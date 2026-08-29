@@ -1,0 +1,21 @@
+[package]
+name = "agentworth-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+agentworth-schema.workspace = true
+agentworth-adapter-sdk.workspace = true
+agentworth-adapters.workspace = true
+agentworth-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
