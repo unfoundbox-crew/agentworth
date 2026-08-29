@@ -1,0 +1,228 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+
+import {
+  getPlatformKey,
+  getBinaryName,
+  resolveArguments,
+  isExecutable,
+  findCargoTargetBinary,
+  findPathBinary,
+  resolveBinary,
+  formatMissingBinaryMessage,
+  run,
+} from '../lib/resolver.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+describe('npm-wrapper / launcher', () => {
+  describe('platform & binary naming', () => {
+    it('detects OS and architecture platform keys correctly', () => {
+      assert.equal(getPlatformKey('darwin', 'arm64'), 'darwin-arm64');
+      assert.equal(getPlatformKey('darwin', 'x64'), 'darwin-x64');
+      assert.equal(getPlatformKey('linux', 'x64'), 'linux-x64');
+      assert.equal(getPlatformKey('linux', 'arm64'), 'linux-arm64');
+      assert.equal(getPlatformKey('win32', 'x64'), 'win32-x64');
+      assert.equal(getPlatformKey('win32', 'arm64'), 'win32-arm64');
+    });
+
+    it('determines native binary filename by platform', () => {
+      assert.equal(getBinaryName('darwin'), 'agentworth');
+      assert.equal(getBinaryName('linux'), 'agentworth');
+      assert.equal(getBinaryName('win32'), 'agentworth.exe');
+    });
+  });
+
+  describe('argument parsing & defaults', () => {
+    it('defaults to ["serve", "--open"] when no arguments are provided', () => {
+      assert.deepEqual(resolveArguments([]), ['serve', '--open']);
+      assert.deepEqual(resolveArguments(undefined), ['serve', '--open']);
+    });
+
+    it('preserves and forwards subcommands and flags transparently', () => {
+      assert.deepEqual(resolveArguments(['scan']), ['scan']);
+      assert.deepEqual(resolveArguments(['scan', '--force', '--json']), ['scan', '--force', '--json']);
+      assert.deepEqual(resolveArguments(['stats']), ['stats']);
+      assert.deepEqual(resolveArguments(['traces', '--limit', '50']), ['traces', '--limit', '50']);
+      assert.deepEqual(resolveArguments(['inspect', 'session-abc-123']), ['inspect', 'session-abc-123']);
+      assert.deepEqual(resolveArguments(['export', 'session-123', '--redact', '--format', 'atif']), [
+        'export',
+        'session-123',
+        '--redact',
+        '--format',
+        'atif',
+      ]);
+      assert.deepEqual(resolveArguments(['--version']), ['--version']);
+      assert.deepEqual(resolveArguments(['-v', 'stats']), ['-v', 'stats']);
+    });
+  });
+
+  describe('binary resolution & search order', () => {
+    let tempDir;
+    let mockBin;
+
+    before(() => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentworth-test-'));
+      mockBin = path.join(tempDir, 'agentworth');
+      fs.writeFileSync(mockBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    });
+
+    after(() => {
+      if (tempDir && fs.existsSync(tempDir)) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves explicit AGENTWORTH_BIN environment variable', () => {
+      const res = resolveBinary({
+        cwd: tempDir,
+        env: { AGENTWORTH_BIN: mockBin },
+        baseDir: tempDir,
+      });
+
+      assert.equal(res.found, true);
+      assert.equal(res.path, mockBin);
+      assert.equal(res.source, 'env:AGENTWORTH_BIN');
+    });
+
+    it('resolves local cargo target directory', () => {
+      const workspaceDir = path.join(tempDir, 'workspace');
+      const targetDebug = path.join(workspaceDir, 'target', 'debug');
+      fs.mkdirSync(targetDebug, { recursive: true });
+      const targetBin = path.join(targetDebug, 'agentworth');
+      fs.writeFileSync(targetBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+      const subDir = path.join(workspaceDir, 'nested', 'subproject');
+      fs.mkdirSync(subDir, { recursive: true });
+
+      const res = resolveBinary({
+        cwd: subDir,
+        env: {},
+        baseDir: subDir,
+      });
+
+      assert.equal(res.found, true);
+      assert.equal(res.path, targetBin);
+      assert.ok(res.source.startsWith('cargo-target'));
+    });
+
+    it('resolves from CARGO_TARGET_DIR environment variable', () => {
+      const customTargetDir = path.join(tempDir, 'custom-target');
+      const releaseDir = path.join(customTargetDir, 'release');
+      fs.mkdirSync(releaseDir, { recursive: true });
+      const customBin = path.join(releaseDir, 'agentworth');
+      fs.writeFileSync(customBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+      const isolatedDir = path.join(tempDir, 'isolated');
+      fs.mkdirSync(isolatedDir, { recursive: true });
+
+      const res = resolveBinary({
+        cwd: isolatedDir,
+        env: { CARGO_TARGET_DIR: customTargetDir },
+        baseDir: isolatedDir,
+      });
+
+      assert.equal(res.found, true);
+      assert.equal(res.path, customBin);
+      assert.equal(res.source, 'cargo-target-dir-release');
+    });
+
+    it('resolves from PATH environment variable', () => {
+      const binDir = path.join(tempDir, 'custom-bin');
+      fs.mkdirSync(binDir, { recursive: true });
+      const pathBin = path.join(binDir, 'agentworth');
+      fs.writeFileSync(pathBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+      const isolatedDir = path.join(tempDir, 'isolated-path');
+      fs.mkdirSync(isolatedDir, { recursive: true });
+
+      const res = resolveBinary({
+        cwd: isolatedDir,
+        env: { PATH: binDir },
+        baseDir: isolatedDir,
+      });
+
+      assert.equal(res.found, true);
+      assert.equal(res.path, pathBin);
+      assert.equal(res.source, 'path');
+    });
+
+    it('returns found: false when binary is not located', () => {
+      const emptyDir = path.join(tempDir, 'empty-dir');
+      fs.mkdirSync(emptyDir, { recursive: true });
+
+      const res = resolveBinary({
+        cwd: emptyDir,
+        env: { PATH: '' },
+        baseDir: emptyDir,
+      });
+
+      assert.equal(res.found, false);
+      assert.ok(res.error);
+    });
+  });
+
+  describe('execution & fallback handling', () => {
+    let tempDir;
+    let successBin;
+    let failingBin;
+
+    before(() => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentworth-exec-test-'));
+      successBin = path.join(tempDir, 'mock-agentworth-success');
+      fs.writeFileSync(successBin, '#!/bin/sh\necho "MOCK_SUCCESS: $@"\nexit 0\n', { mode: 0o755 });
+
+      failingBin = path.join(tempDir, 'mock-agentworth-fail');
+      fs.writeFileSync(failingBin, '#!/bin/sh\nexit 42\n', { mode: 0o755 });
+    });
+
+    after(() => {
+      if (tempDir && fs.existsSync(tempDir)) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('executes successfully and forwards exit code 0', () => {
+      const exitCode = run(['stats'], {
+        cwd: tempDir,
+        env: { AGENTWORTH_BIN: successBin },
+      });
+      assert.equal(exitCode, 0);
+    });
+
+    it('forwards non-zero child process exit codes', () => {
+      const exitCode = run(['traces'], {
+        cwd: tempDir,
+        env: { AGENTWORTH_BIN: failingBin },
+      });
+      assert.equal(exitCode, 42);
+    });
+
+    it('handles fallback gracefully when binary is missing and returns code 1', () => {
+      const emptyDir = path.join(tempDir, 'empty');
+      fs.mkdirSync(emptyDir, { recursive: true });
+
+      const exitCode = run(['scan'], {
+        cwd: emptyDir,
+        env: { PATH: '' },
+        baseDir: emptyDir,
+      });
+      assert.equal(exitCode, 1);
+    });
+
+    it('formats missing binary error message with helpful installation hints', () => {
+      const msg = formatMissingBinaryMessage('darwin-arm64');
+      assert.ok(msg.includes('darwin-arm64'));
+      assert.ok(msg.includes('cargo build --release -p agentworth-cli'));
+      assert.ok(msg.includes('cargo install --path apps/cli'));
+      assert.ok(msg.includes('brew install agentworth'));
+      assert.ok(msg.includes('curl -fsSL https://agentworth.dev/install.sh | sh'));
+      assert.ok(msg.includes('AGENTWORTH_BIN'));
+    });
+  });
+});

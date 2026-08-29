@@ -1,0 +1,36 @@
+{
+  "name": "agentworth",
+  "version": "0.1.0",
+  "description": "Discover, normalize, and understand AI-agent histories locally.",
+  "type": "module",
+  "main": "./lib/resolver.js",
+  "bin": {
+    "agentworth": "./bin/agentworth.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "traces",
+    "claude-code",
+    "codex",
+    "gemini",
+    "opencode",
+    "history",
+    "analytics",
+    "developer-tools"
+  ],
+  "author": "Unfoundbox",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ]
+}
