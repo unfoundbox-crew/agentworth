@@ -1,0 +1,472 @@
+{
+  "irVersion": "2.0",
+  "output": {
+    "width": 1080,
+    "height": 1080,
+    "fps": 60
+  },
+  "theme": {
+    "palette": {
+      "colors": {
+        "bg": "#FFFFFF",
+        "ink": "#000000",
+        "inkMuted": "#64748B",
+        "primary": "#000000",
+        "secondary": "#16A34A",
+        "accent": "#DC2626",
+        "surface": "#FFFFFF",
+        "cardBg": "#F8FAFC",
+        "bubbleBg": "#FFFFFF",
+        "bubbleText": "#000000"
+      }
+    },
+    "motion": {
+      "personality": "energetic"
+    }
+  },
+  "timeline": {
+    "beats": [
+      {
+        "id": "beat_01_full_comic",
+        "durationMs": 6000
+      }
+    ]
+  },
+  "beatContent": {
+    "beat_01_full_comic": {
+      "stack": {
+        "slot": "root_stack",
+        "children": [
+          {
+            "column": {
+              "slot": "main_col",
+              "pad": "s4",
+              "gap": "s3",
+              "align": "center",
+              "children": [
+                {
+                  "row": {
+                    "slot": "comic_header_row",
+                    "align": "spaceBetween",
+                    "width": 960.0,
+                    "children": [
+                      {
+                        "text": {
+                          "text": "xkcd.com/agentworth — \"Center This Div\"",
+                          "role": "mono",
+                          "colorRole": "ink"
+                        }
+                      },
+                      {
+                        "text": {
+                          "text": "EPISODE 2026 // AGENT ARCHAEOLOGY",
+                          "role": "mono",
+                          "colorRole": "inkMuted"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "row": {
+                    "slot": "top_panels_row",
+                    "align": "center",
+                    "gap": "s4",
+                    "children": [
+                      {
+                        "stack": {
+                          "slot": "p1_stack",
+                          "width": 465.0,
+                          "height": 450.0,
+                          "children": [
+                            {
+                              "shape": {
+                                "slot": "p1_border",
+                                "width": 465.0,
+                                "height": 450.0,
+                                "colorRole": "bg",
+                                "rect": { "radius": "r1" },
+                                "stroke": { "colorRole": "ink", "width": 3.0 }
+                              }
+                            },
+                            {
+                              "column": {
+                                "slot": "p1_content",
+                                "pad": "s4",
+                                "gap": "s2",
+                                "width": 465.0,
+                                "children": [
+                                  {
+                                    "text": {
+                                      "text": "1. THE SPECIFICATION",
+                                      "role": "mono",
+                                      "colorRole": "inkMuted"
+                                    }
+                                  },
+                                  {
+                                    "stack": {
+                                      "slot": "p1_bubble_stack",
+                                      "width": 415.0,
+                                      "height": 110.0,
+                                      "children": [
+                                        {
+                                          "shape": {
+                                            "slot": "p1_bubble_bg",
+                                            "width": 415.0,
+                                            "height": 110.0,
+                                            "colorRole": "bubbleBg",
+                                            "rect": { "radius": "r2" },
+                                            "stroke": { "colorRole": "ink", "width": 2.0 }
+                                          }
+                                        },
+                                        {
+                                          "column": {
+                                            "slot": "p1_bubble_col",
+                                            "pad": "s3",
+                                            "gap": "s1",
+                                            "width": 415.0,
+                                            "children": [
+                                              {
+                                                "text": {
+                                                  "text": "\"Please center this div\nvertically & horizontally.\nKeep it simple.\"",
+                                                  "role": "mono",
+                                                  "colorRole": "ink"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "row": {
+                                      "slot": "p1_char_row",
+                                      "align": "center",
+                                      "children": [
+                                        {
+                                          "shape": {
+                                            "slot": "p1_dev_figure",
+                                            "width": 120.0,
+                                            "height": 200.0,
+                                            "pathSvg": "M 60 40 A 20 20 0 1 0 59 40 M 60 60 L 60 130 M 60 75 L 20 105 M 60 75 L 100 105 M 60 130 L 30 195 M 60 130 L 90 195 M 10 115 L 110 115",
+                                            "stroke": { "colorRole": "ink", "width": 3.0 }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "stack": {
+                          "slot": "p2_stack",
+                          "width": 465.0,
+                          "height": 450.0,
+                          "children": [
+                            {
+                              "shape": {
+                                "slot": "p2_border",
+                                "width": 465.0,
+                                "height": 450.0,
+                                "colorRole": "bg",
+                                "rect": { "radius": "r1" },
+                                "stroke": { "colorRole": "ink", "width": 3.0 }
+                              }
+                            },
+                            {
+                              "column": {
+                                "slot": "p2_content",
+                                "pad": "s4",
+                                "gap": "s2",
+                                "width": 465.0,
+                                "children": [
+                                  {
+                                    "text": {
+                                      "text": "2. AUTONOMOUS LOOP (Turn 47)",
+                                      "role": "mono",
+                                      "colorRole": "accent"
+                                    }
+                                  },
+                                  {
+                                    "stack": {
+                                      "slot": "p2_bubble_stack",
+                                      "width": 415.0,
+                                      "height": 110.0,
+                                      "children": [
+                                        {
+                                          "shape": {
+                                            "slot": "p2_bubble_bg",
+                                            "width": 415.0,
+                                            "height": 110.0,
+                                            "colorRole": "bubbleBg",
+                                            "rect": { "radius": "r2" },
+                                            "stroke": { "colorRole": "accent", "width": 2.0 }
+                                          }
+                                        },
+                                        {
+                                          "column": {
+                                            "slot": "p2_bubble_col",
+                                            "pad": "s3",
+                                            "gap": "s1",
+                                            "width": 415.0,
+                                            "children": [
+                                              {
+                                                "text": {
+                                                  "text": "\"Installing Three.js, Docker,\nWebGL, and an autonomous\nSubgrid daemon!\"",
+                                                  "role": "mono",
+                                                  "colorRole": "accent"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "row": {
+                                      "slot": "p2_char_row",
+                                      "align": "center",
+                                      "children": [
+                                        {
+                                          "shape": {
+                                            "slot": "p2_agent_panic",
+                                            "width": 120.0,
+                                            "height": 200.0,
+                                            "pathSvg": "M 60 40 A 20 20 0 1 0 59 40 M 60 60 L 60 130 M 60 75 L 15 35 M 60 75 L 105 35 M 60 130 L 30 195 M 60 130 L 90 195",
+                                            "stroke": { "colorRole": "accent", "width": 3.0 }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "row": {
+                    "slot": "bottom_panels_row",
+                    "align": "center",
+                    "gap": "s4",
+                    "children": [
+                      {
+                        "stack": {
+                          "slot": "p3_stack",
+                          "width": 465.0,
+                          "height": 450.0,
+                          "children": [
+                            {
+                              "shape": {
+                                "slot": "p3_border",
+                                "width": 465.0,
+                                "height": 450.0,
+                                "colorRole": "bg",
+                                "rect": { "radius": "r1" },
+                                "stroke": { "colorRole": "ink", "width": 3.0 }
+                              }
+                            },
+                            {
+                              "column": {
+                                "slot": "p3_content",
+                                "pad": "s4",
+                                "gap": "s2",
+                                "width": 465.0,
+                                "children": [
+                                  {
+                                    "text": {
+                                      "text": "3. AGENTWORTH RECEIPT",
+                                      "role": "mono",
+                                      "colorRole": "inkMuted"
+                                    }
+                                  },
+                                  {
+                                    "stack": {
+                                      "slot": "p3_receipt_stack",
+                                      "width": 415.0,
+                                      "height": 310.0,
+                                      "children": [
+                                        {
+                                          "shape": {
+                                            "slot": "p3_receipt_box",
+                                            "width": 415.0,
+                                            "height": 310.0,
+                                            "colorRole": "cardBg",
+                                            "rect": { "radius": "r2" },
+                                            "stroke": { "colorRole": "ink", "width": 2.0 }
+                                          }
+                                        },
+                                        {
+                                          "column": {
+                                            "slot": "p3_receipt_col",
+                                            "pad": "s4",
+                                            "gap": "s2",
+                                            "width": 415.0,
+                                            "children": [
+                                              {
+                                                "text": {
+                                                  "text": "TOTAL TOKENS:  3,420,000",
+                                                  "role": "mono",
+                                                  "colorRole": "ink"
+                                                }
+                                              },
+                                              {
+                                                "text": {
+                                                  "text": "ESTIMATED COST: $48.20 USD",
+                                                  "role": "mono",
+                                                  "colorRole": "accent"
+                                                }
+                                              },
+                                              {
+                                                "text": {
+                                                  "text": "TOOL CALLS:     47",
+                                                  "role": "mono",
+                                                  "colorRole": "ink"
+                                                }
+                                              },
+                                              {
+                                                "text": {
+                                                  "text": "GIT COMMITS:    0",
+                                                  "role": "mono",
+                                                  "colorRole": "accent"
+                                                }
+                                              },
+                                              {
+                                                "text": {
+                                                  "text": "OUTCOME: DoneClaimed (1/5)",
+                                                  "role": "mono",
+                                                  "colorRole": "inkMuted"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "stack": {
+                          "slot": "p4_stack",
+                          "width": 465.0,
+                          "height": 450.0,
+                          "children": [
+                            {
+                              "shape": {
+                                "slot": "p4_border",
+                                "width": 465.0,
+                                "height": 450.0,
+                                "colorRole": "bg",
+                                "rect": { "radius": "r1" },
+                                "stroke": { "colorRole": "ink", "width": 3.0 }
+                              }
+                            },
+                            {
+                              "column": {
+                                "slot": "p4_content",
+                                "pad": "s4",
+                                "gap": "s2",
+                                "width": 465.0,
+                                "children": [
+                                  {
+                                    "text": {
+                                      "text": "4. THE DELIVERABLE",
+                                      "role": "mono",
+                                      "colorRole": "secondary"
+                                    }
+                                  },
+                                  {
+                                    "stack": {
+                                      "slot": "p4_bubble_stack",
+                                      "width": 415.0,
+                                      "height": 110.0,
+                                      "children": [
+                                        {
+                                          "shape": {
+                                            "slot": "p4_bubble_bg",
+                                            "width": 415.0,
+                                            "height": 110.0,
+                                            "colorRole": "bubbleBg",
+                                            "rect": { "radius": "r2" },
+                                            "stroke": { "colorRole": "ink", "width": 2.0 }
+                                          }
+                                        },
+                                        {
+                                          "column": {
+                                            "slot": "p4_bubble_col",
+                                            "pad": "s3",
+                                            "gap": "s1",
+                                            "width": 415.0,
+                                            "children": [
+                                              {
+                                                "text": {
+                                                  "text": "\"I added 'margin: 0 auto;'.\nPlease verify if vertical\ncentering was also needed!\"",
+                                                  "role": "mono",
+                                                  "colorRole": "ink"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "row": {
+                                      "slot": "p4_char_row",
+                                      "align": "spaceBetween",
+                                      "width": 360.0,
+                                      "children": [
+                                        {
+                                          "shape": {
+                                            "slot": "p4_dev_facepalm",
+                                            "width": 100.0,
+                                            "height": 180.0,
+                                            "pathSvg": "M 50 35 A 18 18 0 1 0 49 35 M 50 55 L 50 120 M 50 70 L 25 40 L 40 30 M 50 70 L 80 100 M 50 120 L 25 170 M 50 120 L 75 170",
+                                            "stroke": { "colorRole": "ink", "width": 3.0 }
+                                          }
+                                        },
+                                        {
+                                          "shape": {
+                                            "slot": "p4_agent_shrug",
+                                            "width": 100.0,
+                                            "height": 180.0,
+                                            "pathSvg": "M 50 35 A 18 18 0 1 0 49 35 M 50 55 L 50 120 M 50 70 L 10 50 M 50 70 L 90 50 M 50 120 L 25 170 M 50 120 L 75 170",
+                                            "stroke": { "colorRole": "secondary", "width": 3.0 }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

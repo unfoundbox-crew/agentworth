@@ -67,39 +67,39 @@ export function getOutcomeBadgeInfo(outcome?: string): {
     case 'ci_or_deployment_verified':
       return {
         label: 'CI/PR VERIFIED',
-        className: 'bg-green-100 text-green-800 border-green-700 font-bold',
+        className: 'bg-black text-white border-black font-bold',
         symbol: '✓✓',
       };
     case 'commit_observed':
       return {
         label: 'COMMIT OBSERVED',
-        className: 'bg-emerald-50 text-emerald-800 border-emerald-600',
+        className: 'bg-zinc-900 text-zinc-100 border-zinc-900 font-medium',
         symbol: '✓ git',
       };
     case 'test_or_build_passed':
       return {
-        label: 'TEST/BUILD PASSED',
-        className: 'bg-green-50 text-green-700 border-green-500',
+        label: 'TESTS PASSED',
+        className: 'bg-zinc-800 text-zinc-100 border-zinc-800 font-medium',
         symbol: '✓ pass',
       };
     case 'artifact_changed':
       return {
         label: 'ARTIFACT CHANGED',
-        className: 'bg-yellow-50 text-amber-800 border-amber-500',
+        className: 'bg-zinc-200 text-zinc-900 border-zinc-400 font-medium',
         symbol: '● diff',
       };
     case 'done_claimed':
       return {
         label: 'DONE CLAIMED',
-        className: 'bg-gray-100 text-gray-700 border-gray-400',
+        className: 'bg-zinc-100 text-zinc-700 border-zinc-300',
         symbol: '? claim',
       };
     case 'unresolved':
     default:
       return {
         label: 'UNRESOLVED',
-        className: 'bg-red-50 text-red-700 border-red-400',
-        symbol: '✗ fail',
+        className: 'bg-white text-zinc-900 border-dashed border-zinc-400',
+        symbol: '✗ unres',
       };
   }
 }
@@ -111,30 +111,30 @@ export function getAdapterBadge(adapter: string): {
 } {
   switch (adapter) {
     case 'claude_code':
-      return { name: 'Claude Code', tag: 'claude', borderColor: 'border-orange-600' };
+      return { name: 'Claude Code', tag: 'claude', borderColor: 'border-black' };
     case 'antigravity':
     case 'gemini':
-      return { name: 'Antigravity (AGY)', tag: 'antigravity', borderColor: 'border-blue-600' };
+      return { name: 'Antigravity (AGY)', tag: 'antigravity', borderColor: 'border-black' };
     case 'codex':
-      return { name: 'Codex CLI', tag: 'codex', borderColor: 'border-emerald-700' };
+      return { name: 'Codex CLI', tag: 'codex', borderColor: 'border-black' };
     case 'cursor':
-      return { name: 'Cursor Composer', tag: 'cursor', borderColor: 'border-cyan-600' };
+      return { name: 'Cursor Composer', tag: 'cursor', borderColor: 'border-black' };
     case 'goose':
-      return { name: 'Block Goose', tag: 'goose', borderColor: 'border-amber-600' };
+      return { name: 'Block Goose', tag: 'goose', borderColor: 'border-black' };
     case 'pi':
-      return { name: 'Pi Task Agent', tag: 'pi', borderColor: 'border-violet-600' };
+      return { name: 'Pi Task Agent', tag: 'pi', borderColor: 'border-black' };
     case 'herdr':
-      return { name: 'Herdr Orchestrator', tag: 'herdr', borderColor: 'border-indigo-600' };
+      return { name: 'Herdr Swarm', tag: 'herdr', borderColor: 'border-black' };
     case 'hermes':
-      return { name: 'Nous Hermes', tag: 'hermes', borderColor: 'border-rose-600' };
+      return { name: 'Nous Hermes', tag: 'hermes', borderColor: 'border-black' };
     case 'openclaw':
-      return { name: 'OpenClaw', tag: 'openclaw', borderColor: 'border-teal-600' };
+      return { name: 'OpenClaw', tag: 'openclaw', borderColor: 'border-black' };
     case 'grok':
-      return { name: 'xAI Grok', tag: 'grok', borderColor: 'border-zinc-800' };
+      return { name: 'xAI Grok', tag: 'grok', borderColor: 'border-black' };
     case 'opencode':
-      return { name: 'OpenCode', tag: 'opencode', borderColor: 'border-purple-600' };
+      return { name: 'OpenCode', tag: 'opencode', borderColor: 'border-black' };
     default:
-      return { name: adapter, tag: adapter, borderColor: 'border-zinc-600' };
+      return { name: adapter, tag: adapter, borderColor: 'border-black' };
   }
 }
 
