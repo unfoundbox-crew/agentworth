@@ -1,0 +1,53 @@
+[workspace]
+members = [
+    "crates/schema",
+    "crates/adapter-sdk",
+    "crates/adapters",
+    "crates/storage",
+    "crates/core",
+    "crates/outcomes",
+    "crates/scoring",
+    "crates/redaction",
+    "crates/export-atif",
+    "apps/cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["AgentWorth Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/unfoundbox/agentworth"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rusqlite = { version = "0.31", features = ["bundled", "chrono", "uuid"] }
+clap = { version = "4.5", features = ["derive", "cargo"] }
+walkdir = "2.5"
+sha2 = "0.10"
+hex = "0.4"
+tempfile = "3.12"
+tokio = { version = "1.40", features = ["full"] }
+console = "0.15"
+indicatif = "0.17"
+directories = "5.0"
+regex = "1.10"
+
+# Workspace crates
+agentworth-schema = { path = "crates/schema" }
+agentworth-adapter-sdk = { path = "crates/adapter-sdk" }
+agentworth-adapters = { path = "crates/adapters" }
+agentworth-storage = { path = "crates/storage" }
+agentworth-core = { path = "crates/core" }
+agentworth-outcomes = { path = "crates/outcomes" }
+agentworth-scoring = { path = "crates/scoring" }
+agentworth-redaction = { path = "crates/redaction" }
+agentworth-export-atif = { path = "crates/export-atif" }
