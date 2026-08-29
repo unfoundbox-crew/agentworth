@@ -1,0 +1,51 @@
+# AgentWorth
+> Your agents left receipts. A local-first native Rust tool that discovers, normalizes, and indexes AI coding-agent trajectories already sitting in your computer's dotfiles.
+
+## Overview
+AgentWorth turns gigabytes of unreadable JSONL agent histories into clean metrics, trajectories, and verified outcomes—showing developers exactly how many tokens they spent, which tasks succeeded, and where the loops got stuck.
+
+- Canonical Website: https://agentworth.dev/
+- GitHub Repository: https://github.com/unfoundbox/agentworth
+- License: Apache-2.0 / MIT
+- Core Architecture: Native Rust scanner, SQLite WAL local index, React monochrome explorer.
+
+## Quickstart
+```bash
+# Instant run (native binary launcher)
+npx agentworth
+
+# Or install natively via Cargo
+cargo install agentworth
+```
+
+## Supported Coding Agents & Adapters
+1. Claude Code (~/.claude/projects/, ~/.claude/sessions/)
+2. Google Antigravity (~/.gemini/antigravity/, ~/.gemini/history/, ~/.antigravity/)
+3. Cursor Composer (~/.cursor/, ~/Library/Application Support/Cursor/User/workspaceStorage/)
+4. OpenAI Codex (~/.codex/sessions/)
+5. Block Goose (~/.config/goose/, ~/.local/share/goose/sessions/)
+6. Pi Agent (~/.pi/, ~/.pi/tasks/)
+7. Herdr (~/.config/herdr/ - Multi-agent orchestration DAGs)
+8. Nous Hermes (~/.hermes/sessions/)
+9. OpenClaw (~/.openclaw/)
+10. xAI Grok (~/.grok/sessions/)
+11. OpenCode (~/.opencode/, ~/.local/share/opencode/)
+
+## Core CLI Commands
+- `agentworth scan`: Discovers and incrementally indexes agent sessions into local SQLite.
+- `agentworth stats`: Displays machine-wide token totals, top models, top tools, and session counts.
+- `agentworth doctor`: Diagnoses system health, SQLite WAL status, and detected adapter roots.
+- `agentworth traces`: Filterable tabular session directory (`--limit`, `--adapter`, `--model`).
+- `agentworth inspect <id>`: Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs.
+- `agentworth serve`: Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`).
+- `agentworth export <id>`: Safe export to standard ATIF v1.0 with 13-rule offline privacy secret redaction (`--redact`).
+
+## Privacy & Security Guarantees
+- 100% Local & Offline: No telemetry, no background network pings, zero telemetry uploads.
+- Read-Only on Raw Histories: Never alters original transcript files.
+- Zero Duplication: Maintains a lightweight metadata and score index; raw logs loaded lazily.
+- Bounded Memory: Multi-gigabyte JSONL files are processed as streaming pipelines.
+
+## Canonical Documentation
+- Full Documentation: https://agentworth.dev/llms-full.txt
+- GitHub Source: https://github.com/unfoundbox/agentworth

@@ -1,0 +1,8 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+
+# Sitemaps and LLM Knowledge Manifests
+Sitemap: https://agentworth.dev/sitemap.xml
+Allow: /llms.txt
+Allow: /llms-full.txt

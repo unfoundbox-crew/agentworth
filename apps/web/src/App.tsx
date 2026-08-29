@@ -21,6 +21,8 @@ import {
 } from './services/api';
 import { mockAggregateStats, mockSummaries } from './services/mockData';
 
+import { initAnalytics } from './services/analytics';
+
 export function App() {
   const [viewMode, setViewMode] = useState<'landing' | 'explorer'>('landing');
   const [stats, setStats] = useState<AggregateStats>(mockAggregateStats);
@@ -41,6 +43,7 @@ export function App() {
 
   // Load stats & traces on mount
   useEffect(() => {
+    initAnalytics();
     // If URL has ?view=explorer, start in explorer mode
     const params = new URLSearchParams(window.location.search);
     if (params.get('view') === 'explorer') {

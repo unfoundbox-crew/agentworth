@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Github, ArrowUpRight, Copy, Check, Terminal, ExternalLink } from 'lucide-react';
+import { trackEvent } from '../services/analytics';
 
 interface LandingPageProps {
   onOpenExplorer?: () => void;
@@ -35,11 +36,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
   const handleCopyNpx = () => {
     navigator.clipboard.writeText('npx agentworth');
     setCopied(true);
+    trackEvent('npx_command_copied', { source: 'landing_hero' });
     setTimeout(() => setCopied(false), 2000);
   };
 
   const restartScanDemo = () => {
     setTerminalLineIndex(0);
+    trackEvent('terminal_demo_replayed');
   };
 
   return (
@@ -66,6 +69,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
                   href="https://github.com/unfoundbox/agentworth"
                   target="_blank"
                   rel="noreferrer"
+                  aria-label="View AgentWorth on GitHub"
+                  onClick={() => trackEvent('github_clicked', { location: 'header' })}
                   className="px-3 py-1.5 text-xs font-bold border-2 border-black bg-white hover:bg-black hover:text-white transition-colors shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center space-x-1"
                 >
                   <Github className="w-3.5 h-3.5" />
@@ -75,6 +80,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
                   href="https://github.com/unfoundbox/agentworth#readme"
                   target="_blank"
                   rel="noreferrer"
+                  aria-label="Read Documentation on GitHub"
+                  onClick={() => trackEvent('docs_clicked', { location: 'header' })}
                   className="px-3 py-1.5 text-xs font-bold border-2 border-black bg-white hover:bg-black hover:text-white transition-colors shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center space-x-1"
                 >
                   <span>Docs</span>
@@ -94,6 +101,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
               <div className="flex items-center space-x-2 w-full sm:w-auto">
                 <button
                   onClick={handleCopyNpx}
+                  aria-label="Copy npx agentworth command"
                   className="flex-1 sm:flex-none px-3 py-1 text-xs font-bold border border-black bg-white hover:bg-black hover:text-white transition-colors flex items-center justify-center space-x-1"
                 >
                   {copied ? (
@@ -110,7 +118,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
                 </button>
                 {onOpenExplorer && (
                   <button
-                    onClick={onOpenExplorer}
+                    onClick={() => {
+                      trackEvent('explorer_launched');
+                      onOpenExplorer();
+                    }}
+                    aria-label="Launch live trace explorer"
                     className="flex-1 sm:flex-none px-3 py-1 text-xs font-bold border border-black bg-black text-white hover:bg-zinc-800 transition-colors"
                   >
                     Launch Explorer →
