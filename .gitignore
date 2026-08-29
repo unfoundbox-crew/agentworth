@@ -18,3 +18,4 @@ target
 node_modules/
 dist/
 .worktrees/
+.vercel
