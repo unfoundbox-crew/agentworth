@@ -159,6 +159,10 @@ impl Storage {
 
             CREATE INDEX IF NOT EXISTS idx_sessions_adapter ON sessions(adapter);
             CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
+            CREATE INDEX IF NOT EXISTS idx_sessions_tokens ON sessions(total_tokens);
+            CREATE INDEX IF NOT EXISTS idx_sessions_events ON sessions(total_events);
+            CREATE INDEX IF NOT EXISTS idx_sessions_duration ON sessions(duration_seconds);
+            CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
             CREATE INDEX IF NOT EXISTS idx_sources_fingerprint ON sources(fingerprint);
             "#,
         )?;

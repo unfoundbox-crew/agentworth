@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use agentworth_adapter_sdk::{
@@ -14,6 +14,8 @@ use chrono::{DateTime, Utc};
 use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
+
+use crate::normalize_mcp_tool_name;
 
 /// Adapter for discovering and normalizing OpenCode agent session histories.
 pub struct OpenCodeAdapter;
@@ -128,9 +130,6 @@ impl AgentAdapter for OpenCodeAdapter {
     }
 
     fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
-        let file = File::open(&source.path)?;
-        let reader = BufReader::new(file);
-
         let session_id = derive_session_id(&source.path);
         let provenance = Provenance::new(
             source.path.to_string_lossy().to_string(),
@@ -148,41 +147,98 @@ impl AgentAdapter for OpenCodeAdapter {
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
 
-        for (line_idx, line_res) in reader.lines().enumerate() {
-            let line_num = line_idx + 1;
-            let line_str = match line_res {
-                Ok(l) => l,
-                Err(e) => {
-                    malformed_lines += 1;
-                    warnings.push(format!("I/O read error on line {}: {}", line_num, e));
+        let file = File::open(&source.path)?;
+        let mut reader = BufReader::new(file);
+
+        let has_content = reader.get_ref().metadata()?.len() > 0;
+
+        if has_content {
+            let mut content_str = String::new();
+            reader.read_to_string(&mut content_str)?;
+
+            let trimmed = content_str.trim();
+            if trimmed.starts_with('[')
+                || (trimmed.starts_with('{') && !trimmed.contains('\n'))
+                || (trimmed.starts_with('{') && serde_json::from_str::<Value>(trimmed).is_ok())
+            {
+                if let Ok(json_val) = serde_json::from_str::<Value>(trimmed) {
+                    let items = if let Some(arr) = json_val.as_array() {
+                        arr.clone()
+                    } else if let Some(messages) =
+                        json_val.get("messages").and_then(|m| m.as_array())
+                    {
+                        messages.clone()
+                    } else if let Some(turns) = json_val.get("turns").and_then(|t| t.as_array()) {
+                        turns.clone()
+                    } else if let Some(events) = json_val.get("events").and_then(|e| e.as_array()) {
+                        events.clone()
+                    } else if let Some(history) = json_val.get("history").and_then(|h| h.as_array()) {
+                        history.clone()
+                    } else if let Some(conversation) =
+                        json_val.get("conversation").and_then(|c| c.as_array())
+                    {
+                        conversation.clone()
+                    } else {
+                        vec![json_val]
+                    };
+
+                    for (idx, item) in items.iter().enumerate() {
+                        let timestamp = parse_timestamp(item).unwrap_or_else(Utc::now);
+                        if earliest_ts.is_none_or(|ts| timestamp < ts) {
+                            earliest_ts = Some(timestamp);
+                        }
+                        if latest_ts.is_none_or(|ts| timestamp > ts) {
+                            latest_ts = Some(timestamp);
+                        }
+
+                        let evts = parse_opencode_record(item, &mut sequence, timestamp, idx + 1);
+                        trace.events.extend(evts);
+                    }
+
+                    if let Some(earliest) = earliest_ts {
+                        trace.started_at = earliest;
+                    }
+                    if let Some(latest) = latest_ts {
+                        trace.ended_at = Some(latest);
+                    }
+
+                    trace.recalculate_stats();
+
+                    return Ok(ParseResult {
+                        trace,
+                        malformed_lines,
+                        warnings,
+                    });
+                }
+            }
+
+            for (line_idx, line_str) in content_str.lines().enumerate() {
+                let line_num = line_idx + 1;
+                let trimmed_line = line_str.trim();
+                if trimmed_line.is_empty() {
                     continue;
                 }
-            };
 
-            let trimmed = line_str.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
+                let val: Value = match serde_json::from_str(trimmed_line) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        malformed_lines += 1;
+                        warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
+                        continue;
+                    }
+                };
 
-            let val: Value = match serde_json::from_str(trimmed) {
-                Ok(v) => v,
-                Err(e) => {
-                    malformed_lines += 1;
-                    warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
-                    continue;
+                let timestamp = parse_timestamp(&val).unwrap_or_else(Utc::now);
+                if earliest_ts.is_none_or(|ts| timestamp < ts) {
+                    earliest_ts = Some(timestamp);
                 }
-            };
+                if latest_ts.is_none_or(|ts| timestamp > ts) {
+                    latest_ts = Some(timestamp);
+                }
 
-            let timestamp = parse_timestamp(&val).unwrap_or_else(Utc::now);
-            if earliest_ts.is_none_or(|ts| timestamp < ts) {
-                earliest_ts = Some(timestamp);
+                let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num);
+                trace.events.extend(events);
             }
-            if latest_ts.is_none_or(|ts| timestamp > ts) {
-                latest_ts = Some(timestamp);
-            }
-
-            let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num);
-            trace.events.extend(events);
         }
 
         if let Some(earliest) = earliest_ts {
@@ -358,7 +414,7 @@ fn parse_opencode_record(
             {
                 for tc in tcs {
                     let id = tc.get("id").and_then(|v| v.as_str()).map(String::from);
-                    let name = tc
+                    let raw_name = tc
                         .get("name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
@@ -368,6 +424,7 @@ fn parse_opencode_record(
                         .or_else(|| tc.get("input"))
                         .cloned()
                         .unwrap_or(Value::Null);
+                    let name = normalize_mcp_tool_name(&raw_name, &args);
 
                     *seq += 1;
                     events.push(
@@ -384,6 +441,7 @@ fn parse_opencode_record(
                     );
 
                     process_specific_opencode_tool_call(
+                        &raw_name,
                         &name,
                         &args,
                         seq,
@@ -409,7 +467,7 @@ fn parse_opencode_record(
 
         "tool_call" | "tool_use" => {
             let id = val.get("id").and_then(|v| v.as_str()).map(String::from);
-            let name = val
+            let raw_name = val
                 .get("name")
                 .or_else(|| val.get("tool"))
                 .and_then(|v| v.as_str())
@@ -420,6 +478,7 @@ fn parse_opencode_record(
                 .or_else(|| val.get("input"))
                 .cloned()
                 .unwrap_or(Value::Null);
+            let name = normalize_mcp_tool_name(&raw_name, &args);
 
             *seq += 1;
             events.push(
@@ -435,7 +494,7 @@ fn parse_opencode_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            process_specific_opencode_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+            process_specific_opencode_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
         }
 
         "tool_result" | "tool_output" => {
@@ -456,6 +515,11 @@ fn parse_opencode_record(
                 .cloned()
                 .unwrap_or(Value::Null);
 
+            let tool_name = val
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|n| normalize_mcp_tool_name(n, &Value::Null));
+
             *seq += 1;
             events.push(
                 NormalizedEvent::new(
@@ -463,7 +527,7 @@ fn parse_opencode_record(
                     ts,
                     EventPayload::ToolResult(ToolResult {
                         call_id,
-                        name: val.get("name").and_then(|v| v.as_str()).map(String::from),
+                        name: tool_name,
                         output: output.clone(),
                         is_error,
                     }),
@@ -578,6 +642,7 @@ fn parse_opencode_record(
 }
 
 fn process_specific_opencode_tool_call(
+    raw_name: &str,
     name: &str,
     args: &Value,
     seq: &mut u64,
@@ -585,12 +650,16 @@ fn process_specific_opencode_tool_call(
     raw_ref: &str,
     events: &mut Vec<NormalizedEvent>,
 ) {
+    let lower_raw = raw_name.to_lowercase();
     let lower_name = name.to_lowercase();
-    if lower_name == "bash"
-        || lower_name == "shell"
-        || lower_name == "exec"
-        || lower_name == "run_command"
-        || lower_name == "terminal"
+    if lower_raw == "bash"
+        || lower_raw == "shell"
+        || lower_raw == "exec"
+        || lower_raw == "run_command"
+        || lower_raw == "terminal"
+        || lower_name.ends_with(":bash")
+        || lower_name.ends_with(":shell")
+        || lower_name.ends_with(":run_command")
     {
         if let Some(cmd) = args
             .get("command")
@@ -612,11 +681,14 @@ fn process_specific_opencode_tool_call(
                 .with_raw_ref(raw_ref),
             );
         }
-    } else if lower_name == "edit_file"
-        || lower_name == "write_file"
-        || lower_name == "edit"
-        || lower_name == "patch"
-        || lower_name == "create_file"
+    } else if lower_raw == "edit_file"
+        || lower_raw == "write_file"
+        || lower_raw == "edit"
+        || lower_raw == "patch"
+        || lower_raw == "create_file"
+        || lower_name.ends_with(":edit_file")
+        || lower_name.ends_with(":write_file")
+        || lower_name.ends_with(":text_editor")
     {
         let path = args
             .get("path")
@@ -753,5 +825,22 @@ mod tests {
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
         assert_eq!(enumerated[0].adapter_name, "opencode");
+    }
+
+    #[test]
+    fn test_parse_opencode_json_array() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"[
+            {"type":"user_message","timestamp":"2026-08-29T10:00:00Z","content":"Start task"},
+            {"type":"assistant_message","timestamp":"2026-08-29T10:00:02Z","content":"Working on it"}
+        ]"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = OpenCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        assert_eq!(result.trace.stats.user_messages_count, 1);
+        assert_eq!(result.trace.stats.assistant_messages_count, 1);
     }
 }

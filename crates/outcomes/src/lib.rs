@@ -292,4 +292,74 @@ mod tests {
         assert_eq!(recoveries[0].recovery_sequence, 12);
         assert_eq!(recoveries[0].corrective_actions_count, 1);
     }
+
+    #[test]
+    fn test_contextual_file_path_correlation_recovery() {
+        let mut trace = make_test_trace();
+        let start = trace.started_at;
+
+        // Step 1: Rust compiler failure pointing directly at src/recovery.rs
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start + Duration::seconds(1),
+            EventPayload::ShellCommand(ShellCommand {
+                command: "cargo check".to_string(),
+                cwd: None,
+                exit_code: Some(101),
+                output: Some(
+                    "error[E0425]: cannot find value `foo` in this scope\n  --> crates/outcomes/src/recovery.rs:52:13\n   |\n52 |     let x = foo;\n   |             ^^^ not found in this scope".to_string(),
+                ),
+            }),
+        ));
+
+        // Step 2: Unrelated edit to another file (should not correlate with the specific failure file)
+        trace.events.push(NormalizedEvent::new(
+            2,
+            start + Duration::seconds(2),
+            EventPayload::FileAction {
+                path: "README.md".to_string(),
+                action: FileActionType::Edit,
+                diff: Some("+ docs".to_string()),
+                lines_changed: Some(1),
+            },
+        ));
+
+        // Step 3: Exact corrective edit modifying crates/outcomes/src/recovery.rs
+        trace.events.push(NormalizedEvent::new(
+            3,
+            start + Duration::seconds(3),
+            EventPayload::ToolCall(ToolCall {
+                id: Some("call_edit".to_string()),
+                name: "replace_file_content".to_string(),
+                arguments: serde_json::json!({
+                    "TargetFile": "/Users/saurabh/code/unfoundbox/agentworth/crates/outcomes/src/recovery.rs",
+                    "ReplacementContent": "let x = 42;"
+                }),
+            }),
+        ));
+
+        // Step 4: Cargo check passes
+        trace.events.push(NormalizedEvent::new(
+            4,
+            start + Duration::seconds(5),
+            EventPayload::ShellCommand(ShellCommand {
+                command: "cargo check".to_string(),
+                cwd: None,
+                exit_code: Some(0),
+                output: Some("Finished `dev` profile in 0.42s".to_string()),
+            }),
+        ));
+
+        let detector = RecoveryDetector::new();
+        let recoveries = detector.detect_recoveries(&trace);
+
+        assert_eq!(recoveries.len(), 1);
+        let rec = &recoveries[0];
+        assert_eq!(rec.failure_sequence, 1);
+        assert_eq!(rec.recovery_sequence, 4);
+        assert!(!rec.correlated_files.is_empty());
+        assert!(rec.correlated_files.iter().any(|f| f.contains("recovery.rs")));
+        assert!(rec.recovery_summary.contains("recovery.rs"));
+    }
 }
+

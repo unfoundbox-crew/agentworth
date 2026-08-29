@@ -109,6 +109,7 @@ dependencies = [
  "agentworth-schema",
  "anyhow",
  "chrono",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

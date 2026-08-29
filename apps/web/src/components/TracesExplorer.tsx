@@ -67,9 +67,16 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
 
   const adapters = [
     { id: 'all', label: 'All Adapters' },
+    { id: 'antigravity', label: 'Antigravity (AGY)' },
+    { id: 'cursor', label: 'Cursor Composer' },
     { id: 'claude_code', label: 'Claude Code' },
-    { id: 'codex', label: 'Codex' },
-    { id: 'gemini', label: 'Gemini' },
+    { id: 'codex', label: 'Codex CLI' },
+    { id: 'goose', label: 'Block Goose' },
+    { id: 'pi', label: 'Pi Agent' },
+    { id: 'herdr', label: 'Herdr' },
+    { id: 'hermes', label: 'Nous Hermes' },
+    { id: 'openclaw', label: 'OpenClaw' },
+    { id: 'grok', label: 'xAI Grok' },
     { id: 'opencode', label: 'OpenCode' },
   ];
 

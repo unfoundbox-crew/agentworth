@@ -15,6 +15,8 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::normalize_mcp_tool_name;
+
 /// Adapter for discovering and normalizing Goose (Block) agent sessions.
 pub struct GooseAdapter;
 
@@ -432,7 +434,7 @@ fn parse_goose_record(
             {
                 for tc in tools {
                     let id = tc.get("id").and_then(|v| v.as_str()).map(String::from);
-                    let name = tc
+                    let raw_name = tc
                         .get("name")
                         .or_else(|| tc.get("tool"))
                         .or_else(|| tc.get("skill"))
@@ -445,6 +447,8 @@ fn parse_goose_record(
                         .or_else(|| tc.get("parameters"))
                         .cloned()
                         .unwrap_or(Value::Null);
+
+                    let name = normalize_mcp_tool_name(&raw_name, &args);
 
                     *seq += 1;
                     events.push(
@@ -460,7 +464,7 @@ fn parse_goose_record(
                         .with_raw_ref(&raw_ref),
                     );
 
-                    process_specific_goose_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+                    process_specific_goose_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
                 }
             }
 
@@ -479,7 +483,7 @@ fn parse_goose_record(
 
         "tool_use" | "tool_call" | "skill_call" => {
             let id = val.get("id").and_then(|v| v.as_str()).map(String::from);
-            let name = val
+            let raw_name = val
                 .get("name")
                 .or_else(|| val.get("tool"))
                 .or_else(|| val.get("skill"))
@@ -492,6 +496,7 @@ fn parse_goose_record(
                 .or_else(|| val.get("parameters"))
                 .cloned()
                 .unwrap_or(Value::Null);
+            let name = normalize_mcp_tool_name(&raw_name, &args);
 
             *seq += 1;
             events.push(
@@ -507,7 +512,7 @@ fn parse_goose_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            process_specific_goose_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+            process_specific_goose_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
         }
 
         "tool_result" | "tool_output" | "skill_result" | "tool" => {
@@ -529,6 +534,12 @@ fn parse_goose_record(
                 .cloned()
                 .unwrap_or(Value::Null);
 
+            let tool_name = val
+                .get("name")
+                .or_else(|| val.get("tool"))
+                .and_then(|v| v.as_str())
+                .map(|n| normalize_mcp_tool_name(n, &Value::Null));
+
             *seq += 1;
             events.push(
                 NormalizedEvent::new(
@@ -536,7 +547,7 @@ fn parse_goose_record(
                     ts,
                     EventPayload::ToolResult(ToolResult {
                         call_id,
-                        name: val.get("name").and_then(|v| v.as_str()).map(String::from),
+                        name: tool_name,
                         output: output.clone(),
                         is_error,
                     }),
@@ -626,6 +637,7 @@ fn parse_goose_record(
 }
 
 fn process_specific_goose_tool_call(
+    raw_name: &str,
     name: &str,
     args: &Value,
     seq: &mut u64,
@@ -633,13 +645,17 @@ fn process_specific_goose_tool_call(
     raw_ref: &str,
     events: &mut Vec<NormalizedEvent>,
 ) {
-    let lower = name.to_lowercase();
-    if lower.contains("shell")
-        || lower.contains("bash")
-        || lower == "developer__text_editor"
-        || lower == "developer__shell"
-        || lower == "run_command"
-        || lower == "exec"
+    let lower_raw = raw_name.to_lowercase();
+    let lower_name = name.to_lowercase();
+    if lower_raw.contains("shell")
+        || lower_raw.contains("bash")
+        || lower_raw == "developer__text_editor"
+        || lower_raw == "developer__shell"
+        || lower_raw == "run_command"
+        || lower_raw == "exec"
+        || lower_name.ends_with(":bash")
+        || lower_name.ends_with(":shell")
+        || lower_name.ends_with(":run_command")
     {
         if let Some(cmd) = args
             .get("command")
@@ -663,10 +679,13 @@ fn process_specific_goose_tool_call(
         }
     }
 
-    if lower.contains("edit")
-        || lower.contains("write")
-        || lower.contains("patch")
-        || lower == "developer__text_editor"
+    if lower_raw.contains("edit")
+        || lower_raw.contains("write")
+        || lower_raw.contains("patch")
+        || lower_raw == "developer__text_editor"
+        || lower_name.ends_with(":text_editor")
+        || lower_name.ends_with(":edit_file")
+        || lower_name.ends_with(":write_file")
     {
         let path = args
             .get("path")
@@ -785,7 +804,7 @@ mod tests {
         assert_eq!(trace.stats.token_usage.cache_creation_tokens, 20);
         assert_eq!(trace.stats.token_usage.total(), 630);
         assert_eq!(trace.stats.tool_calls_count, 1);
-        assert_eq!(trace.stats.tools_used.get("developer__shell"), Some(&1));
+        assert_eq!(trace.stats.tools_used.get("mcp:developer:shell"), Some(&1));
         assert_eq!(trace.stats.user_messages_count, 1);
         assert_eq!(trace.stats.assistant_messages_count, 2);
     }
@@ -810,6 +829,10 @@ mod tests {
         let trace = result.trace;
         assert_eq!(trace.stats.user_messages_count, 1);
         assert_eq!(trace.stats.tool_calls_count, 1);
+        assert_eq!(
+            trace.stats.tools_used.get("mcp:developer:text_editor"),
+            Some(&1)
+        );
         assert_eq!(trace.stats.token_usage.input_tokens, 150);
         assert_eq!(trace.stats.token_usage.output_tokens, 50);
     }
@@ -827,5 +850,26 @@ mod tests {
         assert_eq!(result.malformed_lines, 1);
         assert_eq!(result.trace.stats.user_messages_count, 1);
         assert_eq!(result.trace.stats.assistant_messages_count, 1);
+    }
+
+    #[test]
+    fn test_parse_goose_mcp_normalization() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"role":"user","timestamp":"2026-08-29T10:00:00Z","content":"Search knowledge catalog"}
+{"role":"assistant","timestamp":"2026-08-29T10:00:02Z","tool_calls":[{"name":"mcp__knowledge_catalog__search_entries","arguments":{"query":"sales"}}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = GooseAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        let trace = result.trace;
+        assert_eq!(trace.stats.tool_calls_count, 1);
+        assert_eq!(
+            trace.stats.tools_used.get("mcp:knowledge_catalog:search_entries"),
+            Some(&1)
+        );
     }
 }

@@ -105,14 +105,27 @@ pub fn create_router(state: AppState) -> Router {
 async fn get_stats_handler(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let stats = state.storage.get_aggregate_stats().map_err(|e| {
+    let storage = state.storage.clone();
+    
+    let (stats_res, top_repos_res) = tokio::task::spawn_blocking(move || {
+        (storage.get_aggregate_stats(), storage.get_top_repositories())
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Task joining failed: {}", e) })),
+        )
+    })?;
+
+    let stats = stats_res.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": format!("Failed to retrieve stats: {}", e) })),
         )
     })?;
 
-    let top_repos = state.storage.get_top_repositories().map_err(|e| {
+    let top_repos = top_repos_res.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": format!("Failed to retrieve top repositories: {}", e) })),
@@ -161,7 +174,17 @@ async fn get_traces_handler(
         ..Default::default()
     };
 
-    let sessions = state.storage.list_sessions_filtered(&filter).map_err(|e| {
+    let storage = state.storage.clone();
+    let sessions_res = tokio::task::spawn_blocking(move || storage.list_sessions_filtered(&filter))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Task joining failed: {}", e) })),
+            )
+        })?;
+
+    let sessions = sessions_res.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": format!("Failed to list traces: {}", e) })),
@@ -176,7 +199,18 @@ async fn get_trace_by_id_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<TraceDetailResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let trace = state.scanner.load_trace(&id).map_err(|e| {
+    let scanner = state.scanner.clone();
+    let id_clone = id.clone();
+    let trace_res = tokio::task::spawn_blocking(move || scanner.load_trace(&id_clone))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Task joining failed: {}", e) })),
+            )
+        })?;
+
+    let trace = trace_res.map_err(|e| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": format!("Trace session '{}' not found: {}", id, e) })),
@@ -200,8 +234,18 @@ async fn get_trace_by_id_handler(
 async fn get_archaeology_handler(
     State(state): State<AppState>,
 ) -> Result<Json<ArchaeologyHighlights>, (StatusCode, Json<serde_json::Value>)> {
-    let highlights =
-        compute_archaeology_highlights(&state.storage, &state.scanner).map_err(|e| {
+    let storage = state.storage.clone();
+    let scanner = state.scanner.clone();
+    let highlights_res = tokio::task::spawn_blocking(move || compute_archaeology_highlights(&storage, &scanner))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Task joining failed: {}", e) })),
+            )
+        })?;
+
+    let highlights = highlights_res.map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": format!("Failed computing archaeology: {}", e) })),
@@ -222,7 +266,17 @@ async fn post_scan_handler(
         force: req.force.unwrap_or(false),
     };
 
-    let summary = state.scanner.run_scan(&options, |_, _| {}).map_err(|e| {
+    let scanner = state.scanner.clone();
+    let summary_res = tokio::task::spawn_blocking(move || scanner.run_scan(&options, |_, _| {}))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Task joining failed: {}", e) })),
+            )
+        })?;
+
+    let summary = summary_res.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": format!("Scan failed: {}", e) })),
@@ -239,7 +293,18 @@ async fn post_export_handler(
     body: Option<Json<ExportRequest>>,
 ) -> Result<Json<ExportResponse>, (StatusCode, Json<serde_json::Value>)> {
     let req = body.map(|Json(b)| b).unwrap_or_default();
-    let mut trace = state.scanner.load_trace(&id).map_err(|e| {
+    let scanner = state.scanner.clone();
+    let id_clone = id.clone();
+    let trace_res = tokio::task::spawn_blocking(move || scanner.load_trace(&id_clone))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Task joining failed: {}", e) })),
+            )
+        })?;
+
+    let mut trace = trace_res.map_err(|e| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": format!("Trace session '{}' not found: {}", id, e) })),

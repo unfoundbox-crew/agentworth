@@ -103,6 +103,7 @@ pub fn compute_archaeology_highlights(
     let mut monthly_buckets: BTreeMap<String, (u64, usize)> = BTreeMap::new();
     let mut adapter_tokens: BTreeMap<String, u64> = BTreeMap::new();
 
+    // 1. Build Token Carbon Dating (Shallow Pass)
     for summary in &all_sessions {
         // Track adapter tokens
         *adapter_tokens.entry(summary.adapter.clone()).or_insert(0) += summary.total_tokens;
@@ -112,7 +113,32 @@ pub fn compute_archaeology_highlights(
         let bucket = monthly_buckets.entry(month_key).or_insert((0, 0));
         bucket.0 += summary.total_tokens;
         bucket.1 += 1;
+    }
 
+    // 2. Select top candidates for deep trace inspection
+    let mut candidate_ids = std::collections::HashSet::new();
+    
+    // Top 20 by tokens (for most_expensive_unsolved)
+    let mut by_tokens = all_sessions.clone();
+    by_tokens.sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
+    for s in by_tokens.iter().take(20) {
+        candidate_ids.insert(s.session_id.clone());
+    }
+
+    // Top 20 by events (for recovery loops and model switches)
+    let mut by_events = all_sessions.clone();
+    by_events.sort_by(|a, b| b.total_events.cmp(&a.total_events));
+    for s in by_events.iter().take(20) {
+        candidate_ids.insert(s.session_id.clone());
+    }
+
+    let candidate_sessions: Vec<_> = all_sessions
+        .iter()
+        .filter(|s| candidate_ids.contains(&s.session_id))
+        .collect();
+
+    // 3. Deep Trace Inspection on Candidates Only
+    for summary in candidate_sessions {
         // Attempt to load full trace for deep inspection
         let trace_opt = scanner.load_trace(&summary.session_id).ok();
 

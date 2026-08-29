@@ -15,6 +15,8 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::normalize_mcp_tool_name;
+
 /// Adapter for discovering and normalizing Google Gemini / Antigravity agent sessions.
 pub struct GeminiAdapter;
 
@@ -419,7 +421,7 @@ fn parse_gemini_record(
             {
                 for tc in tool_calls_arr {
                     let id = tc.get("id").and_then(|v| v.as_str()).map(String::from);
-                    let name = tc
+                    let raw_name = tc
                         .get("name")
                         .or_else(|| tc.get("functionName"))
                         .and_then(|v| v.as_str())
@@ -431,6 +433,8 @@ fn parse_gemini_record(
                         .or_else(|| tc.get("args"))
                         .cloned()
                         .unwrap_or(Value::Null);
+
+                    let name = normalize_mcp_tool_name(&raw_name, &args);
 
                     *seq += 1;
                     events.push(
@@ -446,7 +450,7 @@ fn parse_gemini_record(
                         .with_raw_ref(&raw_ref),
                     );
 
-                    process_specific_gemini_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+                    process_specific_gemini_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
                 }
             }
 
@@ -454,12 +458,13 @@ fn parse_gemini_record(
             if let Some(parts_arr) = val.get("parts").and_then(|v| v.as_array()) {
                 for part in parts_arr {
                     if let Some(fc) = part.get("functionCall") {
-                        let name = fc
+                        let raw_name = fc
                             .get("name")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown")
                             .to_string();
                         let args = fc.get("args").cloned().unwrap_or(Value::Null);
+                        let name = normalize_mcp_tool_name(&raw_name, &args);
 
                         *seq += 1;
                         events.push(
@@ -476,6 +481,7 @@ fn parse_gemini_record(
                         );
 
                         process_specific_gemini_tool_call(
+                            &raw_name,
                             &name,
                             &args,
                             seq,
@@ -517,6 +523,11 @@ fn parse_gemini_record(
                 .cloned()
                 .unwrap_or(Value::Null);
 
+            let tool_name = val
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|n| normalize_mcp_tool_name(n, &Value::Null));
+
             *seq += 1;
             events.push(
                 NormalizedEvent::new(
@@ -524,7 +535,7 @@ fn parse_gemini_record(
                     ts,
                     EventPayload::ToolResult(ToolResult {
                         call_id,
-                        name: val.get("name").and_then(|v| v.as_str()).map(String::from),
+                        name: tool_name,
                         output: output.clone(),
                         is_error,
                     }),
@@ -592,6 +603,7 @@ fn parse_gemini_record(
 }
 
 fn process_specific_gemini_tool_call(
+    raw_name: &str,
     name: &str,
     args: &Value,
     seq: &mut u64,
@@ -599,11 +611,16 @@ fn process_specific_gemini_tool_call(
     raw_ref: &str,
     events: &mut Vec<NormalizedEvent>,
 ) {
+    let lower_raw = raw_name.to_lowercase();
     let lower_name = name.to_lowercase();
-    if lower_name == "run_command"
-        || lower_name == "bash"
-        || lower_name == "exec"
-        || lower_name == "shell"
+    if lower_raw == "run_command"
+        || lower_raw == "bash"
+        || lower_raw == "exec"
+        || lower_raw == "shell"
+        || lower_name.ends_with(":run_command")
+        || lower_name.ends_with(":bash")
+        || lower_name.ends_with(":shell")
+        || lower_name.ends_with(":exec")
     {
         if let Some(cmd) = args
             .get("CommandLine")
@@ -630,10 +647,14 @@ fn process_specific_gemini_tool_call(
                 .with_raw_ref(raw_ref),
             );
         }
-    } else if lower_name == "replace_file_content"
-        || lower_name == "write_to_file"
-        || lower_name == "edit"
-        || lower_name == "edit_file"
+    } else if lower_raw == "replace_file_content"
+        || lower_raw == "write_to_file"
+        || lower_raw == "edit"
+        || lower_raw == "edit_file"
+        || lower_name.ends_with(":replace_file_content")
+        || lower_name.ends_with(":write_to_file")
+        || lower_name.ends_with(":edit_file")
+        || lower_name.ends_with(":edit")
     {
         let path = args
             .get("TargetFile")
@@ -786,4 +807,27 @@ mod tests {
         assert_eq!(enumerated.len(), 1);
         assert_eq!(enumerated[0].adapter_name, "antigravity");
     }
+
+    #[test]
+    fn test_parse_gemini_mcp_tool_call() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"type":"USER_INPUT","created_at":"2026-08-29T10:00:00Z","content":"Browse webpage"}
+{"type":"PLANNER_RESPONSE","created_at":"2026-08-29T10:00:02Z","model":"gemini-2.5-pro","tool_calls":[{"id":"call_mcp_1","name":"call_mcp_tool","arguments":{"ServerName":"chrome-devtools","ToolName":"navigate_page","Arguments":{"Url":"https://example.com"}}}]}
+{"type":"TOOL_OUTPUT","created_at":"2026-08-29T10:00:04Z","call_id":"call_mcp_1","name":"call_mcp_tool","output":"Navigated successfully"}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = GeminiAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        let trace = result.trace;
+        assert_eq!(trace.stats.tool_calls_count, 1);
+        assert_eq!(
+            trace.stats.tools_used.get("mcp:chrome-devtools:navigate_page"),
+            Some(&1)
+        );
+    }
 }
+

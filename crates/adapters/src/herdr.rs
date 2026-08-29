@@ -385,8 +385,8 @@ fn parse_herdr_record(
         }
     }
 
-    // Coordination / Agent delegation handling
-    if let Some(delegation) = val.get("delegation").or_else(|| val.get("handoff")) {
+    // Coordination / Agent delegation handling (capturing multi-agent DAG hierarchies)
+    if let Some(delegation_payload) = extract_delegation_payload(val) {
         *seq += 1;
         events.push(
             NormalizedEvent::new(
@@ -394,7 +394,7 @@ fn parse_herdr_record(
                 ts,
                 EventPayload::Custom {
                     kind: "coordination_delegation".to_string(),
-                    data: delegation.clone(),
+                    data: delegation_payload,
                 },
             )
             .with_raw_ref(&raw_ref),
@@ -589,6 +589,114 @@ fn parse_herdr_record(
     events
 }
 
+fn extract_delegation_payload(val: &Value) -> Option<Value> {
+    let delegation_obj = val
+        .get("delegation")
+        .or_else(|| val.get("handoff"))
+        .or_else(|| val.get("subagent_delegation"));
+
+    let parent_id = val
+        .get("parent_agent_id")
+        .or_else(|| val.get("parent_id"))
+        .or_else(|| val.get("parent"))
+        .or_else(|| val.get("caller_id"))
+        .or_else(|| val.get("caller"))
+        .or_else(|| val.get("supervisor_id"))
+        .or_else(|| val.get("from_agent"))
+        .or_else(|| val.get("from"))
+        .or_else(|| {
+            delegation_obj.and_then(|d| {
+                d.get("parent_agent_id")
+                    .or_else(|| d.get("parent_id"))
+                    .or_else(|| d.get("parent"))
+                    .or_else(|| d.get("caller_id"))
+                    .or_else(|| d.get("caller"))
+                    .or_else(|| d.get("from"))
+            })
+        })
+        .and_then(|v| v.as_str());
+
+    let child_id = val
+        .get("child_agent_id")
+        .or_else(|| val.get("subagent_id"))
+        .or_else(|| val.get("child_id"))
+        .or_else(|| val.get("subagent"))
+        .or_else(|| val.get("worker_id"))
+        .or_else(|| val.get("to_agent"))
+        .or_else(|| val.get("to"))
+        .or_else(|| {
+            delegation_obj.and_then(|d| {
+                d.get("child_agent_id")
+                    .or_else(|| d.get("subagent_id"))
+                    .or_else(|| d.get("child_id"))
+                    .or_else(|| d.get("subagent"))
+                    .or_else(|| d.get("to"))
+            })
+        })
+        .and_then(|v| v.as_str());
+
+    let delegation_id = val
+        .get("delegation_id")
+        .or_else(|| val.get("task_id"))
+        .or_else(|| val.get("handoff_id"))
+        .or_else(|| {
+            delegation_obj.and_then(|d| {
+                d.get("delegation_id")
+                    .or_else(|| d.get("task_id"))
+                    .or_else(|| d.get("handoff_id"))
+                    .or_else(|| d.get("id"))
+            })
+        })
+        .and_then(|v| v.as_str());
+
+    let task = val
+        .get("task")
+        .or_else(|| {
+            delegation_obj.and_then(|d| {
+                d.get("task")
+                    .or_else(|| d.get("prompt"))
+                    .or_else(|| d.get("instructions"))
+            })
+        })
+        .and_then(|v| v.as_str());
+
+    let depth = val
+        .get("depth")
+        .or_else(|| val.get("dag_level"))
+        .or_else(|| delegation_obj.and_then(|d| d.get("depth").or_else(|| d.get("level"))))
+        .and_then(|v| v.as_u64());
+
+    if parent_id.is_some()
+        || child_id.is_some()
+        || delegation_id.is_some()
+        || delegation_obj.is_some()
+    {
+        let mut map = serde_json::Map::new();
+        if let Some(p) = parent_id {
+            map.insert("parent_agent_id".to_string(), Value::String(p.to_string()));
+        }
+        if let Some(c) = child_id {
+            map.insert("child_agent_id".to_string(), Value::String(c.to_string()));
+        }
+        if let Some(d) = delegation_id {
+            map.insert("delegation_id".to_string(), Value::String(d.to_string()));
+        }
+        if let Some(t) = task {
+            map.insert("task".to_string(), Value::String(t.to_string()));
+        }
+        if let Some(dp) = depth {
+            map.insert("depth".to_string(), Value::Number(dp.into()));
+        }
+        if let Some(d_val) = delegation_obj {
+            map.insert("details".to_string(), d_val.clone());
+        }
+
+        Some(Value::Object(map))
+    } else {
+        None
+    }
+}
+
 fn process_specific_herdr_tool_call(
     name: &str,
     args: &Value,
@@ -598,6 +706,65 @@ fn process_specific_herdr_tool_call(
     events: &mut Vec<NormalizedEvent>,
 ) {
     let lower = name.to_lowercase();
+    if lower.contains("subagent")
+        || lower.contains("delegate")
+        || lower.contains("spawn")
+        || lower.contains("worker")
+    {
+        let parent = args
+            .get("parent_agent_id")
+            .or_else(|| args.get("parent_id"))
+            .or_else(|| args.get("caller_id"))
+            .and_then(|v| v.as_str());
+        let child = args
+            .get("child_agent_id")
+            .or_else(|| args.get("subagent_id"))
+            .or_else(|| args.get("child_id"))
+            .or_else(|| args.get("subagent"))
+            .or_else(|| args.get("role"))
+            .or_else(|| args.get("TypeName"))
+            .and_then(|v| v.as_str());
+        let delegation_id = args
+            .get("delegation_id")
+            .or_else(|| args.get("task_id"))
+            .or_else(|| args.get("id"))
+            .and_then(|v| v.as_str());
+        let task = args
+            .get("task")
+            .or_else(|| args.get("prompt"))
+            .or_else(|| args.get("Prompt"))
+            .and_then(|v| v.as_str());
+
+        let mut d_map = serde_json::Map::new();
+        if let Some(p) = parent {
+            d_map.insert("parent_agent_id".to_string(), Value::String(p.to_string()));
+        }
+        if let Some(c) = child {
+            d_map.insert("child_agent_id".to_string(), Value::String(c.to_string()));
+        }
+        if let Some(d) = delegation_id {
+            d_map.insert("delegation_id".to_string(), Value::String(d.to_string()));
+        }
+        if let Some(t) = task {
+            d_map.insert("task".to_string(), Value::String(t.to_string()));
+        }
+        d_map.insert("tool".to_string(), Value::String(name.to_string()));
+        d_map.insert("arguments".to_string(), args.clone());
+
+        *seq += 1;
+        events.push(
+            NormalizedEvent::new(
+                *seq,
+                ts,
+                EventPayload::Custom {
+                    kind: "coordination_delegation".to_string(),
+                    data: Value::Object(d_map),
+                },
+            )
+            .with_raw_ref(raw_ref),
+        );
+    }
+
     if lower.contains("shell")
         || lower.contains("bash")
         || lower.contains("exec")
@@ -777,5 +944,41 @@ mod tests {
         assert_eq!(result.malformed_lines, 1);
         assert_eq!(result.trace.stats.user_messages_count, 1);
         assert_eq!(result.trace.stats.assistant_messages_count, 1);
+    }
+
+    #[test]
+    fn test_parse_herdr_multi_agent_dag_delegation() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"role":"supervisor","parent_agent_id":"root_coordinator","child_agent_id":"worker_1","delegation_id":"del_100","depth":1,"task":"Spawn indexing workers"}
+{"role":"worker","parent_agent_id":"worker_1","child_agent_id":"leaf_worker_a","delegation_id":"del_101","depth":2,"task":"Index shard A","tool_calls":[{"name":"invoke_subagent","arguments":{"parent_id":"worker_1","subagent_id":"leaf_worker_a","task":"Process shard"}}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = HerdrAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        let trace = result.trace;
+        let delegations: Vec<_> = trace
+            .events
+            .iter()
+            .filter(|e| match &e.payload {
+                EventPayload::Custom { kind, .. } => kind == "coordination_delegation",
+                _ => false,
+            })
+            .collect();
+
+        // 2 record delegations + 1 tool call delegation = 3 delegation events
+        assert_eq!(delegations.len(), 3);
+
+        if let EventPayload::Custom { data, .. } = &delegations[0].payload {
+            assert_eq!(data.get("parent_agent_id").unwrap(), "root_coordinator");
+            assert_eq!(data.get("child_agent_id").unwrap(), "worker_1");
+            assert_eq!(data.get("delegation_id").unwrap(), "del_100");
+            assert_eq!(data.get("depth").unwrap(), 1);
+        } else {
+            panic!("Expected custom event payload");
+        }
     }
 }

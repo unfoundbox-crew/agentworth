@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Copy, Check } from 'lucide-react';
 import { AggregateStats } from '../types';
-import { formatTokens } from '../utils/formatters';
+import { formatTokens, estimateTokenCostUSD, formatUSD, getAdapterBadge } from '../utils/formatters';
 
 interface HeroReceiptProps {
   stats: AggregateStats;
@@ -32,6 +32,22 @@ export const HeroReceipt: React.FC<HeroReceiptProps> = ({ stats, onScanClick }) 
     stats.token_usage.output_tokens +
     stats.token_usage.cache_read_input_tokens +
     stats.token_usage.cache_creation_input_tokens;
+
+  const estimatedCostUSD = estimateTokenCostUSD(totalTokensNum, stats.models_usage_count);
+
+  const verifiedPercent =
+    stats.total_sessions > 0
+      ? ((stats.verified_outcomes_count / stats.total_sessions) * 100).toFixed(1)
+      : '0.0';
+
+  const topAdapterEntry = Object.entries(stats.sessions_by_adapter || {}).sort(
+    (a, b) => b[1] - a[1]
+  )[0];
+  const topAdapterInfo = topAdapterEntry ? getAdapterBadge(topAdapterEntry[0]) : null;
+  const topAdapterPercent =
+    stats.total_sessions > 0 && topAdapterEntry
+      ? ((topAdapterEntry[1] / stats.total_sessions) * 100).toFixed(1)
+      : '0.0';
 
   return (
     <section className="py-8 sm:py-12 border-b border-zinc-300 bg-[#fdfdfd]">
@@ -100,10 +116,10 @@ export const HeroReceipt: React.FC<HeroReceiptProps> = ({ stats, onScanClick }) 
               {terminalStep >= 5 && (
                 <div className="pt-3 border-t border-zinc-800 space-y-1.5 font-mono text-[11px]">
                   <div className="text-zinc-400">
-                    Total Indexed: <span className="text-white font-bold">{stats.total_sessions.toLocaleString()} sessions</span> ({formatTokens(totalTokensNum)} tokens)
+                    Total Indexed: <span className="text-white font-bold">{stats.total_sessions.toLocaleString()} sessions</span> ({formatTokens(totalTokensNum)} tokens ~ <span className="text-emerald-400 font-semibold">{formatUSD(estimatedCostUSD)}</span>)
                   </div>
                   <div className="text-zinc-400">
-                    Verified Outcomes: <span className="text-emerald-400 font-bold">{stats.verified_outcomes_count.toLocaleString()}</span> (CI pass / tests / git commits)
+                    Verified Outcomes: <span className="text-emerald-400 font-bold">{stats.verified_outcomes_count.toLocaleString()}</span> ({verifiedPercent}%)
                   </div>
                   <div className="text-amber-300 italic pt-1">
                     &gt; Useful work: unfortunately, some.
@@ -156,10 +172,15 @@ export const HeroReceipt: React.FC<HeroReceiptProps> = ({ stats, onScanClick }) 
             </div>
 
             {/* Metrics Breakdown */}
-            <div className="space-y-3 my-auto">
+            <div className="space-y-2.5 my-auto">
               <div className="flex justify-between items-center py-1 border-b border-zinc-200">
                 <span className="text-zinc-600">TOTAL EXHAUST TOKENS</span>
                 <span className="text-sm font-bold text-black">{formatTokens(totalTokensNum)}</span>
+              </div>
+
+              <div className="flex justify-between items-center py-1 border-b border-zinc-200">
+                <span className="text-zinc-600">ESTIMATED TOKEN COST</span>
+                <span className="text-sm font-bold text-emerald-700">{formatUSD(estimatedCostUSD)}</span>
               </div>
 
               <div className="flex justify-between items-center py-1 border-b border-zinc-200">
@@ -170,20 +191,23 @@ export const HeroReceipt: React.FC<HeroReceiptProps> = ({ stats, onScanClick }) 
               <div className="flex justify-between items-center py-1 border-b border-zinc-200">
                 <span className="text-zinc-600">ACTIVE AGENTS DETECTED</span>
                 <span className="text-sm font-bold text-black">
-                  {Object.keys(stats.sessions_by_adapter).length} adapters ({Object.keys(stats.models_usage_count).length} models)
+                  {Object.keys(stats.sessions_by_adapter || {}).length} adapters ({Object.keys(stats.models_usage_count || {}).length} models)
                 </span>
               </div>
 
               <div className="flex justify-between items-center py-1 border-b border-zinc-200">
                 <span className="text-zinc-600">VERIFIED OUTCOMES</span>
                 <span className="text-sm font-bold text-emerald-700">
-                  {stats.verified_outcomes_count.toLocaleString()} <span className="text-[10px] font-normal text-zinc-500">(31.2%)</span>
+                  {stats.verified_outcomes_count.toLocaleString()}{' '}
+                  <span className="text-[10px] font-normal text-zinc-500">({verifiedPercent}%)</span>
                 </span>
               </div>
 
               <div className="flex justify-between items-center py-1 border-b border-zinc-200">
                 <span className="text-zinc-600">TOP ADAPTER</span>
-                <span className="text-xs font-semibold text-black">Claude Code (66.3%)</span>
+                <span className="text-xs font-semibold text-black">
+                  {topAdapterInfo?.name || 'Claude Code'} ({topAdapterPercent}%)
+                </span>
               </div>
             </div>
 

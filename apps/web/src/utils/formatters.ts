@@ -112,13 +112,96 @@ export function getAdapterBadge(adapter: string): {
   switch (adapter) {
     case 'claude_code':
       return { name: 'Claude Code', tag: 'claude', borderColor: 'border-orange-600' };
+    case 'antigravity':
+    case 'gemini':
+      return { name: 'Antigravity (AGY)', tag: 'antigravity', borderColor: 'border-blue-600' };
     case 'codex':
       return { name: 'Codex CLI', tag: 'codex', borderColor: 'border-emerald-700' };
-    case 'gemini':
-      return { name: 'Gemini CLI', tag: 'gemini', borderColor: 'border-blue-600' };
+    case 'cursor':
+      return { name: 'Cursor Composer', tag: 'cursor', borderColor: 'border-cyan-600' };
+    case 'goose':
+      return { name: 'Block Goose', tag: 'goose', borderColor: 'border-amber-600' };
+    case 'pi':
+      return { name: 'Pi Task Agent', tag: 'pi', borderColor: 'border-violet-600' };
+    case 'herdr':
+      return { name: 'Herdr Orchestrator', tag: 'herdr', borderColor: 'border-indigo-600' };
+    case 'hermes':
+      return { name: 'Nous Hermes', tag: 'hermes', borderColor: 'border-rose-600' };
+    case 'openclaw':
+      return { name: 'OpenClaw', tag: 'openclaw', borderColor: 'border-teal-600' };
+    case 'grok':
+      return { name: 'xAI Grok', tag: 'grok', borderColor: 'border-zinc-800' };
     case 'opencode':
       return { name: 'OpenCode', tag: 'opencode', borderColor: 'border-purple-600' };
     default:
       return { name: adapter, tag: adapter, borderColor: 'border-zinc-600' };
   }
 }
+
+/**
+ * Estimates developer token expenditure in USD based on total tokens and model breakdown or typical pricing.
+ * Default blended baseline is ~$3.00 per million tokens.
+ */
+export function estimateTokenCostUSD(
+  tokens: number,
+  models?: string[] | Record<string, number>
+): number {
+  if (!tokens || tokens <= 0) return 0;
+
+  if (models && typeof models === 'object' && !Array.isArray(models)) {
+    let totalEstimated = 0;
+    let totalCount = 0;
+    for (const [modelName, count] of Object.entries(models)) {
+      const rate = getModelBlendedRatePerMillion(modelName);
+      totalEstimated += count * rate;
+      totalCount += count;
+    }
+    if (totalCount > 0) {
+      const avgRate = totalEstimated / totalCount;
+      return (tokens / 1_000_000) * avgRate;
+    }
+  }
+
+  if (Array.isArray(models) && models.length > 0) {
+    const totalRate = models.reduce((acc, m) => acc + getModelBlendedRatePerMillion(m), 0);
+    const avgRate = totalRate / models.length;
+    return (tokens / 1_000_000) * avgRate;
+  }
+
+  return (tokens / 1_000_000) * 3.0;
+}
+
+function getModelBlendedRatePerMillion(model: string): number {
+  const m = model.toLowerCase();
+  if (m.includes('opus')) return 15.0; // Claude Opus
+  if (m.includes('sonnet')) return 3.0; // Claude Sonnet
+  if (m.includes('haiku')) return 0.50; // Claude Haiku
+  if (m.includes('o1') || m.includes('o3')) return 20.0;
+  if (m.includes('gpt-4o-mini')) return 0.30;
+  if (m.includes('gpt-4o') || m.includes('gpt-4')) return 3.5;
+  if (m.includes('gemini-2.5-pro') || m.includes('gemini-1.5-pro')) return 2.0;
+  if (m.includes('flash')) return 0.20;
+  if (m.includes('deepseek')) return 0.35;
+  if (m.includes('qwen') || m.includes('llama') || m.includes('mistral')) return 0.40;
+  return 3.0; // blended default: ~$3.00 / 1M tokens
+}
+
+export function formatUSD(amount: number): string {
+  if (amount >= 1_000_000) {
+    return `$${(amount / 1_000_000).toFixed(2)}M`;
+  }
+  if (amount >= 1_000) {
+    return `$${(amount / 1_000).toFixed(2)}k`;
+  }
+  if (amount >= 100) {
+    return `$${amount.toFixed(0)}`;
+  }
+  if (amount >= 1) {
+    return `$${amount.toFixed(2)}`;
+  }
+  if (amount > 0) {
+    return `$${amount.toFixed(2)}`;
+  }
+  return '$0.00';
+}
+

@@ -166,6 +166,8 @@ impl AgentAdapter for HermesAdapter {
                         .get("turns")
                         .or_else(|| json_val.get("messages"))
                         .or_else(|| json_val.get("history"))
+                        .or_else(|| json_val.get("events"))
+                        .or_else(|| json_val.get("conversation"))
                         .and_then(|t| t.as_array())
                     {
                         turns.clone()

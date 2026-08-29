@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use agentworth_adapter_sdk::{
@@ -14,6 +14,8 @@ use chrono::{DateTime, Utc};
 use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
+
+use crate::normalize_mcp_tool_name;
 
 /// Adapter for discovering and normalizing Claude Code sessions.
 pub struct ClaudeCodeAdapter;
@@ -127,9 +129,6 @@ impl AgentAdapter for ClaudeCodeAdapter {
     }
 
     fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
-        let file = File::open(&source.path)?;
-        let reader = BufReader::new(file);
-
         let session_id = derive_session_id(&source.path);
         let provenance = Provenance::new(
             source.path.to_string_lossy().to_string(),
@@ -147,41 +146,98 @@ impl AgentAdapter for ClaudeCodeAdapter {
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
 
-        for (line_idx, line_res) in reader.lines().enumerate() {
-            let line_num = line_idx + 1;
-            let line_str = match line_res {
-                Ok(l) => l,
-                Err(e) => {
-                    malformed_lines += 1;
-                    warnings.push(format!("I/O read error on line {}: {}", line_num, e));
+        let file = File::open(&source.path)?;
+        let mut reader = BufReader::new(file);
+
+        let has_content = reader.get_ref().metadata()?.len() > 0;
+
+        if has_content {
+            let mut content_str = String::new();
+            reader.read_to_string(&mut content_str)?;
+
+            let trimmed = content_str.trim();
+            if trimmed.starts_with('[')
+                || (trimmed.starts_with('{') && !trimmed.contains('\n'))
+                || (trimmed.starts_with('{') && serde_json::from_str::<Value>(trimmed).is_ok())
+            {
+                if let Ok(json_val) = serde_json::from_str::<Value>(trimmed) {
+                    let items = if let Some(arr) = json_val.as_array() {
+                        arr.clone()
+                    } else if let Some(messages) =
+                        json_val.get("messages").and_then(|m| m.as_array())
+                    {
+                        messages.clone()
+                    } else if let Some(turns) =
+                        json_val.get("conversation").and_then(|c| c.as_array())
+                    {
+                        turns.clone()
+                    } else if let Some(turns) = json_val.get("turns").and_then(|t| t.as_array()) {
+                        turns.clone()
+                    } else if let Some(events) = json_val.get("events").and_then(|e| e.as_array()) {
+                        events.clone()
+                    } else if let Some(history) = json_val.get("history").and_then(|h| h.as_array()) {
+                        history.clone()
+                    } else {
+                        vec![json_val]
+                    };
+
+                    for (idx, item) in items.iter().enumerate() {
+                        let timestamp = parse_timestamp(item).unwrap_or_else(Utc::now);
+                        if earliest_ts.is_none_or(|ts| timestamp < ts) {
+                            earliest_ts = Some(timestamp);
+                        }
+                        if latest_ts.is_none_or(|ts| timestamp > ts) {
+                            latest_ts = Some(timestamp);
+                        }
+
+                        let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1);
+                        trace.events.extend(evts);
+                    }
+
+                    if let Some(earliest) = earliest_ts {
+                        trace.started_at = earliest;
+                    }
+                    if let Some(latest) = latest_ts {
+                        trace.ended_at = Some(latest);
+                    }
+
+                    trace.recalculate_stats();
+
+                    return Ok(ParseResult {
+                        trace,
+                        malformed_lines,
+                        warnings,
+                    });
+                }
+            }
+
+            for (line_idx, line_str) in content_str.lines().enumerate() {
+                let line_num = line_idx + 1;
+                let trimmed_line = line_str.trim();
+                if trimmed_line.is_empty() {
                     continue;
                 }
-            };
 
-            let trimmed = line_str.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
+                let val: Value = match serde_json::from_str(trimmed_line) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        malformed_lines += 1;
+                        warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
+                        continue;
+                    }
+                };
 
-            let val: Value = match serde_json::from_str(trimmed) {
-                Ok(v) => v,
-                Err(e) => {
-                    malformed_lines += 1;
-                    warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
-                    continue;
+                let timestamp = parse_timestamp(&val).unwrap_or_else(Utc::now);
+                if earliest_ts.is_none_or(|ts| timestamp < ts) {
+                    earliest_ts = Some(timestamp);
                 }
-            };
+                if latest_ts.is_none_or(|ts| timestamp > ts) {
+                    latest_ts = Some(timestamp);
+                }
 
-            let timestamp = parse_timestamp(&val).unwrap_or_else(Utc::now);
-            if earliest_ts.is_none_or(|ts| timestamp < ts) {
-                earliest_ts = Some(timestamp);
+                let events = parse_claude_record(&val, &mut sequence, timestamp, line_num);
+                trace.events.extend(events);
             }
-            if latest_ts.is_none_or(|ts| timestamp > ts) {
-                latest_ts = Some(timestamp);
-            }
-
-            let events = parse_claude_record(&val, &mut sequence, timestamp, line_num);
-            trace.events.extend(events);
         }
 
         if let Some(earliest) = earliest_ts {
@@ -463,12 +519,13 @@ fn parse_claude_record(
                             }
                             "tool_use" => {
                                 let id = block.get("id").and_then(|v| v.as_str()).map(String::from);
-                                let name = block
+                                let raw_name = block
                                     .get("name")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("unknown")
                                     .to_string();
                                 let input = block.get("input").cloned().unwrap_or(Value::Null);
+                                let name = normalize_mcp_tool_name(&raw_name, &input);
 
                                 *seq += 1;
                                 events.push(
@@ -485,7 +542,7 @@ fn parse_claude_record(
                                 );
 
                                 // Check specific tool types: Bash, FileEdit, etc.
-                                if name == "Bash" || name == "bash" {
+                                if raw_name == "Bash" || raw_name == "bash" || name.ends_with(":bash") || name.ends_with(":shell") {
                                     if let Some(cmd) = input.get("command").and_then(|v| v.as_str())
                                     {
                                         *seq += 1;
@@ -506,10 +563,13 @@ fn parse_claude_record(
                                             .with_raw_ref(&raw_ref),
                                         );
                                     }
-                                } else if name == "FileEdit"
-                                    || name == "Edit"
-                                    || name == "Write"
-                                    || name == "create_file"
+                                } else if raw_name == "FileEdit"
+                                    || raw_name == "Edit"
+                                    || raw_name == "Write"
+                                    || raw_name == "create_file"
+                                    || name.ends_with(":edit_file")
+                                    || name.ends_with(":write_file")
+                                    || name.ends_with(":text_editor")
                                 {
                                     let path = input
                                         .get("file_path")
@@ -564,7 +624,7 @@ fn parse_claude_record(
 
         "tool_use" => {
             let id = val.get("id").and_then(|v| v.as_str()).map(String::from);
-            let name = val
+            let raw_name = val
                 .get("name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
@@ -574,6 +634,7 @@ fn parse_claude_record(
                 .or_else(|| val.get("arguments"))
                 .cloned()
                 .unwrap_or(Value::Null);
+            let name = normalize_mcp_tool_name(&raw_name, &input);
 
             *seq += 1;
             events.push(
@@ -606,6 +667,11 @@ fn parse_claude_record(
                 .cloned()
                 .unwrap_or(Value::Null);
 
+            let tool_name = val
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|n| normalize_mcp_tool_name(n, &Value::Null));
+
             *seq += 1;
             events.push(
                 NormalizedEvent::new(
@@ -613,7 +679,7 @@ fn parse_claude_record(
                     ts,
                     EventPayload::ToolResult(ToolResult {
                         call_id,
-                        name: val.get("name").and_then(|v| v.as_str()).map(String::from),
+                        name: tool_name,
                         output: output.clone(),
                         is_error,
                     }),
@@ -753,5 +819,44 @@ mod tests {
         assert_eq!(result.malformed_lines, 1);
         assert_eq!(result.trace.stats.user_messages_count, 1);
         assert_eq!(result.trace.stats.assistant_messages_count, 1);
+    }
+
+    #[test]
+    fn test_parse_claude_json_array_and_object() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"[
+            {"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Fix the bug"},
+            {"type":"assistant","timestamp":"2026-08-29T10:00:05Z","content":[{"type":"text","text":"Fixed."}]}
+        ]"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        assert_eq!(result.trace.stats.user_messages_count, 1);
+        assert_eq!(result.trace.stats.assistant_messages_count, 1);
+    }
+
+    #[test]
+    fn test_parse_claude_mcp_tool_calls() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Query postgres and edit"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:02Z","content":[{"type":"tool_use","id":"t1","name":"mcp__postgres__query","input":{"query":"SELECT 1"}},{"type":"tool_use","id":"t2","name":"developer__text_editor","input":{"command":"view","path":"/tmp/test.rs"}}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        let trace = result.trace;
+        assert_eq!(trace.stats.tool_calls_count, 2);
+        assert_eq!(trace.stats.tools_used.get("mcp:postgres:query"), Some(&1));
+        assert_eq!(
+            trace.stats.tools_used.get("mcp:developer:text_editor"),
+            Some(&1)
+        );
     }
 }

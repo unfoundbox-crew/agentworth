@@ -125,8 +125,11 @@ fn test_complex_multi_loop_recovery() {
     assert_eq!(recoveries.len(), 2);
     assert_eq!(recoveries[0].failure_sequence, 1);
     assert_eq!(recoveries[0].recovery_sequence, 3);
+    assert!(recoveries[0].correlated_files.iter().any(|f| f.contains("types.ts")));
+
     assert_eq!(recoveries[1].failure_sequence, 4);
     assert_eq!(recoveries[1].recovery_sequence, 6);
+    assert!(recoveries[1].correlated_files.iter().any(|f| f.contains("calc.ts")));
 }
 
 #[test]
