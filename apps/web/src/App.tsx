@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
+import { LandingPage } from './components/LandingPage';
 import { HeroReceipt } from './components/HeroReceipt';
 import { ArchaeologyPanel } from './components/ArchaeologyPanel';
 import { TracesExplorer } from './components/TracesExplorer';
@@ -21,6 +22,7 @@ import {
 import { mockAggregateStats, mockSummaries } from './services/mockData';
 
 export function App() {
+  const [viewMode, setViewMode] = useState<'landing' | 'explorer'>('landing');
   const [stats, setStats] = useState<AggregateStats>(mockAggregateStats);
   const [traces, setTraces] = useState<SessionSummary[]>(mockSummaries);
   const [totalTraces, setTotalTraces] = useState<number>(mockSummaries.length);
@@ -39,6 +41,11 @@ export function App() {
 
   // Load stats & traces on mount
   useEffect(() => {
+    // If URL has ?view=explorer, start in explorer mode
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('view') === 'explorer') {
+      setViewMode('explorer');
+    }
     loadData(filters);
   }, []);
 
@@ -90,27 +97,39 @@ export function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#fdfdfd] text-[#0a0a0c]">
-      <Navbar onTriggerScan={handleTriggerScan} isScanning={isScanning} />
+      <Navbar
+        onTriggerScan={handleTriggerScan}
+        isScanning={isScanning}
+        viewMode={viewMode}
+        onToggleView={(mode) => setViewMode(mode)}
+      />
 
-      <main className="flex-1">
-        {/* 1. Hero & Physical Receipt Section */}
-        <HeroReceipt stats={stats} onScanClick={handleTriggerScan} />
+      {viewMode === 'landing' ? (
+        <LandingPage onOpenExplorer={() => setViewMode('explorer')} />
+      ) : (
+        <main className="flex-1">
+          {/* 1. Hero & Physical Receipt Section */}
+          <HeroReceipt stats={stats} onScanClick={handleTriggerScan} />
 
-        {/* 2. Archaeology Panel */}
-        {stats.archaeology && <ArchaeologyPanel data={stats.archaeology} />}
+          {/* 2. Archaeology Panel */}
+          {stats.archaeology && <ArchaeologyPanel data={stats.archaeology} />}
 
-        {/* 3. Traces Explorer Table */}
-        <TracesExplorer
-          traces={traces}
-          totalTraces={totalTraces}
-          selectedSessionId={selectedSessionId || undefined}
-          onSelectSession={handleSelectSession}
-          onFilterChange={handleFilterChange}
-          isLoading={isLoadingTraces}
-        />
-      </main>
+          {/* 3. Traces Explorer Table */}
+          <TracesExplorer
+            traces={traces}
+            totalTraces={totalTraces}
+            selectedSessionId={selectedSessionId || undefined}
+            onSelectSession={handleSelectSession}
+            onFilterChange={handleFilterChange}
+            isLoading={isLoadingTraces}
+          />
 
-      {/* 4. Session Inspector Slideover */}
+          {/* 4. Local-first Architecture Footer */}
+          <Footer />
+        </main>
+      )}
+
+      {/* Session Inspector Slideover */}
       {activeTrace && (
         <SessionInspector
           trace={activeTrace}
@@ -119,16 +138,13 @@ export function App() {
         />
       )}
 
-      {/* 5. Safe Redaction & ATIF Export Modal */}
+      {/* Safe Redaction & ATIF Export Modal */}
       {isExportOpen && activeTrace && (
         <ExportModal
           trace={activeTrace}
           onClose={() => setIsExportOpen(false)}
         />
       )}
-
-      {/* 6. Local-first Architecture Footer */}
-      <Footer />
     </div>
   );
 }
