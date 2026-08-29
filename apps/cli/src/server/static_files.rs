@@ -13,132 +13,128 @@ const FALLBACK_HTML: &str = r#"<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AgentWorth - Your agents left receipts</title>
+  <title>AgentWorth — Your agents left receipts</title>
   <style>
     :root {
-      --bg: #09090b;
-      --card-bg: #121215;
-      --card-border: #27272a;
-      --text: #f4f4f5;
-      --text-muted: #a1a1aa;
-      --cyan: #06b6d4;
-      --green: #22c55e;
-      --yellow: #eab308;
-      --red: #ef4444;
-      --magenta: #d946ef;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --bg: #ffffff;
+      --card-bg: #ffffff;
+      --card-border: #000000;
+      --text: #000000;
+      --text-muted: #666666;
+      --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: var(--bg);
+      background: #fbfbfb;
       color: var(--text);
       font-family: var(--mono);
-      padding: 24px;
+      padding: 32px 16px;
       line-height: 1.5;
     }
+    .container { max-width: 1080px; margin: 0 auto; }
     header {
-      border-bottom: 1px solid var(--card-border);
+      border-bottom: 2px solid #000000;
       padding-bottom: 16px;
-      margin-bottom: 24px;
+      margin-bottom: 32px;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    h1 { font-size: 1.5rem; color: var(--cyan); }
-    .tagline { color: var(--text-muted); font-size: 0.9rem; margin-top: 4px; }
+    h1 { font-size: 1.6rem; font-weight: 800; text-transform: uppercase; letter-spacing: -0.5px; }
+    .tagline { color: var(--text-muted); font-size: 0.85rem; margin-top: 4px; }
     .btn {
-      background: #18181b;
-      color: var(--text);
-      border: 1px solid var(--card-border);
+      background: #ffffff;
+      color: #000000;
+      border: 2px solid #000000;
       padding: 8px 16px;
-      border-radius: 6px;
       cursor: pointer;
       font-family: var(--mono);
       font-size: 0.85rem;
+      font-weight: 700;
+      box-shadow: 2px 2px 0px 0px #000000;
+      transition: all 0.1s;
     }
-    .btn:hover { background: #27272a; border-color: var(--cyan); }
-    .btn-primary { background: var(--cyan); color: #000; font-weight: bold; border: none; }
-    .btn-primary:hover { background: #22d3ee; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 8px;
-      padding: 16px;
+    .btn:hover { background: #000000; color: #ffffff; }
+    .btn-primary { background: #000000; color: #ffffff; }
+    .btn-primary:hover { background: #333333; }
+    .receipt-box {
+      background: #ffffff;
+      border: 2px solid #000000;
+      padding: 24px;
+      box-shadow: 5px 5px 0px 0px #000000;
+      margin-bottom: 32px;
     }
-    .card-title { color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 8px; }
-    .card-value { font-size: 1.5rem; font-weight: bold; }
-    .search-bar {
+    .receipt-title {
+      text-align: center;
+      font-size: 1.1rem;
+      font-weight: 800;
+      letter-spacing: 2px;
+      border-bottom: 2px dashed #999999;
+      padding-bottom: 12px;
+      margin-bottom: 20px;
+    }
+    .receipt-row {
       display: flex;
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-    input, select {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      color: var(--text);
-      padding: 8px 12px;
-      border-radius: 6px;
-      font-family: var(--mono);
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 6px 0;
       font-size: 0.9rem;
+    }
+    .dots { flex: 1; border-bottom: 1px dotted #cccccc; margin: 0 8px; }
+    .val { font-weight: 700; }
+    .barcode {
+      text-align: center;
+      letter-spacing: 4px;
+      font-size: 0.85rem;
+      font-weight: 800;
+      border-top: 2px dashed #999999;
+      padding-top: 16px;
+      margin-top: 20px;
+      user-select: none;
+    }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 32px; }
+    .card {
+      background: #ffffff;
+      border: 2px solid #000000;
+      padding: 16px;
+      box-shadow: 3px 3px 0px 0px #000000;
+    }
+    .card-title { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; }
+    .card-value { font-size: 1.4rem; font-weight: 800; }
+    .search-bar { display: flex; gap: 12px; margin-bottom: 16px; }
+    input, select {
+      background: #ffffff;
+      border: 2px solid #000000;
+      color: #000000;
+      padding: 8px 12px;
+      font-family: var(--mono);
+      font-size: 0.85rem;
     }
     input { flex: 1; }
     table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.85rem; }
-    th { text-align: left; padding: 10px; border-bottom: 1px solid var(--card-border); color: var(--cyan); }
-    td { padding: 10px; border-bottom: 1px solid #18181b; }
-    tr:hover td { background: #18181b; }
+    th { text-align: left; padding: 10px; border-bottom: 2px solid #000000; background: #f0f0f0; font-weight: 800; }
+    td { padding: 10px; border-bottom: 1px solid #e5e5e5; }
+    tr:hover td { background: #f9f9f9; }
     .badge {
       display: inline-block;
       padding: 2px 6px;
-      border-radius: 4px;
       font-size: 0.75rem;
-      background: #27272a;
-    }
-    .badge-green { background: #052e16; color: var(--green); }
-    .badge-cyan { background: #083344; color: var(--cyan); }
-    .badge-yellow { background: #422006; color: var(--yellow); }
-    .badge-red { background: #450a0a; color: var(--red); }
-    .archaeology-box {
-      border: 1px dashed var(--yellow);
-      background: rgba(234, 179, 8, 0.05);
-      border-radius: 8px;
-      padding: 16px;
-      margin-bottom: 24px;
-    }
-    .arch-title { color: var(--yellow); font-size: 1.1rem; margin-bottom: 8px; }
-    #modal {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.8);
-      padding: 24px;
-      overflow-y: auto;
-      z-index: 100;
-    }
-    .modal-content {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      max-width: 900px;
-      margin: 0 auto;
-      border-radius: 8px;
-      padding: 24px;
-    }
-    .timeline-event {
-      border-left: 2px solid var(--card-border);
-      padding-left: 16px;
-      margin-left: 8px;
-      margin-bottom: 16px;
+      font-weight: 700;
+      border: 1px solid #000000;
+      background: #000000;
+      color: #ffffff;
     }
   </style>
 </head>
 <body>
-  <header>
-    <div>
-      <h1>AGENTWORTH</h1>
-      <div class="tagline">Your agents left receipts. Discover and normalize AI histories locally.</div>
-    </div>
-    <button class="btn btn-primary" onclick="triggerScan()">⚡ Rescan Agents</button>
-  </header>
+  <div class="container">
+    <header>
+      <div>
+        <h1>AGENTWORTH</h1>
+        <div class="tagline">Your agents left receipts. Carbon dating your local AI exhaust.</div>
+      </div>
+      <button class="btn btn-primary" onclick="triggerScan()">⚡ Rescan Agents</button>
+    </header>
 
   <div id="stats-grid" class="grid">
     <div class="card"><div class="card-title">Total Sessions</div><div id="stat-sessions" class="card-value">-</div></div>
@@ -361,6 +357,7 @@ const FALLBACK_HTML: &str = r#"<!DOCTYPE html>
     loadArchaeology();
     loadTraces();
   </script>
+  </div>
 </body>
 </html>"#;
 
