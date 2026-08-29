@@ -1,0 +1,556 @@
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use agentworth_cli::server::{create_router, AppState};
+use agentworth_core::Scanner;
+use agentworth_schema::{AgentWorthTrace, Provenance, TokenUsage};
+use agentworth_storage::Storage;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use chrono::{Duration, Utc};
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use tempfile::TempDir;
+use tower::ServiceExt;
+
+/// Helper function to create an in-memory test AppState and router.
+fn setup_test_app(dist_dir: Option<PathBuf>) -> (axum::Router, Arc<Storage>, Arc<Scanner>) {
+    let storage = Arc::new(Storage::open_in_memory().expect("open in-memory storage"));
+    let scanner = Arc::new(Scanner::new(storage.clone()));
+    let state = AppState {
+        storage: storage.clone(),
+        scanner: scanner.clone(),
+        dist_dir,
+    };
+    let app = create_router(state);
+    (app, storage, scanner)
+}
+
+/// Helper to execute an HTTP request on an Axum router and return status + JSON Value.
+async fn request_json(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let req_builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json");
+
+    let req = if let Some(json_body) = body {
+        req_builder
+            .body(Body::from(serde_json::to_vec(&json_body).unwrap()))
+            .unwrap()
+    } else {
+        req_builder.body(Body::empty()).unwrap()
+    };
+
+    let response = app.oneshot(req).await.expect("execute request");
+    let status = response.status();
+    let body_bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("collect body")
+        .to_bytes();
+    let json_val: Value = serde_json::from_slice(&body_bytes).unwrap_or(Value::Null);
+    (status, json_val)
+}
+
+/// Helper to execute an HTTP request and return status + raw response body as String.
+async fn request_raw(app: axum::Router, method: &str, uri: &str) -> (StatusCode, String) {
+    let req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.expect("execute request");
+    let status = response.status();
+    let body_bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("collect body")
+        .to_bytes();
+    let string_val = String::from_utf8_lossy(&body_bytes).to_string();
+    (status, string_val)
+}
+
+#[tokio::test]
+async fn test_api_get_stats_empty_and_populated() {
+    let (app, storage, _) = setup_test_app(None);
+
+    // 1. Initial empty stats
+    let (status, stats) = request_json(app.clone(), "GET", "/api/stats", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats["total_sessions"], 0);
+    assert_eq!(stats["total_events"], 0);
+    assert_eq!(stats["token_usage"]["total_tokens"], 0);
+
+    // 2. Populate storage with two traces
+    let now = Utc::now();
+    for i in 1..=2 {
+        let prov = Provenance::new(
+            format!("/Users/dev/code/org/repo1/.claude/session_{}.jsonl", i),
+            "claude_code",
+            500,
+            1700000000,
+            format!("fp_{}", i),
+        );
+        let mut trace = AgentWorthTrace::new(
+            format!("session_{}", i),
+            "claude_code",
+            prov,
+            now + Duration::hours(i as i64),
+        );
+        trace.stats.token_usage = TokenUsage::new(1000 * i as u64, 500 * i as u64, 200, 50);
+        trace.stats.total_events = i * 5;
+        trace.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
+        trace.stats.tools_used.insert("Bash".to_string(), 3);
+        storage.upsert_trace(&trace).expect("upsert trace");
+    }
+
+    // 3. Verify populated stats
+    let (status, stats) = request_json(app, "GET", "/api/stats", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats["total_sessions"], 2);
+    assert_eq!(stats["total_events"], 15);
+    assert_eq!(stats["token_usage"]["input_tokens"], 3000);
+    assert_eq!(stats["token_usage"]["output_tokens"], 1500);
+    assert_eq!(stats["sessions_by_adapter"]["claude_code"], 2);
+    assert_eq!(stats["models_usage_count"]["claude-3-5-sonnet"], 2);
+    assert_eq!(stats["tools_usage_count"]["Bash"], 6);
+}
+
+#[tokio::test]
+async fn test_api_get_traces_filtering_search_and_pagination() {
+    let (app, storage, _) = setup_test_app(None);
+    let now = Utc::now();
+
+    // Insert 4 sessions with diverse parameters
+    let session_specs = [
+        ("sess_a", "claude_code", "claude-3-5-sonnet", 1000u64),
+        ("sess_b", "claude_code", "claude-3-opus", 5000u64),
+        ("sess_c", "codex", "gpt-4o", 12000u64),
+        ("sess_d", "gemini", "gemini-2.5-flash", 2500u64),
+    ];
+
+    for (i, &(id, adapter, model, tokens)) in session_specs.iter().enumerate() {
+        let prov = Provenance::new(
+            format!("/Users/dev/code/org/project_{}/log.jsonl", id),
+            adapter,
+            1024,
+            1700000000,
+            format!("fp_{}", id),
+        );
+        let mut trace = AgentWorthTrace::new(
+            id.to_string(),
+            adapter,
+            prov,
+            now + Duration::minutes(i as i64 * 10),
+        );
+        trace.stats.token_usage = TokenUsage::new(tokens, 0, 0, 0);
+        trace.stats.models_used = vec![model.to_string()];
+        trace.stats.total_events = 10;
+        storage.upsert_trace(&trace).expect("upsert trace");
+    }
+
+    // 1. Get all traces
+    let (status, traces) = request_json(app.clone(), "GET", "/api/traces", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(traces.as_array().unwrap().len(), 4);
+
+    // 2. Filter by adapter: claude_code
+    let (status, traces) =
+        request_json(app.clone(), "GET", "/api/traces?adapter=claude_code", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(traces.as_array().unwrap().len(), 2);
+
+    // 3. Filter by model substring: opus
+    let (status, traces) = request_json(app.clone(), "GET", "/api/traces?model=opus", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = traces.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["session_id"], "sess_b");
+
+    // 4. Search query: project_sess_c
+    let (status, traces) = request_json(
+        app.clone(),
+        "GET",
+        "/api/traces?search=project_sess_c",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = traces.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["session_id"], "sess_c");
+
+    // 5. Min tokens: 4000
+    let (status, traces) =
+        request_json(app.clone(), "GET", "/api/traces?min_tokens=4000", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(traces.as_array().unwrap().len(), 2); // sess_b (5000) and sess_c (12000)
+
+    // 6. Ordering: tokens_desc
+    let (status, traces) =
+        request_json(app.clone(), "GET", "/api/traces?order_by=tokens_desc", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = traces.as_array().unwrap();
+    assert_eq!(arr[0]["session_id"], "sess_c");
+    assert_eq!(arr[3]["session_id"], "sess_a");
+
+    // 7. Pagination: limit=2, offset=2
+    let (status, traces) =
+        request_json(app.clone(), "GET", "/api/traces?limit=2&offset=2", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(traces.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn test_api_get_trace_by_id_and_not_found() {
+    let (app, storage, _) = setup_test_app(None);
+
+    // Create a real temporary Claude Code JSONL file on disk
+    let mut temp_file = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .unwrap();
+    let sample_claude_jsonl = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Fix the database connection retry loop"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":500,"output_tokens":150,"cache_read_input_tokens":50,"cache_creation_input_tokens":10},"content":[{"type":"text","text":"I will inspect the connection logic."},{"type":"tool_use","id":"call_2","name":"Bash","input":{"command":"cargo test --lib"}}]}
+{"type":"tool_result","timestamp":"2026-08-29T10:00:20Z","tool_use_id":"call_2","content":"test result: ok. 8 passed; 0 failed","is_error":false}
+"#;
+    temp_file.write_all(sample_claude_jsonl.as_bytes()).unwrap();
+
+    let session_id = temp_file
+        .path()
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    let prov = Provenance::new(
+        temp_file.path().to_string_lossy().to_string(),
+        "claude_code",
+        1024,
+        1700000000,
+        "sha256:mock_hash",
+    );
+    let trace = AgentWorthTrace::new(session_id.clone(), "claude_code", prov, Utc::now());
+    storage.upsert_trace(&trace).expect("upsert trace");
+
+    // 1. Query existing trace details
+    let uri = format!("/api/traces/{}", session_id);
+    let (status, detail) = request_json(app.clone(), "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["trace"]["session_id"], session_id);
+    assert_eq!(detail["trace"]["adapter"], "claude_code");
+    assert!(detail["score"]["composite_score"].as_f64().unwrap() > 0.0);
+    assert!(detail["score"]["outcome_score"].as_f64().unwrap() >= 0.50);
+    assert!(!detail["outcomes"].as_array().unwrap().is_empty());
+    assert!(!detail["trace"]["events"].as_array().unwrap().is_empty());
+
+    // 2. Query non-existent trace -> 404 Not Found
+    let (status, err) = request_json(app, "GET", "/api/traces/unknown_session_999", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(err["error"].as_str().unwrap().contains("not found"));
+}
+
+#[tokio::test]
+async fn test_api_get_archaeology_highlights() {
+    let (app, storage, _) = setup_test_app(None);
+
+    // Create 3 temporary trace files on disk representing archaeological discoveries:
+    // Trace 1: Expensive unsolved task (18.3M tokens, unverified)
+    let mut temp1 = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .unwrap();
+    let content1 = r#"
+{"type":"user","timestamp":"2026-08-10T10:00:00Z","content":"Center this div perfectly and fix alignment"}
+{"type":"assistant","timestamp":"2026-08-10T10:05:00Z","model":"claude-3-opus","usage":{"input_tokens":18000000,"output_tokens":300000},"content":[{"type":"text","text":"Attempting flexbox..."},{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"npm test"}}]}
+{"type":"tool_result","timestamp":"2026-08-10T10:11:00Z","tool_use_id":"c1","is_error":true,"content":"FAIL: tests failed with error"}
+"#;
+    temp1.write_all(content1.as_bytes()).unwrap();
+    let sess1_id = temp1
+        .path()
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let prov1 = Provenance::new(
+        temp1.path().to_string_lossy().to_string(),
+        "claude_code",
+        2048,
+        1700000000,
+        "fp1",
+    );
+    let mut trace1 = AgentWorthTrace::new(
+        sess1_id.clone(),
+        "claude_code",
+        prov1,
+        Utc::now() - Duration::days(15),
+    );
+    trace1.stats.token_usage = TokenUsage::new(18000000, 300000, 0, 0);
+    trace1.stats.models_used = vec!["claude-3-opus".to_string()];
+    storage.upsert_trace(&trace1).unwrap();
+
+    // Trace 2: Autonomous Recovery Loop (Failure -> Fix -> Pass)
+    let mut temp2 = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .unwrap();
+    let start2 = Utc::now() - Duration::days(5);
+    let prov2 = Provenance::new(
+        temp2.path().to_string_lossy().to_string(),
+        "claude_code",
+        1024,
+        1700000000,
+        "fp2",
+    );
+    let sess2_id = temp2
+        .path()
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let trace2 = AgentWorthTrace::new(sess2_id.clone(), "claude_code", prov2, start2);
+    let sample_claude_rec = format!(
+        r#"{{"type":"user","timestamp":"{}","content":"Run tests"}}
+{{"type":"assistant","timestamp":"{}","model":"claude-3-5-sonnet","usage":{{"input_tokens":1000,"output_tokens":200}},"content":[{{"type":"tool_use","id":"c2","name":"Bash","input":{{"command":"cargo test"}}}}]}}
+{{"type":"tool_result","timestamp":"{}","tool_use_id":"c2","is_error":true,"content":"test result: FAILED. 1 failed"}}
+{{"type":"assistant","timestamp":"{}","model":"claude-3-5-sonnet","content":[{{"type":"tool_use","id":"c3","name":"replace_file_content","input":{{"path":"src/logic.rs"}}}}]}}
+{{"type":"tool_result","timestamp":"{}","tool_use_id":"c3","content":"Saved"}}
+{{"type":"assistant","timestamp":"{}","model":"claude-3-5-sonnet","content":[{{"type":"tool_use","id":"c4","name":"Bash","input":{{"command":"cargo test"}}}}]}}
+{{"type":"tool_result","timestamp":"{}","tool_use_id":"c4","content":"test result: ok. 5 passed; 0 failed"}}
+"#,
+        start2.to_rfc3339(),
+        (start2 + Duration::seconds(2)).to_rfc3339(),
+        (start2 + Duration::seconds(4)).to_rfc3339(),
+        (start2 + Duration::seconds(6)).to_rfc3339(),
+        (start2 + Duration::seconds(8)).to_rfc3339(),
+        (start2 + Duration::seconds(10)).to_rfc3339(),
+        (start2 + Duration::seconds(12)).to_rfc3339(),
+    );
+    temp2.write_all(sample_claude_rec.as_bytes()).unwrap();
+    storage.upsert_trace(&trace2).unwrap();
+
+    // Trace 3: Model switches (Claude 3 Opus -> Sonnet -> Haiku)
+    let mut temp3 = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .unwrap();
+    let start3 = Utc::now() - Duration::days(1);
+    let sample_switches = format!(
+        r#"{{"type":"user","timestamp":"{}","content":"Multi-model task"}}
+{{"type":"assistant","timestamp":"{}","model":"claude-3-opus","usage":{{"input_tokens":500,"output_tokens":100}},"content":[{{"type":"text","text":"Planning..."}}]}}
+{{"type":"assistant","timestamp":"{}","model":"claude-3-5-sonnet","usage":{{"input_tokens":500,"output_tokens":100}},"content":[{{"type":"text","text":"Executing..."}}]}}
+{{"type":"assistant","timestamp":"{}","model":"claude-3-haiku","usage":{{"input_tokens":500,"output_tokens":100}},"content":[{{"type":"text","text":"Summarizing..."}}]}}
+"#,
+        start3.to_rfc3339(),
+        (start3 + Duration::seconds(2)).to_rfc3339(),
+        (start3 + Duration::seconds(4)).to_rfc3339(),
+        (start3 + Duration::seconds(6)).to_rfc3339(),
+    );
+    temp3.write_all(sample_switches.as_bytes()).unwrap();
+    let prov3 = Provenance::new(
+        temp3.path().to_string_lossy().to_string(),
+        "claude_code",
+        1024,
+        1700000000,
+        "fp3",
+    );
+    let mut trace3 = AgentWorthTrace::new(
+        temp3
+            .path()
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string(),
+        "claude_code",
+        prov3,
+        start3,
+    );
+    trace3.stats.models_used = vec![
+        "claude-3-opus".to_string(),
+        "claude-3-5-sonnet".to_string(),
+        "claude-3-haiku".to_string(),
+    ];
+    trace3.stats.token_usage = TokenUsage::new(1500, 300, 0, 0);
+    storage.upsert_trace(&trace3).unwrap();
+
+    // Call GET /api/archaeology
+    let (status, arch) = request_json(app, "GET", "/api/archaeology", None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify Most Expensive Unsolved
+    let unsolved = &arch["most_expensive_unsolved"];
+    assert!(unsolved.is_object());
+    assert_eq!(unsolved["session_id"], sess1_id);
+    assert_eq!(unsolved["total_tokens"], 18300000);
+    assert!(unsolved["prompt"]
+        .as_str()
+        .unwrap()
+        .contains("Center this div"));
+
+    // Verify Longest Recovery Loop
+    let recovery = &arch["longest_recovery_loop"];
+    assert!(recovery.is_object());
+    assert!(recovery["steps_to_recover"].as_u64().unwrap() >= 1);
+
+    // Verify Model Switches
+    let switches = &arch["most_frequent_model_switches"];
+    assert!(switches.is_object());
+    assert_eq!(switches["switch_count"], 2);
+    assert_eq!(switches["unique_models"].as_array().unwrap().len(), 3);
+
+    // Verify Token Carbon Dating
+    let carbon = &arch["token_carbon_dating"];
+    assert!(carbon["total_tokens"].as_u64().unwrap() > 0);
+    assert!(carbon["total_days_active"].as_u64().unwrap() >= 1);
+    assert!(!carbon["timeline"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_api_post_scan_endpoint() {
+    let (app, storage, _) = setup_test_app(None);
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("session_1.jsonl");
+    let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Hello world"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Hi!"}]}
+"#;
+    std::fs::write(&file_path, sample).unwrap();
+
+    let scan_payload = json!({
+        "paths": [temp_dir.path().to_string_lossy().to_string()],
+        "force": true
+    });
+
+    let (status, summary) = request_json(app, "POST", "/api/scan", Some(scan_payload)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(summary["discovered_sources"].as_u64().unwrap() >= 1);
+    assert!(summary["scanned_sessions"].as_u64().unwrap() >= 1);
+    assert!(summary["total_indexed_sessions"].as_u64().unwrap() >= 1);
+
+    // Verify indexed in storage
+    let stats = storage.get_aggregate_stats().unwrap();
+    assert_eq!(stats.total_sessions, 1);
+}
+
+#[tokio::test]
+async fn test_api_post_export_json_and_atif_and_redact() {
+    let (app, storage, _) = setup_test_app(None);
+
+    let mut temp_file = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .unwrap();
+    let sample_with_secret = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Here is my API key sk-ant-api03-abcdef1234567890abcdef1234567890"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Saved to /Users/saurabh/secret.pem and sent to admin@company.com"}]}
+"#;
+    temp_file.write_all(sample_with_secret.as_bytes()).unwrap();
+
+    let session_id = temp_file
+        .path()
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    let prov = Provenance::new(
+        temp_file.path().to_string_lossy().to_string(),
+        "claude_code",
+        1024,
+        1700000000,
+        "fp_secret",
+    );
+    let trace = AgentWorthTrace::new(session_id.clone(), "claude_code", prov, Utc::now());
+    storage.upsert_trace(&trace).unwrap();
+
+    // 1. Export unredacted JSON
+    let uri = format!("/api/export/{}", session_id);
+    let (status, res) = request_json(
+        app.clone(),
+        "POST",
+        &uri,
+        Some(json!({ "format": "json", "redact": false })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(res["format"], "json");
+    assert!(res["content"]
+        .as_str()
+        .unwrap()
+        .contains("sk-ant-api03-abcdef1234567890abcdef1234567890"));
+
+    // 2. Export REDACTED JSON
+    let (status, res) = request_json(
+        app.clone(),
+        "POST",
+        &uri,
+        Some(json!({ "format": "json", "redact": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let content = res["content"].as_str().unwrap();
+    assert!(!content.contains("sk-ant-api03-abcdef1234567890abcdef1234567890"));
+    assert!(content.contains("[REDACTED_API_KEY]"));
+    assert!(content.contains("[REDACTED_EMAIL]"));
+
+    // 3. Export ATIF format
+    let (status, res) = request_json(
+        app,
+        "POST",
+        &uri,
+        Some(json!({ "format": "atif", "redact": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(res["format"], "atif");
+    let atif_str = res["content"].as_str().unwrap();
+    assert!(atif_str.contains("\"schema_version\": \"atif-v1.0\""));
+}
+
+#[tokio::test]
+async fn test_api_static_file_serving_and_spa_fallback() {
+    // 1. Default embedded fallback
+    let (app, _, _) = setup_test_app(None);
+
+    // Root GET /
+    let (status, html) = request_raw(app.clone(), "GET", "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("AGENTWORTH"));
+    assert!(html.contains("Your agents left receipts"));
+
+    // SPA client-side route GET /traces/sess_123
+    let (status, html) = request_raw(app, "GET", "/traces/sess_123").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("AGENTWORTH"));
+
+    // 2. Custom dist_dir serving
+    let temp_dist = TempDir::new().unwrap();
+    let index_file = temp_dist.path().join("index.html");
+    std::fs::write(&index_file, "<html><body>Custom Dist Web UI</body></html>").unwrap();
+
+    let asset_file = temp_dist.path().join("app.js");
+    std::fs::write(&asset_file, "console.log('custom js');").unwrap();
+
+    let (app_dist, _, _) = setup_test_app(Some(temp_dist.path().to_path_buf()));
+
+    // Exact asset file GET /app.js
+    let (status, js) = request_raw(app_dist.clone(), "GET", "/app.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(js, "console.log('custom js');");
+
+    // SPA fallback route GET /sessions
+    let (status, custom_html) = request_raw(app_dist, "GET", "/sessions").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(custom_html.contains("Custom Dist Web UI"));
+}

@@ -293,3 +293,15 @@ fn test_cli_export_command_json_and_atif_and_redaction() {
     assert!(atif_content.contains("sample_session_123"));
     assert!(!atif_content.contains("sk-testsecretkey12345678901234567890"));
 }
+
+#[test]
+fn test_cli_serve_command_help_and_flags() {
+    let mut cmd = Command::cargo_bin("agentworth").unwrap();
+    cmd.arg("serve").arg("--help");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("--port"))
+        .stdout(predicate::str::contains("--open"))
+        .stdout(predicate::str::contains("--dist"));
+}

@@ -28,6 +28,7 @@ pub struct AggregateStats {
 
 /// Ordering options when querying session traces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionOrderBy {
     #[default]
     StartedAtDesc,
@@ -44,6 +45,7 @@ pub enum SessionOrderBy {
 pub struct SessionFilter {
     pub adapter: Option<String>,
     pub model: Option<String>,
+    pub search: Option<String>,
     pub start_date: Option<DateTime<Utc>>,
     pub end_date: Option<DateTime<Utc>>,
     pub min_tokens: Option<u64>,
@@ -417,6 +419,17 @@ impl Storage {
             param_values.push(Box::new(format!("%{}%", model)));
         }
 
+        if let Some(ref search) = filter.search {
+            if !search.trim().is_empty() {
+                let pattern = format!("%{}%", search.trim());
+                sql.push_str(" AND (session_id LIKE ? OR source_path LIKE ? OR models_used LIKE ? OR adapter LIKE ?)");
+                param_values.push(Box::new(pattern.clone()));
+                param_values.push(Box::new(pattern.clone()));
+                param_values.push(Box::new(pattern.clone()));
+                param_values.push(Box::new(pattern.clone()));
+            }
+        }
+
         if let Some(start_date) = filter.start_date {
             sql.push_str(" AND started_at >= ?");
             param_values.push(Box::new(start_date.to_rfc3339()));
@@ -728,6 +741,16 @@ mod tests {
             .expect("page2");
         assert_eq!(page2.len(), 1);
         assert_eq!(page2[0].session_id, "sess_1");
+
+        // Test 6: Search keyword matching session ID or path
+        let searched = storage
+            .list_sessions_filtered(&SessionFilter {
+                search: Some("sess_2".to_string()),
+                ..Default::default()
+            })
+            .expect("search");
+        assert_eq!(searched.len(), 1);
+        assert_eq!(searched[0].session_id, "sess_2");
     }
 
     #[test]

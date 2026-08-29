@@ -104,6 +104,21 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// Start the local API server and interactive explorer UI
+    Serve {
+        /// Port to bind the server to
+        #[arg(short, long, default_value_t = agentworth_cli::DEFAULT_PORT)]
+        port: u16,
+
+        /// Automatically open the Web UI in the default browser
+        #[arg(long)]
+        open: bool,
+
+        /// Optional path to custom web frontend dist directory
+        #[arg(long)]
+        dist: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -145,6 +160,19 @@ fn main() -> Result<()> {
             output,
         } => {
             run_export_command(&session_id, redact, &format, output.as_deref(), cli.db_path)?;
+        }
+        Commands::Serve { port, open, dist } => {
+            let storage = open_storage(cli.db_path)?;
+            let dist_path = dist.or_else(|| {
+                let default_dist = PathBuf::from("apps/web/dist");
+                if default_dist.exists() {
+                    Some(default_dist)
+                } else {
+                    None
+                }
+            });
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
         }
     }
 
