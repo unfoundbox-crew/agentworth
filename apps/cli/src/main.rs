@@ -119,6 +119,13 @@ enum Commands {
         #[arg(long)]
         dist: Option<PathBuf>,
     },
+
+    /// Check local environment, adapter discoveries, and SQLite database health
+    Doctor {
+        /// Output diagnostic report as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -141,6 +148,9 @@ fn main() -> Result<()> {
         }
         Commands::Stats { json } => {
             run_stats_command(json, cli.db_path)?;
+        }
+        Commands::Doctor { json } => {
+            run_doctor_command(json, cli.db_path)?;
         }
         Commands::Traces {
             limit,
@@ -1122,4 +1132,154 @@ fn print_scan_summary(summary: &ScanSummary, db_path: Option<&std::path::Path>) 
         style("└──────────────────────────────────────────────────────────┘").bold()
     );
     println!();
+}
+
+fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Result<()> {
+    let storage_res = open_storage(custom_db_path.clone());
+    let mut storage_healthy = false;
+    let mut total_indexed = 0;
+    let mut db_size_bytes = 0;
+    let db_path_display = if let Some(ref p) = custom_db_path {
+        p.display().to_string()
+    } else {
+        match std::env::var("HOME") {
+            Ok(h) => PathBuf::from(h).join(".agentworth").join("agentworth.db").display().to_string(),
+            Err(_) => "agentworth.db".to_string(),
+        }
+    };
+
+    if let Ok(st) = &storage_res {
+        storage_healthy = true;
+        if let Ok(stats) = st.get_aggregate_stats() {
+            total_indexed = stats.total_sessions;
+        }
+        let actual_path = PathBuf::from(&db_path_display);
+        if let Ok(meta) = std::fs::metadata(&actual_path) {
+            db_size_bytes = meta.len();
+        }
+    }
+
+    // Inspect adapters discovery
+    let adapters: Vec<Box<dyn agentworth_adapter_sdk::AgentAdapter>> = vec![
+        Box::new(agentworth_adapters::ClaudeCodeAdapter::new()),
+        Box::new(agentworth_adapters::CursorAdapter::new()),
+        Box::new(agentworth_adapters::GeminiAdapter::new()),
+        Box::new(agentworth_adapters::CodexAdapter::new()),
+        Box::new(agentworth_adapters::GooseAdapter::new()),
+        Box::new(agentworth_adapters::PiAdapter::new()),
+        Box::new(agentworth_adapters::HerdrAdapter::new()),
+        Box::new(agentworth_adapters::HermesAdapter::new()),
+        Box::new(agentworth_adapters::OpenClawAdapter::new()),
+        Box::new(agentworth_adapters::GrokAdapter::new()),
+        Box::new(agentworth_adapters::OpenCodeAdapter::new()),
+    ];
+
+    let scan_opts = ScanOptions::default();
+    let mut detections = Vec::new();
+    for a in &adapters {
+        if let Ok(d) = a.detect(&scan_opts) {
+            detections.push(d);
+        }
+    }
+
+    if json_output {
+        let report = json!({
+            "status": if storage_healthy { "healthy" } else { "degraded" },
+            "environment": {
+                "os": std::env::consts::OS,
+                "arch": std::env::consts::ARCH,
+                "version": env!("CARGO_PKG_VERSION"),
+            },
+            "storage": {
+                "path": db_path_display,
+                "healthy": storage_healthy,
+                "size_bytes": db_size_bytes,
+                "total_indexed_sessions": total_indexed,
+            },
+            "adapters": detections.iter().map(|d| {
+                json!({
+                    "adapter": d.adapter_name,
+                    "is_present": d.is_present,
+                    "confidence": d.confidence,
+                    "discovered_roots": d.discovered_roots.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "{}",
+        style("┌──────────────────────────────────────────────────────────┐").bold()
+    );
+    println!(
+        "│ {}                   │",
+        style("🩺 AgentWorth System Health & Diagnostics").bold()
+    );
+    println!(
+        "{}",
+        style("├──────────────────────────────────────────────────────────┤").bold()
+    );
+    println!("│ Environment:                                             │");
+    println!(
+        "│   • OS / Arch:        {:<34} │",
+        style(format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH)).cyan()
+    );
+    println!(
+        "│   • Binary Version:   {:<34} │",
+        style(format!("v{}", env!("CARGO_PKG_VERSION"))).cyan()
+    );
+    println!(
+        "{}",
+        style("├──────────────────────────────────────────────────────────┤").bold()
+    );
+    println!("│ Local SQLite Index:                                      │");
+    println!(
+        "│   • Path:             {:<34} │",
+        style(if db_path_display.len() > 34 {
+            format!("...{}", &db_path_display[db_path_display.len() - 31..])
+        } else {
+            db_path_display.clone()
+        }).cyan()
+    );
+    println!(
+        "│   • Database State:   {:<34} │",
+        if storage_healthy {
+            style("✓ Healthy (WAL Mode)").green().bold()
+        } else {
+            style("✗ Not Found / Uninitialized").red().bold()
+        }
+    );
+    println!(
+        "│   • Size / Sessions:  {:<34} │",
+        style(format!("{:.1} KB ({} sessions indexed)", db_size_bytes as f64 / 1024.0, total_indexed)).cyan()
+    );
+    println!(
+        "{}",
+        style("├──────────────────────────────────────────────────────────┤").bold()
+    );
+    println!("│ Detected Agent Adapters:                                 │");
+
+    for d in &detections {
+        let status_str = if d.is_present {
+            format!("✓ Detected ({} roots)", d.discovered_roots.len())
+        } else {
+            "○ Not found".to_string()
+        };
+        println!(
+            "│   • {:<18} {:<33} │",
+            style(&d.adapter_name).bold(),
+            if d.is_present { style(status_str).green() } else { style(status_str).dim() }
+        );
+    }
+
+    println!(
+        "{}",
+        style("└──────────────────────────────────────────────────────────┘").bold()
+    );
+    println!();
+
+    Ok(())
 }
