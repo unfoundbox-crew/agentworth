@@ -3,7 +3,10 @@
 use std::sync::Arc;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
-use agentworth_adapters::{ClaudeCodeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter};
+use agentworth_adapters::{
+    ClaudeCodeAdapter, CodexAdapter, CursorAdapter, GeminiAdapter, GooseAdapter, GrokAdapter,
+    HerdrAdapter, HermesAdapter, OpenClawAdapter, OpenCodeAdapter, PiAdapter,
+};
 use agentworth_schema::AgentWorthTrace;
 use agentworth_storage::{AggregateStats, Storage};
 use anyhow::{Context, Result};
@@ -33,8 +36,15 @@ impl Scanner {
         let adapters: Vec<Box<dyn AgentAdapter>> = vec![
             Box::new(ClaudeCodeAdapter::new()),
             Box::new(CodexAdapter::new()),
+            Box::new(CursorAdapter::new()),
             Box::new(GeminiAdapter::new()),
+            Box::new(GooseAdapter::new()),
+            Box::new(GrokAdapter::new()),
+            Box::new(HerdrAdapter::new()),
+            Box::new(HermesAdapter::new()),
+            Box::new(OpenClawAdapter::new()),
             Box::new(OpenCodeAdapter::new()),
+            Box::new(PiAdapter::new()),
         ];
         Self { adapters, storage }
     }

@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use agentworth_adapter_sdk::{
@@ -15,45 +15,40 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
-/// Adapter for discovering and normalizing Google Gemini / Antigravity agent sessions.
-pub struct GeminiAdapter;
+/// Adapter for discovering and normalizing OpenClaw agent stream logs and session histories.
+pub struct OpenClawAdapter;
 
-impl Default for GeminiAdapter {
+impl Default for OpenClawAdapter {
     fn default() -> Self {
         Self
     }
 }
 
-impl GeminiAdapter {
+impl OpenClawAdapter {
     pub fn new() -> Self {
         Self
     }
 
-    /// Candidate directory paths for Google Antigravity (agy / Antigravity IDE / Gemini) on the host machine.
+    /// Candidate directory paths for OpenClaw on the host machine.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
-            roots.push(home.join(".gemini"));
-            roots.push(home.join(".gemini").join("antigravity-cli"));
-            roots.push(home.join(".gemini").join("antigravity-ide"));
-            roots.push(home.join(".gemini").join("antigravity"));
-            roots.push(home.join(".gemini").join("brain"));
-            roots.push(home.join(".gemini").join("history"));
-            roots.push(home.join(".gemini").join("sessions"));
-            roots.push(home.join(".antigravity"));
-            roots.push(home.join(".config").join("antigravity"));
-            roots.push(home.join(".config").join("gemini"));
+            roots.push(home.join(".openclaw"));
+            roots.push(home.join(".openclaw").join("sessions"));
+            roots.push(home.join(".openclaw").join("logs"));
+            roots.push(home.join(".config").join("openclaw"));
         }
-        roots.push(PathBuf::from(".gemini"));
-        roots.push(PathBuf::from(".antigravity"));
+        roots.push(PathBuf::from(".openclaw"));
+        roots.push(PathBuf::from(".openclaw").join("sessions"));
+        roots.push(PathBuf::from(".openclaw").join("logs"));
         roots
     }
 }
 
-impl AgentAdapter for GeminiAdapter {
+impl AgentAdapter for OpenClawAdapter {
     fn name(&self) -> &'static str {
-        "antigravity"
+        "openclaw"
     }
 
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
@@ -66,11 +61,8 @@ impl AgentAdapter for GeminiAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".gemini")
-                    || custom.to_string_lossy().contains("gemini")
-                    || custom.to_string_lossy().contains("antigravity"))
-            {
+            let s = custom.to_string_lossy().to_lowercase();
+            if custom.exists() && (s.contains(".openclaw") || s.contains("openclaw")) {
                 discovered.push(custom.clone());
             }
         }
@@ -92,7 +84,7 @@ impl AgentAdapter for GeminiAdapter {
         if !options.custom_paths.is_empty() {
             for custom in &options.custom_paths {
                 if custom.is_file() {
-                    if is_candidate_gemini_file(custom) {
+                    if is_candidate_openclaw_file(custom) {
                         if let Ok(source) = SessionSource::from_path(custom, self.name()) {
                             sources.push(source);
                         }
@@ -100,7 +92,7 @@ impl AgentAdapter for GeminiAdapter {
                 } else if custom.is_dir() {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
-                        if path.is_file() && is_candidate_gemini_file(path) {
+                        if path.is_file() && is_candidate_openclaw_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
                                 sources.push(source);
                             }
@@ -111,7 +103,7 @@ impl AgentAdapter for GeminiAdapter {
         } else {
             for root in self.candidate_roots() {
                 if root.is_file() {
-                    if is_candidate_gemini_file(&root) {
+                    if is_candidate_openclaw_file(&root) {
                         if let Ok(source) = SessionSource::from_path(&root, self.name()) {
                             sources.push(source);
                         }
@@ -119,7 +111,7 @@ impl AgentAdapter for GeminiAdapter {
                 } else if root.is_dir() {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
-                        if path.is_file() && is_candidate_gemini_file(path) {
+                        if path.is_file() && is_candidate_openclaw_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
                                 sources.push(source);
                             }
@@ -129,7 +121,6 @@ impl AgentAdapter for GeminiAdapter {
             }
         }
 
-        // Deduplicate sources by canonical path
         sources.sort_by(|a, b| a.path.cmp(&b.path));
         sources.dedup_by(|a, b| a.path == b.path);
 
@@ -137,9 +128,6 @@ impl AgentAdapter for GeminiAdapter {
     }
 
     fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
-        let file = File::open(&source.path)?;
-        let reader = BufReader::new(file);
-
         let session_id = derive_session_id(&source.path);
         let provenance = Provenance::new(
             source.path.to_string_lossy().to_string(),
@@ -157,41 +145,92 @@ impl AgentAdapter for GeminiAdapter {
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
 
-        for (line_idx, line_res) in reader.lines().enumerate() {
-            let line_num = line_idx + 1;
-            let line_str = match line_res {
-                Ok(l) => l,
-                Err(e) => {
-                    malformed_lines += 1;
-                    warnings.push(format!("I/O read error on line {}: {}", line_num, e));
+        let file = File::open(&source.path)?;
+        let mut reader = BufReader::new(file);
+
+        let has_content = reader.get_ref().metadata()?.len() > 0;
+
+        if has_content {
+            let mut content_str = String::new();
+            reader.read_to_string(&mut content_str)?;
+
+            let trimmed = content_str.trim();
+            if trimmed.starts_with('[')
+                || (trimmed.starts_with('{') && !trimmed.contains('\n'))
+                || (trimmed.starts_with('{') && serde_json::from_str::<Value>(trimmed).is_ok())
+            {
+                if let Ok(json_val) = serde_json::from_str::<Value>(trimmed) {
+                    let items = if let Some(arr) = json_val.as_array() {
+                        arr.clone()
+                    } else if let Some(turns) = json_val
+                        .get("turns")
+                        .or_else(|| json_val.get("steps"))
+                        .or_else(|| json_val.get("logs"))
+                        .or_else(|| json_val.get("messages"))
+                        .and_then(|t| t.as_array())
+                    {
+                        turns.clone()
+                    } else {
+                        vec![json_val]
+                    };
+
+                    for (idx, item) in items.iter().enumerate() {
+                        let timestamp = parse_timestamp(item).unwrap_or_else(Utc::now);
+                        if earliest_ts.is_none_or(|ts| timestamp < ts) {
+                            earliest_ts = Some(timestamp);
+                        }
+                        if latest_ts.is_none_or(|ts| timestamp > ts) {
+                            latest_ts = Some(timestamp);
+                        }
+
+                        let evts = parse_openclaw_record(item, &mut sequence, timestamp, idx + 1);
+                        trace.events.extend(evts);
+                    }
+
+                    if let Some(earliest) = earliest_ts {
+                        trace.started_at = earliest;
+                    }
+                    if let Some(latest) = latest_ts {
+                        trace.ended_at = Some(latest);
+                    }
+
+                    trace.recalculate_stats();
+
+                    return Ok(ParseResult {
+                        trace,
+                        malformed_lines,
+                        warnings,
+                    });
+                }
+            }
+
+            for (line_idx, line_str) in content_str.lines().enumerate() {
+                let line_num = line_idx + 1;
+                let trimmed_line = line_str.trim();
+                if trimmed_line.is_empty() {
                     continue;
                 }
-            };
 
-            let trimmed = line_str.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
+                let val: Value = match serde_json::from_str(trimmed_line) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        malformed_lines += 1;
+                        warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
+                        continue;
+                    }
+                };
 
-            let val: Value = match serde_json::from_str(trimmed) {
-                Ok(v) => v,
-                Err(e) => {
-                    malformed_lines += 1;
-                    warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
-                    continue;
+                let timestamp = parse_timestamp(&val).unwrap_or_else(Utc::now);
+                if earliest_ts.is_none_or(|ts| timestamp < ts) {
+                    earliest_ts = Some(timestamp);
                 }
-            };
+                if latest_ts.is_none_or(|ts| timestamp > ts) {
+                    latest_ts = Some(timestamp);
+                }
 
-            let timestamp = parse_timestamp(&val).unwrap_or_else(Utc::now);
-            if earliest_ts.is_none_or(|ts| timestamp < ts) {
-                earliest_ts = Some(timestamp);
+                let events = parse_openclaw_record(&val, &mut sequence, timestamp, line_num);
+                trace.events.extend(events);
             }
-            if latest_ts.is_none_or(|ts| timestamp > ts) {
-                latest_ts = Some(timestamp);
-            }
-
-            let events = parse_gemini_record(&val, &mut sequence, timestamp, line_num);
-            trace.events.extend(events);
         }
 
         if let Some(earliest) = earliest_ts {
@@ -211,9 +250,9 @@ impl AgentAdapter for GeminiAdapter {
     }
 }
 
-fn is_candidate_gemini_file(path: &Path) -> bool {
+fn is_candidate_openclaw_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    if !path_str.contains("gemini") && !path_str.contains("antigravity") {
+    if !path_str.contains("openclaw") && !path_str.contains("claw") {
         return false;
     }
     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -224,19 +263,8 @@ fn is_candidate_gemini_file(path: &Path) -> bool {
     if lower == "config.json"
         || lower == "settings.json"
         || lower == "credentials.json"
-        || lower == "oauth.json"
-        || lower == "oauth_creds.json"
-        || lower == "trustedfolders.json"
-        || lower == "projects.json"
-        || lower == "google_accounts.json"
-        || lower == "state.json"
+        || lower == "auth.json"
         || lower == "package.json"
-        || lower == "package-lock.json"
-        || lower == "tsconfig.json"
-        || lower == "hooks.json"
-        || lower == "mcp_config.json"
-        || lower == "import_manifest.json"
-        || lower == "manifest.json"
     {
         return false;
     }
@@ -245,22 +273,6 @@ fn is_candidate_gemini_file(path: &Path) -> bool {
 }
 
 fn derive_session_id(path: &Path) -> String {
-    // If inside brain/<conversation-id>/..., try to extract conversation-id
-    let components: Vec<_> = path
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .collect();
-
-    for (i, part) in components.iter().enumerate() {
-        if (part == "brain" || part == "sessions" || part == "history") && i + 1 < components.len()
-        {
-            let next_comp = &components[i + 1];
-            if !next_comp.is_empty() && !next_comp.starts_with('.') {
-                return next_comp.clone();
-            }
-        }
-    }
-
     path.file_stem()
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
@@ -268,12 +280,12 @@ fn derive_session_id(path: &Path) -> String {
 }
 
 fn parse_timestamp(val: &Value) -> Option<DateTime<Utc>> {
-    if let Some(ts_str) = val.get("created_at").and_then(|v| v.as_str()) {
+    if let Some(ts_str) = val.get("timestamp").and_then(|v| v.as_str()) {
         if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
             return Some(dt.with_timezone(&Utc));
         }
     }
-    if let Some(ts_str) = val.get("timestamp").and_then(|v| v.as_str()) {
+    if let Some(ts_str) = val.get("created_at").and_then(|v| v.as_str()) {
         if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
             return Some(dt.with_timezone(&Utc));
         }
@@ -286,23 +298,20 @@ fn parse_timestamp(val: &Value) -> Option<DateTime<Utc>> {
 
 fn extract_token_usage(usage_val: &Value) -> TokenUsage {
     let input_tokens = usage_val
-        .get("promptTokenCount")
-        .or_else(|| usage_val.get("input_tokens"))
+        .get("input_tokens")
         .or_else(|| usage_val.get("prompt_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let output_tokens = usage_val
-        .get("candidatesTokenCount")
-        .or_else(|| usage_val.get("output_tokens"))
+        .get("output_tokens")
         .or_else(|| usage_val.get("completion_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let cache_read_tokens = usage_val
-        .get("cachedContentTokenCount")
+        .get("cache_read_tokens")
         .or_else(|| usage_val.get("cached_tokens"))
-        .or_else(|| usage_val.get("cache_read_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
@@ -319,7 +328,7 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
     )
 }
 
-fn parse_gemini_record(
+fn parse_openclaw_record(
     val: &Value,
     seq: &mut u64,
     ts: DateTime<Utc>,
@@ -328,18 +337,25 @@ fn parse_gemini_record(
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
 
-    // Model invocation / Token usage extraction
+    let role = val
+        .get("role")
+        .or_else(|| val.get("type"))
+        .or_else(|| val.get("kind"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // Model invocation / Token extraction
     if let Some(usage_val) = val
-        .get("usageMetadata")
-        .or_else(|| val.get("usage"))
+        .get("usage")
         .or_else(|| val.get("tokens"))
+        .or_else(|| val.get("token_usage"))
     {
         let usage = extract_token_usage(usage_val);
         if usage.total() > 0 {
             let model = val
                 .get("model")
                 .and_then(|v| v.as_str())
-                .unwrap_or("gemini-2.5-pro")
+                .unwrap_or("openclaw-agent-model")
                 .to_string();
 
             *seq += 1;
@@ -351,7 +367,10 @@ fn parse_gemini_record(
                         model,
                         token_usage: usage,
                         cost_usd: val.get("cost").and_then(|c| c.as_f64()),
-                        latency_ms: val.get("latency_ms").and_then(|d| d.as_u64()),
+                        latency_ms: val
+                            .get("latency_ms")
+                            .or_else(|| val.get("duration_ms"))
+                            .and_then(|d| d.as_u64()),
                     },
                 )
                 .with_raw_ref(&raw_ref),
@@ -359,43 +378,9 @@ fn parse_gemini_record(
         }
     }
 
-    // Direct error check
-    let is_step_error = val
-        .get("status")
-        .and_then(|s| s.as_str())
-        .map(|s| s == "ERROR")
-        .unwrap_or(false);
-
-    if is_step_error {
-        let msg = val
-            .get("content")
-            .and_then(|c| c.as_str())
-            .unwrap_or("Step failed with ERROR");
-        *seq += 1;
-        events.push(
-            NormalizedEvent::new(
-                *seq,
-                ts,
-                EventPayload::Error {
-                    message: msg.to_string(),
-                    is_recovered: false,
-                },
-            )
-            .with_raw_ref(&raw_ref),
-        );
-    }
-
-    let raw_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let raw_role = val.get("role").and_then(|v| v.as_str()).unwrap_or("");
-    let effective_type = if !raw_type.is_empty() {
-        raw_type
-    } else {
-        raw_role
-    };
-
-    match effective_type {
-        "USER_INPUT" | "USER_EXPLICIT" | "user" | "human" => {
-            let content = extract_gemini_content(val);
+    match role {
+        "user" | "human" | "task" => {
+            let content = extract_openclaw_content(val);
             *seq += 1;
             events.push(
                 NormalizedEvent::new(*seq, ts, EventPayload::UserMessage { content })
@@ -403,32 +388,32 @@ fn parse_gemini_record(
             );
         }
 
-        "PLANNER_RESPONSE" | "MODEL" | "assistant" | "model" => {
+        "assistant" | "agent" | "claw" | "step" => {
             let thinking = val
                 .get("thinking")
+                .or_else(|| val.get("reasoning"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
-            let content = extract_gemini_content(val);
+            let content = extract_openclaw_content(val);
 
-            // Extract tool calls / function calls
-            if let Some(tool_calls_arr) = val
+            // Extract tools / actions
+            if let Some(tools) = val
                 .get("tool_calls")
-                .or_else(|| val.get("function_calls"))
+                .or_else(|| val.get("actions"))
                 .and_then(|v| v.as_array())
             {
-                for tc in tool_calls_arr {
+                for tc in tools {
                     let id = tc.get("id").and_then(|v| v.as_str()).map(String::from);
                     let name = tc
                         .get("name")
-                        .or_else(|| tc.get("functionName"))
+                        .or_else(|| tc.get("action"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
-
                     let args = tc
                         .get("arguments")
-                        .or_else(|| tc.get("args"))
+                        .or_else(|| tc.get("params"))
                         .cloned()
                         .unwrap_or(Value::Null);
 
@@ -446,44 +431,14 @@ fn parse_gemini_record(
                         .with_raw_ref(&raw_ref),
                     );
 
-                    process_specific_gemini_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
-                }
-            }
-
-            // Also check parts with functionCall
-            if let Some(parts_arr) = val.get("parts").and_then(|v| v.as_array()) {
-                for part in parts_arr {
-                    if let Some(fc) = part.get("functionCall") {
-                        let name = fc
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        let args = fc.get("args").cloned().unwrap_or(Value::Null);
-
-                        *seq += 1;
-                        events.push(
-                            NormalizedEvent::new(
-                                *seq,
-                                ts,
-                                EventPayload::ToolCall(ToolCall {
-                                    id: None,
-                                    name: name.clone(),
-                                    arguments: args.clone(),
-                                }),
-                            )
-                            .with_raw_ref(&raw_ref),
-                        );
-
-                        process_specific_gemini_tool_call(
-                            &name,
-                            &args,
-                            seq,
-                            ts,
-                            &raw_ref,
-                            &mut events,
-                        );
-                    }
+                    process_specific_openclaw_tool_call(
+                        &name,
+                        &args,
+                        seq,
+                        ts,
+                        &raw_ref,
+                        &mut events,
+                    );
                 }
             }
 
@@ -500,10 +455,36 @@ fn parse_gemini_record(
             }
         }
 
-        "TOOL_OUTPUT" | "tool_result" | "function_response" | "tool" | "function" => {
+        "tool_call" | "action" => {
+            let id = val.get("id").and_then(|v| v.as_str()).map(String::from);
+            let name = val
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let args = val.get("arguments").cloned().unwrap_or(Value::Null);
+
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::ToolCall(ToolCall {
+                        id,
+                        name: name.clone(),
+                        arguments: args.clone(),
+                    }),
+                )
+                .with_raw_ref(&raw_ref),
+            );
+
+            process_specific_openclaw_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+        }
+
+        "tool_result" | "action_result" => {
             let call_id = val
-                .get("call_id")
-                .or_else(|| val.get("tool_call_id"))
+                .get("tool_call_id")
+                .or_else(|| val.get("call_id"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let is_error = val
@@ -513,7 +494,6 @@ fn parse_gemini_record(
             let output = val
                 .get("output")
                 .or_else(|| val.get("content"))
-                .or_else(|| val.get("response"))
                 .cloned()
                 .unwrap_or(Value::Null);
 
@@ -532,12 +512,8 @@ fn parse_gemini_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            // Infer outcome evidence
             if let Some(out_str) = output.as_str() {
-                if out_str.contains("test result: ok.")
-                    || out_str.contains("PASSED")
-                    || out_str.contains("100% tests passed")
-                {
+                if out_str.contains("test result: ok.") || out_str.contains("PASSED") {
                     *seq += 1;
                     events.push(
                         NormalizedEvent::new(
@@ -545,31 +521,35 @@ fn parse_gemini_record(
                             ts,
                             EventPayload::OutcomeEvidence(OutcomeEvidence {
                                 kind: OutcomeKind::TestOrBuildPassed,
-                                summary: "Test suite executed successfully".to_string(),
+                                summary: "Test suite executed successfully in OpenClaw".to_string(),
                                 confidence: 0.9,
-                            }),
-                        )
-                        .with_raw_ref(&raw_ref),
-                    );
-                } else if out_str.contains("[main ")
-                    || out_str.contains("commit ")
-                    || out_str.contains("files changed,")
-                {
-                    *seq += 1;
-                    events.push(
-                        NormalizedEvent::new(
-                            *seq,
-                            ts,
-                            EventPayload::OutcomeEvidence(OutcomeEvidence {
-                                kind: OutcomeKind::CommitObserved,
-                                summary: "Git commit observed in tool result".to_string(),
-                                confidence: 0.85,
                             }),
                         )
                         .with_raw_ref(&raw_ref),
                     );
                 }
             }
+        }
+
+        "error" => {
+            let message = val
+                .get("message")
+                .or_else(|| val.get("error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("OpenClaw error")
+                .to_string();
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::Error {
+                        message,
+                        is_recovered: false,
+                    },
+                )
+                .with_raw_ref(&raw_ref),
+            );
         }
 
         _ => {
@@ -579,7 +559,7 @@ fn parse_gemini_record(
                     *seq,
                     ts,
                     EventPayload::Custom {
-                        kind: effective_type.to_string(),
+                        kind: role.to_string(),
                         data: val.clone(),
                     },
                 )
@@ -591,7 +571,7 @@ fn parse_gemini_record(
     events
 }
 
-fn process_specific_gemini_tool_call(
+fn process_specific_openclaw_tool_call(
     name: &str,
     args: &Value,
     seq: &mut u64,
@@ -599,15 +579,14 @@ fn process_specific_gemini_tool_call(
     raw_ref: &str,
     events: &mut Vec<NormalizedEvent>,
 ) {
-    let lower_name = name.to_lowercase();
-    if lower_name == "run_command"
-        || lower_name == "bash"
-        || lower_name == "exec"
-        || lower_name == "shell"
+    let lower = name.to_lowercase();
+    if lower.contains("shell")
+        || lower.contains("bash")
+        || lower.contains("exec")
+        || lower.contains("run")
     {
         if let Some(cmd) = args
-            .get("CommandLine")
-            .or_else(|| args.get("command"))
+            .get("command")
             .or_else(|| args.get("cmd"))
             .and_then(|v| v.as_str())
         {
@@ -618,11 +597,7 @@ fn process_specific_gemini_tool_call(
                     ts,
                     EventPayload::ShellCommand(ShellCommand {
                         command: cmd.to_string(),
-                        cwd: args
-                            .get("Cwd")
-                            .or_else(|| args.get("cwd"))
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
+                        cwd: args.get("cwd").and_then(|v| v.as_str()).map(String::from),
                         exit_code: None,
                         output: None,
                     }),
@@ -630,16 +605,11 @@ fn process_specific_gemini_tool_call(
                 .with_raw_ref(raw_ref),
             );
         }
-    } else if lower_name == "replace_file_content"
-        || lower_name == "write_to_file"
-        || lower_name == "edit"
-        || lower_name == "edit_file"
-    {
+    } else if lower.contains("file") || lower.contains("edit") || lower.contains("write") {
         let path = args
-            .get("TargetFile")
-            .or_else(|| args.get("target_file"))
-            .or_else(|| args.get("path"))
+            .get("path")
             .or_else(|| args.get("file_path"))
+            .or_else(|| args.get("target_file"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -654,8 +624,9 @@ fn process_specific_gemini_tool_call(
                         path,
                         action: FileActionType::Edit,
                         diff: args
-                            .get("ReplacementContent")
-                            .or_else(|| args.get("diff"))
+                            .get("diff")
+                            .or_else(|| args.get("content"))
+                            .or_else(|| args.get("patch"))
                             .and_then(|v| v.as_str())
                             .map(String::from),
                         lines_changed: None,
@@ -667,24 +638,27 @@ fn process_specific_gemini_tool_call(
     }
 }
 
-fn extract_gemini_content(val: &Value) -> String {
+fn extract_openclaw_content(val: &Value) -> String {
     if let Some(text) = val.get("content").and_then(|v| v.as_str()) {
         return text.to_string();
     }
-    if let Some(parts) = val.get("parts").and_then(|v| v.as_array()) {
+    if let Some(text) = val.get("message").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
+    if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
+    if let Some(arr) = val.get("content").and_then(|v| v.as_array()) {
         let mut texts = Vec::new();
-        for p in parts {
-            if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
+        for item in arr {
+            if let Some(t) = item.get("text").and_then(|v| v.as_str()) {
                 texts.push(t);
+            } else if let Some(s) = item.as_str() {
+                texts.push(s);
             }
         }
         if !texts.is_empty() {
             return texts.join("\n");
-        }
-    }
-    if let Some(c) = val.get("content") {
-        if !c.is_null() {
-            return c.to_string();
         }
     }
     String::new()
@@ -697,83 +671,16 @@ mod tests {
     use tempfile::{tempdir, NamedTempFile};
 
     #[test]
-    fn test_parse_standard_gemini_jsonl() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = r#"
-{"type":"USER_INPUT","created_at":"2026-08-29T10:00:00Z","content":"Implement a new feature"}
-{"type":"PLANNER_RESPONSE","created_at":"2026-08-29T10:00:05Z","model":"gemini-2.5-pro","thinking":"I will run cargo check first.","usageMetadata":{"promptTokenCount":600,"candidatesTokenCount":180,"cachedContentTokenCount":150},"tool_calls":[{"id":"call_1","name":"run_command","arguments":{"CommandLine":"cargo test","Cwd":"/workspace"}}],"content":"Running test suite..."}
-{"type":"TOOL_OUTPUT","created_at":"2026-08-29T10:00:08Z","call_id":"call_1","output":"test result: ok. 8 passed; 0 failed","is_error":false}
-{"type":"PLANNER_RESPONSE","created_at":"2026-08-29T10:00:10Z","content":"Feature implemented and all tests pass."}
-"#;
-        temp.write_all(sample.as_bytes()).unwrap();
-
-        let adapter = GeminiAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
-
-        assert_eq!(result.malformed_lines, 0);
-        let trace = result.trace;
-        assert_eq!(trace.adapter, "antigravity");
-        assert_eq!(trace.stats.models_used, vec!["gemini-2.5-pro".to_string()]);
-        assert_eq!(trace.stats.token_usage.input_tokens, 600);
-        assert_eq!(trace.stats.token_usage.output_tokens, 180);
-        assert_eq!(trace.stats.token_usage.cache_read_tokens, 150);
-        assert_eq!(trace.stats.token_usage.total(), 930);
-        assert_eq!(trace.stats.tool_calls_count, 1);
-        assert_eq!(trace.stats.tools_used.get("run_command"), Some(&1));
-        assert_eq!(trace.stats.user_messages_count, 1);
-        assert_eq!(trace.stats.assistant_messages_count, 2);
-    }
-
-    #[test]
-    fn test_parse_gemini_chat_parts_format() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = r#"
-{"role":"user","timestamp":"2026-08-29T11:00:00Z","parts":[{"text":"Please edit file"}]}
-{"role":"model","timestamp":"2026-08-29T11:00:02Z","model":"gemini-3.7-sonnet","tokens":{"prompt_tokens":300,"completion_tokens":90},"parts":[{"functionCall":{"name":"replace_file_content","args":{"TargetFile":"/src/main.rs","ReplacementContent":"fn main() {}"}}},{"text":"File replaced."}]}
-"#;
-        temp.write_all(sample.as_bytes()).unwrap();
-
-        let adapter = GeminiAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
-
-        let trace = result.trace;
-        assert_eq!(
-            trace.stats.models_used,
-            vec!["gemini-3.7-sonnet".to_string()]
-        );
-        assert_eq!(trace.stats.token_usage.input_tokens, 300);
-        assert_eq!(trace.stats.token_usage.output_tokens, 90);
-        assert_eq!(trace.stats.tool_calls_count, 1);
-    }
-
-    #[test]
-    fn test_parse_graceful_on_empty_and_corrupt_lines() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = "{\"type\":\"USER_INPUT\",\"content\":\"hello\"}\n\n{INVALID_JSON}\n{\"type\":\"PLANNER_RESPONSE\",\"content\":\"world\"}\n";
-        temp.write_all(sample.as_bytes()).unwrap();
-
-        let adapter = GeminiAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
-
-        assert_eq!(result.malformed_lines, 1);
-        assert_eq!(result.trace.stats.user_messages_count, 1);
-        assert_eq!(result.trace.stats.assistant_messages_count, 1);
-    }
-
-    #[test]
-    fn test_detect_and_enumerate_gemini() {
+    fn test_detect_and_enumerate_openclaw() {
         let temp = tempdir().unwrap();
-        let gemini_dir = temp.path().join(".gemini").join("history");
-        std::fs::create_dir_all(&gemini_dir).unwrap();
+        let claw_dir = temp.path().join(".openclaw").join("sessions");
+        std::fs::create_dir_all(&claw_dir).unwrap();
 
-        let session_file = gemini_dir.join("history_001.jsonl");
-        let mut f = File::create(&session_file).unwrap();
-        writeln!(f, "{{\"type\":\"USER_INPUT\",\"content\":\"test\"}}").unwrap();
+        let log_file = claw_dir.join("session_001.jsonl");
+        let mut f = File::create(&log_file).unwrap();
+        writeln!(f, "{{\"role\":\"user\",\"content\":\"Run crawler\"}}").unwrap();
 
-        let adapter = GeminiAdapter::new();
+        let adapter = OpenClawAdapter::new();
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
@@ -784,6 +691,71 @@ mod tests {
 
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
-        assert_eq!(enumerated[0].adapter_name, "antigravity");
+        assert_eq!(enumerated[0].adapter_name, "openclaw");
+    }
+
+    #[test]
+    fn test_parse_standard_openclaw_jsonl() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"role":"user","timestamp":"2026-08-29T10:00:00Z","content":"Execute automated crawl & test"}
+{"role":"claw","timestamp":"2026-08-29T10:00:03Z","model":"openclaw-v2","usage":{"input_tokens":320,"output_tokens":90,"cache_read_tokens":40},"thinking":"Starting test execution","tool_calls":[{"name":"shell_exec","arguments":{"command":"cargo test"}}]}
+{"role":"tool_result","timestamp":"2026-08-29T10:00:06Z","output":"test result: ok. 8 passed; 0 failed"}
+{"role":"claw","timestamp":"2026-08-29T10:00:08Z","content":"OpenClaw finished all tasks."}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = OpenClawAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        assert_eq!(result.malformed_lines, 0);
+        let trace = result.trace;
+        assert_eq!(trace.adapter, "openclaw");
+        assert_eq!(trace.stats.models_used, vec!["openclaw-v2".to_string()]);
+        assert_eq!(trace.stats.token_usage.input_tokens, 320);
+        assert_eq!(trace.stats.token_usage.output_tokens, 90);
+        assert_eq!(trace.stats.token_usage.cache_read_tokens, 40);
+        assert_eq!(trace.stats.token_usage.total(), 450);
+        assert_eq!(trace.stats.tool_calls_count, 1);
+        assert_eq!(trace.stats.user_messages_count, 1);
+        assert_eq!(trace.stats.assistant_messages_count, 2);
+    }
+
+    #[test]
+    fn test_parse_openclaw_json_object() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"{
+  "session_id": "claw-sess-888",
+  "logs": [
+    {"role": "user", "content": "Start scraper"},
+    {"role": "agent", "model": "openclaw-pro", "usage": {"input_tokens": 120, "output_tokens": 40}, "content": "Scraper initialized"}
+  ]
+}"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = OpenClawAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        let trace = result.trace;
+        assert_eq!(trace.stats.user_messages_count, 1);
+        assert_eq!(trace.stats.assistant_messages_count, 1);
+        assert_eq!(trace.stats.token_usage.total(), 160);
+    }
+
+    #[test]
+    fn test_parse_graceful_on_malformed_lines() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = "{\"role\":\"user\",\"content\":\"hello\"}\n{CORRUPT_OPENCLAW_JSON}\n{\"role\":\"agent\",\"content\":\"hi\"}\n";
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = OpenClawAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        assert_eq!(result.malformed_lines, 1);
+        assert_eq!(result.trace.stats.user_messages_count, 1);
+        assert_eq!(result.trace.stats.assistant_messages_count, 1);
     }
 }

@@ -202,14 +202,8 @@ impl AgentAdapter for CodexAdapter {
 }
 
 fn is_candidate_codex_file(path: &Path) -> bool {
-    let path_str = path.to_string_lossy();
-    if path_str.contains("/.claude/")
-        || path_str.contains("/.gemini/")
-        || path_str.contains("/.opencode/")
-        || path_str.contains("claude_session")
-        || path_str.contains("gemini_session")
-        || path_str.contains("opencode_session")
-    {
+    let path_str = path.to_string_lossy().to_lowercase();
+    if !path_str.contains("codex") && !path_str.contains("openai") && !path_str.contains("gpt") {
         return false;
     }
     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");

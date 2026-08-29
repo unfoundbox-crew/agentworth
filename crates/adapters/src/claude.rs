@@ -202,13 +202,22 @@ impl AgentAdapter for ClaudeCodeAdapter {
 }
 
 fn is_candidate_claude_file(path: &Path) -> bool {
-    let path_str = path.to_string_lossy();
-    if path_str.contains("/.codex/")
-        || path_str.contains("/.gemini/")
-        || path_str.contains("/.opencode/")
-        || path_str.contains("codex_session")
-        || path_str.contains("gemini_session")
-        || path_str.contains("opencode_session")
+    let path_str = path.to_string_lossy().to_lowercase();
+    if path_str.contains("codex")
+        || path_str.contains("gemini")
+        || path_str.contains("antigravity")
+        || path_str.contains("opencode")
+        || path_str.contains("goose")
+        || path_str.contains("cursor")
+        || path_str.contains("composer")
+        || path_str.contains("herdr")
+        || path_str.contains("hermes")
+        || path_str.contains("openclaw")
+        || path_str.contains("grok")
+        || path_str.contains("xai")
+        || path_str.contains("/.pi/")
+        || path_str.contains("/pi/")
+        || path_str.contains(".pi")
     {
         return false;
     }
@@ -216,8 +225,8 @@ fn is_candidate_claude_file(path: &Path) -> bool {
     if filename.starts_with('.') && !filename.ends_with(".jsonl") && !filename.ends_with(".json") {
         return false;
     }
-    // Ignore general settings or auth files
-    if filename == "config.json" || filename == "settings.json" || filename == "credentials.json" {
+    let lower = filename.to_lowercase();
+    if lower == "config.json" || lower == "settings.json" || lower == "credentials.json" {
         return false;
     }
     path.extension()
@@ -334,16 +343,98 @@ fn parse_claude_record(
             {
                 msg.to_string()
             } else if let Some(arr) = val.get("content").and_then(|v| v.as_array()) {
-                extract_text_from_blocks(arr)
+                let mut text_parts = Vec::new();
+                for block in arr {
+                    let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    if block_type == "tool_result" {
+                        let call_id = block
+                            .get("tool_use_id")
+                            .or_else(|| block.get("call_id"))
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        let is_error = block
+                            .get("is_error")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let output = block
+                            .get("content")
+                            .or_else(|| block.get("output"))
+                            .cloned()
+                            .unwrap_or(Value::Null);
+
+                        *seq += 1;
+                        events.push(
+                            NormalizedEvent::new(
+                                *seq,
+                                ts,
+                                EventPayload::ToolResult(ToolResult {
+                                    call_id,
+                                    name: block
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                    output: output.clone(),
+                                    is_error,
+                                }),
+                            )
+                            .with_raw_ref(&raw_ref),
+                        );
+
+                        if let Some(out_str) = output.as_str() {
+                            if out_str.contains("test result: ok.")
+                                || out_str.contains("PASSED")
+                                || out_str.contains("100% tests passed")
+                                || out_str.contains("passed in ")
+                            {
+                                *seq += 1;
+                                events.push(
+                                    NormalizedEvent::new(
+                                        *seq,
+                                        ts,
+                                        EventPayload::OutcomeEvidence(OutcomeEvidence {
+                                            kind: OutcomeKind::TestOrBuildPassed,
+                                            summary: "Test suite executed successfully".to_string(),
+                                            confidence: 0.9,
+                                        }),
+                                    )
+                                    .with_raw_ref(&raw_ref),
+                                );
+                            } else if out_str.contains("[main ")
+                                || out_str.contains("commit ")
+                                || out_str.contains("files changed,")
+                            {
+                                *seq += 1;
+                                events.push(
+                                    NormalizedEvent::new(
+                                        *seq,
+                                        ts,
+                                        EventPayload::OutcomeEvidence(OutcomeEvidence {
+                                            kind: OutcomeKind::CommitObserved,
+                                            summary: "Git commit observed in tool output"
+                                                .to_string(),
+                                            confidence: 0.85,
+                                        }),
+                                    )
+                                    .with_raw_ref(&raw_ref),
+                                );
+                            }
+                        }
+                    } else if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+                        text_parts.push(t.to_string());
+                    }
+                }
+                text_parts.join("\n")
             } else {
                 val.to_string()
             };
 
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(*seq, ts, EventPayload::UserMessage { content })
-                    .with_raw_ref(&raw_ref),
-            );
+            if !content.is_empty() {
+                *seq += 1;
+                events.push(
+                    NormalizedEvent::new(*seq, ts, EventPayload::UserMessage { content })
+                        .with_raw_ref(&raw_ref),
+                );
+            }
         }
 
         "assistant" => {
@@ -609,16 +700,6 @@ fn parse_claude_record(
     }
 
     events
-}
-
-fn extract_text_from_blocks(arr: &[Value]) -> String {
-    let mut texts = Vec::new();
-    for item in arr {
-        if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-            texts.push(text);
-        }
-    }
-    texts.join("\n")
 }
 
 #[cfg(test)]

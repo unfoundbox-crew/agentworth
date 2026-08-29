@@ -215,3 +215,127 @@ fn test_scanner_with_all_adapters_end_to_end() {
     assert_eq!(summary.aggregate_stats.token_usage.output_tokens, 290);
     assert_eq!(summary.aggregate_stats.token_usage.cache_read_tokens, 90);
 }
+
+#[test]
+fn test_scanner_with_all_11_adapters_end_to_end() {
+    let temp = tempdir().unwrap();
+
+    // 1. Claude
+    let claude_dir = temp.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    let f_claude = claude_dir.join("claude.jsonl");
+    let mut f = File::create(&f_claude).unwrap();
+    writeln!(f, r#"{{"type":"user","content":"Hi Claude"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant","model":"claude-3-5-sonnet","usage":{{"input_tokens":100,"output_tokens":50}},"content":[{{"type":"text","text":"Hi"}}]}}"#).unwrap();
+
+    // 2. Codex
+    let codex_dir = temp.path().join(".codex");
+    fs::create_dir_all(&codex_dir).unwrap();
+    let f_codex = codex_dir.join("codex.jsonl");
+    let mut f = File::create(&f_codex).unwrap();
+    writeln!(f, r#"{{"role":"user","content":"Hi Codex"}}"#).unwrap();
+    writeln!(f, r#"{{"role":"assistant","model":"gpt-4o","usage":{{"prompt_tokens":100,"completion_tokens":50}},"content":"Hi"}}"#).unwrap();
+
+    // 3. Gemini
+    let gemini_dir = temp.path().join(".gemini");
+    fs::create_dir_all(&gemini_dir).unwrap();
+    let f_gemini = gemini_dir.join("gemini.jsonl");
+    let mut f = File::create(&f_gemini).unwrap();
+    writeln!(f, r#"{{"type":"USER_INPUT","content":"Hi Gemini"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"PLANNER_RESPONSE","model":"gemini-2.5-pro","usageMetadata":{{"promptTokenCount":100,"candidatesTokenCount":50}},"content":"Hi"}}"#).unwrap();
+
+    // 4. OpenCode
+    let opencode_dir = temp.path().join(".opencode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    let f_opencode = opencode_dir.join("opencode.jsonl");
+    let mut f = File::create(&f_opencode).unwrap();
+    writeln!(f, r#"{{"type":"user_message","content":"Hi OpenCode"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant_message","model":"deepseek-coder","usage":{{"input_tokens":100,"output_tokens":50}},"content":"Hi"}}"#).unwrap();
+
+    // 5. Goose
+    let goose_dir = temp.path().join(".goose");
+    fs::create_dir_all(&goose_dir).unwrap();
+    let f_goose = goose_dir.join("goose.jsonl");
+    let mut f = File::create(&f_goose).unwrap();
+    writeln!(f, r#"{{"role":"user","content":"Hi Goose"}}"#).unwrap();
+    writeln!(f, r#"{{"role":"assistant","model":"claude-3-5-sonnet","usage":{{"input_tokens":100,"output_tokens":50}},"content":"Hi"}}"#).unwrap();
+
+    // 6. Pi
+    let pi_dir = temp.path().join(".pi").join("tasks");
+    fs::create_dir_all(&pi_dir).unwrap();
+    let f_pi = pi_dir.join("pi.jsonl");
+    let mut f = File::create(&f_pi).unwrap();
+    writeln!(f, r#"{{"type":"task_input","content":"Hi Pi"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"step","model":"pi-v1","usage":{{"prompt_tokens":100,"completion_tokens":50}},"content":"Hi"}}"#).unwrap();
+
+    // 7. Cursor
+    let cursor_dir = temp.path().join(".cursor").join("composer");
+    fs::create_dir_all(&cursor_dir).unwrap();
+    let f_cursor = cursor_dir.join("cursor.jsonl");
+    let mut f = File::create(&f_cursor).unwrap();
+    writeln!(f, r#"{{"type":"user","text":"Hi Cursor"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"ai","model":"cursor-fast","tokens":{{"promptTokens":100,"completionTokens":50}},"text":"Hi"}}"#).unwrap();
+
+    // 8. Herdr
+    let herdr_dir = temp.path().join(".herdr").join("sessions");
+    fs::create_dir_all(&herdr_dir).unwrap();
+    let f_herdr = herdr_dir.join("herdr.jsonl");
+    let mut f = File::create(&f_herdr).unwrap();
+    writeln!(f, r#"{{"role":"supervisor","content":"Hi Herdr"}}"#).unwrap();
+    writeln!(f, r#"{{"role":"worker","model":"herdr-swarm","usage":{{"input_tokens":100,"output_tokens":50}},"content":"Hi"}}"#).unwrap();
+
+    // 9. Hermes
+    let hermes_dir = temp.path().join(".hermes").join("sessions");
+    fs::create_dir_all(&hermes_dir).unwrap();
+    let f_hermes = hermes_dir.join("hermes.jsonl");
+    let mut f = File::create(&f_hermes).unwrap();
+    writeln!(f, r#"{{"role":"user","content":"Hi Hermes"}}"#).unwrap();
+    writeln!(f, r#"{{"role":"assistant","model":"Hermes-3-Llama-3.1-70B","usage":{{"input_tokens":100,"output_tokens":50}},"content":"Hi"}}"#).unwrap();
+
+    // 10. OpenClaw
+    let openclaw_dir = temp.path().join(".openclaw").join("sessions");
+    fs::create_dir_all(&openclaw_dir).unwrap();
+    let f_openclaw = openclaw_dir.join("openclaw.jsonl");
+    let mut f = File::create(&f_openclaw).unwrap();
+    writeln!(f, r#"{{"role":"user","content":"Hi OpenClaw"}}"#).unwrap();
+    writeln!(f, r#"{{"role":"claw","model":"openclaw-v2","usage":{{"input_tokens":100,"output_tokens":50}},"content":"Hi"}}"#).unwrap();
+
+    // 11. Grok
+    let grok_dir = temp.path().join(".grok").join("sessions");
+    fs::create_dir_all(&grok_dir).unwrap();
+    let f_grok = grok_dir.join("grok.jsonl");
+    let mut f = File::create(&f_grok).unwrap();
+    writeln!(f, r#"{{"role":"user","content":"Hi Grok"}}"#).unwrap();
+    writeln!(f, r#"{{"role":"assistant","model":"grok-beta","usage":{{"prompt_tokens":100,"completion_tokens":50}},"content":"Hi"}}"#).unwrap();
+
+    let storage_dir = temp.path().join(".agentworth");
+    let db_path = storage_dir.join("agentworth.db");
+    let storage = Arc::new(Storage::open_path(&db_path).unwrap());
+    let scanner = Scanner::new(storage.clone());
+
+    let options = ScanOptions {
+        custom_paths: vec![temp.path().to_path_buf()],
+        force: false,
+    };
+
+    let summary = scanner.run_scan(&options, |_, _| {}).unwrap();
+    assert!(summary.discovered_sources >= 11);
+    assert_eq!(summary.scanned_sessions, 11);
+    assert_eq!(summary.total_indexed_sessions, 11);
+
+    let by_adapter = &summary.aggregate_stats.sessions_by_adapter;
+    assert_eq!(by_adapter.get("claude_code"), Some(&1));
+    assert_eq!(by_adapter.get("codex"), Some(&1));
+    assert_eq!(by_adapter.get("cursor"), Some(&1));
+    assert_eq!(by_adapter.get("antigravity"), Some(&1));
+    assert_eq!(by_adapter.get("goose"), Some(&1));
+    assert_eq!(by_adapter.get("grok"), Some(&1));
+    assert_eq!(by_adapter.get("herdr"), Some(&1));
+    assert_eq!(by_adapter.get("hermes"), Some(&1));
+    assert_eq!(by_adapter.get("openclaw"), Some(&1));
+    assert_eq!(by_adapter.get("opencode"), Some(&1));
+    assert_eq!(by_adapter.get("pi"), Some(&1));
+
+    // Each session: 100 in + 50 out = 150 tokens * 11 = 1650 total tokens
+    assert_eq!(summary.aggregate_stats.token_usage.total(), 1650);
+}

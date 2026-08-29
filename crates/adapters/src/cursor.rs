@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use agentworth_adapter_sdk::{
@@ -15,38 +15,65 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
-/// Adapter for discovering and normalizing OpenCode agent session histories.
-pub struct OpenCodeAdapter;
+/// Adapter for discovering and normalizing Cursor (Composer / Chat) agent sessions.
+pub struct CursorAdapter;
 
-impl Default for OpenCodeAdapter {
+impl Default for CursorAdapter {
     fn default() -> Self {
         Self
     }
 }
 
-impl OpenCodeAdapter {
+impl CursorAdapter {
     pub fn new() -> Self {
         Self
     }
 
-    /// Candidate directory paths for OpenCode on the host machine.
+    /// Candidate directory paths for Cursor on the host machine.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
-            roots.push(home.join(".opencode"));
-            roots.push(home.join(".opencode").join("sessions"));
-            roots.push(home.join(".local").join("share").join("opencode"));
-            roots.push(home.join(".config").join("opencode"));
+            roots.push(home.join(".cursor"));
+            roots.push(home.join(".cursor").join("sessions"));
+            roots.push(home.join(".cursor").join("composer"));
+            roots.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Cursor"),
+            );
+            roots.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Cursor")
+                    .join("User")
+                    .join("workspaceStorage"),
+            );
+            roots.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Cursor")
+                    .join("User")
+                    .join("globalStorage"),
+            );
+            roots.push(home.join(".config").join("Cursor"));
+            roots.push(
+                home.join(".config")
+                    .join("Cursor")
+                    .join("User")
+                    .join("workspaceStorage"),
+            );
         }
-        roots.push(PathBuf::from(".opencode"));
+        roots.push(PathBuf::from(".cursor"));
+        roots.push(PathBuf::from(".cursor").join("sessions"));
+        roots.push(PathBuf::from(".cursor").join("composer"));
         roots
     }
 }
 
-impl AgentAdapter for OpenCodeAdapter {
+impl AgentAdapter for CursorAdapter {
     fn name(&self) -> &'static str {
-        "opencode"
+        "cursor"
     }
 
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
@@ -59,9 +86,8 @@ impl AgentAdapter for OpenCodeAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".opencode") || custom.to_string_lossy().contains("opencode"))
-            {
+            let s = custom.to_string_lossy().to_lowercase();
+            if custom.exists() && (s.contains(".cursor") || s.contains("cursor")) {
                 discovered.push(custom.clone());
             }
         }
@@ -83,7 +109,7 @@ impl AgentAdapter for OpenCodeAdapter {
         if !options.custom_paths.is_empty() {
             for custom in &options.custom_paths {
                 if custom.is_file() {
-                    if is_candidate_opencode_file(custom) {
+                    if is_candidate_cursor_file(custom) {
                         if let Ok(source) = SessionSource::from_path(custom, self.name()) {
                             sources.push(source);
                         }
@@ -91,7 +117,7 @@ impl AgentAdapter for OpenCodeAdapter {
                 } else if custom.is_dir() {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
-                        if path.is_file() && is_candidate_opencode_file(path) {
+                        if path.is_file() && is_candidate_cursor_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
                                 sources.push(source);
                             }
@@ -102,7 +128,7 @@ impl AgentAdapter for OpenCodeAdapter {
         } else {
             for root in self.candidate_roots() {
                 if root.is_file() {
-                    if is_candidate_opencode_file(&root) {
+                    if is_candidate_cursor_file(&root) {
                         if let Ok(source) = SessionSource::from_path(&root, self.name()) {
                             sources.push(source);
                         }
@@ -110,7 +136,7 @@ impl AgentAdapter for OpenCodeAdapter {
                 } else if root.is_dir() {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
-                        if path.is_file() && is_candidate_opencode_file(path) {
+                        if path.is_file() && is_candidate_cursor_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
                                 sources.push(source);
                             }
@@ -120,7 +146,6 @@ impl AgentAdapter for OpenCodeAdapter {
             }
         }
 
-        // Deduplicate sources by canonical path
         sources.sort_by(|a, b| a.path.cmp(&b.path));
         sources.dedup_by(|a, b| a.path == b.path);
 
@@ -128,9 +153,6 @@ impl AgentAdapter for OpenCodeAdapter {
     }
 
     fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
-        let file = File::open(&source.path)?;
-        let reader = BufReader::new(file);
-
         let session_id = derive_session_id(&source.path);
         let provenance = Provenance::new(
             source.path.to_string_lossy().to_string(),
@@ -148,41 +170,97 @@ impl AgentAdapter for OpenCodeAdapter {
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
 
-        for (line_idx, line_res) in reader.lines().enumerate() {
-            let line_num = line_idx + 1;
-            let line_str = match line_res {
-                Ok(l) => l,
-                Err(e) => {
-                    malformed_lines += 1;
-                    warnings.push(format!("I/O read error on line {}: {}", line_num, e));
+        let file = File::open(&source.path)?;
+        let mut reader = BufReader::new(file);
+
+        let has_content = reader.get_ref().metadata()?.len() > 0;
+
+        if has_content {
+            let mut content_str = String::new();
+            reader.read_to_string(&mut content_str)?;
+
+            let trimmed = content_str.trim();
+            if trimmed.starts_with('[')
+                || (trimmed.starts_with('{') && !trimmed.contains('\n'))
+                || (trimmed.starts_with('{') && serde_json::from_str::<Value>(trimmed).is_ok())
+            {
+                if let Ok(json_val) = serde_json::from_str::<Value>(trimmed) {
+                    let items = if let Some(arr) = json_val.as_array() {
+                        arr.clone()
+                    } else if let Some(bubbles) = json_val.get("bubbles").and_then(|b| b.as_array())
+                    {
+                        bubbles.clone()
+                    } else if let Some(messages) =
+                        json_val.get("messages").and_then(|m| m.as_array())
+                    {
+                        messages.clone()
+                    } else if let Some(turns) =
+                        json_val.get("conversation").and_then(|c| c.as_array())
+                    {
+                        turns.clone()
+                    } else if let Some(turns) = json_val.get("turns").and_then(|t| t.as_array()) {
+                        turns.clone()
+                    } else {
+                        vec![json_val]
+                    };
+
+                    for (idx, item) in items.iter().enumerate() {
+                        let timestamp = parse_timestamp(item).unwrap_or_else(Utc::now);
+                        if earliest_ts.is_none_or(|ts| timestamp < ts) {
+                            earliest_ts = Some(timestamp);
+                        }
+                        if latest_ts.is_none_or(|ts| timestamp > ts) {
+                            latest_ts = Some(timestamp);
+                        }
+
+                        let evts = parse_cursor_record(item, &mut sequence, timestamp, idx + 1);
+                        trace.events.extend(evts);
+                    }
+
+                    if let Some(earliest) = earliest_ts {
+                        trace.started_at = earliest;
+                    }
+                    if let Some(latest) = latest_ts {
+                        trace.ended_at = Some(latest);
+                    }
+
+                    trace.recalculate_stats();
+
+                    return Ok(ParseResult {
+                        trace,
+                        malformed_lines,
+                        warnings,
+                    });
+                }
+            }
+
+            for (line_idx, line_str) in content_str.lines().enumerate() {
+                let line_num = line_idx + 1;
+                let trimmed_line = line_str.trim();
+                if trimmed_line.is_empty() {
                     continue;
                 }
-            };
 
-            let trimmed = line_str.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
+                let val: Value = match serde_json::from_str(trimmed_line) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        malformed_lines += 1;
+                        warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
+                        continue;
+                    }
+                };
 
-            let val: Value = match serde_json::from_str(trimmed) {
-                Ok(v) => v,
-                Err(e) => {
-                    malformed_lines += 1;
-                    warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
-                    continue;
+                let timestamp = parse_timestamp(&val).unwrap_or_else(Utc::now);
+                if earliest_ts.is_none_or(|ts| timestamp < ts) {
+                    earliest_ts = Some(timestamp);
                 }
-            };
+                if latest_ts.is_none_or(|ts| timestamp > ts) {
+                    latest_ts = Some(timestamp);
+                }
 
-            let timestamp = parse_timestamp(&val).unwrap_or_else(Utc::now);
-            if earliest_ts.is_none_or(|ts| timestamp < ts) {
-                earliest_ts = Some(timestamp);
+                let events = parse_cursor_record(&val, &mut sequence, timestamp, line_num);
+                trace.events.extend(events);
             }
-            if latest_ts.is_none_or(|ts| timestamp > ts) {
-                latest_ts = Some(timestamp);
-            }
-
-            let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num);
-            trace.events.extend(events);
         }
 
         if let Some(earliest) = earliest_ts {
@@ -202,9 +280,9 @@ impl AgentAdapter for OpenCodeAdapter {
     }
 }
 
-fn is_candidate_opencode_file(path: &Path) -> bool {
+fn is_candidate_cursor_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    if !path_str.contains("opencode") {
+    if !path_str.contains("cursor") && !path_str.contains("composer") {
         return false;
     }
     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -214,12 +292,11 @@ fn is_candidate_opencode_file(path: &Path) -> bool {
     let lower = filename.to_lowercase();
     if lower == "config.json"
         || lower == "settings.json"
+        || lower == "keybindings.json"
+        || lower == "extensions.json"
+        || lower == "argv.json"
         || lower == "credentials.json"
-        || lower == "auth.json"
         || lower == "package.json"
-        || lower == "package-lock.json"
-        || lower == "tsconfig.json"
-        || lower == "manifest.json"
     {
         return false;
     }
@@ -240,38 +317,48 @@ fn parse_timestamp(val: &Value) -> Option<DateTime<Utc>> {
             return Some(dt.with_timezone(&Utc));
         }
     }
-    if let Some(ts_str) = val.get("created_at").and_then(|v| v.as_str()) {
+    if let Some(ts_str) = val
+        .get("createdAt")
+        .or_else(|| val.get("created_at"))
+        .and_then(|v| v.as_str())
+    {
         if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
             return Some(dt.with_timezone(&Utc));
         }
     }
-    if let Some(ts_str) = val.get("time").and_then(|v| v.as_str()) {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
-            return Some(dt.with_timezone(&Utc));
+    if let Some(millis) = val
+        .get("timestamp")
+        .or_else(|| val.get("createdAt"))
+        .and_then(|v| v.as_i64())
+    {
+        if millis > 1_000_000_000_000 {
+            return DateTime::from_timestamp_millis(millis);
+        } else {
+            return DateTime::from_timestamp(millis, 0);
         }
-    }
-    if let Some(millis) = val.get("timestamp").and_then(|v| v.as_i64()) {
-        return DateTime::from_timestamp_millis(millis);
     }
     None
 }
 
 fn extract_token_usage(usage_val: &Value) -> TokenUsage {
     let input_tokens = usage_val
-        .get("input_tokens")
+        .get("promptTokens")
         .or_else(|| usage_val.get("prompt_tokens"))
+        .or_else(|| usage_val.get("input_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let output_tokens = usage_val
-        .get("output_tokens")
+        .get("completionTokens")
         .or_else(|| usage_val.get("completion_tokens"))
+        .or_else(|| usage_val.get("output_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let cache_read_tokens = usage_val
-        .get("cache_read_tokens")
+        .get("cachedTokens")
         .or_else(|| usage_val.get("cached_tokens"))
+        .or_else(|| usage_val.get("cache_read_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
@@ -288,7 +375,7 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
     )
 }
 
-fn parse_opencode_record(
+fn parse_cursor_record(
     val: &Value,
     seq: &mut u64,
     ts: DateTime<Utc>,
@@ -297,21 +384,27 @@ fn parse_opencode_record(
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
 
-    let event_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let role = val.get("role").and_then(|v| v.as_str()).unwrap_or("");
+    let role = val
+        .get("role")
+        .or_else(|| val.get("type"))
+        .or_else(|| val.get("bubbleType"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
-    // Model invocation / Token usage extraction
+    // Model invocation / Token extraction
     if let Some(usage_val) = val
-        .get("usage")
-        .or_else(|| val.get("tokens"))
-        .or_else(|| val.get("token_usage"))
+        .get("tokens")
+        .or_else(|| val.get("usage"))
+        .or_else(|| val.get("tokenUsage"))
     {
         let usage = extract_token_usage(usage_val);
         if usage.total() > 0 {
             let model = val
                 .get("model")
+                .or_else(|| val.get("modelType"))
+                .or_else(|| val.get("modelName"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("opencode-model")
+                .unwrap_or("cursor-composer-model")
                 .to_string();
 
             *seq += 1;
@@ -323,7 +416,10 @@ fn parse_opencode_record(
                         model,
                         token_usage: usage,
                         cost_usd: val.get("cost").and_then(|c| c.as_f64()),
-                        latency_ms: val.get("latency_ms").and_then(|d| d.as_u64()),
+                        latency_ms: val
+                            .get("durationMs")
+                            .or_else(|| val.get("latency_ms"))
+                            .and_then(|d| d.as_u64()),
                     },
                 )
                 .with_raw_ref(&raw_ref),
@@ -331,9 +427,9 @@ fn parse_opencode_record(
         }
     }
 
-    match event_type {
-        "user" | "user_message" => {
-            let content = extract_opencode_content(val);
+    match role {
+        "user" | "human" | "prompt" => {
+            let content = extract_cursor_content(val);
             *seq += 1;
             events.push(
                 NormalizedEvent::new(*seq, ts, EventPayload::UserMessage { content })
@@ -341,31 +437,74 @@ fn parse_opencode_record(
             );
         }
 
-        "assistant" | "assistant_message" => {
+        "ai" | "assistant" | "composer" | "bot" => {
             let thinking = val
                 .get("thinking")
                 .or_else(|| val.get("reasoning"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
-            let content = extract_opencode_content(val);
+            let content = extract_cursor_content(val);
 
-            // Extract tool calls if present in assistant message
-            if let Some(tcs) = val
-                .get("tool_calls")
-                .or_else(|| val.get("tools"))
+            // Extract tool diffs / code edits in Composer
+            if let Some(diffs) = val
+                .get("diffs")
+                .or_else(|| val.get("codeBlocks"))
+                .or_else(|| val.get("fileModifications"))
                 .and_then(|v| v.as_array())
             {
-                for tc in tcs {
+                for d in diffs {
+                    let path = d
+                        .get("file")
+                        .or_else(|| d.get("filePath"))
+                        .or_else(|| d.get("path"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    if !path.is_empty() {
+                        let diff_text = d
+                            .get("diff")
+                            .or_else(|| d.get("content"))
+                            .or_else(|| d.get("newContent"))
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+
+                        *seq += 1;
+                        events.push(
+                            NormalizedEvent::new(
+                                *seq,
+                                ts,
+                                EventPayload::FileAction {
+                                    path,
+                                    action: FileActionType::Edit,
+                                    diff: diff_text,
+                                    lines_changed: d.get("linesChanged").and_then(|v| v.as_u64()),
+                                },
+                            )
+                            .with_raw_ref(&raw_ref),
+                        );
+                    }
+                }
+            }
+
+            // Check tool calls
+            if let Some(tools) = val
+                .get("toolCalls")
+                .or_else(|| val.get("tool_calls"))
+                .and_then(|v| v.as_array())
+            {
+                for tc in tools {
                     let id = tc.get("id").and_then(|v| v.as_str()).map(String::from);
                     let name = tc
                         .get("name")
+                        .or_else(|| tc.get("tool"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
                     let args = tc
                         .get("arguments")
-                        .or_else(|| tc.get("input"))
+                        .or_else(|| tc.get("params"))
                         .cloned()
                         .unwrap_or(Value::Null);
 
@@ -383,14 +522,7 @@ fn parse_opencode_record(
                         .with_raw_ref(&raw_ref),
                     );
 
-                    process_specific_opencode_tool_call(
-                        &name,
-                        &args,
-                        seq,
-                        ts,
-                        &raw_ref,
-                        &mut events,
-                    );
+                    process_specific_cursor_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
                 }
             }
 
@@ -407,19 +539,14 @@ fn parse_opencode_record(
             }
         }
 
-        "tool_call" | "tool_use" => {
+        "tool_call" | "tool" => {
             let id = val.get("id").and_then(|v| v.as_str()).map(String::from);
             let name = val
                 .get("name")
-                .or_else(|| val.get("tool"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
-            let args = val
-                .get("arguments")
-                .or_else(|| val.get("input"))
-                .cloned()
-                .unwrap_or(Value::Null);
+            let args = val.get("arguments").cloned().unwrap_or(Value::Null);
 
             *seq += 1;
             events.push(
@@ -435,24 +562,22 @@ fn parse_opencode_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            process_specific_opencode_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+            process_specific_cursor_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
         }
 
-        "tool_result" | "tool_output" => {
+        "tool_result" => {
             let call_id = val
-                .get("tool_call_id")
-                .or_else(|| val.get("call_id"))
+                .get("call_id")
+                .or_else(|| val.get("tool_call_id"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let is_error = val
                 .get("is_error")
-                .or_else(|| val.get("error"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             let output = val
                 .get("output")
                 .or_else(|| val.get("content"))
-                .or_else(|| val.get("result"))
                 .cloned()
                 .unwrap_or(Value::Null);
 
@@ -471,12 +596,8 @@ fn parse_opencode_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            // Infer outcome evidence
             if let Some(out_str) = output.as_str() {
-                if out_str.contains("test result: ok.")
-                    || out_str.contains("PASSED")
-                    || out_str.contains("100% tests passed")
-                {
+                if out_str.contains("test result: ok.") || out_str.contains("PASSED") {
                     *seq += 1;
                     events.push(
                         NormalizedEvent::new(
@@ -484,25 +605,8 @@ fn parse_opencode_record(
                             ts,
                             EventPayload::OutcomeEvidence(OutcomeEvidence {
                                 kind: OutcomeKind::TestOrBuildPassed,
-                                summary: "Test suite executed successfully".to_string(),
+                                summary: "Tests passed in Cursor terminal output".to_string(),
                                 confidence: 0.9,
-                            }),
-                        )
-                        .with_raw_ref(&raw_ref),
-                    );
-                } else if out_str.contains("[main ")
-                    || out_str.contains("commit ")
-                    || out_str.contains("files changed,")
-                {
-                    *seq += 1;
-                    events.push(
-                        NormalizedEvent::new(
-                            *seq,
-                            ts,
-                            EventPayload::OutcomeEvidence(OutcomeEvidence {
-                                kind: OutcomeKind::CommitObserved,
-                                summary: "Git commit observed in tool output".to_string(),
-                                confidence: 0.85,
                             }),
                         )
                         .with_raw_ref(&raw_ref),
@@ -516,9 +620,8 @@ fn parse_opencode_record(
                 .get("message")
                 .or_else(|| val.get("error"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("Unknown error")
+                .unwrap_or("Cursor error")
                 .to_string();
-
             *seq += 1;
             events.push(
                 NormalizedEvent::new(
@@ -533,31 +636,6 @@ fn parse_opencode_record(
             );
         }
 
-        _ if role == "user" => {
-            let content = extract_opencode_content(val);
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(*seq, ts, EventPayload::UserMessage { content })
-                    .with_raw_ref(&raw_ref),
-            );
-        }
-
-        _ if role == "assistant" => {
-            let content = extract_opencode_content(val);
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *seq,
-                    ts,
-                    EventPayload::AssistantMessage {
-                        content,
-                        thinking: None,
-                    },
-                )
-                .with_raw_ref(&raw_ref),
-            );
-        }
-
         _ => {
             *seq += 1;
             events.push(
@@ -565,7 +643,7 @@ fn parse_opencode_record(
                     *seq,
                     ts,
                     EventPayload::Custom {
-                        kind: event_type.to_string(),
+                        kind: role.to_string(),
                         data: val.clone(),
                     },
                 )
@@ -577,7 +655,7 @@ fn parse_opencode_record(
     events
 }
 
-fn process_specific_opencode_tool_call(
+fn process_specific_cursor_tool_call(
     name: &str,
     args: &Value,
     seq: &mut u64,
@@ -585,12 +663,11 @@ fn process_specific_opencode_tool_call(
     raw_ref: &str,
     events: &mut Vec<NormalizedEvent>,
 ) {
-    let lower_name = name.to_lowercase();
-    if lower_name == "bash"
-        || lower_name == "shell"
-        || lower_name == "exec"
-        || lower_name == "run_command"
-        || lower_name == "terminal"
+    let lower = name.to_lowercase();
+    if lower.contains("terminal")
+        || lower.contains("command")
+        || lower.contains("bash")
+        || lower.contains("shell")
     {
         if let Some(cmd) = args
             .get("command")
@@ -612,52 +689,17 @@ fn process_specific_opencode_tool_call(
                 .with_raw_ref(raw_ref),
             );
         }
-    } else if lower_name == "edit_file"
-        || lower_name == "write_file"
-        || lower_name == "edit"
-        || lower_name == "patch"
-        || lower_name == "create_file"
-    {
-        let path = args
-            .get("path")
-            .or_else(|| args.get("file_path"))
-            .or_else(|| args.get("target_file"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        if !path.is_empty() {
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *seq,
-                    ts,
-                    EventPayload::FileAction {
-                        path,
-                        action: FileActionType::Edit,
-                        diff: args
-                            .get("diff")
-                            .or_else(|| args.get("patch"))
-                            .or_else(|| args.get("content"))
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        lines_changed: None,
-                    },
-                )
-                .with_raw_ref(raw_ref),
-            );
-        }
     }
 }
 
-fn extract_opencode_content(val: &Value) -> String {
+fn extract_cursor_content(val: &Value) -> String {
+    if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
     if let Some(text) = val.get("content").and_then(|v| v.as_str()) {
         return text.to_string();
     }
     if let Some(text) = val.get("message").and_then(|v| v.as_str()) {
-        return text.to_string();
-    }
-    if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
         return text.to_string();
     }
     if let Some(arr) = val.get("content").and_then(|v| v.as_array()) {
@@ -683,65 +725,16 @@ mod tests {
     use tempfile::{tempdir, NamedTempFile};
 
     #[test]
-    fn test_parse_standard_opencode_jsonl() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = r#"
-{"type":"user_message","timestamp":"2026-08-29T10:00:00Z","content":"Optimize database queries"}
-{"type":"assistant_message","timestamp":"2026-08-29T10:00:04Z","model":"deepseek-coder-v2","usage":{"input_tokens":350,"output_tokens":110,"cache_read_tokens":50},"thinking":"Checking queries...","content":"I will inspect the query logs."}
-{"type":"tool_call","timestamp":"2026-08-29T10:00:06Z","id":"tc_1","name":"bash","arguments":{"command":"cargo test"}}
-{"type":"tool_result","timestamp":"2026-08-29T10:00:08Z","tool_call_id":"tc_1","output":"test result: ok. 5 passed; 0 failed","is_error":false}
-{"type":"assistant_message","timestamp":"2026-08-29T10:00:10Z","content":"Queries are optimized and verified."}
-"#;
-        temp.write_all(sample.as_bytes()).unwrap();
-
-        let adapter = OpenCodeAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
-
-        assert_eq!(result.malformed_lines, 0);
-        let trace = result.trace;
-        assert_eq!(trace.adapter, "opencode");
-        assert_eq!(
-            trace.stats.models_used,
-            vec!["deepseek-coder-v2".to_string()]
-        );
-        assert_eq!(trace.stats.token_usage.input_tokens, 350);
-        assert_eq!(trace.stats.token_usage.output_tokens, 110);
-        assert_eq!(trace.stats.token_usage.cache_read_tokens, 50);
-        assert_eq!(trace.stats.token_usage.total(), 510);
-        assert_eq!(trace.stats.tool_calls_count, 1);
-        assert_eq!(trace.stats.tools_used.get("bash"), Some(&1));
-        assert_eq!(trace.stats.user_messages_count, 1);
-        assert_eq!(trace.stats.assistant_messages_count, 2);
-        assert!(trace.stats.duration_seconds.unwrap() >= 10.0);
-    }
-
-    #[test]
-    fn test_parse_graceful_on_empty_and_corrupt_lines() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = "{\"type\":\"user_message\",\"content\":\"start\"}\n\n{CORRUPT_JSON_DATA}\n{\"type\":\"assistant_message\",\"content\":\"finish\"}\n";
-        temp.write_all(sample.as_bytes()).unwrap();
-
-        let adapter = OpenCodeAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
-
-        assert_eq!(result.malformed_lines, 1);
-        assert_eq!(result.trace.stats.user_messages_count, 1);
-        assert_eq!(result.trace.stats.assistant_messages_count, 1);
-    }
-
-    #[test]
-    fn test_detect_and_enumerate_opencode() {
+    fn test_detect_and_enumerate_cursor() {
         let temp = tempdir().unwrap();
-        let opencode_dir = temp.path().join(".opencode").join("sessions");
-        std::fs::create_dir_all(&opencode_dir).unwrap();
+        let cursor_dir = temp.path().join(".cursor").join("composer");
+        std::fs::create_dir_all(&cursor_dir).unwrap();
 
-        let session_file = opencode_dir.join("session_001.jsonl");
-        let mut f = File::create(&session_file).unwrap();
-        writeln!(f, "{{\"type\":\"user_message\",\"content\":\"test\"}}").unwrap();
+        let composer_file = cursor_dir.join("composer_001.jsonl");
+        let mut f = File::create(&composer_file).unwrap();
+        writeln!(f, "{{\"type\":\"user\",\"text\":\"Fix bug in component\"}}").unwrap();
 
-        let adapter = OpenCodeAdapter::new();
+        let adapter = CursorAdapter::new();
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
@@ -752,6 +745,76 @@ mod tests {
 
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
-        assert_eq!(enumerated[0].adapter_name, "opencode");
+        assert_eq!(enumerated[0].adapter_name, "cursor");
+    }
+
+    #[test]
+    fn test_parse_standard_cursor_composer_jsonl() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"bubbleType":"user","createdAt":"2026-08-29T10:00:00Z","text":"Create a auth middleware in Rust"}
+{"bubbleType":"ai","createdAt":"2026-08-29T10:00:04Z","modelType":"claude-3.5-sonnet","tokens":{"promptTokens":500,"completionTokens":120,"cachedTokens":100},"text":"Here is the middleware implementation","diffs":[{"filePath":"src/auth.rs","diff":"+pub fn auth_middleware() {}","linesChanged":1}]}
+{"type":"tool_call","timestamp":"2026-08-29T10:00:06Z","name":"run_terminal_command","arguments":{"command":"cargo test"}}
+{"type":"tool_result","timestamp":"2026-08-29T10:00:08Z","output":"test result: ok. 4 passed; 0 failed"}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CursorAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        assert_eq!(result.malformed_lines, 0);
+        let trace = result.trace;
+        assert_eq!(trace.adapter, "cursor");
+        assert_eq!(
+            trace.stats.models_used,
+            vec!["claude-3.5-sonnet".to_string()]
+        );
+        assert_eq!(trace.stats.token_usage.input_tokens, 500);
+        assert_eq!(trace.stats.token_usage.output_tokens, 120);
+        assert_eq!(trace.stats.token_usage.cache_read_tokens, 100);
+        assert_eq!(trace.stats.token_usage.total(), 720);
+        assert_eq!(trace.stats.user_messages_count, 1);
+        assert_eq!(trace.stats.assistant_messages_count, 1);
+    }
+
+    #[test]
+    fn test_parse_cursor_workspace_storage_json() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"{
+  "composerData": {
+    "conversationId": "comp-777"
+  },
+  "bubbles": [
+    {"type": "user", "text": "Refactor styling"},
+    {"type": "ai", "model": "cursor-fast", "tokens": {"promptTokens": 100, "completionTokens": 30}, "text": "Updated styles", "codeBlocks": [{"file": "src/App.css", "newContent": ".main { margin: 0; }"}]}
+  ]
+}"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CursorAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        let trace = result.trace;
+        assert_eq!(trace.stats.user_messages_count, 1);
+        assert_eq!(trace.stats.assistant_messages_count, 1);
+        assert_eq!(trace.stats.token_usage.input_tokens, 100);
+        assert_eq!(trace.stats.token_usage.output_tokens, 30);
+    }
+
+    #[test]
+    fn test_parse_graceful_on_malformed_lines() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = "{\"type\":\"user\",\"text\":\"hello\"}\n{CORRUPT_CURSOR_JSON}\n{\"type\":\"ai\",\"text\":\"hi\"}\n";
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CursorAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        assert_eq!(result.malformed_lines, 1);
+        assert_eq!(result.trace.stats.user_messages_count, 1);
+        assert_eq!(result.trace.stats.assistant_messages_count, 1);
     }
 }
