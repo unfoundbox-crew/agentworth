@@ -1,0 +1,19 @@
+[package]
+name = "agentworth-redaction"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+agentworth-schema.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex = "1.10"
+thiserror.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+chrono.workspace = true
