@@ -1,5 +1,11 @@
 # AgentWorth
 
+[![npm](https://img.shields.io/npm/v/agentworth?style=flat-square&color=000000)](https://www.npmjs.com/package/agentworth)
+[![License](https://img.shields.io/badge/license-Apache--2.0-000000?style=flat-square)](LICENSE)
+[![Privacy](https://img.shields.io/badge/telemetry-zero%20(100%25%20local)-000000?style=flat-square)](#privacy--local-first-guarantees)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-000000?style=flat-square)](#quickstart)
+[![Website](https://img.shields.io/badge/website-agentworth.dev-000000?style=flat-square)](https://agentworth.dev)
+
 **Your agents left receipts.**  
 See what your AI coding agents have actually been doing on your machine.
 
@@ -23,7 +29,11 @@ It turns gigabytes of unreadable JSONL into clean metrics, trajectories, and ver
 
 ## Quickstart
 
-Run AgentWorth directly via `npx` or install it natively with Cargo:
+| Method | Command | Description |
+| :--- | :--- | :--- |
+| **NPX (Instant)** | `npx agentworth` | Zero-install. Runs the precompiled native binary immediately. |
+| **Cargo (Native)** | `cargo install agentworth` | Compiles and installs the native Rust binary to your `$PATH`. |
+| **Source** | `cargo build --release` | Clone and build from source. |
 
 ```bash
 # Run immediately with npx
