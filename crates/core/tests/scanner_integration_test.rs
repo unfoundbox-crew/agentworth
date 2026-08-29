@@ -194,7 +194,7 @@ fn test_scanner_with_all_adapters_end_to_end() {
     let by_adapter = &summary.aggregate_stats.sessions_by_adapter;
     assert_eq!(by_adapter.get("claude_code"), Some(&1));
     assert_eq!(by_adapter.get("codex"), Some(&1));
-    assert_eq!(by_adapter.get("gemini"), Some(&1));
+    assert_eq!(by_adapter.get("antigravity"), Some(&1));
     assert_eq!(by_adapter.get("opencode"), Some(&1));
 
     // Verify models distribution

@@ -29,26 +29,31 @@ impl GeminiAdapter {
         Self
     }
 
-    /// Candidate directory paths for Gemini / Antigravity on the host machine.
+    /// Candidate directory paths for Google Antigravity (agy / Antigravity IDE / Gemini) on the host machine.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
             roots.push(home.join(".gemini"));
-            roots.push(home.join(".gemini").join("history"));
-            roots.push(home.join(".gemini").join("antigravity"));
             roots.push(home.join(".gemini").join("antigravity-cli"));
+            roots.push(home.join(".gemini").join("antigravity-ide"));
+            roots.push(home.join(".gemini").join("antigravity"));
+            roots.push(home.join(".gemini").join("brain"));
+            roots.push(home.join(".gemini").join("history"));
             roots.push(home.join(".gemini").join("sessions"));
+            roots.push(home.join(".antigravity"));
+            roots.push(home.join(".config").join("antigravity"));
             roots.push(home.join(".config").join("gemini"));
         }
         roots.push(PathBuf::from(".gemini"));
+        roots.push(PathBuf::from(".antigravity"));
         roots
     }
 }
 
 impl AgentAdapter for GeminiAdapter {
     fn name(&self) -> &'static str {
-        "gemini"
+        "antigravity"
     }
 
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
@@ -714,7 +719,7 @@ mod tests {
 
         assert_eq!(result.malformed_lines, 0);
         let trace = result.trace;
-        assert_eq!(trace.adapter, "gemini");
+        assert_eq!(trace.adapter, "antigravity");
         assert_eq!(trace.stats.models_used, vec!["gemini-2.5-pro".to_string()]);
         assert_eq!(trace.stats.token_usage.input_tokens, 600);
         assert_eq!(trace.stats.token_usage.output_tokens, 180);
@@ -785,6 +790,6 @@ mod tests {
 
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
-        assert_eq!(enumerated[0].adapter_name, "gemini");
+        assert_eq!(enumerated[0].adapter_name, "antigravity");
     }
 }

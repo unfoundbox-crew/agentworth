@@ -7,5 +7,5 @@ mod opencode;
 
 pub use claude::ClaudeCodeAdapter;
 pub use codex::CodexAdapter;
-pub use gemini::GeminiAdapter;
+pub use gemini::{GeminiAdapter, GeminiAdapter as AntigravityAdapter};
 pub use opencode::OpenCodeAdapter;
