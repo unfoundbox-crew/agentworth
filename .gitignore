@@ -13,3 +13,8 @@ target
 *.db
 *.db-journal
 *.sqlite
+
+# Node & Frontend build
+node_modules/
+dist/
+.worktrees/
