@@ -26,7 +26,7 @@ It turns gigabytes of unreadable JSONL into clean metrics, trajectories, and ver
 Run AgentWorth directly via `npx` or install it natively with Cargo:
 
 ```bash
-# Instant run (native binary wrapper)
+# Run immediately with npx
 npx agentworth
 
 # Or install natively via Cargo
@@ -186,7 +186,7 @@ apps/
   web/           React + Vite + Tailwind monochrome receipt explorer dashboard
 
 packages/
-  npm-wrapper/   Zero-dependency npx agentworth launcher
+  agentworth/    Official agentworth npm & npx package distribution
 ```
 
 ---

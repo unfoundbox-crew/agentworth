@@ -57,7 +57,7 @@ npx agentworth export <session-id> --redact --format atif --output session.atif.
 
 ## How It Works
 
-`agentworth` is a lightweight Node.js wrapper that resolves and executes the high-performance native Rust binary on your machine.
+`agentworth` resolves and executes the high-performance native Rust binary on your machine.
 
 ### Binary Resolution Order
 
