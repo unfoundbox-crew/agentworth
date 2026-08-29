@@ -39,6 +39,7 @@ All distribution methods should execute the same native binary.
 * Never infer success only because an agent says it succeeded.
 * Prefer deterministic extraction before LLM-based analysis.
 * Keep marketplace logic outside the core scanner.
+* Gemini / Antigravity (gemini-3.7-flash): Never rush or take shortcuts. Read the full specification, understand the structural intent, and execute thoroughly — other agents are not in a hurry, and accuracy beats hasty completion.
 
 ## Pipeline
 
