@@ -18,7 +18,7 @@ export const Footer: React.FC = () => {
             </p>
             <div className="flex items-center space-x-3 text-xs">
               <a
-                href="https://github.com/unfoundbox/agentworth"
+                href="https://github.com/unfoundbox-crew/agentworth"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center space-x-1 font-bold underline hover:text-zinc-600 dark:hover:text-zinc-300"
@@ -28,7 +28,7 @@ export const Footer: React.FC = () => {
               </a>
               <span className="text-zinc-400">·</span>
               <a
-                href="https://github.com/unfoundbox/agentworth/blob/main/LICENSE"
+                href="https://github.com/unfoundbox-crew/agentworth/blob/main/LICENSE"
                 target="_blank"
                 rel="noreferrer"
                 className="font-bold underline hover:text-zinc-600 dark:hover:text-zinc-300"
@@ -77,7 +77,7 @@ export const Footer: React.FC = () => {
           <div className="flex items-center space-x-4">
             <span>Built with Rust, React, Vite &amp; Tailwind</span>
             <a
-              href="https://github.com/unfoundbox/agentworth"
+              href="https://github.com/unfoundbox-crew/agentworth"
               target="_blank"
               rel="noreferrer"
               className="text-black font-semibold hover:underline flex items-center space-x-1"

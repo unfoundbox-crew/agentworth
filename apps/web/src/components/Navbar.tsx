@@ -24,7 +24,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onTriggerScan, isScanning, viewM
                 AGENTWORTH
               </span>
               <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300">
-                v0.1.0-alpha
+                v0.1.1
               </span>
             </div>
             <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono hidden sm:block">
@@ -73,7 +73,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onTriggerScan, isScanning, viewM
           )}
 
           <a
-            href="https://github.com/unfoundbox/agentworth"
+            href="https://github.com/unfoundbox-crew/agentworth"
             target="_blank"
             rel="noreferrer"
             className="flex items-center space-x-1 px-2.5 py-1 text-xs font-mono bg-black text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200 border border-black dark:border-white shadow-[2px_2px_0px_0px_rgba(0,0,0,0.3)] transition-all"

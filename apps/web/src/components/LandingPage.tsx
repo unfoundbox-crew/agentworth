@@ -16,8 +16,8 @@ export const LandingPage: React.FC<LandingPageProps> = () => {
   const installCommands = {
     npx: 'npx agentworth',
     cargo: 'cargo install agentworth',
-    brew: 'brew install unfoundbox/tap/agentworth',
-    source: 'git clone https://github.com/unfoundbox/agentworth && cd agentworth && cargo build --release',
+    brew: 'brew install unfoundbox-crew/tap/agentworth',
+    source: 'git clone https://github.com/unfoundbox-crew/agentworth && cd agentworth && cargo build --release',
   };
 
   const terminalSteps = [
@@ -77,7 +77,7 @@ export const LandingPage: React.FC<LandingPageProps> = () => {
 
           <div className="flex items-center gap-1.5 sm:gap-2">
             <a
-              href="https://github.com/unfoundbox/agentworth"
+              href="https://github.com/unfoundbox-crew/agentworth"
               target="_blank"
               rel="noreferrer"
               title="GitHub Repository"
@@ -87,7 +87,7 @@ export const LandingPage: React.FC<LandingPageProps> = () => {
               <Github className="w-4 h-4" />
             </a>
             <a
-              href="https://github.com/unfoundbox/agentworth#readme"
+              href="https://github.com/unfoundbox-crew/agentworth#readme"
               target="_blank"
               rel="noreferrer"
               title="Documentation"

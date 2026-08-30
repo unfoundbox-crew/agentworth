@@ -18,7 +18,7 @@ version = "0.1.1"
 edition = "2021"
 authors = ["AgentWorth Contributors"]
 license = "Apache-2.0"
-repository = "https://github.com/unfoundbox/agentworth"
+repository = "https://github.com/unfoundbox-crew/agentworth"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }

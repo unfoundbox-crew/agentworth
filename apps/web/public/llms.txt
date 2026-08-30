@@ -5,7 +5,7 @@
 AgentWorth turns gigabytes of unreadable JSONL agent histories into clean metrics, trajectories, and verified outcomes—showing developers exactly how many tokens they spent, which tasks succeeded, and where the loops got stuck.
 
 - Canonical Website: https://agentworth.dev/
-- GitHub Repository: https://github.com/unfoundbox/agentworth
+- GitHub Repository: https://github.com/unfoundbox-crew/agentworth
 - License: Apache-2.0 / MIT
 - Core Architecture: Native Rust scanner, SQLite WAL local index, React monochrome explorer.
 
@@ -48,4 +48,4 @@ cargo install agentworth
 
 ## Canonical Documentation
 - Full Documentation: https://agentworth.dev/llms-full.txt
-- GitHub Source: https://github.com/unfoundbox/agentworth
+- GitHub Source: https://github.com/unfoundbox-crew/agentworth

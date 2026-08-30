@@ -32,7 +32,7 @@ It turns gigabytes of unreadable JSONL into clean metrics, trajectories, and ver
 | Method | Command | Description |
 | :--- | :--- | :--- |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs the pre-built native binary directly to `~/.local/bin`. |
-| **Homebrew** | `brew install unfoundbox/tap/agentworth` | Installs via official Homebrew tap. |
+| **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | Installs via official Homebrew tap. |
 | **Cargo (Native)** | `cargo install agentworth-cli` | Compiles and installs `agentworth` & `agwt` to `~/.cargo/bin`. |
 | **NPX (Instant)** | `npx agentworth` | Zero-install runner that detects or downloads the native binary. |
 
