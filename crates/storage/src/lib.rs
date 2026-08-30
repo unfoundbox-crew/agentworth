@@ -300,7 +300,7 @@ impl Storage {
                 COALESCE(SUM(output_tokens), 0),
                 COALESCE(SUM(cache_read_tokens), 0),
                 COALESCE(SUM(cache_creation_tokens), 0),
-                MIN(started_at),
+                MIN(CASE WHEN started_at > '2020-01-01' THEN started_at ELSE NULL END),
                 MAX(started_at)
             FROM sessions
             "#,
