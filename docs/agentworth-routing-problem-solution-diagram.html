@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AgentWorth — Routing / Effort / Chaos Problem + Planned Solution</title>
+  <style>
+    :root{
+      --bg:#ffffff;
+      --ink:#111111;
+      --muted:#666666;
+      --line:#cfcfcf;
+      --soft:#f7f7f7;
+      --soft2:#fbfbfb;
+      --accent:#1f3b57;
+      --accentSoft:#eef4f9;
+      --good:#2e6b3f;
+      --warn:#8a5a12;
+      --dash:#6e7f8f;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif}
+    body{padding:28px}
+    .wrap{max-width:1540px;margin:0 auto}
+    .header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:18px}
+    h1{margin:0 0 6px 0;font-size:30px;letter-spacing:-0.02em}
+    .sub{margin:0;color:var(--muted);font-size:14px;line-height:1.5;max-width:980px}
+    .pill{padding:8px 12px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:var(--muted);white-space:nowrap}
+    .frame{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.05)}
+    svg{display:block;width:100%;min-width:1380px;height:auto;background:white}
+    .footer{margin-top:12px;color:#777;font-size:12px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div>
+      <h1>AgentWorth — The Routing / Effort / Agent Chaos Problem</h1>
+      <p class="sub">A system-design view of the current developer pain and the planned solution: a local policy engine that automatically chooses model, effort, execution shape, verifier, fallback, and cleanup based on verified outcomes in your own repos.</p>
+    </div>
+    <div class="pill">HTML + SVG · LIGHT MODE · SHAREABLE INDUSTRY ARTIFACT</div>
+  </div>
+
+  <div class="frame">
+    <svg viewBox="0 0 1540 1260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AgentWorth system design diagram showing the current problem and the planned solution">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+          <path d="M0,0 L10,5 L0,10 Z" fill="#6c757d"/>
+        </marker>
+        <marker id="arrowAccent" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+          <path d="M0,0 L10,5 L0,10 Z" fill="#1f3b57"/>
+        </marker>
+        <filter id="shadow" x="-20%" y="-20%" width="150%" height="150%">
+          <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.08"/>
+        </filter>
+        <style>
+          .title{font:700 18px Inter,system-ui,sans-serif;fill:#111}
+          .big{font:700 26px Inter,system-ui,sans-serif;fill:#111}
+          .small{font:500 12px Inter,system-ui,sans-serif;fill:#666}
+          .label{font:600 13px Inter,system-ui,sans-serif;fill:#111}
+          .mono{font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#111}
+          .tiny{font:500 10px Inter,system-ui,sans-serif;fill:#777}
+          .box{fill:#fff;stroke:#cfcfcf;stroke-width:1.3;filter:url(#shadow)}
+          .soft{fill:#f7f7f7;stroke:#d8d8d8;stroke-width:1.2}
+          .section{fill:#fbfbfb;stroke:#d9d9d9;stroke-width:1.4}
+          .accentBox{fill:#eef4f9;stroke:#aabac9;stroke-width:1.4}
+          .planned{fill:#ffffff;stroke:#6e7f8f;stroke-width:1.8;stroke-dasharray:8 6}
+          .plannedFill{fill:#f8fbfd;stroke:#6e7f8f;stroke-width:1.8;stroke-dasharray:8 6}
+          .edge{fill:none;stroke:#7c848c;stroke-width:1.7;marker-end:url(#arrow)}
+          .edgeA{fill:none;stroke:#1f3b57;stroke-width:2;marker-end:url(#arrowAccent)}
+          .edgeD{fill:none;stroke:#6e7f8f;stroke-width:1.8;stroke-dasharray:7 6;marker-end:url(#arrowAccent)}
+          .divider{stroke:#e2e2e2;stroke-width:1}
+        </style>
+      </defs>
+
+      <text x="36" y="40" class="big">1. Current State: developers are flying blind while agent fleets create hidden cost and chaos</text>
+      <text x="36" y="64" class="small">Core pain: models and effort levels are exposed as controls, but the user lacks empirical routing intelligence, objective feedback loops, and lifecycle cleanup.</text>
+
+      <rect x="28" y="88" width="1484" height="468" rx="18" class="section"/>
+
+      <rect x="54" y="122" width="208" height="104" rx="12" class="box"/>
+      <text x="74" y="150" class="title">Developer / CTO / CPO</text>
+      <text x="74" y="173" class="small">high-level intent</text>
+      <text x="74" y="192" class="small">novel R&amp;D · architecture</text>
+      <text x="74" y="211" class="small">video / AI / Rust / GPU / Web</text>
+
+      <rect x="308" y="122" width="230" height="104" rx="12" class="box"/>
+      <text x="328" y="150" class="title">Coding Harnesses</text>
+      <text x="328" y="173" class="small">Claude Code · Codex</text>
+      <text x="328" y="192" class="small">Antigravity · OpenCode</text>
+      <text x="328" y="211" class="small">worktrees · branches · PRs</text>
+
+      <path d="M262 174 L308 174" class="edge"/>
+
+      <rect x="584" y="108" width="230" height="58" rx="10" class="box"/>
+      <text x="604" y="133" class="label">Model choice</text>
+      <text x="604" y="152" class="small">Sonnet / Opus / Fable / Codex / Gemini / open models</text>
+
+      <rect x="584" y="178" width="230" height="58" rx="10" class="box"/>
+      <text x="604" y="203" class="label">Effort choice</text>
+      <text x="604" y="222" class="small">low / medium / high / xhigh / max</text>
+
+      <path d="M538 150 L584 137" class="edge"/>
+      <path d="M538 194 L584 207" class="edge"/>
+
+      <rect x="854" y="122" width="282" height="104" rx="12" class="box"/>
+      <text x="874" y="150" class="title">Execution Reality</text>
+      <text x="874" y="173" class="small">multiple attempts · retries · switches</text>
+      <text x="874" y="192" class="small">shifting providers after quota limits</text>
+      <text x="874" y="211" class="small">parallel agents where 1 may have been enough</text>
+
+      <path d="M814 137 C835 137, 835 148, 854 148" class="edge"/>
+      <path d="M814 207 C835 207, 835 200, 854 200" class="edge"/>
+
+      <rect x="1184" y="106" width="296" height="142" rx="12" class="accentBox"/>
+      <text x="1204" y="134" class="title">Blind Spot</text>
+      <text x="1204" y="159" class="small">No visibility into:</text>
+      <text x="1204" y="180" class="small">• which model/effort would have 1-shot the task</text>
+      <text x="1204" y="201" class="small">• whether retries were cheaper than starting stronger</text>
+      <text x="1204" y="222" class="small">• whether the right fix was a verifier, not a better model</text>
+
+      <path d="M1136 174 L1184 174" class="edge"/>
+
+      <rect x="58" y="288" width="1422" height="226" rx="14" class="soft"/>
+      <text x="80" y="318" class="title">Symptoms / failure modes</text>
+
+      <rect x="86" y="342" width="210" height="136" rx="12" class="box"/>
+      <text x="104" y="368" class="label">Cost opacity</text>
+      <text x="104" y="391" class="small">total tokens ≠ cost per completed task</text>
+      <text x="104" y="411" class="small">retry cost + human time invisible</text>
+      <text x="104" y="431" class="small">subscription scarcity invisible</text>
+      <text x="104" y="451" class="mono">"cheap first" may be costlier overall</text>
+
+      <rect x="320" y="342" width="210" height="136" rx="12" class="box"/>
+      <text x="338" y="368" class="label">Cache invalidation</text>
+      <text x="338" y="391" class="small">/model switch → full reread</text>
+      <text x="338" y="411" class="small">/effort switch → full reread</text>
+      <text x="338" y="431" class="small">large history becomes expensive again</text>
+      <text x="338" y="451" class="mono">switches are not free</text>
+
+      <rect x="554" y="342" width="210" height="136" rx="12" class="box"/>
+      <text x="572" y="368" class="label">Agent chaos</text>
+      <text x="572" y="391" class="small">dead worktrees / branches / PRs</text>
+      <text x="572" y="411" class="small">speculative docs everywhere</text>
+      <text x="572" y="431" class="small">handoffs across providers lose context</text>
+      <text x="572" y="451" class="mono">task identity becomes fragmented</text>
+
+      <rect x="788" y="342" width="210" height="136" rx="12" class="box"/>
+      <text x="806" y="368" class="label">Wrong escalation</text>
+      <text x="806" y="391" class="small">raise effort when issue was capability</text>
+      <text x="806" y="411" class="small">switch model when issue was verifier</text>
+      <text x="806" y="431" class="small">fan out agents on non-parallel tasks</text>
+      <text x="806" y="451" class="mono">wasted intelligence</text>
+
+      <rect x="1022" y="342" width="210" height="136" rx="12" class="box"/>
+      <text x="1040" y="368" class="label">Weak feedback loops</text>
+      <text x="1040" y="391" class="small">"done" without objective success</text>
+      <text x="1040" y="411" class="small">no local memory of what actually worked</text>
+      <text x="1040" y="431" class="small">benchmarks are public, not personal</text>
+      <text x="1040" y="451" class="mono">intuition never compounds</text>
+
+      <rect x="1256" y="342" width="196" height="136" rx="12" class="box"/>
+      <text x="1274" y="368" class="label">Quota pressure</text>
+      <text x="1274" y="391" class="small">Claude Max runs out mid-week</text>
+      <text x="1274" y="411" class="small">fallback to Codex / others is ad hoc</text>
+      <text x="1274" y="431" class="small">no shadow price for scarce capacity</text>
+      <text x="1274" y="451" class="mono">sub-optimal provider switching</text>
+
+      <text x="36" y="602" class="big">2. Planned Solution: AgentWorth becomes the local empirical policy engine</text>
+      <text x="36" y="626" class="small">The dotted boxes below are the planned system. Goal: stop asking humans to remember model-routing heuristics.</text>
+
+      <rect x="28" y="650" width="1484" height="536" rx="18" class="section"/>
+
+      <rect x="56" y="692" width="236" height="118" rx="12" class="plannedFill"/>
+      <text x="76" y="720" class="title">PLANNED · Task Intake</text>
+      <text x="76" y="744" class="small">single durable task identity</text>
+      <text x="76" y="764" class="mono">aw run "investigate WebGPU upload stalls"</text>
+      <text x="76" y="786" class="small">captures intent, repo, branch, constraints</text>
+
+      <rect x="332" y="692" width="252" height="118" rx="12" class="plannedFill"/>
+      <text x="352" y="720" class="title">PLANNED · Feature Builder</text>
+      <text x="352" y="744" class="small">task class · novelty · risk · parallelizability</text>
+      <text x="352" y="764" class="small">repo/domain signals: Rust, GPU, Web, video, AI</text>
+      <text x="352" y="786" class="small">current context size / cache risk / verifier availability</text>
+
+      <rect x="624" y="692" width="266" height="118" rx="12" class="plannedFill"/>
+      <text x="644" y="720" class="title">PLANNED · Priors + Ledger</text>
+      <text x="644" y="744" class="small">public priors + your local history</text>
+      <text x="644" y="764" class="small">task → model/effort → verified outcome</text>
+      <text x="644" y="786" class="small">cost, latency, retries, switches, cleanup</text>
+
+      <rect x="930" y="678" width="276" height="146" rx="12" class="planned"/>
+      <text x="950" y="706" class="title">PLANNED · Policy Engine</text>
+      <text x="950" y="731" class="small">optimizes cost per completed task</text>
+      <text x="950" y="752" class="small">selects:</text>
+      <text x="950" y="773" class="small">• model &amp; provider</text>
+      <text x="950" y="793" class="small">• effort level</text>
+      <text x="950" y="813" class="small">• single vs parallel execution</text>
+
+      <path d="M292 751 L332 751" class="edgeD"/>
+      <path d="M584 751 L624 751" class="edgeD"/>
+      <path d="M890 751 L930 751" class="edgeD"/>
+
+      <rect x="56" y="862" width="188" height="126" rx="12" class="planned"/>
+      <text x="76" y="890" class="title">PLANNED · Route</text>
+      <text x="76" y="914" class="small">Fable / Opus / Sonnet</text>
+      <text x="76" y="934" class="small">Codex / Gemini / Open models</text>
+      <text x="76" y="954" class="small">quota-aware fallback</text>
+
+      <rect x="266" y="862" width="188" height="126" rx="12" class="planned"/>
+      <text x="286" y="890" class="title">PLANNED · Effort</text>
+      <text x="286" y="914" class="small">low / medium / high / xhigh</text>
+      <text x="286" y="934" class="small">chosen upfront when possible</text>
+      <text x="286" y="954" class="small">avoid cache-invalidating thrash</text>
+
+      <rect x="476" y="862" width="188" height="126" rx="12" class="planned"/>
+      <text x="496" y="890" class="title">PLANNED · Shape</text>
+      <text x="496" y="914" class="small">single agent by default</text>
+      <text x="496" y="934" class="small">parallel only for breadth-first work</text>
+      <text x="496" y="954" class="small">worktree lifecycle attached to task</text>
+
+      <rect x="686" y="862" width="236" height="126" rx="12" class="planned"/>
+      <text x="706" y="890" class="title">PLANNED · Verifier Plan</text>
+      <text x="706" y="914" class="small">test / build / benchmark / screenshot</text>
+      <text x="706" y="934" class="small">if verifier missing → build verifier first</text>
+      <text x="706" y="954" class="small">objective success gate</text>
+
+      <rect x="944" y="862" width="260" height="126" rx="12" class="planned"/>
+      <text x="964" y="890" class="title">PLANNED · Compact Handoff</text>
+      <text x="964" y="914" class="small">if limits hit, move same task to fallback</text>
+      <text x="964" y="934" class="small">same identity · same verifier · same state</text>
+      <text x="964" y="954" class="small">no blind cold restart</text>
+
+      <path d="M1040 824 L150 862" class="edgeD"/>
+      <path d="M1055 824 L360 862" class="edgeD"/>
+      <path d="M1070 824 L570 862" class="edgeD"/>
+      <path d="M1085 824 L804 862" class="edgeD"/>
+      <path d="M1100 824 L1074 862" class="edgeD"/>
+
+      <rect x="1230" y="692" width="254" height="296" rx="14" class="accentBox"/>
+      <text x="1250" y="720" class="title">Execution + Feedback Loop</text>
+      <text x="1250" y="745" class="small">runs through existing harnesses</text>
+      <line x1="1250" y1="760" x2="1462" y2="760" class="divider"/>
+
+      <text x="1250" y="787" class="label">Observed outcomes</text>
+      <text x="1250" y="809" class="small">pass/fail · actual cost · retries</text>
+      <text x="1250" y="829" class="small">cache invalidation penalties</text>
+      <text x="1250" y="849" class="small">human interventions</text>
+      <text x="1250" y="869" class="small">merge / PR / cleanup result</text>
+
+      <line x1="1250" y1="885" x2="1462" y2="885" class="divider"/>
+      <text x="1250" y="912" class="label">What compounds over time</text>
+      <text x="1250" y="934" class="small">which model/effort actually worked</text>
+      <text x="1250" y="954" class="small">where you overspend or switch too early</text>
+      <text x="1250" y="974" class="small">what task classes need Fable/Opus</text>
+
+      <path d="M244 926 C375 926, 375 720, 1230 720" class="edgeA"/>
+      <path d="M454 926 C540 926, 540 740, 1230 740" class="edgeA"/>
+      <path d="M664 926 C740 926, 740 760, 1230 760" class="edgeA"/>
+      <path d="M922 926 C1000 926, 1000 780, 1230 780" class="edgeA"/>
+      <path d="M1204 926 C1215 926, 1218 900, 1230 900" class="edgeA"/>
+
+      <path d="M1230 950 C1180 950, 1180 1048, 890 1048" class="edgeD"/>
+      <text x="920" y="1072" class="small">verified outcomes update local policy</text>
+
+      <rect x="56" y="1030" width="1038" height="126" rx="14" class="soft"/>
+      <text x="76" y="1060" class="title">Who would want this?</text>
+
+      <rect x="78" y="1080" width="184" height="52" rx="10" class="box"/>
+      <text x="96" y="1103" class="label">Solo builders</text>
+      <text x="96" y="1120" class="small">heavy Claude/Codex users</text>
+
+      <rect x="280" y="1080" width="184" height="52" rx="10" class="box"/>
+      <text x="298" y="1103" class="label">Startup teams</text>
+      <text x="298" y="1120" class="small">cost + chaos + throughput</text>
+
+      <rect x="482" y="1080" width="184" height="52" rx="10" class="box"/>
+      <text x="500" y="1103" class="label">AI infra / labs</text>
+      <text x="500" y="1120" class="small">routing / eval / policy data</text>
+
+      <rect x="684" y="1080" width="184" height="52" rx="10" class="box"/>
+      <text x="702" y="1103" class="label">OSS communities</text>
+      <text x="702" y="1120" class="small">open standard for agent work</text>
+
+      <rect x="886" y="1080" width="184" height="52" rx="10" class="box"/>
+      <text x="904" y="1103" class="label">Devtool vendors</text>
+      <text x="904" y="1120" class="small">plug-in policy / telemetry layer</text>
+
+      <rect x="1124" y="1030" width="360" height="126" rx="14" class="accentBox"/>
+      <text x="1146" y="1060" class="title">Core thesis</text>
+      <text x="1146" y="1085" class="small">The missing product is not another coding agent.</text>
+      <text x="1146" y="1106" class="small">It is a local empirical policy layer that answers:</text>
+      <text x="1146" y="1128" class="mono">Which brain? How hard? How to work?</text>
+      <text x="1146" y="1150" class="small">then learns from verified results in your own environment.</text>
+    </svg>
+  </div>
+
+  <div class="footer">
+    Suggested call for feedback when sharing: “If you use Claude/Codex/Gemini/OpenCode for real development, would you want a local tool that automatically chooses model, effort, verifier, fallback, and cleanup based on what has actually worked in your repos?”
+  </div>
+</div>
+</body>
+</html>
