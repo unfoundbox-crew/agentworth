@@ -1,11 +1,12 @@
 {
   "name": "agentworth",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Discover, normalize, and understand AI-agent histories locally.",
   "type": "module",
   "main": "./lib/resolver.js",
   "bin": {
-    "agentworth": "./bin/agentworth.js"
+    "agentworth": "bin/agentworth.js",
+    "agwt": "bin/agentworth.js"
   },
   "scripts": {
     "test": "node --test"
@@ -22,8 +23,16 @@
     "analytics",
     "developer-tools"
   ],
-  "author": "Unfoundbox",
+  "author": "Unfoundbox Crew",
   "license": "Apache-2.0",
+  "homepage": "https://agentworth.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unfoundbox-crew/agentworth.git"
+  },
+  "bugs": {
+    "url": "https://github.com/unfoundbox-crew/agentworth/issues"
+  },
   "engines": {
     "node": ">=18.0.0"
   },

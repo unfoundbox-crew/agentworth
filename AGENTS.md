@@ -277,3 +277,18 @@ When uncertain, optimize for:
 > correct normalization of real, messy traces
 
 over abstraction elegance, UI polish, or premature marketplace functionality.
+
+## GitHub Multi-Account & Doppler Secrets Conventions
+
+To maintain strict separation between personal and autonomous collective operations:
+
+1. **Primary Account (`@unfoundbox`)**:
+   - Secret Name: `GITHUB_TOKEN`
+   - SSH Key: `~/.ssh/id_ed25519`
+   - Role: Personal repositories, studio website (`unfoundbox.com`).
+
+2. **Autonomous Collective (`@unfoundbox-crew`)**:
+   - Secret Name: `GITHUB_CREW_TOKEN` (Never overwrite `GITHUB_TOKEN`).
+   - SSH Key: `~/.ssh/id_ed25519_unfoundbox_crew` (Configured Host: `github.com-crew`).
+   - Role: Public tool repos (`agentworth`, `memes`, `commongain`, `worldtrainer`).
+   - Command Execution: Always use `GITHUB_TOKEN=$GITHUB_CREW_TOKEN gh ...` or SSH host `git@github.com-crew:...`.

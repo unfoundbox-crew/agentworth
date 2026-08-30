@@ -22,7 +22,7 @@ npx agentworth
 
 ### CLI Subcommands
 
-Scan and index local agent histories (Claude Code, Codex, Gemini CLI, OpenCode):
+Scan and index local agent histories across 11 agent adapters:
 
 ```bash
 npx agentworth scan
@@ -32,6 +32,19 @@ View summary statistics across all indexed traces:
 
 ```bash
 npx agentworth stats
+```
+
+Inspect token rollups, costs, and rolling pacing:
+
+```bash
+npx agentworth usage --period day
+npx agentworth usage --pacing
+```
+
+Trace file modifications back to the AI agent session and prompt:
+
+```bash
+npx agentworth blame src/main.rs
 ```
 
 List indexed sessions with filtering by adapter or model:
@@ -76,16 +89,12 @@ The launcher searches for the native binary in the following priority order:
 
 You can also install the native AgentWorth binary directly:
 
-```bash
-# Via Homebrew
-brew install agentworth
-
-# Via Standalone Installer
-curl -fsSL https://agentworth.dev/install.sh | sh
-
-# Via Cargo
-cargo install --path apps/cli
-```
+| Method | Command | Description |
+| :--- | :--- | :--- |
+| **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh | sh` | Installs the pre-built native binary directly to `~/.local/bin`. |
+| **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | Installs via official Homebrew tap. |
+| **Cargo (Native)** | `cargo install agentworth-cli` | Compiles and installs `agentworth` & `agwt` to `~/.cargo/bin`. |
+| **NPX (Instant)** | `npx agentworth` | Zero-install runner that detects or downloads the native binary. |
 
 ---
 

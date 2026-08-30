@@ -120,6 +120,39 @@ enum Commands {
         dist: Option<PathBuf>,
     },
 
+    /// View deep usage, pacing, and token expenditure rollups
+    Usage {
+        /// Rollup period: day, week, or month
+        #[arg(short, long, default_value = "day", value_parser = ["day", "week", "month"])]
+        period: String,
+
+        /// Show 5-hour rolling pacing window (burn rate, active models, quota headroom)
+        #[arg(long)]
+        pacing: bool,
+
+        /// Pacing window duration in hours
+        #[arg(long, default_value_t = 5)]
+        hours: i64,
+
+        /// Maximum number of rows to display
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+
+        /// Output usage data as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Trace file modifications back to the AI agent session, model, and prompt that authored them
+    Blame {
+        /// Target file path or pattern to search
+        file_path: String,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Check local environment, adapter discoveries, and SQLite database health
     Doctor {
         /// Output diagnostic report as formatted JSON
@@ -170,6 +203,18 @@ fn main() -> Result<()> {
             output,
         } => {
             run_export_command(&session_id, redact, &format, output.as_deref(), cli.db_path)?;
+        }
+        Commands::Usage {
+            period,
+            pacing,
+            hours,
+            limit,
+            json,
+        } => {
+            run_usage_command(&period, pacing, hours, limit, json, cli.db_path)?;
+        }
+        Commands::Blame { file_path, json } => {
+            run_blame_command(&file_path, json, cli.db_path)?;
         }
         Commands::Serve { port, open, dist } => {
             let storage = open_storage(cli.db_path)?;
@@ -303,12 +348,23 @@ fn run_stats_command(json: bool, db_path: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+fn print_archie_ascii_banner() {
+    println!();
+    println!("       {}", style("┌───────────┐").dim());
+    println!("       {}   {}", style("│ ( • _ • ) │").bold().cyan(), style("\"Your agents left receipts.\"").italic());
+    println!("       {}    {}", style("│  /| 🔎 |\\ │").bold(), style("────────────────────────────").dim());
+    println!("       {}    {}", style("│  / |  | \\ │").dim(), style("• Digging through dotfiles").dim());
+    println!("       {}    {}", style("│   /    \\  │").dim(), style("• Auditing token burn pacing").dim());
+    println!("       {}    {}", style("└───┴────┴──┘").dim(), style("• Tracing line-by-line lineage").dim());
+    println!();
+}
+
 fn print_stats_view(
     stats: &agentworth_storage::AggregateStats,
     top_repos: &[(String, usize)],
     db_path: Option<&std::path::Path>,
 ) {
-    println!();
+    print_archie_ascii_banner();
     println!(
         "{}",
         style("┌──────────────────────────────────────────────────────────┐").bold()
@@ -1209,7 +1265,7 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
         return Ok(());
     }
 
-    println!();
+    print_archie_ascii_banner();
     println!(
         "{}",
         style("┌──────────────────────────────────────────────────────────┐").bold()
@@ -1273,6 +1329,281 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
             style(&d.adapter_name).bold(),
             if d.is_present { style(status_str).green() } else { style(status_str).dim() }
         );
+    }
+
+    println!(
+        "{}",
+        style("└──────────────────────────────────────────────────────────┘").bold()
+    );
+    println!();
+
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// Command: Usage & Pacing
+// -----------------------------------------------------------------------------
+
+fn run_usage_command(
+    period: &str,
+    pacing: bool,
+    hours: i64,
+    limit: usize,
+    json: bool,
+    db_path: Option<PathBuf>,
+) -> Result<()> {
+    let storage = open_storage(db_path)?;
+
+    if pacing {
+        let p = storage.get_pacing_window(hours)?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&p)?);
+            return Ok(());
+        }
+
+        println!();
+        println!(
+            "{}",
+            style("┌──────────────────────────────────────────────────────────┐").bold()
+        );
+        println!(
+            "│ {}                   │",
+            style(format!("⏱️  {}-Hour Rolling Pacing Window", hours)).bold()
+        );
+        println!(
+            "{}",
+            style("├──────────────────────────────────────────────────────────┤").bold()
+        );
+        println!(
+            "│ Window:          {} -> {} │",
+            style(p.started_at.format("%Y-%m-%d %H:%M").to_string()).cyan(),
+            style(p.ended_at.format("%H:%M").to_string()).cyan(),
+        );
+        println!(
+            "│ Sessions Active: {:<39} │",
+            style(p.session_count).bold()
+        );
+        println!(
+            "│ Total Events:    {:<39} │",
+            style(p.total_events).bold()
+        );
+        println!(
+            "│ Tokens Consumed: {:<39} │",
+            style(format!(
+                "{} ({:.2}M)",
+                format_number(p.total_tokens),
+                p.total_tokens as f64 / 1_000_000.0
+            ))
+            .green()
+            .bold()
+        );
+        println!(
+            "│ Burn Velocity:   {:<39} │",
+            style(format!(
+                "{:.1}M tokens / hour",
+                p.burn_rate_tokens_per_hour / 1_000_000.0
+            ))
+            .yellow()
+        );
+        println!(
+            "│ Prompt Caching:  {:<39} │",
+            style(format!("{:.1}% cache hit ratio", p.cache_hit_ratio)).cyan()
+        );
+        println!(
+            "│ Estimated Cost:  {:<39} │",
+            style(format!("${:.2} USD", p.estimated_cost_usd))
+                .magenta()
+                .bold()
+        );
+
+        if !p.active_adapters.is_empty() {
+            println!(
+                "{}",
+                style("├──────────────────────────────────────────────────────────┤").bold()
+            );
+            println!("│ Active Adapters in Window:                               │");
+            for a in &p.active_adapters {
+                println!("│   • {:<52} │", style(a).cyan());
+            }
+        }
+
+        if !p.active_models.is_empty() {
+            println!(
+                "{}",
+                style("├──────────────────────────────────────────────────────────┤").bold()
+            );
+            println!("│ Active Models in Window:                                 │");
+            for m in &p.active_models {
+                println!("│   • {:<52} │", style(m).green());
+            }
+        }
+
+        println!(
+            "{}",
+            style("└──────────────────────────────────────────────────────────┘").bold()
+        );
+        println!();
+        return Ok(());
+    }
+
+    let records = match period {
+        "week" => storage.get_weekly_usage(Some(limit))?,
+        "month" => storage.get_monthly_usage(Some(limit))?,
+        _ => storage.get_daily_usage(Some(limit))?,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&records)?);
+        return Ok(());
+    }
+
+    if records.is_empty() {
+        println!("No usage records found. Run `agwt scan` to index local sessions.");
+        return Ok(());
+    }
+
+    let title = match period {
+        "week" => "📅 AgentWorth Weekly Usage Rollup",
+        "month" => "🗓️  AgentWorth Monthly Usage Rollup",
+        _ => "📊 AgentWorth Daily Usage Ledger",
+    };
+
+    println!();
+    println!("{}", style(format!("┌─ {} ───────────────────────────────────────────┐", title)).bold());
+    println!(
+        "{}",
+        style("├────────────┬─────────────┬───────────┬────────────┬────────────┬────────────┬───────────┤").bold()
+    );
+    println!(
+        "│ {:<10} │ {:<11} │ {:<9} │ {:<10} │ {:<10} │ {:<10} │ {:<9} │",
+        style("PERIOD").bold(),
+        style("ADAPTER").bold(),
+        style("SESSIONS").bold(),
+        style("INPUT").bold(),
+        style("OUTPUT").bold(),
+        style("CACHE READ").bold(),
+        style("EST. COST").bold()
+    );
+    println!(
+        "{}",
+        style("├────────────┼─────────────┼───────────┼────────────┼────────────┼────────────┼───────────┤").bold()
+    );
+
+    let mut total_sessions = 0;
+    let mut total_tokens = 0;
+    let mut total_cost = 0.0;
+
+    for r in &records {
+        total_sessions += r.session_count;
+        total_tokens += r.total_tokens;
+        total_cost += r.estimated_cost_usd;
+
+        let input_disp = format_number(r.input_tokens);
+        let output_disp = format_number(r.output_tokens);
+        let cache_disp = format_number(r.cache_read_tokens);
+        let cost_disp = format!("${:.2}", r.estimated_cost_usd);
+
+        println!(
+            "│ {:<10} │ {:<11} │ {:>9} │ {:>10} │ {:>10} │ {:>10} │ {:>9} │",
+            style(&r.period).cyan(),
+            style(&r.adapter).green(),
+            r.session_count,
+            input_disp,
+            output_disp,
+            cache_disp,
+            style(cost_disp).magenta()
+        );
+    }
+
+    println!(
+        "{}",
+        style("├────────────┴─────────────┼───────────┼────────────┴────────────┼────────────┼───────────┤").bold()
+    );
+    println!(
+        "│ TOTAL (Displayed)        │ {:>9} │ {:<23} │ {:>10} │ {:>9} │",
+        style(total_sessions).bold(),
+        "",
+        style(format_number(total_tokens)).bold(),
+        style(format!("${:.2}", total_cost)).bold().magenta()
+    );
+    println!(
+        "{}",
+        style("└──────────────────────────┴───────────┴─────────────────────────┴────────────┴───────────┘").bold()
+    );
+    println!();
+
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// Command: Blame
+// -----------------------------------------------------------------------------
+
+fn run_blame_command(
+    file_path: &str,
+    json: bool,
+    db_path: Option<PathBuf>,
+) -> Result<()> {
+    let storage = open_storage(db_path)?;
+    let matches = storage.find_sessions_for_blame(file_path)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&matches)?);
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "{}",
+        style("┌──────────────────────────────────────────────────────────┐").bold()
+    );
+    println!(
+        "│ {}             │",
+        style(format!("🔍 AI Code Blame: {}", if file_path.len() > 38 { format!("...{}", &file_path[file_path.len()-35..]) } else { file_path.to_string() })).bold()
+    );
+    println!(
+        "{}",
+        style("├──────────────────────────────────────────────────────────┤").bold()
+    );
+
+    if matches.is_empty() {
+        println!("│ No indexed sessions modified files matching pattern.     │");
+    } else {
+        println!("│ Found {} session(s) touching this path:                  │", matches.len());
+        println!(
+            "{}",
+            style("├──────────────────────────────────────────────────────────┤").bold()
+        );
+        for (i, m) in matches.iter().enumerate() {
+            println!(
+                "│ [{}] Session: {:<43} │",
+                i + 1,
+                style(&m.session_id).cyan().bold()
+            );
+            println!(
+                "│     Adapter:   {:<41} │",
+                style(&m.adapter).green()
+            );
+            println!(
+                "│     Timestamp: {:<41} │",
+                m.started_at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+            );
+            if !m.models_used.is_empty() {
+                println!(
+                    "│     Models:    {:<41} │",
+                    style(m.models_used.join(", ")).yellow()
+                );
+            }
+            println!(
+                "│     Tokens:    {:<41} │",
+                format!("{} tokens ({} tool calls)", format_number(m.total_tokens), m.tool_calls_count)
+            );
+            if i + 1 < matches.len() {
+                println!(
+                    "│                                                          │"
+                );
+            }
+        }
     }
 
     println!(

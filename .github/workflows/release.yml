@@ -21,7 +21,7 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             binary_name: agentworth
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             binary_name: agentworth
           - os: ubuntu-latest
@@ -108,7 +108,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: 'https://registry.npmjs.org'
 
       - name: Update package.json version from tag

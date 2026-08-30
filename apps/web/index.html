@@ -7,6 +7,21 @@
     <!-- Chrome WebMCP Origin Trial -->
     <meta http-equiv="origin-trial" content="A0GWeUm4e3ZTkxTQyV42DqvprHDZo4Am5s2fNtsyij+hO22qqp3vBUL1N6MgKyW+BaMaIX44wJGTO7Kyk8XbYA8AAAB1eyJvcmlnaW4iOiJodHRwczovL2FnZW50d29ydGguZGV2OjQ0MyIsImZlYXR1cmUiOiJXZWJNQ1AiLCJleHBpcnkiOjE3OTQ4NzM2MDAsImlzU3ViZG9tYWluIjp0cnVlLCJpc1RoaXJkUGFydHkiOnRydWV9" />
     
+    <!-- Theme Initialization Script -->
+    <script>
+      (function() {
+        try {
+          var stored = localStorage.getItem('agentworth_theme') || 'light';
+          var isDark = stored === 'dark' || (stored === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
+
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-BL0XD4ZQCS"></script>
     <script>
@@ -73,7 +88,7 @@
           "applicationCategory": "DeveloperApplication",
           "description": "A local-first native Rust tool that discovers, normalizes, and indexes AI coding-agent trajectories sitting in your computer's dotfiles.",
           "url": "https://agentworth.dev/",
-          "license": "https://github.com/unfoundbox/agentworth/blob/main/LICENSE",
+          "license": "https://github.com/unfoundbox-crew/agentworth/blob/main/LICENSE",
           "offers": {
             "@type": "Offer",
             "price": "0",
@@ -81,8 +96,8 @@
           },
           "author": {
             "@type": "Organization",
-            "name": "Unfoundbox",
-            "url": "https://github.com/unfoundbox"
+            "name": "Unfoundbox Crew",
+            "url": "https://github.com/unfoundbox-crew"
           }
         },
         {

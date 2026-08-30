@@ -68,6 +68,55 @@ pub struct SessionSummary {
     pub models_used: Vec<String>,
 }
 
+/// Usage aggregation rollup for a time period (Day, Week, Month).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsagePeriodSummary {
+    pub period: String,
+    pub adapter: String,
+    pub session_count: usize,
+    pub total_events: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub total_tokens: u64,
+    pub total_duration_seconds: f64,
+    pub estimated_cost_usd: f64,
+    pub cache_hit_ratio: f64,
+}
+
+/// Rolling pacing window summary (e.g. 5-hour window).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PacingSummary {
+    pub window_hours: i64,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub session_count: usize,
+    pub total_events: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub total_tokens: u64,
+    pub burn_rate_tokens_per_hour: f64,
+    pub estimated_cost_usd: f64,
+    pub cache_hit_ratio: f64,
+    pub active_adapters: Vec<String>,
+    pub active_models: Vec<String>,
+}
+
+/// AI Code Blame record matching a file modification.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlameMatch {
+    pub session_id: String,
+    pub adapter: String,
+    pub source_path: String,
+    pub started_at: DateTime<Utc>,
+    pub models_used: Vec<String>,
+    pub total_tokens: u64,
+    pub tool_calls_count: usize,
+}
+
 /// SQLite-backed storage index.
 pub struct Storage {
     conn: Mutex<Connection>,
@@ -164,6 +213,57 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_sessions_duration ON sessions(duration_seconds);
             CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
             CREATE INDEX IF NOT EXISTS idx_sources_fingerprint ON sources(fingerprint);
+
+            CREATE VIEW IF NOT EXISTS v_daily_usage AS
+            SELECT
+                DATE(started_at) AS period,
+                adapter,
+                COUNT(*) AS session_count,
+                COALESCE(SUM(total_events), 0) AS total_events,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(duration_seconds), 0.0) AS total_duration_seconds
+            FROM sessions
+            WHERE started_at > '2020-01-01'
+            GROUP BY DATE(started_at), adapter
+            ORDER BY period DESC, total_tokens DESC;
+
+            CREATE VIEW IF NOT EXISTS v_weekly_usage AS
+            SELECT
+                strftime('%Y-W%W', started_at) AS period,
+                adapter,
+                COUNT(*) AS session_count,
+                COALESCE(SUM(total_events), 0) AS total_events,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(duration_seconds), 0.0) AS total_duration_seconds
+            FROM sessions
+            WHERE started_at > '2020-01-01'
+            GROUP BY strftime('%Y-W%W', started_at), adapter
+            ORDER BY period DESC, total_tokens DESC;
+
+            CREATE VIEW IF NOT EXISTS v_monthly_usage AS
+            SELECT
+                strftime('%Y-%m', started_at) AS period,
+                adapter,
+                COUNT(*) AS session_count,
+                COALESCE(SUM(total_events), 0) AS total_events,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(duration_seconds), 0.0) AS total_duration_seconds
+            FROM sessions
+            WHERE started_at > '2020-01-01'
+            GROUP BY strftime('%Y-%m', started_at), adapter
+            ORDER BY period DESC, total_tokens DESC;
             "#,
         )?;
 
@@ -300,7 +400,7 @@ impl Storage {
                 COALESCE(SUM(output_tokens), 0),
                 COALESCE(SUM(cache_read_tokens), 0),
                 COALESCE(SUM(cache_creation_tokens), 0),
-                MIN(started_at),
+                MIN(CASE WHEN started_at > '2020-01-01' THEN started_at ELSE NULL END),
                 MAX(started_at)
             FROM sessions
             "#,
@@ -498,6 +598,240 @@ impl Storage {
         let mut ranked: Vec<(String, usize)> = repo_counts.into_iter().collect();
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         Ok(ranked)
+    }
+
+    /// Retrieve daily usage summaries grouped by day and adapter.
+    pub fn get_daily_usage(&self, limit: Option<usize>) -> Result<Vec<UsagePeriodSummary>> {
+        self.query_usage_view("v_daily_usage", limit.unwrap_or(30))
+    }
+
+    /// Retrieve weekly usage summaries grouped by week and adapter.
+    pub fn get_weekly_usage(&self, limit: Option<usize>) -> Result<Vec<UsagePeriodSummary>> {
+        self.query_usage_view("v_weekly_usage", limit.unwrap_or(20))
+    }
+
+    /// Retrieve monthly usage summaries grouped by month and adapter.
+    pub fn get_monthly_usage(&self, limit: Option<usize>) -> Result<Vec<UsagePeriodSummary>> {
+        self.query_usage_view("v_monthly_usage", limit.unwrap_or(12))
+    }
+
+    fn query_usage_view(&self, view_name: &str, limit: usize) -> Result<Vec<UsagePeriodSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!(
+            "SELECT period, adapter, session_count, total_events, input_tokens, output_tokens, \
+             cache_read_tokens, cache_creation_tokens, total_tokens, total_duration_seconds \
+             FROM {} LIMIT ?1",
+            view_name
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![limit as i64])?;
+        let mut results = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            let period: String = row.get(0)?;
+            let adapter: String = row.get(1)?;
+            let session_count: i64 = row.get(2)?;
+            let total_events: i64 = row.get(3)?;
+            let input: i64 = row.get(4)?;
+            let output: i64 = row.get(5)?;
+            let cache_read: i64 = row.get(6)?;
+            let cache_creation: i64 = row.get(7)?;
+            let total: i64 = row.get(8)?;
+            let duration: f64 = row.get(9)?;
+
+            let estimated_cost_usd = estimate_tokens_cost_usd(
+                input as u64,
+                output as u64,
+                cache_read as u64,
+                cache_creation as u64,
+            );
+            let cache_hit_ratio =
+                calculate_cache_hit_ratio(input as u64, cache_read as u64, cache_creation as u64);
+
+            results.push(UsagePeriodSummary {
+                period,
+                adapter,
+                session_count: session_count as usize,
+                total_events: total_events as usize,
+                input_tokens: input as u64,
+                output_tokens: output as u64,
+                cache_read_tokens: cache_read as u64,
+                cache_creation_tokens: cache_creation as u64,
+                total_tokens: total as u64,
+                total_duration_seconds: duration,
+                estimated_cost_usd,
+                cache_hit_ratio,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Calculate rolling pacing summary for the last N hours.
+    pub fn get_pacing_window(&self, hours: i64) -> Result<PacingSummary> {
+        let conn = self.conn.lock().unwrap();
+
+        // Get max date in DB as anchor if current real-time clock has no recent sessions
+        let mut max_stmt = conn.prepare("SELECT MAX(started_at) FROM sessions")?;
+        let max_str: Option<String> = max_stmt.query_row([], |r| r.get(0)).ok();
+        let anchor_time = max_str
+            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc)))
+            .unwrap_or_else(Utc::now);
+
+        let window_start = anchor_time - chrono::Duration::hours(hours);
+        let start_str = window_start.to_rfc3339();
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                COUNT(*),
+                COALESCE(SUM(total_events), 0),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0),
+                COALESCE(SUM(cache_read_tokens), 0),
+                COALESCE(SUM(cache_creation_tokens), 0),
+                COALESCE(SUM(total_tokens), 0)
+            FROM sessions
+            WHERE started_at >= ?1
+            "#,
+        )?;
+
+        let mut rows = stmt.query(params![start_str])?;
+        let (session_count, total_events, input, output, cache_read, cache_creation, total) =
+            if let Some(row) = rows.next()? {
+                (
+                    row.get::<_, i64>(0)? as usize,
+                    row.get::<_, i64>(1)? as usize,
+                    row.get::<_, i64>(2)? as u64,
+                    row.get::<_, i64>(3)? as u64,
+                    row.get::<_, i64>(4)? as u64,
+                    row.get::<_, i64>(5)? as u64,
+                    row.get::<_, i64>(6)? as u64,
+                )
+            } else {
+                (0, 0, 0, 0, 0, 0, 0)
+            };
+
+        // Query active adapters in this window
+        let mut ad_stmt = conn.prepare(
+            "SELECT DISTINCT adapter FROM sessions WHERE started_at >= ?1 ORDER BY adapter",
+        )?;
+        let mut ad_rows = ad_stmt.query(params![start_str])?;
+        let mut active_adapters = Vec::new();
+        while let Some(r) = ad_rows.next()? {
+            active_adapters.push(r.get(0)?);
+        }
+
+        let mut mod_stmt =
+            conn.prepare("SELECT models_used FROM sessions WHERE started_at >= ?1")?;
+        let mut mod_rows = mod_stmt.query(params![start_str])?;
+        let mut model_set = std::collections::BTreeSet::new();
+        while let Some(r) = mod_rows.next()? {
+            let m_str: String = r.get(0)?;
+            if let Ok(models) = serde_json::from_str::<Vec<String>>(&m_str) {
+                for m in models {
+                    model_set.insert(m);
+                }
+            }
+        }
+
+        let burn_rate_tokens_per_hour = if hours > 0 {
+            total as f64 / hours as f64
+        } else {
+            0.0
+        };
+
+        let estimated_cost_usd =
+            estimate_tokens_cost_usd(input, output, cache_read, cache_creation);
+        let cache_hit_ratio = calculate_cache_hit_ratio(input, cache_read, cache_creation);
+
+        Ok(PacingSummary {
+            window_hours: hours,
+            started_at: window_start,
+            ended_at: anchor_time,
+            session_count,
+            total_events,
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
+            total_tokens: total,
+            burn_rate_tokens_per_hour,
+            estimated_cost_usd,
+            cache_hit_ratio,
+            active_adapters,
+            active_models: model_set.into_iter().collect(),
+        })
+    }
+
+    /// Search sessions that modified or touched a specific target file path for AI Code Blame.
+    pub fn find_sessions_for_blame(&self, file_path_pattern: &str) -> Result<Vec<BlameMatch>> {
+        let conn = self.conn.lock().unwrap();
+        let pattern = format!("%{}%", file_path_pattern);
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, adapter, source_path, started_at, models_used, total_tokens, tool_calls_count
+            FROM sessions
+            WHERE source_path LIKE ?1 OR metadata LIKE ?1 OR tools_used LIKE ?1
+            ORDER BY started_at DESC
+            LIMIT 25
+            "#,
+        )?;
+
+        let mut rows = stmt.query(params![pattern])?;
+        let mut results = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            let session_id: String = row.get(0)?;
+            let adapter: String = row.get(1)?;
+            let source_path: String = row.get(2)?;
+            let started_str: String = row.get(3)?;
+            let models_str: String = row.get(4)?;
+            let total_tokens: i64 = row.get(5)?;
+            let tool_calls_count: i64 = row.get(6)?;
+
+            let started_at = DateTime::parse_from_rfc3339(&started_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            let models_used = serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default();
+
+            results.push(BlameMatch {
+                session_id,
+                adapter,
+                source_path,
+                started_at,
+                models_used,
+                total_tokens: total_tokens as u64,
+                tool_calls_count: tool_calls_count as usize,
+            });
+        }
+
+        Ok(results)
+    }
+}
+
+/// Estimate developer token cost in USD based on standard blended pricing.
+pub fn estimate_tokens_cost_usd(
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_creation: u64,
+) -> f64 {
+    (input as f64 * 3.0 / 1_000_000.0)
+        + (output as f64 * 15.0 / 1_000_000.0)
+        + (cache_read as f64 * 0.30 / 1_000_000.0)
+        + (cache_creation as f64 * 3.75 / 1_000_000.0)
+}
+
+/// Calculate prompt cache hit percentage.
+pub fn calculate_cache_hit_ratio(input: u64, cache_read: u64, cache_creation: u64) -> f64 {
+    let total_input = input + cache_read + cache_creation;
+    if total_input == 0 {
+        0.0
+    } else {
+        (cache_read as f64 / total_input as f64) * 100.0
     }
 }
 
@@ -779,5 +1113,103 @@ mod tests {
         assert!(!repos.is_empty());
         assert_eq!(repos[0].0, "unfoundbox/agentworth");
         assert_eq!(repos[0].1, 2);
+    }
+
+    #[test]
+    fn test_usage_views_daily_weekly_monthly() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base_date = DateTime::parse_from_rfc3339("2026-08-30T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // Insert sessions across 2 days
+        for day_offset in 0..2 {
+            let prov = Provenance::new(
+                format!("/path/to/day{}/session.jsonl", day_offset),
+                "claude_code",
+                100,
+                100,
+                format!("fp_day{}", day_offset),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess_day_{}", day_offset),
+                "claude_code",
+                prov,
+                base_date - Duration::days(day_offset),
+            );
+            trace.stats.token_usage = TokenUsage::new(1000, 200, 5000, 500);
+            trace.stats.total_events = 15;
+            trace.stats.duration_seconds = Some(120.0);
+            storage.upsert_trace(&trace).expect("upsert trace");
+        }
+
+        let daily = storage.get_daily_usage(Some(10)).expect("daily usage");
+        assert_eq!(daily.len(), 2);
+        assert_eq!(daily[0].session_count, 1);
+        assert_eq!(daily[0].input_tokens, 1000);
+        assert_eq!(daily[0].cache_read_tokens, 5000);
+        assert!(daily[0].estimated_cost_usd > 0.0);
+        assert!(daily[0].cache_hit_ratio > 0.0);
+
+        let weekly = storage.get_weekly_usage(Some(10)).expect("weekly usage");
+        assert!(!weekly.is_empty());
+
+        let monthly = storage.get_monthly_usage(Some(10)).expect("monthly usage");
+        assert!(!monthly.is_empty());
+    }
+
+    #[test]
+    fn test_pacing_window_calculation() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let now = DateTime::parse_from_rfc3339("2026-08-30T18:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // Insert 1 session 1 hour ago, and 1 session 10 hours ago
+        let prov1 = Provenance::new("/path/s1.jsonl", "claude_code", 100, 100, "fp1");
+        let mut trace1 =
+            AgentWorthTrace::new("sess_recent", "claude_code", prov1, now - Duration::hours(1));
+        trace1.stats.token_usage = TokenUsage::new(5000, 1000, 20000, 0);
+        trace1.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
+        storage.upsert_trace(&trace1).expect("upsert 1");
+
+        let prov2 = Provenance::new("/path/s2.jsonl", "codex", 100, 100, "fp2");
+        let mut trace2 =
+            AgentWorthTrace::new("sess_old", "codex", prov2, now - Duration::hours(10));
+        trace2.stats.token_usage = TokenUsage::new(10000, 2000, 0, 0);
+        trace2.stats.models_used = vec!["gpt-4o".to_string()];
+        storage.upsert_trace(&trace2).expect("upsert 2");
+
+        // 5-hour pacing window should only include sess_recent
+        let pacing = storage.get_pacing_window(5).expect("pacing");
+        assert_eq!(pacing.session_count, 1);
+        assert_eq!(pacing.total_tokens, 26000);
+        assert_eq!(pacing.active_adapters, vec!["claude_code"]);
+        assert_eq!(pacing.active_models, vec!["claude-3-5-sonnet"]);
+        assert!(pacing.burn_rate_tokens_per_hour > 0.0);
+    }
+
+    #[test]
+    fn test_find_sessions_for_blame() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        let prov = Provenance::new(
+            "/Users/dev/code/motionvector/src/engine.rs.jsonl",
+            "claude_code",
+            100,
+            100,
+            "fp_blame",
+        );
+        let mut trace = AgentWorthTrace::new("sess_blame_1", "claude_code", prov, Utc::now());
+        trace.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
+        trace.stats.tools_used.insert("Edit".to_string(), 3);
+        storage.upsert_trace(&trace).expect("upsert");
+
+        let matches = storage
+            .find_sessions_for_blame("engine.rs")
+            .expect("blame matches");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].session_id, "sess_blame_1");
+        assert_eq!(matches[0].adapter, "claude_code");
     }
 }

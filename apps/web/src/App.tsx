@@ -22,8 +22,10 @@ import {
 import { mockAggregateStats, mockSummaries } from './services/mockData';
 
 import { initAnalytics } from './services/analytics';
+import { useTheme } from './hooks/useTheme';
 
 export function App() {
+  useTheme();
   const [viewMode, setViewMode] = useState<'landing' | 'explorer'>('landing');
   const [stats, setStats] = useState<AggregateStats>(mockAggregateStats);
   const [traces, setTraces] = useState<SessionSummary[]>(mockSummaries);
@@ -100,12 +102,14 @@ export function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#fdfdfd] text-[#0a0a0c]">
-      <Navbar
-        onTriggerScan={handleTriggerScan}
-        isScanning={isScanning}
-        viewMode={viewMode}
-        onToggleView={(mode) => setViewMode(mode)}
-      />
+      {viewMode === 'explorer' && (
+        <Navbar
+          onTriggerScan={handleTriggerScan}
+          isScanning={isScanning}
+          viewMode={viewMode}
+          onToggleView={(mode) => setViewMode(mode)}
+        />
+      )}
 
       {viewMode === 'landing' ? (
         <LandingPage onOpenExplorer={() => setViewMode('explorer')} />
