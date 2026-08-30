@@ -348,12 +348,23 @@ fn run_stats_command(json: bool, db_path: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+fn print_archie_ascii_banner() {
+    println!();
+    println!("       {}", style("┌───────────┐").dim());
+    println!("       {}   {}", style("│ ( • _ • ) │").bold().cyan(), style("\"Your agents left receipts.\"").italic());
+    println!("       {}    {}", style("│  /| 🔎 |\\ │").bold(), style("────────────────────────────").dim());
+    println!("       {}    {}", style("│  / |  | \\ │").dim(), style("• Digging through dotfiles").dim());
+    println!("       {}    {}", style("│   /    \\  │").dim(), style("• Auditing token burn pacing").dim());
+    println!("       {}    {}", style("└───┴────┴──┘").dim(), style("• Tracing line-by-line lineage").dim());
+    println!();
+}
+
 fn print_stats_view(
     stats: &agentworth_storage::AggregateStats,
     top_repos: &[(String, usize)],
     db_path: Option<&std::path::Path>,
 ) {
-    println!();
+    print_archie_ascii_banner();
     println!(
         "{}",
         style("┌──────────────────────────────────────────────────────────┐").bold()
@@ -1254,7 +1265,7 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
         return Ok(());
     }
 
-    println!();
+    print_archie_ascii_banner();
     println!(
         "{}",
         style("┌──────────────────────────────────────────────────────────┐").bold()
