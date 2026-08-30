@@ -1,0 +1,91 @@
+# AgentWorth (日本語)
+
+[English](README.md) | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
+
+[![npm](https://img.shields.io/npm/v/agentworth?style=flat-square&color=000000)](https://www.npmjs.com/package/agentworth)
+[![License](https://img.shields.io/badge/license-Apache--2.0-000000?style=flat-square)](LICENSE)
+[![Privacy](https://img.shields.io/badge/telemetry-zero%20(100%25%20local)-000000?style=flat-square)](#プライバシーとローカルファーストの保証)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-000000?style=flat-square)](#クイックスタート)
+[![Website](https://img.shields.io/badge/website-agentworth.dev-000000?style=flat-square)](https://agentworth.dev)
+
+**あなたのエージェントは領収書を残しました。**  
+AIコーディングエージェントがあなたのマシンで実際に何をしていたかを可視化します。
+
+AgentWorthは、ローカルのドットファイルに蓄積されたAIエージェントの履歴を自動検出し、正規化してインデックス化する、ローカルファーストのネイティブRustツールです。
+
+ギガバイト単位の読みにくいJSONLログを、明確なメトリクス、実行軌跡（Trajectory）、検証済みアウトカムへと変換します。消費トークン数、タスクの成功率、スタックしたエラーリカバリーループ、各コード行を編集したエージェントの系統を正確に特定します。
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                      * * * 領収書 (RECEIPT) * * *           │
+│ 総消費トークン数 ................................ 77,920,000│
+│ 推定API利用額 ................................... $218.40   │
+│ インデックス済みセッション数 .................... 695       │
+│ 検出されたエージェント数 ........................ 11        │
+│ 検証済み成果率 (Verified Outcomes) .............. 412 (59%) │
+│ 主なエージェント ................................ Claude    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## クイックスタート
+
+| インストール方法 | コマンド | 説明 |
+| :--- | :--- | :--- |
+| **単体インストールスクリプト** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | ネイティブバイナリを直接 `~/.local/bin` にインストールします。 |
+| **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | 公式Homebrew Tap経由でインストールします。 |
+| **Cargo (Rustネイティブ)** | `cargo install agentworth-cli` | `agentworth` および `agwt` を `~/.cargo/bin` にビルドしてインストールします。 |
+| **NPX (インストール不要)** | `npx agentworth stats` | インストールなしで即座に実行できます。 |
+
+```bash
+# 1. ローカルのエージェント履歴をスキャンしてインデックスを作成
+agentworth scan
+
+# 2. マシン全体のトークン消費とモデル統計を表示
+agentworth stats
+
+# 3. トークン消費速度と5時間のローリングペーシングを監査
+agentworth usage --period day
+agentworth usage --pacing
+
+# 4. コード行単位でAIの編集セッションを特定 (AI Blame)
+agentworth blame src/main.rs
+
+# 5. ローカルの対話型レシートエクスプローラーUIを起動
+agentworth serve --open
+```
+
+> **ヒント:** すべてのコマンドで短縮エイリアス `agwt` を使用できます (例: `agwt stats`, `agwt blame`)。
+
+---
+
+## サポートされているエージェント (11種類)
+
+AgentWorthは、ローカル環境に存在する以下のエージェントログを自動検出します：
+
+1. **Claude Code** (`~/.claude/projects/`)
+2. **Google Antigravity / Gemini CLI** (`~/.gemini/antigravity-cli/`)
+3. **OpenAI Codex** (`~/.codex/`)
+4. **Cursor Composer** (`~/Library/Application Support/Cursor/` / `~/.config/Cursor/`)
+5. **Block Goose** (`~/.local/share/goose/`)
+6. **Pi Task Agent** (`~/.pi/agent/`)
+7. **Herdr Orchestrator** (`~/.herdr/`)
+8. **Nous Hermes** (`~/.hermes/`)
+9. **OpenClaw** (`~/.openclaw/`)
+10. **xAI Grok CLI** (`~/.grok/`)
+11. **OpenCode** (`~/.opencode/`)
+
+---
+
+## プライバシーとローカルファーストの保証
+
+- **100% オフライン動作**: クラウドへのテレメトリ送信や外部アップロードは一切行いません。
+- **元ログの非破壊**: 元のトランスクリプトファイルを変更したり複製したりしません。
+- **ゼロ知識データ秘匿化 (Zero-Knowledge Redaction)**: ATIFフォーマットでのエクスポート時に、APIキー、トークン、機密パスを自動でマスキングします。
+
+---
+
+## ライセンス
+
+Apache License 2.0.

@@ -1,0 +1,91 @@
+# AgentWorth (简体中文)
+
+[English](README.md) | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
+
+[![npm](https://img.shields.io/npm/v/agentworth?style=flat-square&color=000000)](https://www.npmjs.com/package/agentworth)
+[![License](https://img.shields.io/badge/license-Apache--2.0-000000?style=flat-square)](LICENSE)
+[![Privacy](https://img.shields.io/badge/telemetry-zero%20(100%25%20local)-000000?style=flat-square)](#隐私与本地优先保证)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-000000?style=flat-square)](#快速开始)
+[![Website](https://img.shields.io/badge/website-agentworth.dev-000000?style=flat-square)](https://agentworth.dev)
+
+**你的智能体留下了账单。**  
+看清 AI 编程智能体在你的机器上实际执行了什么操作。
+
+AgentWorth 是一款采用本地优先架构的 Rust 原生工具，专门用于自动发现、规范化并索引存放在本机隐藏目录（dotfiles）中的 AI 智能体历史轨迹。
+
+它将数 GB 晦涩难读的 JSONL 日志转换为清晰的度量指标、执行轨迹与可验证成果——精确展示你消耗的令牌总数、哪些任务成功执行、哪些错误修复陷入死循环，以及每行代码究竟由哪个 AI 智能体编写。
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                      * * * 账 单 (RECEIPT) * * *            │
+│ 消耗令牌总量 ................................... 77,920,000 │
+│ 预估 API 支出 .................................. $218.40    │
+│ 已索引会话数 ................................... 695        │
+│ 识别到的智能体 ................................. 11 种      │
+│ 验证成果率 (Verified Outcomes) ................. 412 (59%)  │
+│ 主要适配器 ..................................... Claude     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 快速开始
+
+| 安装方式 | 执行命令 | 说明 |
+| :--- | :--- | :--- |
+| **一键安装脚本** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | 直接将预编译原生二进制文件安装至 `~/.local/bin`。 |
+| **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | 通过官方 Homebrew tap 仓库安装。 |
+| **Cargo (Rust 原生)** | `cargo install agentworth-cli` | 编译并安装 `agentworth` 与 `agwt` 至 `~/.cargo/bin`。 |
+| **NPX (免安装即用)** | `npx agentworth stats` | 无需手动安装即可快速执行。 |
+
+```bash
+# 1. 扫描并索引本机所有智能体历史日志
+agentworth scan
+
+# 2. 查看全局令牌消耗与模型分布统计
+agentworth stats
+
+# 3. 审计每日支出与 5 小时滑动窗口令牌消耗速率
+agentworth usage --period day
+agentworth usage --pacing
+
+# 4. 按代码行追溯 AI 会话归属 (AI Blame)
+agentworth blame src/main.rs
+
+# 5. 启动本地交互式账单浏览器前端
+agentworth serve --open
+```
+
+> **提示：** 你可以在所有命令中使用简写别名 `agwt`（例如：`agwt stats`、`agwt blame`）。
+
+---
+
+## 已支持的 11 种智能体适配器
+
+AgentWorth 能自动识别本机上的以下智能体日志：
+
+1. **Claude Code** (`~/.claude/projects/`)
+2. **Google Antigravity / Gemini CLI** (`~/.gemini/antigravity-cli/`)
+3. **OpenAI Codex** (`~/.codex/`)
+4. **Cursor Composer** (`~/Library/Application Support/Cursor/` / `~/.config/Cursor/`)
+5. **Block Goose** (`~/.local/share/goose/`)
+6. **Pi Task Agent** (`~/.pi/agent/`)
+7. **Herdr Orchestrator** (`~/.herdr/`)
+8. **Nous Hermes** (`~/.hermes/`)
+9. **OpenClaw** (`~/.openclaw/`)
+10. **xAI Grok CLI** (`~/.grok/`)
+11. **OpenCode** (`~/.opencode/`)
+
+---
+
+## 隐私与本地优先保证
+
+- **100% 离线运行**：零云端遥测，绝不私自上传任何用户数据。
+- **无损原始日志**：不对原始转录日志进行任何篡改或冗余复制。
+- **零知识隐私脱敏**：导出为标准 ATIF 格式时自动遮蔽 API Key、凭证及私有路径。
+
+---
+
+## 开源协议
+
+Apache License 2.0.

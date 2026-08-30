@@ -1,5 +1,7 @@
 # AgentWorth
 
+[English](README.md) | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
+
 [![npm](https://img.shields.io/npm/v/agentworth?style=flat-square&color=000000)](https://www.npmjs.com/package/agentworth)
 [![License](https://img.shields.io/badge/license-Apache--2.0-000000?style=flat-square)](LICENSE)
 [![Privacy](https://img.shields.io/badge/telemetry-zero%20(100%25%20local)-000000?style=flat-square)](#privacy--local-first-guarantees)
