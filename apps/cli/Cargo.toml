@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "agentworth"
 path = "src/main.rs"
 
+[[bin]]
+name = "agwt"
+path = "src/main.rs"
+
 [dependencies]
 agentworth-schema.workspace = true
 agentworth-adapter-sdk.workspace = true
