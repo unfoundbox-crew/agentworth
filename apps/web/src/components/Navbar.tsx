@@ -24,7 +24,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onTriggerScan, isScanning, viewM
                 AGENTWORTH
               </span>
               <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300">
-                v0.1.1
+                v0.1.2
               </span>
             </div>
             <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono hidden sm:block">

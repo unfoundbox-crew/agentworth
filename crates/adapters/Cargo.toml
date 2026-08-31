@@ -17,6 +17,9 @@ anyhow.workspace = true
 tracing.workspace = true
 walkdir.workspace = true
 directories.workspace = true
+rusqlite = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true

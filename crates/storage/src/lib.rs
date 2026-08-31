@@ -1,8 +1,10 @@
-//! SQLite storage engine for AgentWorth indexing, metadata, and incremental rescans.
+pub mod chunker;
+pub mod embedder;
+pub mod vector;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use agentworth_adapter_sdk::SessionSource;
 use agentworth_schema::{AgentWorthTrace, TokenUsage};
@@ -13,6 +15,10 @@ use rusqlite::types::ToSql;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
+pub use chunker::TrajectoryChunker;
+pub use embedder::LocalEmbedder;
+pub use vector::{SqliteVectorStore, VectorStore};
+
 /// High-level aggregate statistics across all scanned sessions in the SQLite index.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AggregateStats {
@@ -22,6 +28,7 @@ pub struct AggregateStats {
     pub sessions_by_adapter: BTreeMap<String, usize>,
     pub models_usage_count: BTreeMap<String, usize>,
     pub tools_usage_count: BTreeMap<String, usize>,
+    pub verified_outcomes_count: usize,
     pub first_session_at: Option<DateTime<Utc>>,
     pub last_session_at: Option<DateTime<Utc>>,
 }
@@ -38,6 +45,8 @@ pub enum SessionOrderBy {
     EventsDesc,
     EventsAsc,
     DurationDesc,
+    ScoreDesc,
+    ScoreAsc,
 }
 
 /// Filter criteria for querying session traces.
@@ -52,6 +61,8 @@ pub struct SessionFilter {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
     pub order_by: Option<SessionOrderBy>,
+    pub include_stubs: Option<bool>,
+    pub outcome: Option<String>,
 }
 
 /// Lightweight summary of a stored session.
@@ -66,6 +77,10 @@ pub struct SessionSummary {
     pub total_events: usize,
     pub tool_calls_count: usize,
     pub models_used: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_outcome: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composite_score: Option<f64>,
 }
 
 /// Usage aggregation rollup for a time period (Day, Week, Month).
@@ -119,7 +134,7 @@ pub struct BlameMatch {
 
 /// SQLite-backed storage index.
 pub struct Storage {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
     db_path: Option<PathBuf>,
 }
 
@@ -141,7 +156,7 @@ impl Storage {
         let conn = Connection::open(path)
             .with_context(|| format!("Failed to open SQLite database at {:?}", path))?;
         let storage = Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
             db_path: Some(path.to_path_buf()),
         };
         storage.initialize_schema()?;
@@ -152,7 +167,7 @@ impl Storage {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         let storage = Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
             db_path: None,
         };
         storage.initialize_schema()?;
@@ -162,6 +177,11 @@ impl Storage {
     /// Path to the active database file, if not in-memory.
     pub fn db_path(&self) -> Option<&Path> {
         self.db_path.as_deref()
+    }
+
+    /// Obtain a vector store instance sharing the underlying database connection.
+    pub fn vector_store(&self) -> Result<SqliteVectorStore> {
+        SqliteVectorStore::from_shared_connection(Arc::clone(&self.conn))
     }
 
     /// Run migrations / schema initialization.
@@ -203,15 +223,39 @@ impl Storage {
                 tools_used TEXT NOT NULL,
                 metadata TEXT,
                 scanned_at TEXT NOT NULL,
+                primary_outcome TEXT,
+                composite_score REAL,
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
+            "#,
+        )?;
 
+        // Fallback schema migrations for existing databases before creating indexes
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .collect();
+
+        if !columns.is_empty() {
+            if !columns.contains(&"primary_outcome".to_string()) {
+                let _ = conn.execute("ALTER TABLE sessions ADD COLUMN primary_outcome TEXT", []);
+            }
+            if !columns.contains(&"composite_score".to_string()) {
+                let _ = conn.execute("ALTER TABLE sessions ADD COLUMN composite_score REAL", []);
+            }
+        }
+
+        conn.execute_batch(
+            r#"
             CREATE INDEX IF NOT EXISTS idx_sessions_adapter ON sessions(adapter);
             CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
             CREATE INDEX IF NOT EXISTS idx_sessions_tokens ON sessions(total_tokens);
             CREATE INDEX IF NOT EXISTS idx_sessions_events ON sessions(total_events);
             CREATE INDEX IF NOT EXISTS idx_sessions_duration ON sessions(duration_seconds);
             CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
+            CREATE INDEX IF NOT EXISTS idx_sessions_primary_outcome ON sessions(primary_outcome);
+            CREATE INDEX IF NOT EXISTS idx_sessions_composite_score ON sessions(composite_score);
             CREATE INDEX IF NOT EXISTS idx_sources_fingerprint ON sources(fingerprint);
 
             CREATE VIEW IF NOT EXISTS v_daily_usage AS
@@ -293,8 +337,13 @@ impl Storage {
         Ok(true) // New or modified -> needs scan
     }
 
-    /// Upsert an indexed trace into the database atomically.
-    pub fn upsert_trace(&self, trace: &AgentWorthTrace) -> Result<()> {
+    /// Upsert an indexed session into the database atomically with verdict and score.
+    pub fn upsert_session(
+        &self,
+        trace: &AgentWorthTrace,
+        primary_outcome: Option<&str>,
+        composite_score: Option<f64>,
+    ) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
 
@@ -333,9 +382,10 @@ impl Storage {
                 session_id, adapter, source_path, fingerprint, started_at, ended_at,
                 duration_seconds, total_events, user_messages_count, assistant_messages_count,
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
-                cache_creation_tokens, total_tokens, models_used, tools_used, metadata, scanned_at
+                cache_creation_tokens, total_tokens, models_used, tools_used, metadata, scanned_at,
+                primary_outcome, composite_score
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
             ON CONFLICT(session_id) DO UPDATE SET
                 adapter = excluded.adapter,
                 source_path = excluded.source_path,
@@ -355,7 +405,9 @@ impl Storage {
                 models_used = excluded.models_used,
                 tools_used = excluded.tools_used,
                 metadata = excluded.metadata,
-                scanned_at = excluded.scanned_at;
+                scanned_at = excluded.scanned_at,
+                primary_outcome = excluded.primary_outcome,
+                composite_score = excluded.composite_score;
             "#,
             params![
                 trace.session_id,
@@ -378,11 +430,18 @@ impl Storage {
                 tools_json,
                 metadata_json,
                 scanned_at,
+                primary_outcome,
+                composite_score,
             ],
         )?;
 
         tx.commit()?;
         Ok(())
+    }
+
+    /// Upsert an indexed trace into the database atomically.
+    pub fn upsert_trace(&self, trace: &AgentWorthTrace) -> Result<()> {
+        self.upsert_session(trace, None, None)
     }
 
     /// Retrieve summary statistics across the whole indexed database.
@@ -401,7 +460,8 @@ impl Storage {
                 COALESCE(SUM(cache_read_tokens), 0),
                 COALESCE(SUM(cache_creation_tokens), 0),
                 MIN(CASE WHEN started_at > '2020-01-01' THEN started_at ELSE NULL END),
-                MAX(started_at)
+                MAX(started_at),
+                COALESCE(SUM(CASE WHEN primary_outcome IN ('CiOrDeploymentVerified', 'CommitObserved', 'TestOrBuildPassed') THEN 1 ELSE 0 END), 0)
             FROM sessions
             "#,
         )?;
@@ -417,6 +477,9 @@ impl Storage {
 
             let min_started: Option<String> = row.get(6)?;
             let max_started: Option<String> = row.get(7)?;
+            let verified_count: i64 = row.get(8)?;
+
+            stats.verified_outcomes_count = verified_count as usize;
 
             stats.token_usage = TokenUsage::new(
                 input as u64,
@@ -470,13 +533,63 @@ impl Storage {
         Ok(stats)
     }
 
+    /// Group indexed sessions by their primary outcome with session counts, token volume, and estimated cost.
+    pub fn get_outcome_distribution(&self) -> Result<Vec<(String, usize, u64, f64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                COALESCE(primary_outcome, 'Unresolved') AS outcome,
+                COUNT(*) AS session_count,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens
+            FROM sessions
+            GROUP BY COALESCE(primary_outcome, 'Unresolved')
+            ORDER BY session_count DESC, total_tokens DESC
+            "#,
+        )?;
+
+        let mut rows = stmt.query([])?;
+        let mut results = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            let outcome: String = row.get(0)?;
+            let session_count: i64 = row.get(1)?;
+            let total_tokens: i64 = row.get(2)?;
+            let input: i64 = row.get(3)?;
+            let output: i64 = row.get(4)?;
+            let cache_read: i64 = row.get(5)?;
+            let cache_creation: i64 = row.get(6)?;
+
+            let total_cost = estimate_tokens_cost_usd(
+                input as u64,
+                output as u64,
+                cache_read as u64,
+                cache_creation as u64,
+            );
+
+            results.push((
+                outcome,
+                session_count as usize,
+                total_tokens as u64,
+                total_cost,
+            ));
+        }
+
+        Ok(results)
+    }
+
     /// Retrieve a single session summary by its unique session ID.
     pub fn get_session_by_id(&self, session_id: &str) -> Result<Option<SessionSummary>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             r#"
             SELECT session_id, adapter, source_path, started_at, duration_seconds,
-                   total_tokens, total_events, tool_calls_count, models_used
+                   total_tokens, total_events, tool_calls_count, models_used,
+                   primary_outcome, composite_score
             FROM sessions
             WHERE session_id = ?1
             "#,
@@ -505,13 +618,18 @@ impl Storage {
         let mut sql = String::from(
             r#"
             SELECT session_id, adapter, source_path, started_at, duration_seconds,
-                   total_tokens, total_events, tool_calls_count, models_used
+                   total_tokens, total_events, tool_calls_count, models_used,
+                   primary_outcome, composite_score
             FROM sessions
             WHERE 1=1
             "#,
         );
 
         let mut param_values: Vec<Box<dyn ToSql>> = Vec::new();
+
+        if !filter.include_stubs.unwrap_or(false) {
+            sql.push_str(" AND (total_events > 1 AND total_tokens > 0)");
+        }
 
         if let Some(ref adapter) = filter.adapter {
             sql.push_str(" AND adapter = ?");
@@ -521,6 +639,11 @@ impl Storage {
         if let Some(ref model) = filter.model {
             sql.push_str(" AND models_used LIKE ?");
             param_values.push(Box::new(format!("%{}%", model)));
+        }
+
+        if let Some(ref outcome) = filter.outcome {
+            sql.push_str(" AND primary_outcome = ?");
+            param_values.push(Box::new(outcome.clone()));
         }
 
         if let Some(ref search) = filter.search {
@@ -558,6 +681,8 @@ impl Storage {
             SessionOrderBy::EventsDesc => sql.push_str(" ORDER BY total_events DESC"),
             SessionOrderBy::EventsAsc => sql.push_str(" ORDER BY total_events ASC"),
             SessionOrderBy::DurationDesc => sql.push_str(" ORDER BY duration_seconds DESC"),
+            SessionOrderBy::ScoreDesc => sql.push_str(" ORDER BY composite_score DESC"),
+            SessionOrderBy::ScoreAsc => sql.push_str(" ORDER BY composite_score ASC"),
         }
 
         let limit = filter.limit.unwrap_or(50);
@@ -845,6 +970,8 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
     let total_events: i64 = row.get(6)?;
     let tool_calls_count: i64 = row.get(7)?;
     let models_str: String = row.get(8)?;
+    let primary_outcome: Option<String> = row.get(9).ok();
+    let composite_score: Option<f64> = row.get(10).ok();
 
     let started_at = DateTime::parse_from_rfc3339(&started_str)
         .map(|dt| dt.with_timezone(&Utc))
@@ -862,21 +989,35 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
         total_events: total_events as usize,
         tool_calls_count: tool_calls_count as usize,
         models_used,
+        primary_outcome,
+        composite_score,
     })
 }
 
 /// Extract repository or workspace name/path from a session source path.
 pub fn extract_repository_or_workspace(source_path: &str) -> String {
     let path = Path::new(source_path);
+    let path_str = source_path.replace('\\', "/");
+
+    // Skip plugin/package internal cache artifacts
+    if path_str.contains("/plugins/cache/")
+        || path_str.contains("/node_modules/")
+        || path_str.contains("/.bun/")
+    {
+        return "plugins/cache".to_string();
+    }
 
     // 1. Check if path has a Claude Code project slug format:
     // e.g. ~/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/uuid.jsonl
-    let path_str = source_path.replace('\\', "/");
+    // e.g. ~/.claude/projects/-Users-saurabh-code-motionvector-pluto--claude-worktrees-repo-branches-inventory-108a70/...
     if let Some(idx) = path_str.find("/projects/-") {
         let after = &path_str[idx + "/projects/-".len()..];
-        let slug = after.split('/').next().unwrap_or(after);
+        let full_slug = after.split('/').next().unwrap_or(after);
+        // Prune worktree / sub-branch suffix starting at '--'
+        let base_slug = full_slug.split("--").next().unwrap_or(full_slug);
+        
         // Decode -Users-saurabh-code-foo-bar -> /Users/saurabh/code/foo/bar
-        let decoded = format!("/{}", slug.replace('-', "/"));
+        let decoded = format!("/{}", base_slug.replace('-', "/"));
         let parts: Vec<&str> = decoded.split('/').filter(|s| !s.is_empty()).collect();
         if parts.len() >= 2 {
             return format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]);
@@ -885,7 +1026,18 @@ pub fn extract_repository_or_workspace(source_path: &str) -> String {
         }
     }
 
-    // 2. Check for hidden directory boundary (.claude, .cursor, .agentworth, .git)
+    // 2. Check if path directly contains a code/ or projects/ path
+    if let Some(idx) = path_str.find("/code/") {
+        let after = &path_str[idx + "/code/".len()..];
+        let parts: Vec<&str> = after.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.len() >= 2 {
+            return format!("{}/{}", parts[0], parts[1]);
+        } else if let Some(first) = parts.first() {
+            return first.to_string();
+        }
+    }
+
+    // 3. Check for hidden directory boundary (.claude, .cursor, .agentworth, .git, .gemini)
     let components: Vec<&str> = path_str.split('/').filter(|s| !s.is_empty()).collect();
     for (i, comp) in components.iter().enumerate() {
         if comp.starts_with('.') && i > 0 {
@@ -897,7 +1049,7 @@ pub fn extract_repository_or_workspace(source_path: &str) -> String {
         }
     }
 
-    // 3. Fallback: parent folder name or relative repo path
+    // 4. Fallback: parent folder name or relative repo path
     if let Some(parent) = path.parent() {
         let parent_str = parent.to_string_lossy();
         let comps: Vec<&str> = parent_str.split('/').filter(|s| !s.is_empty()).collect();
@@ -1211,5 +1363,114 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].session_id, "sess_blame_1");
         assert_eq!(matches[0].adapter, "claude_code");
+    }
+
+    #[test]
+    fn test_primary_outcome_and_composite_score_persistence() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let prov = Provenance::new("/path/to/log.jsonl", "claude_code", 100, 100, "fp_test");
+        let mut trace = AgentWorthTrace::new("sess_verdict_1", "claude_code", prov, Utc::now());
+        trace.stats.total_events = 10;
+        trace.stats.token_usage = TokenUsage::new(1000, 200, 0, 0);
+
+        storage
+            .upsert_session(&trace, Some("CommitObserved"), Some(0.88))
+            .expect("upsert session");
+
+        let loaded = storage
+            .get_session_by_id("sess_verdict_1")
+            .expect("get session")
+            .expect("found");
+        assert_eq!(loaded.primary_outcome.as_deref(), Some("CommitObserved"));
+        assert_eq!(loaded.composite_score, Some(0.88));
+
+        let list = storage
+            .list_sessions_filtered(&SessionFilter {
+                outcome: Some("CommitObserved".to_string()),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].primary_outcome.as_deref(), Some("CommitObserved"));
+        assert_eq!(list[0].composite_score, Some(0.88));
+    }
+
+    #[test]
+    fn test_verified_outcomes_count_and_distribution() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        let specs = [
+            ("s1", Some("CiOrDeploymentVerified"), 0.98, 1000u64),
+            ("s2", Some("CommitObserved"), 0.85, 2000u64),
+            ("s3", Some("TestOrBuildPassed"), 0.75, 3000u64),
+            ("s4", Some("ArtifactChanged"), 0.50, 4000u64),
+            ("s5", Some("DoneClaimed"), 0.20, 5000u64),
+            ("s6", None, 0.0, 6000u64),
+        ];
+
+        for (id, outcome, score, tokens) in specs {
+            let prov = Provenance::new(format!("/path/{}.jsonl", id), "claude_code", 100, 100, format!("fp_{}", id));
+            let mut trace = AgentWorthTrace::new(id, "claude_code", prov, Utc::now());
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(tokens, 100, 0, 0);
+            storage
+                .upsert_session(&trace, outcome, Some(score))
+                .expect("upsert");
+        }
+
+        let stats = storage.get_aggregate_stats().expect("aggregate stats");
+        assert_eq!(stats.total_sessions, 6);
+        // Verified count should only include: CiOrDeploymentVerified, CommitObserved, TestOrBuildPassed
+        assert_eq!(stats.verified_outcomes_count, 3);
+
+        let dist = storage.get_outcome_distribution().expect("distribution");
+        assert_eq!(dist.len(), 6);
+        let dist_map: BTreeMap<String, usize> = dist.into_iter().map(|(outcome, count, _, _)| (outcome, count)).collect();
+        assert_eq!(dist_map.get("CiOrDeploymentVerified"), Some(&1));
+        assert_eq!(dist_map.get("CommitObserved"), Some(&1));
+        assert_eq!(dist_map.get("TestOrBuildPassed"), Some(&1));
+        assert_eq!(dist_map.get("ArtifactChanged"), Some(&1));
+        assert_eq!(dist_map.get("DoneClaimed"), Some(&1));
+        assert_eq!(dist_map.get("Unresolved"), Some(&1));
+    }
+
+    #[test]
+    fn test_stubs_filtering_by_default() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        // 1. Stub: total_events = 1
+        let prov1 = Provenance::new("/path/stub1.jsonl", "claude_code", 100, 100, "fp_stub1");
+        let mut stub1 = AgentWorthTrace::new("stub_1", "claude_code", prov1, Utc::now());
+        stub1.stats.total_events = 1;
+        stub1.stats.token_usage = TokenUsage::new(100, 0, 0, 0);
+        storage.upsert_trace(&stub1).expect("upsert stub 1");
+
+        // 2. Stub: 0 tokens
+        let prov2 = Provenance::new("/path/stub2.jsonl", "claude_code", 100, 100, "fp_stub2");
+        let mut stub2 = AgentWorthTrace::new("stub_2", "claude_code", prov2, Utc::now());
+        stub2.stats.total_events = 5;
+        stub2.stats.token_usage = TokenUsage::new(0, 0, 0, 0);
+        storage.upsert_trace(&stub2).expect("upsert stub 2");
+
+        // 3. Real session
+        let prov3 = Provenance::new("/path/real.jsonl", "claude_code", 100, 100, "fp_real");
+        let mut real = AgentWorthTrace::new("real_1", "claude_code", prov3, Utc::now());
+        real.stats.total_events = 10;
+        real.stats.token_usage = TokenUsage::new(500, 100, 0, 0);
+        storage.upsert_trace(&real).expect("upsert real");
+
+        // Default: stubs filtered out
+        let default_list = storage.list_sessions(50).expect("list default");
+        assert_eq!(default_list.len(), 1);
+        assert_eq!(default_list[0].session_id, "real_1");
+
+        // Explicit include_stubs: true
+        let all_list = storage
+            .list_sessions_filtered(&SessionFilter {
+                include_stubs: Some(true),
+                ..Default::default()
+            })
+            .expect("list all");
+        assert_eq!(all_list.len(), 3);
     }
 }

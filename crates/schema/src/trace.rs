@@ -85,6 +85,16 @@ impl AgentWorthTrace {
                     }
                     stats.token_usage += *token_usage;
                 }
+                EventPayload::ModelSwitch(ms) => {
+                    if !models.contains(&ms.to_model) {
+                        models.push(ms.to_model.clone());
+                    }
+                    if let Some(ref from) = ms.from_model {
+                        if !models.contains(from) {
+                            models.push(from.clone());
+                        }
+                    }
+                }
                 _ => {}
             }
         }

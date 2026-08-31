@@ -4,11 +4,13 @@ mod event;
 mod provenance;
 mod tokens;
 mod trace;
+pub mod vector;
 
 pub use event::{
-    EventPayload, FileActionType, HumanIntervention, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    ShellCommand, ToolCall, ToolResult,
+    EventPayload, EventType, FileActionType, HumanIntervention, ModelSwitch, NormalizedEvent,
+    OutcomeEvidence, OutcomeKind, ShellCommand, ToolCall, ToolResult,
 };
 pub use provenance::Provenance;
 pub use tokens::TokenUsage;
 pub use trace::{AgentWorthTrace, TraceStats};
+pub use vector::{ChunkKind, TrajectoryChunk, VectorSearchResult, VectorStats};

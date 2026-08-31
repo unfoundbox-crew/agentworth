@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.2] - 2026-08-31
+
+### Added
+
+- **Expanded Native Adapter Fleet from 11 to 20 Agents**:
+  - 🐋 **DeepSeek Code (`deepseek`)**:
+    - Discovers `~/.deepseek/`, `~/.deepseek-coder/`, and `.deepseek/` traces.
+    - Full reasoning token stream accounting for DeepSeek R1 and V3 (`reasoning_content`, `thought`).
+    - Tracks prompt cache hits (`prompt_cache_hit_tokens`) and cache creation (`prompt_cache_miss_tokens`).
+    - Normalizes file editing (`str_replace_editor`, `write`, `edit`) and shell execution (`bash`).
+  - 🌙 **Kimi Code (`kimi`)**:
+    - Discovers Moonshot Kimi Code sessions in `~/.kimi-code/` and `~/.kimi/sessions/wire.jsonl`.
+    - Parses streaming wire JSONL protocols, subagent delegations (`subagent_delegation`), and tool calls.
+  - ⚡ **MiniMax (`minimax`)**:
+    - Discovers `~/.minimax/` and `~/.minimax-agent/` coding plan trajectories.
+    - Normalizes multi-step planning milestones, tool executions, and token expenditures.
+  - 🐉 **Qwen Code / Qwen-Agent (`qwen`)**:
+    - Discovers Alibaba Qwen Code and Qwen-Agent trajectories in `~/.qwen/` and `~/.qwen-agent/`.
+    - Extracts reasoning CoT, `code_interpreter` executions, and tool calls.
+  - 🧠 **Zhipu / CodeGeeX (`zhipu`)**:
+    - Discovers `~/.codegeex/` and `~/.zhipu/` IDE extension and GLM-4 session histories.
+  - 🛠️ **Aider (`aider`)**:
+    - Discovers `.aider.chat.history.md` and `~/.aider/` git-driven trajectory markdown/JSON logs.
+    - Maps git diff edits and commit messages directly into verified outcome evidence (`OutcomeKind::CommitObserved`).
+  - 👁️ **Cline & Roo-Code (`cline`)**:
+    - Discovers VSCode global storage task logs (`saoudrizwan.claude-dev/tasks/` and `rooveterinaryinc.roo-cline/tasks/`).
+    - Parses task UI messages, API conversation histories, token cache metrics, and tool execution trees.
+  - 🌊 **Windsurf / Cascade (`windsurf`)**:
+    - Discovers `~/.codeium/windsurf/` and Cascade execution caches.
+    - Normalizes multi-turn code edits, terminal outputs, and test validations.
+  - 🦾 **Manus (`manus`)**:
+    - Discovers `~/.manus/` autonomous agent browser actions and coding trajectories.
+
+---
+
 ## [0.1.1] - 2026-08-30
 
 ### Added

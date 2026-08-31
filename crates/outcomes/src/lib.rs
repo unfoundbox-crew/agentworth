@@ -7,7 +7,7 @@
 mod outcome;
 mod recovery;
 
-pub use outcome::{outcome_rank, OutcomeDetector};
+pub use outcome::{outcome_kind_name, outcome_rank, OutcomeDetector, OutcomeHierarchyDetector};
 pub use recovery::{RecoveryDetector, RecoverySignal};
 
 /// Evaluates a trace and extracts all inferred outcome evidence.

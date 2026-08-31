@@ -36,16 +36,14 @@ impl GeminiAdapter {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
-            roots.push(home.join(".gemini"));
-            roots.push(home.join(".gemini").join("antigravity-cli"));
-            roots.push(home.join(".gemini").join("antigravity-ide"));
-            roots.push(home.join(".gemini").join("antigravity"));
-            roots.push(home.join(".gemini").join("brain"));
+            roots.push(home.join(".gemini").join("antigravity-cli").join("brain"));
+            roots.push(home.join(".gemini").join("antigravity-ide").join("brain"));
             roots.push(home.join(".gemini").join("history"));
             roots.push(home.join(".gemini").join("sessions"));
-            roots.push(home.join(".antigravity"));
+            roots.push(home.join(".antigravity").join("sessions"));
             roots.push(home.join(".config").join("antigravity"));
             roots.push(home.join(".config").join("gemini"));
+            roots.push(home.join(".gemini"));
         }
         roots.push(PathBuf::from(".gemini"));
         roots.push(PathBuf::from(".antigravity"));
@@ -91,40 +89,52 @@ impl AgentAdapter for GeminiAdapter {
     fn enumerate(&self, options: &ScanOptions) -> Result<Vec<SessionSource>> {
         let mut sources = Vec::new();
 
-        if !options.custom_paths.is_empty() {
-            for custom in &options.custom_paths {
-                if custom.is_file() {
-                    if is_candidate_gemini_file(custom) {
-                        if let Ok(source) = SessionSource::from_path(custom, self.name()) {
-                            sources.push(source);
-                        }
-                    }
-                } else if custom.is_dir() {
-                    for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
-                        let path = entry.path();
-                        if path.is_file() && is_candidate_gemini_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
-                                sources.push(source);
-                            }
-                        }
-                    }
+        let should_skip = |entry: &walkdir::DirEntry| -> bool {
+            if entry.file_type().is_dir() {
+                let name = entry.file_name().to_string_lossy();
+                name == ".git"
+                    || name == "node_modules"
+                    || name == "tasks"
+                    || name == "scratch"
+                    || name == "steps"
+                    || name == "plugins"
+                    || name == "target"
+                    || name == "dist"
+                    || name == ".venv"
+            } else {
+                false
+            }
+        };
+
+        let roots_to_scan = if !options.custom_paths.is_empty() {
+            options.custom_paths.clone()
+        } else {
+            let mut roots = Vec::new();
+            for r in self.candidate_roots() {
+                if r.exists() && !roots.iter().any(|existing: &PathBuf| r.starts_with(existing)) {
+                    roots.push(r);
                 }
             }
-        } else {
-            for root in self.candidate_roots() {
-                if root.is_file() {
-                    if is_candidate_gemini_file(&root) {
-                        if let Ok(source) = SessionSource::from_path(&root, self.name()) {
-                            sources.push(source);
-                        }
+            roots
+        };
+
+        for root in roots_to_scan {
+            if root.is_file() {
+                if is_candidate_gemini_file(&root) {
+                    if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                        sources.push(source);
                     }
-                } else if root.is_dir() {
-                    for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
-                        let path = entry.path();
-                        if path.is_file() && is_candidate_gemini_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
-                                sources.push(source);
-                            }
+                }
+            } else if root.is_dir() {
+                for entry in WalkDir::new(&root)
+                    .into_iter()
+                    .filter_entry(|e| !should_skip(e))
+                    .filter_map(|e| e.ok())
+                {
+                    let path = entry.path();
+                    if path.is_file() && is_candidate_gemini_file(path) {
+                        if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                            sources.push(source);
                         }
                     }
                 }

@@ -18,3 +18,9 @@ anyhow.workspace = true
 tracing.workspace = true
 directories.workspace = true
 tempfile.workspace = true
+sha2.workspace = true
+fastembed = { version = "4", optional = true }
+
+[features]
+default = ["fastembed"]
+fastembed = ["dep:fastembed"]

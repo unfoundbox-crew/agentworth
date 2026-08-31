@@ -11,6 +11,20 @@ use agentworth_schema::{
 #[derive(Debug, Default, Clone)]
 pub struct OutcomeDetector;
 
+/// Alias for OutcomeDetector highlighting the hierarchical detection capabilities.
+pub type OutcomeHierarchyDetector = OutcomeDetector;
+
+/// Return the canonical string name for an OutcomeKind.
+pub fn outcome_kind_name(kind: OutcomeKind) -> &'static str {
+    match kind {
+        OutcomeKind::CiOrDeploymentVerified => "CiOrDeploymentVerified",
+        OutcomeKind::CommitObserved => "CommitObserved",
+        OutcomeKind::TestOrBuildPassed => "TestOrBuildPassed",
+        OutcomeKind::ArtifactChanged => "ArtifactChanged",
+        OutcomeKind::DoneClaimed => "DoneClaimed",
+    }
+}
+
 impl OutcomeDetector {
     pub fn new() -> Self {
         Self

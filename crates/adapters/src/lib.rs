@@ -1,27 +1,45 @@
 //! Agent history adapters for AgentWorth.
 
+mod aider;
 mod claude;
+mod cline;
 mod codex;
 mod cursor;
+mod deepseek;
 mod gemini;
 mod goose;
 mod grok;
 mod herdr;
 mod hermes;
+mod kimi;
+mod manus;
 mod mcp;
+mod minimax;
 mod openclaw;
 mod opencode;
 mod pi;
+mod qwen;
+mod windsurf;
+mod zhipu;
 
+pub use aider::AiderAdapter;
 pub use claude::ClaudeCodeAdapter;
+pub use cline::ClineAdapter;
 pub use codex::CodexAdapter;
 pub use cursor::CursorAdapter;
+pub use deepseek::DeepSeekAdapter;
 pub use gemini::{GeminiAdapter, GeminiAdapter as AntigravityAdapter};
 pub use goose::GooseAdapter;
 pub use grok::GrokAdapter;
 pub use herdr::HerdrAdapter;
 pub use hermes::HermesAdapter;
+pub use kimi::KimiAdapter;
+pub use manus::ManusAdapter;
 pub use mcp::normalize_mcp_tool_name;
+pub use minimax::MiniMaxAdapter;
 pub use openclaw::OpenClawAdapter;
 pub use opencode::OpenCodeAdapter;
 pub use pi::PiAdapter;
+pub use qwen::QwenAdapter;
+pub use windsurf::WindsurfAdapter;
+pub use zhipu::ZhipuAdapter;

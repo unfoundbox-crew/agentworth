@@ -1,5 +1,5 @@
-//! AgentWorth CLI library exposing server, archaeology, and command logic.
-
+pub mod commands;
 pub mod server;
 
+pub use commands::*;
 pub use server::*;

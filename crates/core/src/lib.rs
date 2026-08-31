@@ -4,10 +4,14 @@ use std::sync::Arc;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
 use agentworth_adapters::{
-    ClaudeCodeAdapter, CodexAdapter, CursorAdapter, GeminiAdapter, GooseAdapter, GrokAdapter,
-    HerdrAdapter, HermesAdapter, OpenClawAdapter, OpenCodeAdapter, PiAdapter,
+    AiderAdapter, ClaudeCodeAdapter, ClineAdapter, CodexAdapter, CursorAdapter, DeepSeekAdapter,
+    GeminiAdapter, GooseAdapter, GrokAdapter, HerdrAdapter, HermesAdapter, KimiAdapter, ManusAdapter,
+    MiniMaxAdapter, OpenClawAdapter, OpenCodeAdapter, PiAdapter, QwenAdapter, WindsurfAdapter,
+    ZhipuAdapter,
 };
+use agentworth_outcomes::{outcome_kind_name, OutcomeHierarchyDetector};
 use agentworth_schema::AgentWorthTrace;
+use agentworth_scoring::TraceScorer;
 use agentworth_storage::{AggregateStats, Storage};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -34,17 +38,26 @@ impl Scanner {
     /// Create a new scanner with default registered adapters.
     pub fn new(storage: Arc<Storage>) -> Self {
         let adapters: Vec<Box<dyn AgentAdapter>> = vec![
+            Box::new(AiderAdapter::new()),
             Box::new(ClaudeCodeAdapter::new()),
+            Box::new(ClineAdapter::new()),
             Box::new(CodexAdapter::new()),
             Box::new(CursorAdapter::new()),
+            Box::new(DeepSeekAdapter::new()),
             Box::new(GeminiAdapter::new()),
             Box::new(GooseAdapter::new()),
             Box::new(GrokAdapter::new()),
             Box::new(HerdrAdapter::new()),
             Box::new(HermesAdapter::new()),
+            Box::new(KimiAdapter::new()),
+            Box::new(ManusAdapter::new()),
+            Box::new(MiniMaxAdapter::new()),
             Box::new(OpenClawAdapter::new()),
             Box::new(OpenCodeAdapter::new()),
             Box::new(PiAdapter::new()),
+            Box::new(QwenAdapter::new()),
+            Box::new(WindsurfAdapter::new()),
+            Box::new(ZhipuAdapter::new()),
         ];
         Self { adapters, storage }
     }
@@ -96,21 +109,37 @@ impl Scanner {
     where
         F: FnMut(usize, usize),
     {
-        let mut all_sources: Vec<(usize, SessionSource)> = Vec::new();
+        // 1. Enumerate all sources across registered adapters in parallel threads
+        let all_sources: Vec<(usize, SessionSource)> = std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(self.adapters.len());
+            for (adapter_idx, adapter) in self.adapters.iter().enumerate() {
+                handles.push(s.spawn(move || {
+                    let res = adapter.enumerate(options);
+                    (adapter_idx, res)
+                }));
+            }
 
-        // 1. Enumerate all sources across registered adapters
-        for (adapter_idx, adapter) in self.adapters.iter().enumerate() {
-            match adapter.enumerate(options) {
-                Ok(sources) => {
-                    for src in sources {
-                        all_sources.push((adapter_idx, src));
+            let mut combined = Vec::new();
+            for handle in handles {
+                if let Ok((adapter_idx, res)) = handle.join() {
+                    match res {
+                        Ok(sources) => {
+                            for src in sources {
+                                combined.push((adapter_idx, src));
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Adapter '{}' failed enumeration: {}",
+                                self.adapters[adapter_idx].name(),
+                                e
+                            );
+                        }
                     }
                 }
-                Err(e) => {
-                    warn!("Adapter '{}' failed enumeration: {}", adapter.name(), e);
-                }
             }
-        }
+            combined
+        });
 
         let total = all_sources.len();
         let mut scanned_sessions = 0;
@@ -137,7 +166,20 @@ impl Scanner {
             // Parse session
             match adapter.parse(source) {
                 Ok(parse_result) => {
-                    if let Err(e) = self.storage.upsert_trace(&parse_result.trace) {
+                    let outcome_detector = OutcomeHierarchyDetector::new();
+                    let outcomes = outcome_detector.detect_outcomes(&parse_result.trace);
+                    let strongest = outcome_detector.strongest_outcome(&outcomes);
+                    let primary_outcome_str = strongest.map(|o| outcome_kind_name(o.kind));
+
+                    let scorer = TraceScorer::new();
+                    let score = scorer.score(&parse_result.trace);
+                    let composite_score = score.composite_score;
+
+                    if let Err(e) = self.storage.upsert_session(
+                        &parse_result.trace,
+                        primary_outcome_str,
+                        Some(composite_score),
+                    ) {
                         error!("Failed storing trace for {:?}: {}", source.path, e);
                         errors_encountered += 1;
                     } else {
@@ -218,5 +260,44 @@ mod tests {
         assert_eq!(summary2.scanned_sessions, 0);
         assert_eq!(summary2.skipped_unchanged, 1);
         assert_eq!(summary2.total_indexed_sessions, 1);
+    }
+
+    #[test]
+    fn test_scanner_outcome_detection_and_score_indexing() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        let mut temp = tempfile::Builder::new()
+            .suffix(".jsonl")
+            .tempfile()
+            .unwrap();
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Run tests and commit"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":300,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git commit -m 'feat: complete task'"}}]}
+{"type":"tool_result","timestamp":"2026-08-29T10:00:07Z","tool_use_id":"t1","content":"[main 1a2b3c4] feat: complete task\n 2 files changed","is_error":false}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: true,
+        };
+
+        let summary = scanner.run_scan(&options, |_, _| {}).expect("scan run");
+        assert_eq!(summary.scanned_sessions, 1);
+        assert_eq!(summary.aggregate_stats.verified_outcomes_count, 1);
+
+        let session_id = temp
+            .path()
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        let session = storage.get_session_by_id(&session_id).unwrap().unwrap();
+        assert_eq!(session.primary_outcome.as_deref(), Some("CommitObserved"));
+        assert!(session.composite_score.is_some());
+        assert!(session.composite_score.unwrap() > 0.0);
     }
 }

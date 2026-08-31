@@ -19,3 +19,4 @@ node_modules/
 dist/
 .worktrees/
 .vercel
+.fastembed_cache/

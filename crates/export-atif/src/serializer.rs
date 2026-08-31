@@ -130,6 +130,10 @@ impl AtifTrajectory {
                         });
                         (AtifStepSource::System, "error".to_string())
                     }
+                    EventPayload::ModelSwitch(ms) => {
+                        content = Some(format!("Switched model to {}", ms.to_model));
+                        (AtifStepSource::User, "model_switch".to_string())
+                    }
                     EventPayload::HumanIntervention(hi) => {
                         human_intervention = Some(AtifHumanIntervention {
                             action: hi.action.clone(),

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Copy, Check, RefreshCw } from 'lucide-react';
-import { AggregateStats } from '../types';
-import { formatTokens, estimateTokenCostUSD, formatUSD, getAdapterBadge } from '../utils/formatters';
+import React, { useState } from "react";
+import { Copy, Check, RefreshCw } from "lucide-react";
+import { AggregateStats } from "../types";
+import { formatTokens, estimateTokenCostUSD, formatUSD } from "../utils/formatters";
+import { VerdictStamp } from "./VerdictStamp";
 
 interface HeroReceiptProps {
   stats: AggregateStats;
@@ -11,9 +12,8 @@ interface HeroReceiptProps {
 export const HeroReceipt: React.FC<HeroReceiptProps> = ({ stats, onScanClick }) => {
   const [copied, setCopied] = useState(false);
   const [receiptCopied, setReceiptCopied] = useState(false);
-  const [terminalStep, setTerminalStep] = useState(0);
 
-  const command = 'npx agentworth';
+  const command = "npx agentworth";
 
   const handleCopy = () => {
     navigator.clipboard.writeText(command);
@@ -21,56 +21,45 @@ export const HeroReceipt: React.FC<HeroReceiptProps> = ({ stats, onScanClick }) 
     setTimeout(() => setCopied(false), 2000);
   };
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTerminalStep((prev) => (prev < 5 ? prev + 1 : 5));
-    }, 500);
-    return () => clearInterval(timer);
-  }, []);
-
   const totalTokensNum =
-    stats.token_usage.input_tokens +
-    stats.token_usage.output_tokens +
-    stats.token_usage.cache_read_input_tokens +
-    stats.token_usage.cache_creation_input_tokens;
+    (stats.token_usage.input_tokens || 0) +
+    (stats.token_usage.output_tokens || 0) +
+    (stats.token_usage.cache_read_input_tokens || 0) +
+    (stats.token_usage.cache_creation_input_tokens || 0);
 
   const estimatedCostUSD = estimateTokenCostUSD(totalTokensNum, stats.models_usage_count);
 
-  const verifiedPercent =
-    stats.total_sessions > 0
-      ? ((stats.verified_outcomes_count / stats.total_sessions) * 100).toFixed(1)
-      : '0.0';
+  const cacheReadPercent =
+    totalTokensNum > 0
+      ? (((stats.token_usage.cache_read_input_tokens || 0) / totalTokensNum) * 100).toFixed(1)
+      : "0.0";
 
-  const topAdapterEntry = Object.entries(stats.sessions_by_adapter || {}).sort(
-    (a, b) => b[1] - a[1]
-  )[0];
-  const topAdapterInfo = topAdapterEntry ? getAdapterBadge(topAdapterEntry[0]) : null;
-  const topAdapterPercent =
-    stats.total_sessions > 0 && topAdapterEntry
-      ? ((topAdapterEntry[1] / stats.total_sessions) * 100).toFixed(1)
-      : '0.0';
+  const verifiedCount = stats.verified_outcomes_count || 0;
+  const totalSessions = stats.total_sessions || 0;
+  const isMeasured = totalSessions > 0 && verifiedCount > 0;
 
   const handleCopyReceiptText = () => {
     const rawReceipt = `
 ========================================
-       * * * AGENTWORTH RECEIPT * * *
+       * * * AGENT RECEIPT * * *
 ========================================
-STORE: LOCAL MACHINE DISK (~/.config)
-DATE:  ${new Date().toISOString().split('T')[0]}
-AUTH:  SQLITE SHA-256 (LOCAL ONLY)
+STORE: LOCAL DISK (~/.agentworth)
+DATE:  ${new Date().toISOString().split("T")[0]}
+AUTH:  SQLITE WAL · SHA-256
 ----------------------------------------
-TOTAL TOKENS BURNT:      ${formatTokens(totalTokensNum).padEnd(12)}
-ESTIMATED EXPENDITURE:   ${formatUSD(estimatedCostUSD).padEnd(12)}
-INDEXED SESSIONS:        ${stats.total_sessions.toString().padEnd(12)}
-ACTIVE ADAPTERS:         ${Object.keys(stats.sessions_by_adapter || {}).length.toString().padEnd(12)}
-VERIFIED OUTCOMES:       ${stats.verified_outcomes_count.toString().padEnd(6)} (${verifiedPercent}%)
-TOP ADAPTER:             ${(topAdapterInfo?.name || 'Claude Code')} (${topAdapterPercent}%)
+SESSIONS INDEXED:       ${totalSessions.toString().padEnd(12)}
+TOTAL TOKENS:           ${formatTokens(totalTokensNum).padEnd(12)}
+ — CACHE READ:          ${formatTokens(stats.token_usage.cache_read_input_tokens || 0)} (${cacheReadPercent}%)
+ — CACHE WRITE:         ${formatTokens(stats.token_usage.cache_creation_input_tokens || 0)}
+ — OUTPUT:              ${formatTokens(stats.token_usage.output_tokens || 0)}
+ — FRESH INPUT:         ${formatTokens(stats.token_usage.input_tokens || 0)}
 ----------------------------------------
-TOTAL AMOUNT DUE:        ${formatUSD(estimatedCostUSD)}
-TAX:                     $0.00
+LIST-PRICE EQUIVALENT:  ${formatUSD(estimatedCostUSD)}
+DATA SENT ANYWHERE:     0 bytes
+TASKS VERIFIED DONE:    ${isMeasured ? verifiedCount.toString() : "not measured"}
 ----------------------------------------
 ||| | ||||| || |||||| | |||| ||| |||||||
-#agentworth-audit-2026
+VERDICT: ${isMeasured ? "CI VERIFIED" : "NO VERDICT ON FILE"}
 ========================================`.trim();
 
     navigator.clipboard.writeText(rawReceipt);
@@ -79,100 +68,89 @@ TAX:                     $0.00
   };
 
   return (
-    <section className="py-10 sm:py-14 border-b-2 border-black bg-[#fbfbfb]">
+    <section className="py-8 sm:py-12 border-b-2 border-black dark:border-white bg-[#fbfbfb] dark:bg-[#0a0a0c]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
-        {/* Top Header */}
-        <div className="text-center max-w-3xl mx-auto mb-10">
-          <div className="inline-flex items-center space-x-2 border-2 border-black px-3 py-1 bg-white mb-4 text-xs font-mono font-bold tracking-wider uppercase shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
-            <span className="w-2 h-2 bg-black animate-pulse"></span>
-            <span>CARBON DATING YOUR AI EXHAUST</span>
+        {/* Header Tagline */}
+        <div className="text-center max-w-3xl mx-auto mb-8">
+          <div className="inline-flex items-center space-x-2 border-2 border-black dark:border-white px-3 py-1 bg-white dark:bg-neutral-900 mb-3 text-xs font-mono font-bold tracking-wider uppercase shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,1)]">
+            <span className="w-2 h-2 bg-black dark:bg-white animate-pulse" />
+            <span>THE VERDICT LAYER FOR LOCAL AGENT HISTORIES</span>
           </div>
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-mono font-extrabold tracking-tight text-black mb-4">
-            Your agents left receipts.
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-mono font-extrabold tracking-tight text-black dark:text-white mb-2">
+            Every agent says it&apos;s done.
           </h1>
-          <p className="text-sm sm:text-base font-mono text-zinc-600 max-w-2xl mx-auto leading-relaxed">
-            Discover, normalize, and audit what Claude Code, Cursor, Codex, and Antigravity actually executed on your machine.
+          <p className="text-sm sm:text-base font-mono text-neutral-600 dark:text-neutral-400 max-w-2xl mx-auto leading-relaxed">
+            AgentWorth checks the diff, the compiler exit code, and the git log.
           </p>
         </div>
 
-        {/* The 2-Column Physical Grid */}
+        {/* 2-Column Physical Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
           
-          {/* Left: Minimalist Obsidian Console */}
-          <div className="lg:col-span-6 bg-black text-white border-2 border-black font-mono text-xs shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between">
-            {/* Terminal Titlebar */}
+          {/* Left: Terminal Console */}
+          <div className="lg:col-span-6 bg-black text-white border-2 border-black dark:border-white font-mono text-xs shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] dark:shadow-[6px_6px_0px_0px_rgba(255,255,255,1)] flex flex-col justify-between">
+            {/* Titlebar */}
             <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-3 flex items-center justify-between">
               <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 border border-zinc-700 bg-zinc-800"></div>
-                <div className="w-3 h-3 border border-zinc-700 bg-zinc-800"></div>
-                <div className="w-3 h-3 border border-zinc-700 bg-zinc-800"></div>
-                <span className="text-xs text-zinc-300 ml-2 font-mono font-semibold">agentworth scan --all</span>
+                <div className="w-3 h-3 border border-zinc-700 bg-zinc-800" />
+                <div className="w-3 h-3 border border-zinc-700 bg-zinc-800" />
+                <div className="w-3 h-3 border border-zinc-700 bg-zinc-800" />
+                <span className="text-xs text-zinc-300 ml-2 font-mono font-semibold">agentworth stats --all</span>
               </div>
-              <span className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider">OFFLINE INDEX</span>
+              <span className="text-[10px] text-emerald-400 font-mono uppercase tracking-wider">OFFLINE · LOCAL</span>
             </div>
 
-            {/* Terminal Logs */}
-            <div className="p-5 space-y-3 overflow-x-auto min-h-[260px] font-mono text-xs">
+            {/* Real Stats Console */}
+            <div className="p-5 space-y-2.5 overflow-x-auto min-h-[260px] font-mono text-xs">
               <div className="text-zinc-400">
-                <span className="text-white font-bold">$</span> npx agentworth scan
+                <span className="text-white font-bold">$</span> agentworth stats
               </div>
 
-              {terminalStep >= 1 && (
-                <div className="text-zinc-300 flex items-center justify-between">
-                  <span>Scanning ~/.claude/sessions...</span>
-                  <span className="text-white font-bold">[2,840 TRACES]</span>
+              <div className="text-zinc-300 pt-1 space-y-1.5">
+                <div className="flex justify-between border-b border-zinc-900 pb-1">
+                  <span className="text-zinc-400">Sessions indexed:</span>
+                  <span className="text-white font-bold">{totalSessions.toLocaleString()}</span>
                 </div>
-              )}
-              {terminalStep >= 2 && (
-                <div className="text-zinc-300 flex items-center justify-between">
-                  <span>Scanning ~/.cursor/history...</span>
-                  <span className="text-white font-bold">[812 TRACES]</span>
+                <div className="flex justify-between border-b border-zinc-900 pb-1">
+                  <span className="text-zinc-400">Events normalized:</span>
+                  <span className="text-white font-bold">{stats.total_events.toLocaleString()}</span>
                 </div>
-              )}
-              {terminalStep >= 3 && (
-                <div className="text-zinc-300 flex items-center justify-between">
-                  <span>Scanning ~/.gemini/antigravity...</span>
-                  <span className="text-white font-bold">[490 TRACES]</span>
+                <div className="flex justify-between border-b border-zinc-900 pb-1">
+                  <span className="text-zinc-400">Total tokens:</span>
+                  <span className="text-white font-bold">{formatTokens(totalTokensNum)}</span>
                 </div>
-              )}
-              {terminalStep >= 4 && (
-                <div className="text-zinc-300 flex items-center justify-between">
-                  <span>Scanning ~/.codex/traces...</span>
-                  <span className="text-white font-bold">[139 TRACES]</span>
+                <div className="flex justify-between pl-4 text-zinc-400">
+                  <span>— cache read:</span>
+                  <span className="text-zinc-200">{formatTokens(stats.token_usage.cache_read_input_tokens || 0)} · {cacheReadPercent}%</span>
                 </div>
-              )}
-
-              {terminalStep >= 5 && (
-                <div className="pt-3 border-t border-zinc-800 space-y-2 font-mono text-xs">
-                  <div className="text-zinc-300 flex justify-between">
-                    <span className="text-zinc-400">TOTAL INDEXED:</span>
-                    <span className="text-white font-bold">{stats.total_sessions.toLocaleString()} sessions ({formatTokens(totalTokensNum)} tokens)</span>
-                  </div>
-                  <div className="text-zinc-300 flex justify-between">
-                    <span className="text-zinc-400">ESTIMATED COST:</span>
-                    <span className="text-white font-bold">{formatUSD(estimatedCostUSD)} USD</span>
-                  </div>
-                  <div className="text-zinc-300 flex justify-between">
-                    <span className="text-zinc-400">VERIFIED OUTCOMES:</span>
-                    <span className="text-white font-bold">{stats.verified_outcomes_count.toLocaleString()} ({verifiedPercent}%)</span>
-                  </div>
-                  <div className="text-zinc-400 italic pt-2 text-[11px]">
-                    &gt; SQLite database up-to-date: ~/.agentworth/agentworth.db
-                  </div>
+                <div className="flex justify-between pl-4 text-zinc-400">
+                  <span>— cache write:</span>
+                  <span className="text-zinc-200">{formatTokens(stats.token_usage.cache_creation_input_tokens || 0)}</span>
                 </div>
-              )}
-
-              {terminalStep < 5 && (
-                <div className="flex items-center space-x-1 text-white">
-                  <span>_</span>
-                  <span className="animate-cursor-blink">▋</span>
+                <div className="flex justify-between pl-4 text-zinc-400">
+                  <span>— output:</span>
+                  <span className="text-zinc-200">{formatTokens(stats.token_usage.output_tokens || 0)}</span>
                 </div>
-              )}
+                <div className="flex justify-between border-b border-zinc-900 pb-1 pt-1">
+                  <span className="text-zinc-400">List-price equivalent:</span>
+                  <span className="text-white font-bold">{formatUSD(estimatedCostUSD)}</span>
+                </div>
+                <div className="flex justify-between border-b border-zinc-900 pb-1">
+                  <span className="text-zinc-400">Data sent anywhere:</span>
+                  <span className="text-emerald-400 font-bold">0 bytes</span>
+                </div>
+                <div className="flex justify-between pt-1">
+                  <span className="text-zinc-400">Tasks verified done:</span>
+                  <span className={isMeasured ? "text-emerald-400 font-bold" : "text-red-400 font-bold"}>
+                    {isMeasured ? `${verifiedCount.toLocaleString()} verified` : "not measured"}
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* Quick Action Bar */}
-            <div className="bg-zinc-900 border-t border-zinc-800 p-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div className="bg-zinc-900 border-t border-zinc-800 p-3 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center space-x-2 font-mono text-xs text-zinc-300">
                 <span className="text-zinc-500 font-bold">$</span>
                 <code className="text-white font-bold bg-black px-2 py-0.5 border border-zinc-700">{command}</code>
@@ -180,14 +158,14 @@ TAX:                     $0.00
               <div className="flex items-center space-x-2">
                 <button
                   onClick={handleCopy}
-                  className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-mono bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-600 transition-colors active:translate-x-0.5 active:translate-y-0.5"
+                  className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-mono bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-600 transition-colors"
                 >
                   {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? 'Copied' : 'Copy'}</span>
+                  <span>{copied ? "Copied" : "Copy"}</span>
                 </button>
                 <button
                   onClick={onScanClick}
-                  className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-mono bg-white hover:bg-zinc-200 text-black font-bold border border-white transition-colors active:translate-x-0.5 active:translate-y-0.5"
+                  className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-mono bg-white hover:bg-zinc-200 text-black font-bold border border-white transition-colors"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Run Scan</span>
@@ -196,103 +174,98 @@ TAX:                     $0.00
             </div>
           </div>
 
-          {/* Right: The Physical Thermal Paper Receipt */}
-          <div className="lg:col-span-6 bg-white border-2 border-black p-6 sm:p-7 font-mono text-xs shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] relative flex flex-col justify-between select-text">
+          {/* Right: Thermal Receipt with Verdict Stamp */}
+          <div className="lg:col-span-6 bg-white dark:bg-[#151518] border-2 border-black dark:border-white p-6 sm:p-7 font-mono text-xs shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] dark:shadow-[6px_6px_0px_0px_rgba(255,255,255,1)] relative flex flex-col justify-between select-text">
             
-            {/* Top Receipt Serration */}
-            <div className="text-center pb-4 border-b-2 border-dashed border-zinc-400">
-              <div className="text-xs tracking-widest text-zinc-500 font-bold uppercase mb-1">
+            {/* Top Receipt Header */}
+            <div className="text-center pb-4 border-b-2 border-dashed border-neutral-300 dark:border-neutral-700">
+              <div className="text-xs tracking-widest text-neutral-400 font-bold uppercase mb-1">
                 ========================================
               </div>
-              <div className="text-lg sm:text-xl font-extrabold tracking-widest uppercase text-black">
+              <div className="text-lg sm:text-xl font-extrabold tracking-widest uppercase text-black dark:text-white">
                 * * * AGENT RECEIPT * * *
               </div>
-              <div className="text-xs tracking-widest text-zinc-500 font-bold uppercase mt-1">
+              <div className="text-xs tracking-widest text-neutral-400 font-bold uppercase mt-1">
                 ========================================
               </div>
-              <div className="flex justify-between items-center text-[10px] text-zinc-600 mt-3 font-semibold">
-                <span>STORE: ~/.config (~/local)</span>
-                <span>DATE: {new Date().toISOString().split('T')[0]}</span>
+              <div className="flex justify-between items-center text-[10px] text-neutral-500 mt-3 font-semibold">
+                <span>STORE: ~/.agentworth (LOCAL)</span>
+                <span>DATE: {new Date().toISOString().split("T")[0]}</span>
               </div>
             </div>
 
             {/* Receipt Table Items with Dotted Leaders */}
-            <div className="py-5 space-y-3 my-auto text-xs">
+            <div className="py-4 space-y-2.5 my-auto text-xs">
               <div className="flex justify-between items-baseline">
-                <span className="text-zinc-600 uppercase font-medium">TOTAL EXHAUST TOKENS</span>
-                <span className="text-zinc-400 mx-2 flex-1 border-b border-dotted border-zinc-300"></span>
-                <span className="font-bold text-black text-sm">{formatTokens(totalTokensNum)}</span>
+                <span className="text-neutral-600 dark:text-neutral-400 uppercase font-medium">SESSIONS INDEXED</span>
+                <span className="text-neutral-300 dark:text-neutral-700 mx-2 flex-1 border-b border-dotted border-neutral-300 dark:border-neutral-700" />
+                <span className="font-bold text-black dark:text-white">{totalSessions.toLocaleString()}</span>
               </div>
 
               <div className="flex justify-between items-baseline">
-                <span className="text-zinc-600 uppercase font-medium">ESTIMATED EXPENDITURE</span>
-                <span className="text-zinc-400 mx-2 flex-1 border-b border-dotted border-zinc-300"></span>
-                <span className="font-bold text-black text-sm">{formatUSD(estimatedCostUSD)} USD</span>
+                <span className="text-neutral-600 dark:text-neutral-400 uppercase font-medium">TOTAL TOKENS</span>
+                <span className="text-neutral-300 dark:text-neutral-700 mx-2 flex-1 border-b border-dotted border-neutral-300 dark:border-neutral-700" />
+                <span className="font-bold text-black dark:text-white">{formatTokens(totalTokensNum)}</span>
+              </div>
+
+              <div className="flex justify-between items-baseline text-[11px] text-neutral-500">
+                <span className="pl-3">— CACHE READ</span>
+                <span className="text-neutral-300 dark:text-neutral-700 mx-2 flex-1 border-b border-dotted border-neutral-300 dark:border-neutral-700" />
+                <span>{formatTokens(stats.token_usage.cache_read_input_tokens || 0)} ({cacheReadPercent}%)</span>
+              </div>
+
+              <div className="flex justify-between items-baseline text-[11px] text-neutral-500">
+                <span className="pl-3">— CACHE WRITE</span>
+                <span className="text-neutral-300 dark:text-neutral-700 mx-2 flex-1 border-b border-dotted border-neutral-300 dark:border-neutral-700" />
+                <span>{formatTokens(stats.token_usage.cache_creation_input_tokens || 0)}</span>
               </div>
 
               <div className="flex justify-between items-baseline">
-                <span className="text-zinc-600 uppercase font-medium">INDEXED SESSIONS</span>
-                <span className="text-zinc-400 mx-2 flex-1 border-b border-dotted border-zinc-300"></span>
-                <span className="font-bold text-black">{stats.total_sessions.toLocaleString()}</span>
+                <span className="text-neutral-600 dark:text-neutral-400 uppercase font-medium">LIST-PRICE EQUIV</span>
+                <span className="text-neutral-300 dark:text-neutral-700 mx-2 flex-1 border-b border-dotted border-neutral-300 dark:border-neutral-700" />
+                <span className="font-bold text-black dark:text-white">{formatUSD(estimatedCostUSD)}</span>
               </div>
 
               <div className="flex justify-between items-baseline">
-                <span className="text-zinc-600 uppercase font-medium">DETECTED AGENTS</span>
-                <span className="text-zinc-400 mx-2 flex-1 border-b border-dotted border-zinc-300"></span>
-                <span className="font-bold text-black">
-                  {Object.keys(stats.sessions_by_adapter || {}).length} Adapters ({Object.keys(stats.models_usage_count || {}).length} Models)
-                </span>
+                <span className="text-neutral-600 dark:text-neutral-400 uppercase font-medium">DATA SENT OUT</span>
+                <span className="text-neutral-300 dark:text-neutral-700 mx-2 flex-1 border-b border-dotted border-neutral-300 dark:border-neutral-700" />
+                <span className="font-bold text-emerald-600 dark:text-emerald-400">0 BYTES</span>
               </div>
 
               <div className="flex justify-between items-baseline">
-                <span className="text-zinc-600 uppercase font-medium">VERIFIED OUTCOMES</span>
-                <span className="text-zinc-400 mx-2 flex-1 border-b border-dotted border-zinc-300"></span>
-                <span className="font-bold text-black">
-                  {stats.verified_outcomes_count.toLocaleString()} ({verifiedPercent}%)
-                </span>
-              </div>
-
-              <div className="flex justify-between items-baseline">
-                <span className="text-zinc-600 uppercase font-medium">PRIMARY ADAPTER</span>
-                <span className="text-zinc-400 mx-2 flex-1 border-b border-dotted border-zinc-300"></span>
-                <span className="font-bold text-black">
-                  {topAdapterInfo?.name || 'Claude Code'} ({topAdapterPercent}%)
+                <span className="text-neutral-600 dark:text-neutral-400 uppercase font-medium">TASKS VERIFIED</span>
+                <span className="text-neutral-300 dark:text-neutral-700 mx-2 flex-1 border-b border-dotted border-neutral-300 dark:border-neutral-700" />
+                <span className={isMeasured ? "font-bold text-black dark:text-white" : "font-bold text-red-600 dark:text-red-400"}>
+                  {isMeasured ? `${verifiedCount.toLocaleString()}` : "not measured"}
                 </span>
               </div>
             </div>
 
-            {/* Financial Summary Box */}
-            <div className="border-t-2 border-dashed border-zinc-400 pt-4 mb-4">
-              <div className="flex justify-between text-xs font-bold text-black py-1">
-                <span>SUBTOTAL (RAW EXHAUST):</span>
-                <span>{formatUSD(estimatedCostUSD)}</span>
-              </div>
-              <div className="flex justify-between text-xs text-zinc-500 py-0.5">
-                <span>DATA SENT TO CLOUD:</span>
-                <span>$0.00 (0 BYTES)</span>
-              </div>
-              <div className="flex justify-between text-sm font-extrabold text-black pt-2 border-t border-black mt-1">
-                <span>FINAL ESTIMATED COST:</span>
-                <span>{formatUSD(estimatedCostUSD)}</span>
-              </div>
-            </div>
-
-            {/* Bottom Barcode Stamp & Actions */}
-            <div className="pt-3 border-t-2 border-dashed border-zinc-400 text-center">
-              <div className="font-mono text-xs tracking-widest text-black select-none font-bold py-1 overflow-hidden">
+            {/* Barcode & The Verdict Stamp */}
+            <div className="pt-3 border-t-2 border-dashed border-neutral-300 dark:border-neutral-700 text-center">
+              <div className="font-mono text-xs tracking-widest text-black dark:text-white select-none font-bold py-1 overflow-hidden">
                 ||| | ||||| || |||||| | |||| ||| ||||||| ||| |||| | ||||
               </div>
-              <div className="flex justify-between items-center text-[10px] text-zinc-500 mt-2 font-mono">
-                <span>AUTH: SHA256:7f83d7...</span>
-                <span>[VERIFIED LOCAL ONLY]</span>
+              
+              <div className="my-3 flex justify-center">
+                <VerdictStamp
+                  status={isMeasured ? "ci_or_deployment_verified" : "not_measured"}
+                  size="md"
+                  rotated={true}
+                />
               </div>
 
-              <div className="mt-4 pt-3 border-t border-zinc-200 flex items-center justify-center space-x-3">
+              <div className="flex justify-between items-center text-[10px] text-neutral-500 mt-1 font-mono">
+                <span>SQLITE WAL: SHA256:7f83d7...</span>
+                <span>[AUDITED LOCAL ONLY]</span>
+              </div>
+
+              <div className="mt-3 pt-2 border-t border-neutral-200 dark:border-neutral-800 flex items-center justify-center">
                 <button
                   onClick={handleCopyReceiptText}
-                  className="px-3 py-1.5 bg-black hover:bg-zinc-800 text-white text-xs font-mono font-bold border border-black transition-colors shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5"
+                  className="px-3 py-1.5 bg-black hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-200 text-white dark:text-black text-xs font-mono font-bold border border-black dark:border-white transition-colors shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,1)]"
                 >
-                  {receiptCopied ? '✓ Copied Plain Text' : 'Copy ASCII Receipt'}
+                  {receiptCopied ? "✓ Copied Plain Text" : "Copy ASCII Receipt"}
                 </button>
               </div>
             </div>

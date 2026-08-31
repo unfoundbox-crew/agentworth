@@ -1,20 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
   Search,
   Filter,
   ArrowUpDown,
   Clock,
   ChevronRight,
-} from 'lucide-react';
-import { SessionSummary } from '../types';
+} from "lucide-react";
+import { SessionSummary } from "../types";
 import {
   formatTokens,
   formatDuration,
   formatDate,
   formatTimeAgo,
-  getOutcomeBadgeInfo,
   getAdapterBadge,
-} from '../utils/formatters';
+} from "../utils/formatters";
+import { VerdictStamp } from "./VerdictStamp";
 
 interface TracesExplorerProps {
   traces: SessionSummary[];
@@ -38,10 +38,10 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
   onFilterChange,
   isLoading,
 }) => {
-  const [search, setSearch] = useState('');
-  const [selectedAdapter, setSelectedAdapter] = useState('all');
-  const [selectedOutcome, setSelectedOutcome] = useState('all');
-  const [orderBy, setOrderBy] = useState('started_at_desc');
+  const [search, setSearch] = useState("");
+  const [selectedAdapter, setSelectedAdapter] = useState("all");
+  const [selectedOutcome, setSelectedOutcome] = useState("all");
+  const [orderBy, setOrderBy] = useState("started_at_desc");
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -66,59 +66,59 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
   };
 
   const adapters = [
-    { id: 'all', label: 'All Adapters' },
-    { id: 'antigravity', label: 'Antigravity (AGY)' },
-    { id: 'cursor', label: 'Cursor Composer' },
-    { id: 'claude_code', label: 'Claude Code' },
-    { id: 'codex', label: 'Codex CLI' },
-    { id: 'goose', label: 'Block Goose' },
-    { id: 'pi', label: 'Pi Agent' },
-    { id: 'herdr', label: 'Herdr' },
-    { id: 'hermes', label: 'Nous Hermes' },
-    { id: 'openclaw', label: 'OpenClaw' },
-    { id: 'grok', label: 'xAI Grok' },
-    { id: 'opencode', label: 'OpenCode' },
+    { id: "all", label: "All Adapters" },
+    { id: "claude_code", label: "Claude Code" },
+    { id: "cursor", label: "Cursor" },
+    { id: "codex", label: "Codex" },
+    { id: "antigravity", label: "Antigravity (AGY)" },
+    { id: "gemini", label: "Gemini CLI" },
+    { id: "hermes", label: "Nous Hermes" },
+    { id: "goose", label: "Block Goose" },
+    { id: "pi", label: "Pi" },
+    { id: "grok", label: "Grok" },
+    { id: "opencode", label: "OpenCode" },
   ];
 
   const outcomeFilters = [
-    { id: 'all', label: 'All Outcomes' },
-    { id: 'ci_or_deployment_verified', label: 'CI/PR Verified' },
-    { id: 'test_or_build_passed', label: 'Tests Passed' },
-    { id: 'commit_observed', label: 'Commit Observed' },
-    { id: 'artifact_changed', label: 'Artifact Changed' },
-    { id: 'unresolved', label: 'Unresolved' },
+    { id: "all", label: "All Outcomes" },
+    { id: "ci_or_deployment_verified", label: "CI Verified (R5)" },
+    { id: "commit_observed", label: "Committed (R4)" },
+    { id: "test_or_build_passed", label: "Tested (R3)" },
+    { id: "artifact_changed", label: "Artifact Changed (R2)" },
+    { id: "done_claimed", label: "Claim Only (R1)" },
+    { id: "unresolved", label: "Unresolved (R0)" },
   ];
 
   return (
-    <section className="py-8 sm:py-12 bg-[#fdfdfd]">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section className="py-8 bg-[#fdfdfd] dark:bg-[#0a0a0c]">
+      <div>
         
         {/* Header Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
             <div className="flex items-center space-x-2">
-              <div className="w-3 h-3 bg-black"></div>
-              <h2 className="text-xl sm:text-2xl font-mono font-bold uppercase tracking-tight text-black">
+              <div className="w-3 h-3 bg-black dark:bg-white" />
+              <h2 className="text-xl sm:text-2xl font-mono font-bold uppercase tracking-tight text-black dark:text-white">
                 TRACES EXPLORER
               </h2>
-              <span className="text-xs font-mono px-2 py-0.5 bg-zinc-100 border border-zinc-300 text-zinc-700">
+              <span className="text-xs font-mono px-2 py-0.5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300">
                 {totalTraces} sessions indexed
               </span>
             </div>
-            <p className="text-xs font-mono text-zinc-500 mt-1">
+            <p className="text-xs font-mono text-neutral-500 mt-1 font-sans">
               Filter by adapter, verify outcomes, inspect step-by-step model decisions.
             </p>
           </div>
 
           {/* Sort selection */}
           <div className="flex items-center space-x-2">
-            <span className="text-xs font-mono text-zinc-500 flex items-center">
+            <span className="text-xs font-mono text-neutral-500 flex items-center">
               <ArrowUpDown className="w-3 h-3 mr-1" /> Sort:
             </span>
             <select
               value={orderBy}
               onChange={handleSortChange}
-              className="bg-white border border-zinc-900 px-2.5 py-1 text-xs font-mono text-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] focus:outline-none"
+              className="bg-white dark:bg-neutral-900 border border-black dark:border-white px-2.5 py-1 text-xs font-mono text-black dark:text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,1)] focus:outline-none"
             >
               <option value="started_at_desc">Newest First</option>
               <option value="started_at_asc">Oldest First</option>
@@ -132,20 +132,20 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
         </div>
 
         {/* Filter Controls */}
-        <div className="bg-zinc-50 border border-zinc-900 p-4 mb-6 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] space-y-3">
+        <div className="bg-neutral-50 dark:bg-neutral-900 border border-black dark:border-neutral-700 p-4 mb-6 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,1)] space-y-3">
           
           {/* Top Filter Row: Search Input + Adapter Chips */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             
             {/* Search Input */}
             <div className="relative flex-1">
-              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={search}
                 onChange={handleSearchChange}
                 placeholder="Search prompt, model, session ID, or task..."
-                className="w-full bg-white border border-zinc-400 pl-9 pr-3 py-1.5 text-xs font-mono text-black placeholder:text-zinc-400 focus:border-black focus:outline-none"
+                className="w-full bg-white dark:bg-neutral-800 border border-neutral-400 dark:border-neutral-600 pl-9 pr-3 py-1.5 text-xs font-mono text-black dark:text-white placeholder:text-neutral-400 focus:border-black dark:focus:border-white focus:outline-none"
               />
             </div>
 
@@ -157,8 +157,8 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
                   onClick={() => handleAdapterChange(ad.id)}
                   className={`px-2.5 py-1 text-xs font-mono border transition-all ${
                     selectedAdapter === ad.id
-                      ? 'bg-black text-white border-black font-semibold shadow-[1px_1px_0px_0px_rgba(0,0,0,0.5)]'
-                      : 'bg-white text-zinc-700 border-zinc-300 hover:border-black'
+                      ? "bg-black dark:bg-white text-white dark:text-black border-black dark:border-white font-semibold shadow-[1px_1px_0px_0px_rgba(0,0,0,0.5)]"
+                      : "bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 border-neutral-300 dark:border-neutral-700 hover:border-black dark:hover:border-white"
                   }`}
                 >
                   {ad.label}
@@ -169,9 +169,9 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
           </div>
 
           {/* Bottom Filter Row: Outcome Filter Chips */}
-          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-zinc-200">
-            <span className="text-[11px] font-mono text-zinc-500 mr-1 flex items-center">
-              <Filter className="w-3 h-3 mr-1" /> Outcome:
+          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+            <span className="text-[11px] font-mono text-neutral-500 mr-1 flex items-center">
+              <Filter className="w-3 h-3 mr-1" /> Outcome Rung:
             </span>
             {outcomeFilters.map((out) => (
               <button
@@ -179,8 +179,8 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
                 onClick={() => handleOutcomeChange(out.id)}
                 className={`px-2 py-0.5 text-[11px] font-mono border transition-all ${
                   selectedOutcome === out.id
-                    ? 'bg-zinc-800 text-white border-zinc-800 font-semibold'
-                    : 'bg-white text-zinc-600 border-zinc-300 hover:border-zinc-500'
+                    ? "bg-black dark:bg-white text-white dark:text-black border-black dark:border-white font-semibold"
+                    : "bg-white dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 border-neutral-300 dark:border-neutral-700 hover:border-neutral-500"
                 }`}
               >
                 {out.label}
@@ -191,35 +191,34 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
         </div>
 
         {/* Traces Table */}
-        <div className="border-2 border-zinc-900 bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] overflow-x-auto">
+        <div className="border-2 border-black dark:border-white bg-white dark:bg-[#121215] shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,1)] overflow-x-auto">
           <table className="w-full text-left border-collapse font-mono text-xs">
             <thead>
-              <tr className="bg-zinc-100 border-b-2 border-zinc-900 text-zinc-700 select-none">
+              <tr className="bg-neutral-100 dark:bg-neutral-900 border-b-2 border-black dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 select-none">
                 <th className="py-2.5 px-4 font-bold">SESSION / ADAPTER</th>
                 <th className="py-2.5 px-4 font-bold">PROMPT PREVIEW</th>
                 <th className="py-2.5 px-4 font-bold">MODELS & TOOLS</th>
                 <th className="py-2.5 px-4 font-bold">TOKENS / DURATION</th>
-                <th className="py-2.5 px-4 font-bold">OUTCOME</th>
+                <th className="py-2.5 px-4 font-bold">VERDICT</th>
                 <th className="py-2.5 px-4 font-bold text-center">SCORE</th>
                 <th className="py-2.5 px-4 font-bold text-right">ACTION</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-200">
+            <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-zinc-500 font-mono">
+                  <td colSpan={7} className="py-12 text-center text-neutral-500 font-mono">
                     <span className="inline-block animate-spin mr-2">◴</span> Loading trace histories...
                   </td>
                 </tr>
               ) : traces.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-zinc-500 font-mono">
-                    No matching traces found. Try broadening your search or filter.
+                  <td colSpan={7} className="py-12 text-center text-neutral-500 font-mono">
+                    No matching traces found in local index (~/.agentworth). Run &apos;npx agentworth scan&apos; to index dotfiles.
                   </td>
                 </tr>
               ) : (
                 traces.map((trace) => {
-                  const outcomeInfo = getOutcomeBadgeInfo(trace.primary_outcome);
                   const adapterInfo = getAdapterBadge(trace.adapter);
                   const isSelected = selectedSessionId === trace.session_id;
 
@@ -227,29 +226,29 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
                     <tr
                       key={trace.session_id}
                       onClick={() => onSelectSession(trace.session_id)}
-                      className={`hover:bg-zinc-50/90 cursor-pointer transition-colors ${
-                        isSelected ? 'bg-zinc-100/90 font-medium' : ''
+                      className={`hover:bg-neutral-50 dark:hover:bg-neutral-900/80 cursor-pointer transition-colors ${
+                        isSelected ? "bg-neutral-100 dark:bg-neutral-900 font-medium" : ""
                       }`}
                     >
                       {/* Session ID & Adapter */}
                       <td className="py-3 px-4 whitespace-nowrap">
                         <div className="flex items-center space-x-2">
-                          <span className={`px-1.5 py-0.5 text-[10px] uppercase font-bold border ${adapterInfo.borderColor} bg-white`}>
+                          <span className={`px-1.5 py-0.5 text-[10px] uppercase font-bold border ${adapterInfo.borderColor} bg-white dark:bg-black text-black dark:text-white`}>
                             {adapterInfo.tag}
                           </span>
-                          <span className="font-semibold text-black">{trace.session_id}</span>
+                          <span className="font-semibold text-black dark:text-white">{trace.session_id}</span>
                         </div>
-                        <div className="text-[10px] text-zinc-500 mt-0.5">
+                        <div className="text-[10px] text-neutral-500 mt-0.5">
                           {formatTimeAgo(trace.started_at)} ({formatDate(trace.started_at)})
                         </div>
                       </td>
 
                       {/* Prompt preview */}
                       <td className="py-3 px-4 max-w-xs sm:max-w-md">
-                        <div className="truncate text-zinc-900 font-medium" title={trace.prompt_preview}>
-                          {trace.prompt_preview || 'No prompt preview recorded'}
+                        <div className="truncate text-neutral-900 dark:text-neutral-100 font-medium" title={trace.prompt_preview}>
+                          {trace.prompt_preview || "No prompt preview recorded"}
                         </div>
-                        <div className="text-[10px] text-zinc-400 truncate mt-0.5">
+                        <div className="text-[10px] text-neutral-400 truncate mt-0.5">
                           {trace.source_path}
                         </div>
                       </td>
@@ -260,46 +259,45 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
                           {trace.models_used.map((m) => (
                             <span
                               key={m}
-                              className="px-1.5 py-0.5 bg-zinc-100 border border-zinc-300 text-[10px] text-zinc-700"
+                              className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-[10px] text-neutral-700 dark:text-neutral-300"
                             >
                               {m}
                             </span>
                           ))}
                         </div>
-                        <div className="text-[10px] text-zinc-500 mt-0.5">
+                        <div className="text-[10px] text-neutral-500 mt-0.5">
                           {trace.tool_calls_count} tool calls · {trace.total_events} events
                         </div>
                       </td>
 
                       {/* Tokens & Duration */}
                       <td className="py-3 px-4 whitespace-nowrap">
-                        <div className="font-bold text-zinc-900">
-                          {formatTokens(trace.total_tokens)}
+                        <div className="font-bold text-neutral-900 dark:text-neutral-100">
+                          {trace.total_tokens > 0 ? formatTokens(trace.total_tokens) : "—"}
                         </div>
-                        <div className="text-[10px] text-zinc-500 flex items-center mt-0.5">
-                          <Clock className="w-3 h-3 mr-1 text-zinc-400" />
+                        <div className="text-[10px] text-neutral-500 flex items-center mt-0.5">
+                          <Clock className="w-3 h-3 mr-1 text-neutral-400" />
                           {formatDuration(trace.duration_seconds)}
                         </div>
                       </td>
 
-                      {/* Outcome badge */}
+                      {/* Verdict Stamp */}
                       <td className="py-3 px-4 whitespace-nowrap">
-                        <span
-                          className={`inline-block px-2 py-0.5 text-[10px] border ${outcomeInfo.className}`}
-                        >
-                          {outcomeInfo.label}
-                        </span>
+                        <VerdictStamp
+                          status={trace.primary_outcome || "unresolved"}
+                          size="sm"
+                        />
                       </td>
 
                       {/* Score Breakdown Pill */}
                       <td className="py-3 px-4 text-center whitespace-nowrap">
                         {trace.composite_score !== undefined ? (
-                          <div className="inline-flex items-center space-x-1 px-2 py-0.5 bg-zinc-900 text-white font-bold text-[11px] border border-zinc-900 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
+                          <div className="inline-flex items-center space-x-1 px-2 py-0.5 bg-black dark:bg-white text-white dark:text-black font-bold text-[11px] border border-black dark:border-white shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
                             <span>{(trace.composite_score * 100).toFixed(0)}</span>
-                            <span className="text-[9px] text-zinc-400">/100</span>
+                            <span className="text-[9px] opacity-70">/100</span>
                           </div>
                         ) : (
-                          <span className="text-zinc-400">-</span>
+                          <span className="text-neutral-400">—</span>
                         )}
                       </td>
 
@@ -310,7 +308,7 @@ export const TracesExplorer: React.FC<TracesExplorerProps> = ({
                             e.stopPropagation();
                             onSelectSession(trace.session_id);
                           }}
-                          className="inline-flex items-center space-x-1 px-2 py-1 text-[11px] font-mono bg-white hover:bg-black hover:text-white border border-zinc-900 transition-colors shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]"
+                          className="inline-flex items-center space-x-1 px-2 py-1 text-[11px] font-mono bg-white dark:bg-neutral-800 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black border border-black dark:border-white transition-colors shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] dark:shadow-[1px_1px_0px_0px_rgba(255,255,255,1)] text-black dark:text-white"
                         >
                           <span>Inspect</span>
                           <ChevronRight className="w-3 h-3" />

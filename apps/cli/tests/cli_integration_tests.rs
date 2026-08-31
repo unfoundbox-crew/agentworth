@@ -74,6 +74,9 @@ fn test_cli_scan_and_stats_commands() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Total Sessions:"))
+        .stdout(predicate::str::contains("Verdict Breakdown:"))
+        .stdout(predicate::str::contains("Test or Build Passed (Rung 3)"))
+        .stdout(predicate::str::contains("Real Verified Tasks:"))
         .stdout(predicate::str::contains("claude_code"))
         .stdout(predicate::str::contains("claude-3-5-sonnet-20241022"))
         .stdout(predicate::str::contains("FileEdit"))
@@ -91,7 +94,50 @@ fn test_cli_scan_and_stats_commands() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"total_sessions\": 1"))
+        .stdout(predicate::str::contains("\"verdict_breakdown\":"))
+        .stdout(predicate::str::contains("\"test_or_build_passed\": 1"))
+        .stdout(predicate::str::contains("\"real_verified_tasks\": 1"))
         .stdout(predicate::str::contains("\"claude_code\": 1"));
+}
+
+#[test]
+fn test_cli_matrix_command_table_and_json() {
+    // 1. agwt matrix (table view)
+    let mut matrix_cmd = Command::cargo_bin("agwt").unwrap();
+    matrix_cmd.arg("matrix");
+
+    matrix_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AgentWorth Adapter Extraction Coverage Matrix (20 Production Adapters)"))
+        .stdout(predicate::str::contains("claude_code"))
+        .stdout(predicate::str::contains("codex"))
+        .stdout(predicate::str::contains("gemini"))
+        .stdout(predicate::str::contains("opencode"))
+        .stdout(predicate::str::contains("cursor"))
+        .stdout(predicate::str::contains("windsurf"))
+        .stdout(predicate::str::contains("deepseek"))
+        .stdout(predicate::str::contains("qwen"))
+        .stdout(predicate::str::contains("zhipu"))
+        .stdout(predicate::str::contains("manus"))
+        .stdout(predicate::str::contains("100% extraction parity"));
+
+    // 2. agwt matrix (--json)
+    let mut matrix_json_cmd = Command::cargo_bin("agwt").unwrap();
+    matrix_json_cmd.arg("matrix").arg("--json");
+
+    matrix_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"total_adapters\": 20"))
+        .stdout(predicate::str::contains("\"coverage_rate\": \"100%\""))
+        .stdout(predicate::str::contains("\"adapter\": \"claude_code\""))
+        .stdout(predicate::str::contains("\"prompts\": true"))
+        .stdout(predicate::str::contains("\"tokens\": true"))
+        .stdout(predicate::str::contains("\"tools\": true"))
+        .stdout(predicate::str::contains("\"shell\": true"))
+        .stdout(predicate::str::contains("\"diffs\": true"))
+        .stdout(predicate::str::contains("\"outcomes\": true"));
 }
 
 #[test]
@@ -110,13 +156,16 @@ fn test_cli_traces_list_and_filters() {
         .assert()
         .success();
 
-    // 1. List traces in table view
+    // 1. List traces in table view (with verdict badges and score)
     let mut traces_cmd = Command::cargo_bin("agentworth").unwrap();
     traces_cmd.arg("--db-path").arg(&db_path).arg("traces");
 
     traces_cmd
         .assert()
         .success()
+        .stdout(predicate::str::contains("VERDICT"))
+        .stdout(predicate::str::contains("SCORE"))
+        .stdout(predicate::str::contains("[TEST_PASSED]"))
         .stdout(predicate::str::contains("SESSION ID"))
         .stdout(predicate::str::contains(&session_id))
         .stdout(predicate::str::contains("claude_code"));
@@ -133,6 +182,7 @@ fn test_cli_traces_list_and_filters() {
         .assert()
         .success()
         .stdout(predicate::str::contains(&session_id))
+        .stdout(predicate::str::contains("\"verdict_badge\": \"[TEST_PASSED]\""))
         .stdout(predicate::str::contains("\"adapter\": \"claude_code\""));
 
     // 3. List traces with matching filter
@@ -182,7 +232,7 @@ fn test_cli_inspect_command() {
         .assert()
         .success();
 
-    // 1. Inspect timeline view
+    // 1. Inspect timeline view with grouped highest outcome
     let mut inspect_cmd = Command::cargo_bin("agentworth").unwrap();
     inspect_cmd
         .arg("--db-path")
@@ -195,13 +245,13 @@ fn test_cli_inspect_command() {
         .success()
         .stdout(predicate::str::contains("AgentWorth Session Trace:"))
         .stdout(predicate::str::contains(&session_id))
+        .stdout(predicate::str::contains("Highest Outcome Reached:"))
+        .stdout(predicate::str::contains("Rung 3 - Test or Build Passed"))
+        .stdout(predicate::str::contains("Supporting Evidence:"))
         .stdout(predicate::str::contains("USER PROMPT"))
         .stdout(predicate::str::contains("ASSISTANT THINKING"))
         .stdout(predicate::str::contains("TOOL CALL: FileEdit"))
-        .stdout(predicate::str::contains("TOOL CALL: Bash"))
-        .stdout(predicate::str::contains(
-            "OUTCOME EVIDENCE: TestOrBuildPassed",
-        ));
+        .stdout(predicate::str::contains("TOOL CALL: Bash"));
 
     // 2. Inspect with --json
     let mut inspect_json_cmd = Command::cargo_bin("agentworth").unwrap();
@@ -304,4 +354,224 @@ fn test_cli_serve_command_help_and_flags() {
         .stdout(predicate::str::contains("--port"))
         .stdout(predicate::str::contains("--open"))
         .stdout(predicate::str::contains("--dist"));
+}
+
+#[test]
+fn test_cli_search_command_ascii_and_json() {
+    let temp = tempdir().unwrap();
+    let (_session_file, session_id) = setup_sample_claude_session(temp.path());
+    let db_path = temp.path().join("test_agentworth.db");
+
+    // Scan
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Search (ASCII Thermal Receipt card view)
+    let mut search_cmd = Command::cargo_bin("agwt").unwrap();
+    search_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("search")
+        .arg("database bug fix");
+
+    search_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Semantic Latent Vector Search"))
+        .stdout(predicate::str::contains("MATCH:"))
+        .stdout(predicate::str::contains(&session_id))
+        .stdout(predicate::str::contains("claude_code"));
+
+    // 2. Search with --json
+    let mut search_json_cmd = Command::cargo_bin("agwt").unwrap();
+    search_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("search")
+        .arg("database bug fix")
+        .arg("--json");
+
+    search_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"chunk_id\":"))
+        .stdout(predicate::str::contains("\"session_id\": \"sample_session_123\""))
+        .stdout(predicate::str::contains("\"score\":"));
+}
+
+#[test]
+fn test_cli_audit_command_safety_detection() {
+    let temp = tempdir().unwrap();
+    let claude_dir = temp.path().join(".claude").join("projects").join("katana");
+    fs::create_dir_all(&claude_dir).unwrap();
+
+    let session_file = claude_dir.join("katana_catastrophe.jsonl");
+    let mut file = File::create(&session_file).unwrap();
+
+    // Dangerous session with rm -rf $d and credential leak
+    writeln!(
+        file,
+        r#"{{"type":"user","timestamp":"2026-08-31T10:00:00Z","content":"Clean worktrees and use GITHUB_TOKEN=ghp_123456789012345678901234567890123456"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:02Z","model":"claude-opus-5","content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"rm -rf $d"}}}}]}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-08-31T10:00:04Z","tool_use_id":"t1","content":"Deleted directory","is_error":false}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:05Z","content":[{{"type":"text","text":"STOP. That was my mistake — I accidentally deleted the katana directory. A missing local turned my safety mechanism into a weapon."}}]}}"#
+    )
+    .unwrap();
+
+    let db_path = temp.path().join("test_agentworth.db");
+
+    // Scan
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Run audit (formatted text view)
+    let mut audit_cmd = Command::cargo_bin("agwt").unwrap();
+    audit_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("audit")
+        .arg("--safety");
+
+    audit_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Agent Safety & Forensic Threat Audit"))
+        .stdout(predicate::str::contains("CRITICAL"))
+        .stdout(predicate::str::contains("LEAKED_SHELL_VARIABLE"))
+        .stdout(predicate::str::contains("rm -rf $d"))
+        .stdout(predicate::str::contains("CREDENTIAL_LEAK"));
+
+    // 2. Run audit with --json
+    let mut audit_json_cmd = Command::cargo_bin("agwt").unwrap();
+    audit_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("audit")
+        .arg("--json");
+
+    audit_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"critical_count\": 1"))
+        .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""));
+}
+
+#[test]
+fn test_cli_blunder_command() {
+    let temp = tempdir().unwrap();
+    let katana_dir = temp.path().join(".claude").join("projects").join("katana");
+    fs::create_dir_all(&katana_dir).unwrap();
+
+    let session_file = katana_dir.join("katana_blunder_session.jsonl");
+    let mut file = File::create(&session_file).unwrap();
+
+    writeln!(
+        file,
+        r#"{{"type":"user","timestamp":"2026-08-31T10:00:00Z","content":"Clean worktrees and delete old directories"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:02Z","model":"Claude Opus 5 (Extended Thinking)","usage":{{"input_tokens":1200000,"output_tokens":450000,"cache_read_input_tokens":3000000,"cache_creation_input_tokens":150000}},"content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"for d in \"${{PROTECTED_PATHS[@]}}\"; do rm -rf \"$d\"; done"}}}}]}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-08-31T10:00:04Z","tool_use_id":"t1","content":"Deleted 27.1 GB","is_error":false}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:05Z","content":[{{"type":"text","text":"STOP. That was my mistake — the path was deleted precisely because it was on the protect list. The guard became the target. Tell Sam today."}}]}}"#
+    )
+    .unwrap();
+
+    let db_path = temp.path().join("test_agentworth.db");
+
+    // Scan
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Run blunder (JSON mode)
+    let mut blunder_json_cmd = Command::cargo_bin("agwt").unwrap();
+    blunder_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder")
+        .arg("--top")
+        .arg("3")
+        .arg("--json");
+
+    blunder_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""))
+        .stdout(predicate::str::contains("\"title\": \"The Missing `local` Weapon (The Katana Incident)\""))
+        .stdout(predicate::str::contains("\"severity\": \"CRITICAL\""))
+        .stdout(predicate::str::contains("\"session_hash\""));
+
+    // 2. Run blunder (ASCII slip text output) with stdin EOF
+    let mut blunder_cmd = Command::cargo_bin("agwt").unwrap();
+    blunder_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder")
+        .write_stdin("n\n");
+
+    blunder_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AGENTWORTH HALL OF BLUNDERS"))
+        .stdout(predicate::str::contains("The Missing `local` Weapon (The Katana Incident)"))
+        .stdout(predicate::str::contains("LEAKED_SHELL_VARIABLE"))
+        .stdout(predicate::str::contains("CRITICAL"))
+        .stdout(predicate::str::contains("AGENT REMORSE QUOTE"))
+        .stdout(predicate::str::contains("FATAL MONOSPACE SNIPPET"))
+        .stdout(predicate::str::contains("for d in \"${PROTECTED_PATHS[@]}\"; do rm -rf \"$d\"; done"))
+        .stdout(predicate::str::contains("[ VERIFIED BY AGENTWORTH ]"));
+
+    // 3. Run blunder with --submit --json (offline fallback mode)
+    let mut blunder_submit_cmd = Command::cargo_bin("agwt").unwrap();
+    blunder_submit_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder")
+        .arg("--submit")
+        .arg("--json");
+
+    blunder_submit_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"submission\""))
+        .stdout(predicate::str::contains("\"status\""));
 }

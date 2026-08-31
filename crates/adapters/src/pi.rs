@@ -258,10 +258,17 @@ impl AgentAdapter for PiAdapter {
 
 fn is_candidate_pi_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    if !path_str.contains("pi") {
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let lower = filename.to_lowercase();
+
+    if !path_str.contains(".pi")
+        && !path_str.contains("/pi/")
+        && !path_str.contains("\\pi\\")
+        && !path_str.contains("inflection")
+        && !lower.starts_with("pi")
+    {
         return false;
     }
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if filename.starts_with('.') && !filename.ends_with(".jsonl") && !filename.ends_with(".json") {
         return false;
     }
