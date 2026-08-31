@@ -479,3 +479,99 @@ fn test_cli_audit_command_safety_detection() {
         .stdout(predicate::str::contains("\"critical_count\": 1"))
         .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""));
 }
+
+#[test]
+fn test_cli_blunder_command() {
+    let temp = tempdir().unwrap();
+    let katana_dir = temp.path().join(".claude").join("projects").join("katana");
+    fs::create_dir_all(&katana_dir).unwrap();
+
+    let session_file = katana_dir.join("katana_blunder_session.jsonl");
+    let mut file = File::create(&session_file).unwrap();
+
+    writeln!(
+        file,
+        r#"{{"type":"user","timestamp":"2026-08-31T10:00:00Z","content":"Clean worktrees and delete old directories"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:02Z","model":"Claude Opus 5 (Extended Thinking)","usage":{{"input_tokens":1200000,"output_tokens":450000,"cache_read_input_tokens":3000000,"cache_creation_input_tokens":150000}},"content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"for d in \"${{PROTECTED_PATHS[@]}}\"; do rm -rf \"$d\"; done"}}}}]}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-08-31T10:00:04Z","tool_use_id":"t1","content":"Deleted 27.1 GB","is_error":false}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:05Z","content":[{{"type":"text","text":"STOP. That was my mistake — the path was deleted precisely because it was on the protect list. The guard became the target. Tell Sam today."}}]}}"#
+    )
+    .unwrap();
+
+    let db_path = temp.path().join("test_agentworth.db");
+
+    // Scan
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Run blunder (JSON mode)
+    let mut blunder_json_cmd = Command::cargo_bin("agwt").unwrap();
+    blunder_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder")
+        .arg("--top")
+        .arg("3")
+        .arg("--json");
+
+    blunder_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""))
+        .stdout(predicate::str::contains("\"title\": \"The Missing `local` Weapon (The Katana Incident)\""))
+        .stdout(predicate::str::contains("\"severity\": \"CRITICAL\""))
+        .stdout(predicate::str::contains("\"session_hash\""));
+
+    // 2. Run blunder (ASCII slip text output) with stdin EOF
+    let mut blunder_cmd = Command::cargo_bin("agwt").unwrap();
+    blunder_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder")
+        .write_stdin("n\n");
+
+    blunder_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AGENTWORTH HALL OF BLUNDERS"))
+        .stdout(predicate::str::contains("The Missing `local` Weapon (The Katana Incident)"))
+        .stdout(predicate::str::contains("LEAKED_SHELL_VARIABLE"))
+        .stdout(predicate::str::contains("CRITICAL"))
+        .stdout(predicate::str::contains("AGENT REMORSE QUOTE"))
+        .stdout(predicate::str::contains("FATAL MONOSPACE SNIPPET"))
+        .stdout(predicate::str::contains("for d in \"${PROTECTED_PATHS[@]}\"; do rm -rf \"$d\"; done"))
+        .stdout(predicate::str::contains("[ VERIFIED BY AGENTWORTH ]"));
+
+    // 3. Run blunder with --submit --json (offline fallback mode)
+    let mut blunder_submit_cmd = Command::cargo_bin("agwt").unwrap();
+    blunder_submit_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder")
+        .arg("--submit")
+        .arg("--json");
+
+    blunder_submit_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"submission\""))
+        .stdout(predicate::str::contains("\"status\""));
+}

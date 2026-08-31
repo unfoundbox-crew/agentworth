@@ -149,6 +149,21 @@ enum Commands {
         json: bool,
     },
 
+    /// Discover top agent blunders, render thermal receipts, and export to the Hall of Blunders
+    Blunder {
+        /// Number of top blunder exhibits to retrieve and display (default: 5)
+        #[arg(short, long, default_value_t = 5)]
+        top: usize,
+
+        /// Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol
+        #[arg(short, long)]
+        submit: bool,
+
+        /// Output blunder exhibits as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Start the local API server and interactive explorer UI
     Serve {
         /// Port to bind the server to
@@ -263,6 +278,9 @@ fn main() -> Result<()> {
         }
         Commands::Audit { safety, json } => {
             agentworth_cli::run_audit_command(safety, json, cli.db_path)?;
+        }
+        Commands::Blunder { top, submit, json } => {
+            agentworth_cli::run_blunder_command(top, submit, json, cli.db_path)?;
         }
         Commands::Usage {
             period,
