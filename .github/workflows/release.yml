@@ -126,15 +126,31 @@ jobs:
     name: Publish to NPM
     needs: create-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write        # required for OIDC / trusted publishing
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Trusted publishing needs npm >= 11.5.1; node 24 ships a recent npm but
+      # pin it explicitly so a runner image change cannot silently regress us.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Ensure npm supports trusted publishing
+        run: |
+          npm install -g npm@latest
+          echo "npm $(npm --version)"
+          node -e '
+            const v = require("child_process").execSync("npm --version").toString().trim().split(".").map(Number);
+            const ok = v[0] > 11 || (v[0] === 11 && (v[1] > 5 || (v[1] === 5 && v[2] >= 1)));
+            if (!ok) { console.error("::error::npm >= 11.5.1 required for trusted publishing"); process.exit(1); }
+            console.log("npm version OK for trusted publishing");
+          '
 
       - name: Update package.json version from tag
         working-directory: packages/agentworth
@@ -142,33 +158,24 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
-      - name: Verify NPM credentials before publishing
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::error::NPM_TOKEN secret is empty or unset."
-            exit 1
-          fi
-          # A 404 on PUT to an existing package means auth, not a missing package.
-          # Catch it here so the failure names the real cause.
-          if ! WHO=$(npm whoami 2>&1); then
-            echo "::error::NPM_TOKEN is invalid or expired. npm whoami said: ${WHO}"
-            echo "::error::Mint a new *Automation* token (classic) or a granular token with"
-            echo "::error::read+write on the 'agentworth' package, then update the NPM_TOKEN secret."
-            exit 1
-          fi
-          echo "Authenticated to npm as: ${WHO}"
-          if ! npm access list packages "${WHO}" 2>/dev/null | grep -q agentworth; then
-            echo "::warning::${WHO} may not have write access to 'agentworth'. Publish may 404."
-          fi
-
-      - name: Publish package to NPM
+      # No NPM_TOKEN. The npm CLI detects the OIDC environment and exchanges the
+      # GitHub identity token for a short-lived npm credential. This replaces the
+      # bypass-2FA granular token, which npm restricted on 2026-07-31 and plans to
+      # stop accepting for publish in January 2027.
+      # Requires a Trusted Publisher configured on npmjs.com for:
+      #   org/user: unfoundbox-crew · repo: agentworth · workflow: release.yml
+      - name: Publish package to NPM (trusted publishing / OIDC)
         working-directory: packages/agentworth
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm publish --access public
+          if ! npm publish --access public 2>&1 | tee /tmp/publish.log; then
+            if grep -qiE "trusted publisher|oidc|not configured" /tmp/publish.log; then
+              echo "::error::Trusted Publisher is not configured on npmjs.com."
+              echo "::error::Add one on the agentworth package: Settings -> Trusted Publisher"
+              echo "::error::  org/user: unfoundbox-crew, repo: agentworth, workflow: release.yml"
+              echo "::error::  allowed actions: npm publish"
+            fi
+            exit 1
+          fi
 
   smoke-test:
     name: Smoke test (${{ matrix.os }})
