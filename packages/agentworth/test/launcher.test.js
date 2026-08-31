@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   getPlatformKey,
+  getTargetTriple,
   getBinaryName,
   resolveArguments,
   isExecutable,
@@ -29,6 +30,15 @@ describe('npm-wrapper / launcher', () => {
       assert.equal(getPlatformKey('linux', 'arm64'), 'linux-arm64');
       assert.equal(getPlatformKey('win32', 'x64'), 'win32-x64');
       assert.equal(getPlatformKey('win32', 'arm64'), 'win32-arm64');
+    });
+
+    it('maps platforms to release target triples', () => {
+      assert.equal(getTargetTriple('darwin', 'arm64'), 'aarch64-apple-darwin');
+      assert.equal(getTargetTriple('darwin', 'x64'), 'x86_64-apple-darwin');
+      assert.equal(getTargetTriple('linux', 'x64'), 'x86_64-unknown-linux-gnu');
+      assert.equal(getTargetTriple('linux', 'arm64'), 'aarch64-unknown-linux-gnu');
+      assert.equal(getTargetTriple('win32', 'x64'), 'x86_64-pc-windows-msvc');
+      assert.equal(getTargetTriple('unknown', 'arch'), null);
     });
 
     it('determines native binary filename by platform', () => {
@@ -83,6 +93,7 @@ describe('npm-wrapper / launcher', () => {
         cwd: tempDir,
         env: { AGENTWORTH_BIN: mockBin },
         baseDir: tempDir,
+        homeDir: tempDir,
       });
 
       assert.equal(res.found, true);
@@ -102,8 +113,9 @@ describe('npm-wrapper / launcher', () => {
 
       const res = resolveBinary({
         cwd: subDir,
-        env: {},
+        env: { PATH: '' },
         baseDir: subDir,
+        homeDir: tempDir,
       });
 
       assert.equal(res.found, true);
@@ -123,8 +135,9 @@ describe('npm-wrapper / launcher', () => {
 
       const res = resolveBinary({
         cwd: isolatedDir,
-        env: { CARGO_TARGET_DIR: customTargetDir },
+        env: { CARGO_TARGET_DIR: customTargetDir, PATH: '' },
         baseDir: isolatedDir,
+        homeDir: tempDir,
       });
 
       assert.equal(res.found, true);
@@ -145,6 +158,7 @@ describe('npm-wrapper / launcher', () => {
         cwd: isolatedDir,
         env: { PATH: binDir },
         baseDir: isolatedDir,
+        homeDir: tempDir,
       });
 
       assert.equal(res.found, true);
@@ -160,6 +174,7 @@ describe('npm-wrapper / launcher', () => {
         cwd: emptyDir,
         env: { PATH: '' },
         baseDir: emptyDir,
+        homeDir: emptyDir,
       });
 
       assert.equal(res.found, false);
@@ -211,6 +226,8 @@ describe('npm-wrapper / launcher', () => {
         cwd: emptyDir,
         env: { PATH: '' },
         baseDir: emptyDir,
+        homeDir: emptyDir,
+        autoDownload: false,
       });
       assert.equal(exitCode, 1);
     });
