@@ -11,8 +11,33 @@ permissions:
   id-token: write
 
 jobs:
+  version-gate:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # v0.1.3 was tagged from a tree where Cargo.toml still said 0.1.2, so the
+      # released binary reported the wrong version and the npm launcher (which
+      # builds its download URL from package.json) could 404. Fail before building.
+      - name: Tag, Cargo.toml and package.json must agree
+        shell: bash
+        run: |
+          TAG=${GITHUB_REF_NAME#v}
+          CARGO=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          NPM=$(node -p "require('./packages/agentworth/package.json').version")
+          echo "tag=$TAG cargo=$CARGO npm=$NPM"
+          FAIL=0
+          [ "$TAG" = "$CARGO" ] || { echo "::error::tag $TAG != Cargo.toml $CARGO"; FAIL=1; }
+          [ "$TAG" = "$NPM" ]   || { echo "::error::tag $TAG != package.json $NPM"; FAIL=1; }
+          if [ "$FAIL" = "1" ]; then
+            echo "::error::Bump every version to $TAG and re-tag before releasing."
+            exit 1
+          fi
+
   build-binaries:
     name: Build (${{ matrix.target }})
+    needs: version-gate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -117,9 +142,84 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
+      - name: Verify NPM credentials before publishing
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::NPM_TOKEN secret is empty or unset."
+            exit 1
+          fi
+          # A 404 on PUT to an existing package means auth, not a missing package.
+          # Catch it here so the failure names the real cause.
+          if ! WHO=$(npm whoami 2>&1); then
+            echo "::error::NPM_TOKEN is invalid or expired. npm whoami said: ${WHO}"
+            echo "::error::Mint a new *Automation* token (classic) or a granular token with"
+            echo "::error::read+write on the 'agentworth' package, then update the NPM_TOKEN secret."
+            exit 1
+          fi
+          echo "Authenticated to npm as: ${WHO}"
+          if ! npm access list packages "${WHO}" 2>/dev/null | grep -q agentworth; then
+            echo "::warning::${WHO} may not have write access to 'agentworth'. Publish may 404."
+          fi
+
       - name: Publish package to NPM
         working-directory: packages/agentworth
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish --access public
+
+  smoke-test:
+    name: Smoke test (${{ matrix.os }})
+    needs: publish-npm
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Wait for the registry to serve the new version
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          for i in $(seq 1 30); do
+            if npm view "agentworth@${VERSION}" version >/dev/null 2>&1; then
+              echo "agentworth@${VERSION} is live on the registry."
+              exit 0
+            fi
+            echo "attempt $i: not on the registry yet, waiting 10s..."
+            sleep 10
+          done
+          echo "::error::agentworth@${VERSION} never appeared on the registry."
+          exit 1
+
+      - name: Install and run exactly as a new user would
+        shell: bash
+        timeout-minutes: 6
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          # Clean room: no repo checkout, no cargo target dir, no ~/.agentworth cache.
+          # This is the case that shipped broken and that nothing was checking.
+          OUT=$(npx -y "agentworth@${VERSION}" --version </dev/null 2>&1) || {
+            echo "::error::npx agentworth@${VERSION} --version failed"
+            echo "${OUT}"
+            exit 1
+          }
+          echo "${OUT}"
+          echo "${OUT}" | grep -qi agentworth || {
+            echo "::error::--version output did not mention agentworth"
+            exit 1
+          }
+
+      - name: Run the command the landing pages advertise
+        shell: bash
+        timeout-minutes: 6
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          npx -y "agentworth@${VERSION}" usage --pacing </dev/null
