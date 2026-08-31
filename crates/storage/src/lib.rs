@@ -227,7 +227,27 @@ impl Storage {
                 composite_score REAL,
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
+            "#,
+        )?;
 
+        // Fallback schema migrations for existing databases before creating indexes
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .collect();
+
+        if !columns.is_empty() {
+            if !columns.contains(&"primary_outcome".to_string()) {
+                let _ = conn.execute("ALTER TABLE sessions ADD COLUMN primary_outcome TEXT", []);
+            }
+            if !columns.contains(&"composite_score".to_string()) {
+                let _ = conn.execute("ALTER TABLE sessions ADD COLUMN composite_score REAL", []);
+            }
+        }
+
+        conn.execute_batch(
+            r#"
             CREATE INDEX IF NOT EXISTS idx_sessions_adapter ON sessions(adapter);
             CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
             CREATE INDEX IF NOT EXISTS idx_sessions_tokens ON sessions(total_tokens);
@@ -290,22 +310,6 @@ impl Storage {
             ORDER BY period DESC, total_tokens DESC;
             "#,
         )?;
-
-        // Fallback schema migrations for existing databases
-        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
-        let columns: Vec<String> = stmt
-            .query_map([], |row| row.get::<_, String>(1))?
-            .filter_map(Result::ok)
-            .collect();
-
-        if !columns.is_empty() {
-            if !columns.contains(&"primary_outcome".to_string()) {
-                let _ = conn.execute("ALTER TABLE sessions ADD COLUMN primary_outcome TEXT", []);
-            }
-            if !columns.contains(&"composite_score".to_string()) {
-                let _ = conn.execute("ALTER TABLE sessions ADD COLUMN composite_score REAL", []);
-            }
-        }
 
         Ok(())
     }
