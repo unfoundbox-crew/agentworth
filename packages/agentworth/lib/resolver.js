@@ -264,6 +264,36 @@ export async function downloadAndExtractBinary(options = {}) {
  * @param {string} [currentScriptPath]
  * @returns {string | null}
  */
+/**
+ * True when `candidate` and `selfPath` are the same file, following symlinks.
+ */
+export function isSelf(candidate, selfPath) {
+  if (!selfPath) return false;
+  try {
+    return fs.realpathSync(candidate) === fs.realpathSync(selfPath);
+  } catch {
+    return path.resolve(candidate) === path.resolve(selfPath);
+  }
+}
+
+/**
+ * True when `candidate` is a Node script (a bin shim) rather than the native
+ * binary. Covers shims that are copies rather than symlinks.
+ */
+export function looksLikeNodeScript(filePath) {
+  try {
+    if (/\.(js|cjs|mjs)$/.test(filePath)) return true;
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(64);
+    const n = fs.readSync(fd, buf, 0, 64, 0);
+    fs.closeSync(fd);
+    const first = buf.subarray(0, n).toString('utf8').split('\n')[0];
+    return first.startsWith('#!') && /\bnode\b/.test(first);
+  } catch {
+    return false;
+  }
+}
+
 export function findPathBinary(binName = getBinaryName(), pathEnv = process.env.PATH, currentScriptPath) {
   if (!pathEnv) {
     return null;
@@ -274,8 +304,12 @@ export function findPathBinary(binName = getBinaryName(), pathEnv = process.env.
     if (!entry) continue;
     const candidate = path.join(entry, binName);
     if (isExecutable(candidate)) {
-      // Avoid circular invocation if PATH points to this JS wrapper script
-      if (currentScriptPath && path.resolve(candidate) === path.resolve(currentScriptPath)) {
+      // Avoid circular invocation if PATH points back at this JS wrapper.
+      // npm/npx put node_modules/.bin on PATH and the entry there is a SYMLINK
+      // to this very file. path.resolve() does not follow symlinks, so this guard
+      // missed it and the launcher spawned itself until the OS refused to fork
+      // (EAGAIN on macOS, v0.1.4). Compare real paths, and reject Node scripts.
+      if (isSelf(candidate, currentScriptPath) || looksLikeNodeScript(candidate)) {
         continue;
       }
       return candidate;
@@ -337,8 +371,9 @@ export function resolveBinary(options = {}) {
   }
 
   // 3. System PATH (highest user priority for installed binaries)
+  // Skipped when already inside a launcher: the only thing PATH could offer is us.
   const currentBin = path.resolve(baseDir, '..', 'bin', 'agentworth.js');
-  if (env.PATH !== undefined) {
+  if (env.PATH !== undefined && !env.AGENTWORTH_LAUNCHER_ACTIVE) {
     const pathBin = findPathBinary(binName, env.PATH, currentBin);
     if (pathBin) {
       return {
@@ -487,9 +522,11 @@ export function run(argv = process.argv.slice(2), options = {}) {
     return 1;
   }
 
+  // Belt and braces: a child that somehow re-enters this launcher cannot loop.
+  const childEnv = { ...(options.env || process.env), AGENTWORTH_LAUNCHER_ACTIVE: '1' };
   const result = spawnSync(binaryResult.path, resolvedArgs, {
     stdio: 'inherit',
-    env: options.env || process.env,
+    env: childEnv,
   });
 
   if (result.error) {
