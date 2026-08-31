@@ -575,3 +575,129 @@ fn test_cli_blunder_command() {
         .stdout(predicate::str::contains("\"submission\""))
         .stdout(predicate::str::contains("\"status\""));
 }
+
+#[test]
+fn test_cli_receipt_command_ansi_svg_and_export() {
+    let temp = tempdir().unwrap();
+    let (_session_file, session_id) = setup_sample_claude_session(temp.path());
+
+    let db_path = temp.path().join("test_agentworth.db");
+
+    // Index the sample session
+    let mut scan_cmd = Command::cargo_bin("agwt").unwrap();
+    scan_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Run receipt command with default format (Terminal ANSI)
+    let mut receipt_term_cmd = Command::cargo_bin("agwt").unwrap();
+    receipt_term_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("receipt")
+        .arg(&session_id);
+
+    receipt_term_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AGENTWORTH FLIGHT RECEIPT"))
+        .stdout(predicate::str::contains("TYPED PROVENANCE:"))
+        .stdout(predicate::str::contains("FLOWN"))
+        .stdout(predicate::str::contains("COMPOSITE SCORE:"))
+        .stdout(predicate::str::contains("TOKEN USAGE & FINANCIALS:"))
+        .stdout(predicate::str::contains("APOLOGY TAX & REMORSE AUDIT:"))
+        .stdout(predicate::str::contains("AUTONOMOUS RESILIENCE & RECOVERY:"))
+        .stdout(predicate::str::contains("VERIFIED BY AGENTWORTH"));
+
+    // 2. Run receipt command with format svg
+    let mut receipt_svg_cmd = Command::cargo_bin("agwt").unwrap();
+    receipt_svg_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("receipt")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("svg");
+
+    receipt_svg_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"))
+        .stdout(predicate::str::contains("<svg width=\"1200\" height=\"630\""))
+        .stdout(predicate::str::contains("AGENTWORTH"))
+        .stdout(predicate::str::contains("FLIGHT RECEIPT"))
+        .stdout(predicate::str::contains("FLOWN"))
+        .stdout(predicate::str::contains("TOKEN USAGE &amp; SPEND"))
+        .stdout(predicate::str::contains("AGENTWORTH VERIFIED"));
+
+    // 3. Run receipt command with format json
+    let mut receipt_json_cmd = Command::cargo_bin("agwt").unwrap();
+    receipt_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("receipt")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("json");
+
+    receipt_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"session_id\":"))
+        .stdout(predicate::str::contains("\"provenance_status\": \"Flown\""))
+        .stdout(predicate::str::contains("\"composite_score\":"));
+
+    // 4. Output SVG to a file using --output
+    let svg_out_path = temp.path().join("exports").join("flight_receipt.svg");
+    let mut receipt_out_cmd = Command::cargo_bin("agwt").unwrap();
+    receipt_out_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("receipt")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("svg")
+        .arg("--output")
+        .arg(&svg_out_path);
+
+    receipt_out_cmd.assert().success();
+    assert!(svg_out_path.exists());
+    let svg_content = fs::read_to_string(&svg_out_path).unwrap();
+    assert!(svg_content.contains("<svg width=\"1200\" height=\"630\""));
+
+    // 5. Test export command with --format receipt
+    let mut export_receipt_cmd = Command::cargo_bin("agwt").unwrap();
+    export_receipt_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("export")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("receipt");
+
+    export_receipt_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AGENTWORTH FLIGHT RECEIPT"))
+        .stdout(predicate::str::contains("TYPED PROVENANCE:"));
+
+    // 6. Test export command with --format svg
+    let mut export_svg_cmd = Command::cargo_bin("agwt").unwrap();
+    export_svg_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("export")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("svg");
+
+    export_svg_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("<svg width=\"1200\" height=\"630\""));
+}
+
