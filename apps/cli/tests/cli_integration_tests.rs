@@ -305,3 +305,127 @@ fn test_cli_serve_command_help_and_flags() {
         .stdout(predicate::str::contains("--open"))
         .stdout(predicate::str::contains("--dist"));
 }
+
+#[test]
+fn test_cli_search_command_ascii_and_json() {
+    let temp = tempdir().unwrap();
+    let (_session_file, session_id) = setup_sample_claude_session(temp.path());
+    let db_path = temp.path().join("test_agentworth.db");
+
+    // Scan
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Search (ASCII Thermal Receipt card view)
+    let mut search_cmd = Command::cargo_bin("agwt").unwrap();
+    search_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("search")
+        .arg("database bug fix");
+
+    search_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Semantic Latent Vector Search"))
+        .stdout(predicate::str::contains("MATCH:"))
+        .stdout(predicate::str::contains(&session_id))
+        .stdout(predicate::str::contains("claude_code"));
+
+    // 2. Search with --json
+    let mut search_json_cmd = Command::cargo_bin("agwt").unwrap();
+    search_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("search")
+        .arg("database bug fix")
+        .arg("--json");
+
+    search_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"chunk_id\":"))
+        .stdout(predicate::str::contains("\"session_id\": \"sample_session_123\""))
+        .stdout(predicate::str::contains("\"score\":"));
+}
+
+#[test]
+fn test_cli_audit_command_safety_detection() {
+    let temp = tempdir().unwrap();
+    let claude_dir = temp.path().join(".claude").join("projects").join("katana");
+    fs::create_dir_all(&claude_dir).unwrap();
+
+    let session_file = claude_dir.join("katana_catastrophe.jsonl");
+    let mut file = File::create(&session_file).unwrap();
+
+    // Dangerous session with rm -rf $d and credential leak
+    writeln!(
+        file,
+        r#"{{"type":"user","timestamp":"2026-08-31T10:00:00Z","content":"Clean worktrees and use GITHUB_TOKEN=ghp_123456789012345678901234567890123456"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:02Z","model":"claude-opus-5","content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"rm -rf $d"}}}}]}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-08-31T10:00:04Z","tool_use_id":"t1","content":"Deleted directory","is_error":false}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:05Z","content":[{{"type":"text","text":"STOP. That was my mistake — I accidentally deleted the katana directory. A missing local turned my safety mechanism into a weapon."}}]}}"#
+    )
+    .unwrap();
+
+    let db_path = temp.path().join("test_agentworth.db");
+
+    // Scan
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Run audit (formatted text view)
+    let mut audit_cmd = Command::cargo_bin("agwt").unwrap();
+    audit_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("audit")
+        .arg("--safety");
+
+    audit_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Agent Safety & Forensic Threat Audit"))
+        .stdout(predicate::str::contains("CRITICAL"))
+        .stdout(predicate::str::contains("LEAKED_SHELL_VARIABLE"))
+        .stdout(predicate::str::contains("rm -rf $d"))
+        .stdout(predicate::str::contains("CREDENTIAL_LEAK"));
+
+    // 2. Run audit with --json
+    let mut audit_json_cmd = Command::cargo_bin("agwt").unwrap();
+    audit_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("audit")
+        .arg("--json");
+
+    audit_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"critical_count\": 1"))
+        .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""));
+}

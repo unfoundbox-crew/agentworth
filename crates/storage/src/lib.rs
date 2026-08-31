@@ -1,8 +1,10 @@
-//! SQLite storage engine for AgentWorth indexing, metadata, and incremental rescans.
+pub mod chunker;
+pub mod embedder;
+pub mod vector;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use agentworth_adapter_sdk::SessionSource;
 use agentworth_schema::{AgentWorthTrace, TokenUsage};
@@ -12,6 +14,10 @@ use directories::BaseDirs;
 use rusqlite::types::ToSql;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+
+pub use chunker::TrajectoryChunker;
+pub use embedder::LocalEmbedder;
+pub use vector::{SqliteVectorStore, VectorStore};
 
 /// High-level aggregate statistics across all scanned sessions in the SQLite index.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -119,7 +125,7 @@ pub struct BlameMatch {
 
 /// SQLite-backed storage index.
 pub struct Storage {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
     db_path: Option<PathBuf>,
 }
 
@@ -141,7 +147,7 @@ impl Storage {
         let conn = Connection::open(path)
             .with_context(|| format!("Failed to open SQLite database at {:?}", path))?;
         let storage = Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
             db_path: Some(path.to_path_buf()),
         };
         storage.initialize_schema()?;
@@ -152,7 +158,7 @@ impl Storage {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         let storage = Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
             db_path: None,
         };
         storage.initialize_schema()?;
@@ -162,6 +168,11 @@ impl Storage {
     /// Path to the active database file, if not in-memory.
     pub fn db_path(&self) -> Option<&Path> {
         self.db_path.as_deref()
+    }
+
+    /// Obtain a vector store instance sharing the underlying database connection.
+    pub fn vector_store(&self) -> Result<SqliteVectorStore> {
+        SqliteVectorStore::from_shared_connection(Arc::clone(&self.conn))
     }
 
     /// Run migrations / schema initialization.

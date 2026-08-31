@@ -105,6 +105,39 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Semantic vector search across indexed trajectory turns with ASCII thermal receipts
+    Search {
+        /// Search query (natural language or code snippet)
+        query: String,
+
+        /// Maximum number of results to return
+        #[arg(short, long, default_value_t = 10)]
+        limit: usize,
+
+        /// Minimum similarity score threshold (0.0 to 1.0)
+        #[arg(long, default_value_t = 0.0)]
+        min_score: f32,
+
+        /// Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)
+        #[arg(short, long)]
+        kind: Option<String>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Safety and threat audit detecting forbidden commands, leaked variables, sweeps, and fake claims
+    Audit {
+        /// Restrict audit to safety and threat vectors only
+        #[arg(long)]
+        safety: bool,
+
+        /// Output audit results as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Start the local API server and interactive explorer UI
     Serve {
         /// Port to bind the server to
@@ -203,6 +236,18 @@ fn main() -> Result<()> {
             output,
         } => {
             run_export_command(&session_id, redact, &format, output.as_deref(), cli.db_path)?;
+        }
+        Commands::Search {
+            query,
+            limit,
+            min_score,
+            kind,
+            json,
+        } => {
+            agentworth_cli::run_search_command(&query, limit, min_score, kind, json, cli.db_path)?;
+        }
+        Commands::Audit { safety, json } => {
+            agentworth_cli::run_audit_command(safety, json, cli.db_path)?;
         }
         Commands::Usage {
             period,
