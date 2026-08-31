@@ -1,37 +1,41 @@
-import { useState, useEffect } from 'react';
-import { Navbar } from './components/Navbar';
-import { LandingPage } from './components/LandingPage';
-import { HeroReceipt } from './components/HeroReceipt';
-import { ArchaeologyPanel } from './components/ArchaeologyPanel';
-import { TracesExplorer } from './components/TracesExplorer';
-import { SessionInspector } from './components/SessionInspector';
-import { ExportModal } from './components/ExportModal';
-import { Footer } from './components/Footer';
+import { useState, useEffect } from "react";
+import { Navbar } from "./components/Navbar";
+import { LandingPage } from "./components/LandingPage";
+import { HeroReceipt } from "./components/HeroReceipt";
+import { VerdictBoard } from "./components/VerdictBoard";
+import { CacheCliffWidget } from "./components/CacheCliffWidget";
+import { CoverageMatrix } from "./components/CoverageMatrix";
+import { ArchaeologyPanel } from "./components/ArchaeologyPanel";
+import { TracesExplorer } from "./components/TracesExplorer";
+import { SessionInspector } from "./components/SessionInspector";
+import { ExportModal } from "./components/ExportModal";
+import { Footer } from "./components/Footer";
 
 import {
   AggregateStats,
   SessionSummary,
   AgentWorthTrace,
-} from './types';
+  OutcomeKind,
+} from "./types";
 import {
   fetchAggregateStats,
   fetchTraces,
   fetchTraceDetail,
   TraceQueryFilters,
-} from './services/api';
-import { mockAggregateStats, mockSummaries } from './services/mockData';
+  EMPTY_AGGREGATE_STATS,
+} from "./services/api";
 
-import { initAnalytics } from './services/analytics';
-import { useTheme } from './hooks/useTheme';
+import { initAnalytics } from "./services/analytics";
+import { useTheme } from "./hooks/useTheme";
 
 export function App() {
   useTheme();
-  const [viewMode, setViewMode] = useState<'landing' | 'explorer'>('landing');
-  const [stats, setStats] = useState<AggregateStats>(mockAggregateStats);
-  const [traces, setTraces] = useState<SessionSummary[]>(mockSummaries);
-  const [totalTraces, setTotalTraces] = useState<number>(mockSummaries.length);
+  const [viewMode, setViewMode] = useState<"landing" | "explorer">("landing");
+  const [stats, setStats] = useState<AggregateStats>(EMPTY_AGGREGATE_STATS);
+  const [traces, setTraces] = useState<SessionSummary[]>([]);
+  const [totalTraces, setTotalTraces] = useState<number>(0);
   const [filters, setFilters] = useState<TraceQueryFilters>({
-    orderBy: 'started_at_desc',
+    orderBy: "started_at_desc",
   });
   const [isLoadingTraces, setIsLoadingTraces] = useState<boolean>(false);
   const [isScanning, setIsScanning] = useState<boolean>(false);
@@ -48,8 +52,8 @@ export function App() {
     initAnalytics();
     // If URL has ?view=explorer, start in explorer mode
     const params = new URLSearchParams(window.location.search);
-    if (params.get('view') === 'explorer') {
-      setViewMode('explorer');
+    if (params.get("view") === "explorer") {
+      setViewMode("explorer");
     }
     loadData(filters);
   }, []);
@@ -65,7 +69,7 @@ export function App() {
       setTraces(tracesData.traces);
       setTotalTraces(tracesData.total);
     } catch (err) {
-      console.error('Failed loading data:', err);
+      console.error("Failed loading data:", err);
     } finally {
       setIsLoadingTraces(false);
     }
@@ -77,13 +81,17 @@ export function App() {
     loadData(merged);
   };
 
+  const handleSelectRung = (rung: OutcomeKind | null) => {
+    handleFilterChange({ outcome: rung || undefined });
+  };
+
   const handleSelectSession = async (sessionId: string) => {
     setSelectedSessionId(sessionId);
     try {
       const detail = await fetchTraceDetail(sessionId);
       setActiveTrace(detail);
     } catch (err) {
-      console.error('Failed loading session detail:', err);
+      console.error("Failed loading session detail:", err);
     }
   };
 
@@ -101,8 +109,8 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#fdfdfd] text-[#0a0a0c]">
-      {viewMode === 'explorer' && (
+    <div className="min-h-screen flex flex-col bg-[#fdfdfd] dark:bg-[#0a0a0c] text-[#0a0a0c] dark:text-[#ececed]">
+      {viewMode === "explorer" && (
         <Navbar
           onTriggerScan={handleTriggerScan}
           isScanning={isScanning}
@@ -111,17 +119,24 @@ export function App() {
         />
       )}
 
-      {viewMode === 'landing' ? (
-        <LandingPage onOpenExplorer={() => setViewMode('explorer')} />
+      {viewMode === "landing" ? (
+        <LandingPage onOpenExplorer={() => setViewMode("explorer")} />
       ) : (
-        <main className="flex-1">
+        <main className="flex-1 space-y-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           {/* 1. Hero & Physical Receipt Section */}
           <HeroReceipt stats={stats} onScanClick={handleTriggerScan} />
 
-          {/* 2. Archaeology Panel */}
+          {/* 2. Top Panel: The Verdict Board */}
+          <VerdictBoard
+            stats={stats}
+            selectedRung={(filters.outcome as OutcomeKind) || null}
+            onSelectRung={handleSelectRung}
+          />
+
+          {/* 3. Archaeology Panel (if present in local index) */}
           {stats.archaeology && <ArchaeologyPanel data={stats.archaeology} />}
 
-          {/* 3. Traces Explorer Table */}
+          {/* 4. Traces Explorer Table */}
           <TracesExplorer
             traces={traces}
             totalTraces={totalTraces}
@@ -131,7 +146,13 @@ export function App() {
             isLoading={isLoadingTraces}
           />
 
-          {/* 4. Local-first Architecture Footer */}
+          {/* 5. The Cache Cliff Interactive Widget */}
+          <CacheCliffWidget />
+
+          {/* 6. Grounded Coverage Matrix */}
+          <CoverageMatrix />
+
+          {/* 7. Local-first Architecture Footer */}
           <Footer />
         </main>
       )}

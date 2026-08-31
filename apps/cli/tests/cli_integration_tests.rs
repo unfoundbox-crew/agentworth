@@ -74,6 +74,9 @@ fn test_cli_scan_and_stats_commands() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Total Sessions:"))
+        .stdout(predicate::str::contains("Verdict Breakdown:"))
+        .stdout(predicate::str::contains("Test or Build Passed (Rung 3)"))
+        .stdout(predicate::str::contains("Real Verified Tasks:"))
         .stdout(predicate::str::contains("claude_code"))
         .stdout(predicate::str::contains("claude-3-5-sonnet-20241022"))
         .stdout(predicate::str::contains("FileEdit"))
@@ -91,7 +94,50 @@ fn test_cli_scan_and_stats_commands() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"total_sessions\": 1"))
+        .stdout(predicate::str::contains("\"verdict_breakdown\":"))
+        .stdout(predicate::str::contains("\"test_or_build_passed\": 1"))
+        .stdout(predicate::str::contains("\"real_verified_tasks\": 1"))
         .stdout(predicate::str::contains("\"claude_code\": 1"));
+}
+
+#[test]
+fn test_cli_matrix_command_table_and_json() {
+    // 1. agwt matrix (table view)
+    let mut matrix_cmd = Command::cargo_bin("agwt").unwrap();
+    matrix_cmd.arg("matrix");
+
+    matrix_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AgentWorth Adapter Extraction Coverage Matrix (20 Production Adapters)"))
+        .stdout(predicate::str::contains("claude_code"))
+        .stdout(predicate::str::contains("codex"))
+        .stdout(predicate::str::contains("gemini"))
+        .stdout(predicate::str::contains("opencode"))
+        .stdout(predicate::str::contains("cursor"))
+        .stdout(predicate::str::contains("windsurf"))
+        .stdout(predicate::str::contains("deepseek"))
+        .stdout(predicate::str::contains("qwen"))
+        .stdout(predicate::str::contains("zhipu"))
+        .stdout(predicate::str::contains("manus"))
+        .stdout(predicate::str::contains("100% extraction parity"));
+
+    // 2. agwt matrix (--json)
+    let mut matrix_json_cmd = Command::cargo_bin("agwt").unwrap();
+    matrix_json_cmd.arg("matrix").arg("--json");
+
+    matrix_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"total_adapters\": 20"))
+        .stdout(predicate::str::contains("\"coverage_rate\": \"100%\""))
+        .stdout(predicate::str::contains("\"adapter\": \"claude_code\""))
+        .stdout(predicate::str::contains("\"prompts\": true"))
+        .stdout(predicate::str::contains("\"tokens\": true"))
+        .stdout(predicate::str::contains("\"tools\": true"))
+        .stdout(predicate::str::contains("\"shell\": true"))
+        .stdout(predicate::str::contains("\"diffs\": true"))
+        .stdout(predicate::str::contains("\"outcomes\": true"));
 }
 
 #[test]
@@ -110,13 +156,16 @@ fn test_cli_traces_list_and_filters() {
         .assert()
         .success();
 
-    // 1. List traces in table view
+    // 1. List traces in table view (with verdict badges and score)
     let mut traces_cmd = Command::cargo_bin("agentworth").unwrap();
     traces_cmd.arg("--db-path").arg(&db_path).arg("traces");
 
     traces_cmd
         .assert()
         .success()
+        .stdout(predicate::str::contains("VERDICT"))
+        .stdout(predicate::str::contains("SCORE"))
+        .stdout(predicate::str::contains("[TEST_PASSED]"))
         .stdout(predicate::str::contains("SESSION ID"))
         .stdout(predicate::str::contains(&session_id))
         .stdout(predicate::str::contains("claude_code"));
@@ -133,6 +182,7 @@ fn test_cli_traces_list_and_filters() {
         .assert()
         .success()
         .stdout(predicate::str::contains(&session_id))
+        .stdout(predicate::str::contains("\"verdict_badge\": \"[TEST_PASSED]\""))
         .stdout(predicate::str::contains("\"adapter\": \"claude_code\""));
 
     // 3. List traces with matching filter
@@ -182,7 +232,7 @@ fn test_cli_inspect_command() {
         .assert()
         .success();
 
-    // 1. Inspect timeline view
+    // 1. Inspect timeline view with grouped highest outcome
     let mut inspect_cmd = Command::cargo_bin("agentworth").unwrap();
     inspect_cmd
         .arg("--db-path")
@@ -195,13 +245,13 @@ fn test_cli_inspect_command() {
         .success()
         .stdout(predicate::str::contains("AgentWorth Session Trace:"))
         .stdout(predicate::str::contains(&session_id))
+        .stdout(predicate::str::contains("Highest Outcome Reached:"))
+        .stdout(predicate::str::contains("Rung 3 - Test or Build Passed"))
+        .stdout(predicate::str::contains("Supporting Evidence:"))
         .stdout(predicate::str::contains("USER PROMPT"))
         .stdout(predicate::str::contains("ASSISTANT THINKING"))
         .stdout(predicate::str::contains("TOOL CALL: FileEdit"))
-        .stdout(predicate::str::contains("TOOL CALL: Bash"))
-        .stdout(predicate::str::contains(
-            "OUTCOME EVIDENCE: TestOrBuildPassed",
-        ));
+        .stdout(predicate::str::contains("TOOL CALL: Bash"));
 
     // 2. Inspect with --json
     let mut inspect_json_cmd = Command::cargo_bin("agentworth").unwrap();

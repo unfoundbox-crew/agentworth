@@ -70,6 +70,7 @@ pub fn run_audit_command(
 
     let all_sessions = storage.list_sessions_filtered(&SessionFilter {
         limit: Some(5000),
+        include_stubs: Some(true),
         ..Default::default()
     })?;
 

@@ -2,15 +2,293 @@ import {
   AggregateStats,
   AgentWorthTrace,
   SessionSummary,
-  OutcomeKind,
+  UsageRollupResponse,
+  PacingResponse,
+  BlameResponse,
+  CoverageMatrixResponse,
+  AdapterCapability,
 } from '../types';
-import {
-  mockAggregateStats,
-  mockSummaries,
-  mockDetailedTraces,
-} from './mockData';
 
 const BASE_URL = '/api';
+
+export const EMPTY_AGGREGATE_STATS: AggregateStats = {
+  total_sessions: 0,
+  total_events: 0,
+  token_usage: {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  },
+  sessions_by_adapter: {},
+  models_usage_count: {},
+  tools_usage_count: {},
+  verified_outcomes_count: 0,
+  outcome_distribution: {
+    ci_or_deployment_verified: 0,
+    commit_observed: 0,
+    test_or_build_passed: 0,
+    artifact_changed: 0,
+    done_claimed: 0,
+    unresolved: 0,
+  },
+  archaeology: undefined,
+};
+
+export const GROUNDED_CAPABILITY_MATRIX: AdapterCapability[] = [
+  {
+    id: 'claude_code',
+    name: 'Claude Code',
+    sessions: 'yes',
+    tokens: 'yes',
+    cache_split: 'yes',
+    models: 'yes',
+    file_edits: 'yes',
+    shell_exit: 'yes',
+    outcomes: 'rung 2',
+    notes: 'Input, output, cache-read (0.1x), cache-write (1.25x) fully split',
+  },
+  {
+    id: 'codex',
+    name: 'OpenAI Codex',
+    sessions: 'yes',
+    tokens: 'partial',
+    cache_split: 'no',
+    models: 'partial',
+    file_edits: 'yes',
+    shell_exit: 'partial',
+    outcomes: 'no',
+    notes: 'Session JSON parsed; token counts partial',
+  },
+  {
+    id: 'cursor',
+    name: 'Cursor Composer',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'partial',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'workspaceStorage sqlite parsed; tokens not extracted',
+  },
+  {
+    id: 'antigravity',
+    name: 'Google Antigravity',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'partial',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Brain trajectory JSONL detected; token breakdown pending',
+  },
+  {
+    id: 'gemini',
+    name: 'Gemini CLI',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'partial',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Dotfile detection active; full event stream partial',
+  },
+  {
+    id: 'hermes',
+    name: 'Nous Hermes',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Sessions detected; event normalization in progress',
+  },
+  {
+    id: 'goose',
+    name: 'Block Goose',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Session files enumerated; token parsing pending',
+  },
+  {
+    id: 'pi',
+    name: 'Pi Task Agent',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Tasks directory detected',
+  },
+  {
+    id: 'grok',
+    name: 'xAI Grok',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Dotfiles enumerated; zero-token stubs detected',
+  },
+  {
+    id: 'openclaw',
+    name: 'OpenClaw',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Log stream format parsing pending',
+  },
+  {
+    id: 'herdr',
+    name: 'Herdr Orchestrator',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Orchestrator configs indexed',
+  },
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'History detection active',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek Code',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Dotfile directory detected',
+  },
+  {
+    id: 'kimi',
+    name: 'Kimi Code',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Dotfile directory detected',
+  },
+  {
+    id: 'minimax',
+    name: 'MiniMax',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Dotfile directory detected',
+  },
+  {
+    id: 'qwen',
+    name: 'Qwen Code',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Dotfile directory detected',
+  },
+  {
+    id: 'zhipu',
+    name: 'Zhipu CodeGeeX',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Dotfile directory detected',
+  },
+  {
+    id: 'aider',
+    name: 'Aider',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Chat history markdown detected',
+  },
+  {
+    id: 'cline',
+    name: 'Cline / Roo-Code',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'VS Code globalStorage tasks detected',
+  },
+  {
+    id: 'windsurf',
+    name: 'Windsurf / Cascade',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Cascade session logs detected',
+  },
+  {
+    id: 'manus',
+    name: 'Manus',
+    sessions: 'yes',
+    tokens: 'no',
+    cache_split: 'no',
+    models: 'no',
+    file_edits: 'no',
+    shell_exit: 'no',
+    outcomes: 'no',
+    notes: 'Dotfile directory detected',
+  },
+];
 
 export interface TraceQueryFilters {
   adapter?: string;
@@ -22,23 +300,55 @@ export interface TraceQueryFilters {
   offset?: number;
 }
 
+/**
+ * Fetches machine-wide aggregate stats from /api/stats.
+ * ZERO MOCK FALLBACK: Missing data returns empty/unmeasured state.
+ */
 export async function fetchAggregateStats(): Promise<AggregateStats> {
   try {
     const res = await fetch(`${BASE_URL}/stats`);
     if (res.ok) {
       const data = await res.json();
+
+      const input = data.token_usage?.input_tokens ?? 0;
+      const output = data.token_usage?.output_tokens ?? 0;
+      const cacheRead =
+        data.token_usage?.cache_read_tokens ??
+        data.token_usage?.cache_read_input_tokens ??
+        0;
+      const cacheCreation =
+        data.token_usage?.cache_creation_tokens ??
+        data.token_usage?.cache_creation_input_tokens ??
+        0;
+
       return {
-        ...mockAggregateStats,
-        ...data,
-        archaeology: data.archaeology || mockAggregateStats.archaeology,
+        total_sessions: data.total_sessions ?? 0,
+        total_events: data.total_events ?? 0,
+        token_usage: {
+          input_tokens: input,
+          output_tokens: output,
+          cache_read_input_tokens: cacheRead,
+          cache_creation_input_tokens: cacheCreation,
+        },
+        sessions_by_adapter: data.sessions_by_adapter ?? {},
+        models_usage_count: data.models_usage_count ?? {},
+        tools_usage_count: data.tools_usage_count ?? {},
+        verified_outcomes_count: data.verified_outcomes_count ?? 0,
+        outcome_distribution: data.outcome_distribution,
+        first_session_at: data.date_range?.first_session_at ?? data.first_session_at,
+        last_session_at: data.date_range?.last_session_at ?? data.last_session_at,
+        archaeology: data.archaeology,
       };
     }
   } catch (_err) {
-    // Backend API not running; fallback to local mock data
+    // Backend API not running or returned error; report genuine empty/unmeasured state
   }
-  return mockAggregateStats;
+  return EMPTY_AGGREGATE_STATS;
 }
 
+/**
+ * Fetches filtered session traces from /api/traces.
+ */
 export async function fetchTraces(
   filters: TraceQueryFilters = {}
 ): Promise<{ traces: SessionSummary[]; total: number }> {
@@ -62,170 +372,116 @@ export async function fetchTraces(
       }
     }
   } catch (_err) {
-    // Fallback to local mock filtering
+    // Fetch failed
   }
-
-  let filtered = [...mockSummaries];
-
-  if (filters.adapter && filters.adapter !== 'all') {
-    filtered = filtered.filter((s) => s.adapter === filters.adapter);
-  }
-
-  if (filters.search) {
-    const q = filters.search.toLowerCase();
-    filtered = filtered.filter(
-      (s) =>
-        s.session_id.toLowerCase().includes(q) ||
-        (s.prompt_preview && s.prompt_preview.toLowerCase().includes(q)) ||
-        s.models_used.some((m) => m.toLowerCase().includes(q))
-    );
-  }
-
-  if (filters.outcome && filters.outcome !== 'all') {
-    filtered = filtered.filter((s) => s.primary_outcome === filters.outcome);
-  }
-
-  if (filters.orderBy) {
-    switch (filters.orderBy) {
-      case 'tokens_desc':
-        filtered.sort((a, b) => b.total_tokens - a.total_tokens);
-        break;
-      case 'tokens_asc':
-        filtered.sort((a, b) => a.total_tokens - b.total_tokens);
-        break;
-      case 'events_desc':
-        filtered.sort((a, b) => b.total_events - a.total_events);
-        break;
-      case 'duration_desc':
-        filtered.sort((a, b) => (b.duration_seconds || 0) - (a.duration_seconds || 0));
-        break;
-      case 'score_desc':
-        filtered.sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0));
-        break;
-      case 'started_at_asc':
-        filtered.sort(
-          (a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
-        );
-        break;
-      case 'started_at_desc':
-      default:
-        filtered.sort(
-          (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
-        );
-        break;
-    }
-  }
-
-  return { traces: filtered, total: filtered.length };
+  return { traces: [], total: 0 };
 }
 
+/**
+ * Fetches trace detail from /api/traces/:id.
+ */
 export async function fetchTraceDetail(
   sessionId: string
-): Promise<AgentWorthTrace> {
+): Promise<AgentWorthTrace | null> {
   try {
     const res = await fetch(`${BASE_URL}/traces/${encodeURIComponent(sessionId)}`);
     if (res.ok) {
       const data = await res.json();
+      if (data.trace) {
+        return {
+          ...data.trace,
+          score: data.score || data.trace.score,
+          outcomes: data.outcomes || data.trace.outcomes,
+          recoveries: data.recoveries || data.trace.recoveries,
+        };
+      }
       return data;
     }
   } catch (_err) {
-    // Fallback to local mock data
+    // Trace not found
   }
+  return null;
+}
 
-  if (mockDetailedTraces[sessionId]) {
-    return mockDetailedTraces[sessionId];
+/**
+ * GET /api/usage -> Rollup of daily/weekly token burn & cost
+ */
+export async function fetchUsageRollups(
+  period: 'day' | 'week' | 'month' = 'day'
+): Promise<UsageRollupResponse> {
+  try {
+    const res = await fetch(`${BASE_URL}/usage?period=${period}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (_err) {
+    // Usage endpoint offline
   }
-
-  // Generate generic dynamic trace if requested session isn't in detailed cache
-  const summary = mockSummaries.find((s) => s.session_id === sessionId) || mockSummaries[0];
   return {
-    session_id: summary.session_id,
-    adapter: summary.adapter,
-    provenance: {
-      source_path: summary.source_path,
-      adapter: summary.adapter,
-      file_size_bytes: 32768,
-      modified_timestamp: Math.floor(new Date(summary.started_at).getTime() / 1000),
-      fingerprint: 'sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069',
-    },
-    started_at: summary.started_at,
-    ended_at: new Date(new Date(summary.started_at).getTime() + (summary.duration_seconds || 120) * 1000).toISOString(),
-    stats: {
-      total_events: summary.total_events,
-      user_messages_count: 1,
-      assistant_messages_count: 2,
-      tool_calls_count: summary.tool_calls_count,
-      token_usage: {
-        input_tokens: Math.floor(summary.total_tokens * 0.75),
-        output_tokens: Math.floor(summary.total_tokens * 0.25),
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-      },
-      models_used: summary.models_used,
-      tools_used: { bash: Math.floor(summary.tool_calls_count / 2), replace_file_content: Math.ceil(summary.tool_calls_count / 2) },
-      duration_seconds: summary.duration_seconds,
-    },
-    score: {
-      outcome_score: summary.primary_outcome === 'unresolved' ? 0.2 : 0.9,
-      verifiability_score: summary.primary_outcome === 'unresolved' ? 0.3 : 0.85,
-      complexity_score: 0.75,
-      recovery_score: 0.8,
-      provenance_score: 1.0,
-      composite_score: summary.composite_score || 0.85,
-      explanations: [
-        `Outcome score reflects detected status: ${summary.primary_outcome}`,
-        'Verifiability checked against shell exit codes and repository artifacts',
-        'Local provenance checked against disk fingerprint',
-      ],
-    },
-    outcomes: summary.primary_outcome
-      ? [
-          {
-            kind: summary.primary_outcome as OutcomeKind,
-            summary: `Automated detection: ${summary.primary_outcome}`,
-            confidence: 0.9,
-          },
-        ]
-      : [],
-    events: [
-      {
-        id: 'evt-dyn-1',
-        sequence: 1,
-        timestamp: summary.started_at,
-        payload: {
-          type: 'user_message',
-          data: {
-            content: summary.prompt_preview || 'Investigate codebase',
-          },
-        },
-      },
-      {
-        id: 'evt-dyn-2',
-        sequence: 2,
-        timestamp: new Date(new Date(summary.started_at).getTime() + 5000).toISOString(),
-        payload: {
-          type: 'assistant_message',
-          data: {
-            thinking: 'Analyzing instructions and checking relevant workspace files...',
-            content: `I will address "${summary.prompt_preview || 'the task'}" by reviewing current code structure and applying fixes.`,
-          },
-        },
-      },
-      {
-        id: 'evt-dyn-3',
-        sequence: 3,
-        timestamp: new Date(new Date(summary.started_at).getTime() + 15000).toISOString(),
-        payload: {
-          type: 'shell_command',
-          data: {
-            command: 'cargo check',
-            cwd: '/Users/saurabh/code/unfoundbox/agentworth',
-            exit_code: 0,
-            output: 'Finished dev [unoptimized + debuginfo] target(s) in 0.82s',
-          },
-        },
-      },
-    ],
+    period,
+    entries: [],
+    total_cost_usd: 0,
+    total_tokens: 0,
+  };
+}
+
+/**
+ * GET /api/pacing -> 5-hour pacing window & burn velocity
+ */
+export async function fetchPacing(): Promise<PacingResponse> {
+  try {
+    const res = await fetch(`${BASE_URL}/pacing`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (_err) {
+    // Pacing endpoint offline
+  }
+  return {
+    window_hours: 5,
+    tokens_in_window: 0,
+    burn_rate_tokens_per_hour: 0,
+    cache_hit_percent: 0,
+    estimated_cost_in_window_usd: 0,
+    active_sessions_count: 0,
+    recent_switches_cost_usd: 0,
+  };
+}
+
+/**
+ * GET /api/blame -> line-by-line file edit lineage to sessions and prompts
+ */
+export async function fetchBlame(filePath: string): Promise<BlameResponse> {
+  try {
+    const res = await fetch(`${BASE_URL}/blame?path=${encodeURIComponent(filePath)}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (_err) {
+    // Blame endpoint offline
+  }
+  return {
+    file_path: filePath,
+    total_edits: 0,
+    edits: [],
+  };
+}
+
+/**
+ * GET /api/matrix -> grounded capability coverage matrix across all 20+ adapters
+ */
+export async function fetchCoverageMatrix(): Promise<CoverageMatrixResponse> {
+  try {
+    const res = await fetch(`${BASE_URL}/matrix`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (_err) {
+    // Fallback to grounded canonical matrix
+  }
+  return {
+    generated_at: new Date().toISOString(),
+    adapters: GROUNDED_CAPABILITY_MATRIX,
   };
 }
 
@@ -323,26 +579,26 @@ export function convertToAtif(trace: AgentWorthTrace): any {
     session_id: trace.session_id,
     agent: {
       name: trace.adapter,
-      version: '0.1.0',
-      models: trace.stats.models_used,
+      version: '0.1.2',
+      models: trace.stats?.models_used || [],
     },
     environment: {
       started_at: trace.started_at,
       ended_at: trace.ended_at,
-      duration_seconds: trace.stats.duration_seconds,
+      duration_seconds: trace.stats?.duration_seconds,
     },
     metrics: {
       total_tokens:
-        trace.stats.token_usage.input_tokens +
-        trace.stats.token_usage.output_tokens +
-        trace.stats.token_usage.cache_read_input_tokens +
-        trace.stats.token_usage.cache_creation_input_tokens,
-      input_tokens: trace.stats.token_usage.input_tokens,
-      output_tokens: trace.stats.token_usage.output_tokens,
-      cache_read_tokens: trace.stats.token_usage.cache_read_input_tokens,
-      cache_creation_tokens: trace.stats.token_usage.cache_creation_input_tokens,
-      events_count: trace.events.length,
-      tool_calls_count: trace.stats.tool_calls_count,
+        (trace.stats?.token_usage?.input_tokens || 0) +
+        (trace.stats?.token_usage?.output_tokens || 0) +
+        (trace.stats?.token_usage?.cache_read_input_tokens || 0) +
+        (trace.stats?.token_usage?.cache_creation_input_tokens || 0),
+      input_tokens: trace.stats?.token_usage?.input_tokens || 0,
+      output_tokens: trace.stats?.token_usage?.output_tokens || 0,
+      cache_read_tokens: trace.stats?.token_usage?.cache_read_input_tokens || 0,
+      cache_creation_tokens: trace.stats?.token_usage?.cache_creation_input_tokens || 0,
+      events_count: trace.events?.length || 0,
+      tool_calls_count: trace.stats?.tool_calls_count || 0,
     },
     scores: trace.score
       ? {
@@ -354,11 +610,12 @@ export function convertToAtif(trace: AgentWorthTrace): any {
           provenance: trace.score.provenance_score,
         }
       : null,
-    steps: trace.events.map((evt) => ({
+    steps: (trace.events || []).map((evt) => ({
       sequence: evt.sequence,
       timestamp: evt.timestamp,
-      type: evt.payload.type,
-      data: evt.payload.data,
+      type: evt.payload?.type,
+      data: evt.payload?.data,
     })),
   };
 }
+

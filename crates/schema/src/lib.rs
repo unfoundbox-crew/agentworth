@@ -7,8 +7,8 @@ mod trace;
 pub mod vector;
 
 pub use event::{
-    EventPayload, FileActionType, HumanIntervention, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    ShellCommand, ToolCall, ToolResult,
+    EventPayload, EventType, FileActionType, HumanIntervention, ModelSwitch, NormalizedEvent,
+    OutcomeEvidence, OutcomeKind, ShellCommand, ToolCall, ToolResult,
 };
 pub use provenance::Provenance;
 pub use tokens::TokenUsage;

@@ -86,7 +86,9 @@ version = "0.1.2"
 dependencies = [
  "agentworth-adapter-sdk",
  "agentworth-adapters",
+ "agentworth-outcomes",
  "agentworth-schema",
+ "agentworth-scoring",
  "agentworth-storage",
  "anyhow",
  "chrono",

@@ -123,6 +123,8 @@ async fn test_api_get_stats_empty_and_populated() {
     assert_eq!(stats["sessions_by_adapter"]["claude_code"], 2);
     assert_eq!(stats["models_usage_count"]["claude-3-5-sonnet"], 2);
     assert_eq!(stats["tools_usage_count"]["Bash"], 6);
+    assert!(stats["verified_outcomes_count"].as_u64().is_some());
+    assert!(stats["outcome_distribution"].is_object());
 }
 
 #[tokio::test]
@@ -270,12 +272,12 @@ async fn test_api_get_archaeology_highlights() {
         .suffix(".jsonl")
         .tempfile()
         .unwrap();
-    let content1 = r#"
-{"type":"user","timestamp":"2026-08-10T10:00:00Z","content":"Center this div perfectly and fix alignment"}
+    let content1 = r#"{"type":"user","timestamp":"2026-08-10T10:00:00Z","content":"Center this div perfectly and fix alignment"}
 {"type":"assistant","timestamp":"2026-08-10T10:05:00Z","model":"claude-3-opus","usage":{"input_tokens":18000000,"output_tokens":300000},"content":[{"type":"text","text":"Attempting flexbox..."},{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"npm test"}}]}
 {"type":"tool_result","timestamp":"2026-08-10T10:11:00Z","tool_use_id":"c1","is_error":true,"content":"FAIL: tests failed with error"}
 "#;
     temp1.write_all(content1.as_bytes()).unwrap();
+    temp1.flush().unwrap();
     let sess1_id = temp1
         .path()
         .file_stem()
@@ -295,6 +297,7 @@ async fn test_api_get_archaeology_highlights() {
         prov1,
         Utc::now() - Duration::days(15),
     );
+    trace1.stats.total_events = 3;
     trace1.stats.token_usage = TokenUsage::new(18000000, 300000, 0, 0);
     trace1.stats.models_used = vec!["claude-3-opus".to_string()];
     storage.upsert_trace(&trace1).unwrap();
@@ -318,7 +321,9 @@ async fn test_api_get_archaeology_highlights() {
         .unwrap()
         .to_string_lossy()
         .to_string();
-    let trace2 = AgentWorthTrace::new(sess2_id.clone(), "claude_code", prov2, start2);
+    let mut trace2 = AgentWorthTrace::new(sess2_id.clone(), "claude_code", prov2, start2);
+    trace2.stats.total_events = 7;
+    trace2.stats.token_usage = TokenUsage::new(1000, 200, 0, 0);
     let sample_claude_rec = format!(
         r#"{{"type":"user","timestamp":"{}","content":"Run tests"}}
 {{"type":"assistant","timestamp":"{}","model":"claude-3-5-sonnet","usage":{{"input_tokens":1000,"output_tokens":200}},"content":[{{"type":"tool_use","id":"c2","name":"Bash","input":{{"command":"cargo test"}}}}]}}
@@ -337,6 +342,7 @@ async fn test_api_get_archaeology_highlights() {
         (start2 + Duration::seconds(12)).to_rfc3339(),
     );
     temp2.write_all(sample_claude_rec.as_bytes()).unwrap();
+    temp2.flush().unwrap();
     storage.upsert_trace(&trace2).unwrap();
 
     // Trace 3: Model switches (Claude 3 Opus -> Sonnet -> Haiku)
@@ -357,6 +363,7 @@ async fn test_api_get_archaeology_highlights() {
         (start3 + Duration::seconds(6)).to_rfc3339(),
     );
     temp3.write_all(sample_switches.as_bytes()).unwrap();
+    temp3.flush().unwrap();
     let prov3 = Provenance::new(
         temp3.path().to_string_lossy().to_string(),
         "claude_code",
@@ -375,6 +382,7 @@ async fn test_api_get_archaeology_highlights() {
         prov3,
         start3,
     );
+    trace3.stats.total_events = 4;
     trace3.stats.models_used = vec![
         "claude-3-opus".to_string(),
         "claude-3-5-sonnet".to_string(),
@@ -554,3 +562,154 @@ async fn test_api_static_file_serving_and_spa_fallback() {
     assert_eq!(status, StatusCode::OK);
     assert!(custom_html.contains("Custom Dist Web UI"));
 }
+
+#[tokio::test]
+async fn test_api_get_usage_endpoint() {
+    let (app, storage, _) = setup_test_app(None);
+    let now = Utc::now();
+
+    // Populate with 2 sessions across 2 days
+    for day in 0..2 {
+        let prov = Provenance::new(
+            format!("/Users/dev/code/project/session_{}.jsonl", day),
+            "claude_code",
+            1024,
+            1700000000,
+            format!("fp_usage_{}", day),
+        );
+        let mut trace = AgentWorthTrace::new(
+            format!("sess_usage_{}", day),
+            "claude_code",
+            prov,
+            now - Duration::days(day as i64),
+        );
+        trace.stats.token_usage = TokenUsage::new(2000, 500, 10000, 1000);
+        trace.stats.total_events = 20;
+        trace.stats.duration_seconds = Some(180.0);
+        storage.upsert_trace(&trace).expect("upsert trace");
+    }
+
+    let (status, usage) = request_json(app, "GET", "/api/usage", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(usage["daily"].is_array());
+    assert!(usage["weekly"].is_array());
+    assert!(usage["monthly"].is_array());
+
+    let daily = usage["daily"].as_array().unwrap();
+    assert_eq!(daily.len(), 2);
+    assert_eq!(daily[0]["adapter"], "claude_code");
+    assert_eq!(daily[0]["input_tokens"], 2000);
+    assert_eq!(daily[0]["cache_read_tokens"], 10000);
+    assert!(daily[0]["estimated_cost_usd"].as_f64().unwrap() > 0.0);
+    assert!(daily[0]["cache_hit_ratio"].as_f64().unwrap() > 0.0);
+}
+
+#[tokio::test]
+async fn test_api_get_pacing_endpoint() {
+    let (app, storage, _) = setup_test_app(None);
+    let now = Utc::now();
+
+    // Session 1 hour ago (within 5h window)
+    let prov1 = Provenance::new(
+        "/Users/dev/code/proj/s1.jsonl",
+        "claude_code",
+        512,
+        1700000000,
+        "fp_pacing_1",
+    );
+    let mut trace1 = AgentWorthTrace::new(
+        "sess_pacing_1",
+        "claude_code",
+        prov1,
+        now - Duration::hours(1),
+    );
+    trace1.stats.token_usage = TokenUsage::new(5000, 1000, 20000, 500);
+    trace1.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
+    storage.upsert_trace(&trace1).expect("upsert trace1");
+
+    // Session 10 hours ago (outside 5h window)
+    let prov2 = Provenance::new(
+        "/Users/dev/code/proj/s2.jsonl",
+        "codex",
+        512,
+        1700000000,
+        "fp_pacing_2",
+    );
+    let mut trace2 = AgentWorthTrace::new(
+        "sess_pacing_2",
+        "codex",
+        prov2,
+        now - Duration::hours(10),
+    );
+    trace2.stats.token_usage = TokenUsage::new(8000, 2000, 0, 0);
+    trace2.stats.models_used = vec!["gpt-4o".to_string()];
+    storage.upsert_trace(&trace2).expect("upsert trace2");
+
+    let (status, pacing) = request_json(app, "GET", "/api/pacing?hours=5", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(pacing["window_hours"], 5);
+    assert_eq!(pacing["session_count"], 1);
+    assert_eq!(pacing["total_tokens"], 26500);
+    assert!(pacing["burn_rate_tokens_per_hour"].as_f64().unwrap() > 0.0);
+    assert!(pacing["cache_hit_ratio"].as_f64().unwrap() > 0.0);
+    assert_eq!(pacing["active_adapters"].as_array().unwrap(), &["claude_code"]);
+    assert_eq!(
+        pacing["active_models"].as_array().unwrap(),
+        &["claude-3-5-sonnet"]
+    );
+}
+
+#[tokio::test]
+async fn test_api_get_blame_endpoint() {
+    let (app, storage, _) = setup_test_app(None);
+
+    let prov = Provenance::new(
+        "/Users/dev/code/engine/src/pipeline.rs.jsonl",
+        "claude_code",
+        1024,
+        1700000000,
+        "fp_blame_test",
+    );
+    let mut trace = AgentWorthTrace::new("sess_blame_abc", "claude_code", prov, Utc::now());
+    trace.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
+    trace.stats.tools_used.insert("replace_file_content".to_string(), 4);
+    trace.stats.token_usage = TokenUsage::new(4000, 1000, 0, 0);
+    storage.upsert_trace(&trace).expect("upsert blame trace");
+
+    let (status, matches) = request_json(app, "GET", "/api/blame?file=pipeline.rs", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = matches.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["session_id"], "sess_blame_abc");
+    assert_eq!(arr[0]["adapter"], "claude_code");
+    assert_eq!(arr[0]["total_tokens"], 5000);
+}
+
+#[tokio::test]
+async fn test_api_get_matrix_endpoint() {
+    let (app, _, _) = setup_test_app(None);
+
+    let (status, matrix) = request_json(app, "GET", "/api/matrix", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(matrix["total_adapters"], 20);
+    assert!(matrix["detected_adapters"].as_u64().is_some());
+
+    let adapters = matrix["adapters"].as_array().unwrap();
+    assert_eq!(adapters.len(), 20);
+
+    // Verify Claude Code capability coverage
+    let claude = adapters
+        .iter()
+        .find(|a| a["adapter"] == "claude_code")
+        .expect("claude_code adapter in matrix");
+    assert_eq!(claude["name"], "Claude Code");
+    assert_eq!(claude["token_accounting"], true);
+    assert_eq!(claude["cache_breakdown"], true);
+    assert_eq!(claude["tool_calls"], true);
+    assert_eq!(claude["file_actions"], true);
+    assert_eq!(claude["shell_commands"], true);
+    assert_eq!(claude["model_switches"], true);
+    assert_eq!(claude["thinking_blocks"], true);
+    assert_eq!(claude["error_recovery"], true);
+}
+

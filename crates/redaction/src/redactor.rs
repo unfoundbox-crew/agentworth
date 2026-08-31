@@ -198,6 +198,19 @@ impl Redactor {
                 message: self.redact_text_internal(message, report),
                 is_recovered: *is_recovered,
             },
+            EventPayload::ModelSwitch(ms) => {
+                EventPayload::ModelSwitch(agentworth_schema::ModelSwitch {
+                    from_model: ms
+                        .from_model
+                        .as_ref()
+                        .map(|m| self.redact_text_internal(m, report)),
+                    to_model: self.redact_text_internal(&ms.to_model, report),
+                    reason: ms
+                        .reason
+                        .as_ref()
+                        .map(|r| self.redact_text_internal(r, report)),
+                })
+            }
             EventPayload::HumanIntervention(hi) => {
                 EventPayload::HumanIntervention(agentworth_schema::HumanIntervention {
                     action: self.redact_text_internal(&hi.action, report),

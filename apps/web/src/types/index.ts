@@ -196,6 +196,81 @@ export interface ArchaeologyData {
   weird_discoveries: WeirdDiscovery[];
 }
 
+export interface OutcomeDistribution {
+  ci_or_deployment_verified: number;
+  commit_observed: number;
+  test_or_build_passed: number;
+  artifact_changed: number;
+  done_claimed: number;
+  unresolved: number;
+}
+
+export interface DailyUsageEntry {
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+  sessions_count: number;
+}
+
+export interface UsageRollupResponse {
+  period: 'day' | 'week' | 'month' | string;
+  entries: DailyUsageEntry[];
+  total_cost_usd: number;
+  total_tokens: number;
+}
+
+export interface PacingResponse {
+  window_hours: number;
+  tokens_in_window: number;
+  burn_rate_tokens_per_hour: number;
+  cache_hit_percent: number;
+  estimated_cost_in_window_usd: number;
+  active_sessions_count: number;
+  recent_switches_cost_usd?: number;
+}
+
+export interface BlameEditEntry {
+  session_id: string;
+  adapter: string;
+  model: string;
+  timestamp: string;
+  prompt_preview?: string;
+  diff_snippet?: string;
+  lines_added?: number;
+  lines_deleted?: number;
+  outcome?: OutcomeKind;
+}
+
+export interface BlameResponse {
+  file_path: string;
+  total_edits: number;
+  edits: BlameEditEntry[];
+}
+
+export interface AdapterCapability {
+  id: string;
+  name: string;
+  sessions: 'yes' | 'no' | 'partial';
+  tokens: 'yes' | 'no' | 'partial';
+  cache_split: 'yes' | 'no' | 'partial';
+  models: 'yes' | 'no' | 'partial';
+  file_edits: 'yes' | 'no' | 'partial';
+  shell_exit: 'yes' | 'no' | 'partial';
+  outcomes: string;
+  notes?: string;
+  sessions_count?: number;
+  tokens_count?: number;
+}
+
+export interface CoverageMatrixResponse {
+  adapters: AdapterCapability[];
+  generated_at: string;
+}
+
 export interface AggregateStats {
   total_sessions: number;
   total_events: number;
@@ -204,7 +279,9 @@ export interface AggregateStats {
   models_usage_count: Record<string, number>;
   tools_usage_count: Record<string, number>;
   verified_outcomes_count: number;
+  outcome_distribution?: OutcomeDistribution;
   first_session_at?: string;
   last_session_at?: string;
   archaeology?: ArchaeologyData;
 }
+
