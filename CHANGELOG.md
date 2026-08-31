@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Optimized SHA-256 fingerprint checks to instantly skip unchanged multi-gigabyte session JSONL transcripts.
 - **Unified Multi-Platform Installation**:
   - Standalone script: `curl -fsSL https://agentworth.dev/install.sh | sh`
-  - Homebrew: `brew install unfoundbox/tap/agentworth`
+  - Homebrew: `brew install unfoundbox-crew/tap/agentworth`
   - Cargo: `cargo install agentworth-cli`
   - NPX: `npx agentworth` or `npx agwt`
 

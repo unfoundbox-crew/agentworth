@@ -9,7 +9,7 @@
   
   <!-- Brand Header -->
   <text x="140" y="170" font-family="monospace, 'JetBrains Mono', Courier" font-size="56" font-weight="900" fill="#000000" letter-spacing="-1">AGENTWORTH</text>
-  <text x="140" y="220" font-family="monospace, 'JetBrains Mono', Courier" font-size="28" font-weight="600" fill="#52525b">Your AI coding agents left receipts.</text>
+  <text x="140" y="220" font-family="monospace, 'JetBrains Mono', Courier" font-size="20" font-weight="600" fill="#52525b">Your AI coding agents left receipts.</text>
   
   <!-- Quickstart Box -->
   <rect x="140" y="270" width="460" height="70" fill="#000000" stroke="#000000" stroke-width="2"/>
@@ -28,6 +28,6 @@
   <text x="670" y="445" font-family="monospace, 'JetBrains Mono', Courier" font-size="14" font-weight="800" fill="#059669">DATA UPLOADED ............ $0.00 (0B)</text>
   
   <!-- Footer Tagline -->
-  <text x="140" y="420" font-family="monospace, 'JetBrains Mono', Courier" font-size="20" font-weight="600" fill="#27272a">Claude Code · Cursor · Antigravity · Codex · Goose · Pi · Grok</text>
-  <text x="140" y="460" font-family="monospace, 'JetBrains Mono', Courier" font-size="16" font-weight="700" fill="#059669">✓ 100% Local-First · SQLite WAL · Zero Network Telemetry</text>
+  <text x="140" y="505" font-family="monospace, 'JetBrains Mono', Courier" font-size="20" font-weight="600" fill="#27272a">Claude Code · Cursor · Antigravity · Codex · Goose · Pi · Grok</text>
+  <text x="140" y="535" font-family="monospace, 'JetBrains Mono', Courier" font-size="16" font-weight="700" fill="#059669">✓ 100% Local-First · SQLite WAL · Zero Network Telemetry</text>
 </svg>

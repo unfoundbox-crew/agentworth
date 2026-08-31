@@ -3,6 +3,7 @@ import { Github, Copy, Check, CheckCircle2, Plus, ExternalLink, BookOpen } from 
 import { trackEvent } from '../services/analytics';
 import { getAgentLogo } from './AgentLogos';
 import { ThemeToggle } from './ThemeToggle';
+import pkg from '../../package.json';
 
 interface LandingPageProps {
   onOpenExplorer?: () => void;
@@ -71,7 +72,7 @@ export const LandingPage: React.FC<LandingPageProps> = () => {
               AgentWorth
             </span>
             <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400 border border-neutral-200 dark:border-neutral-800">
-              v0.1.0
+              v{pkg.version}
             </span>
           </div>
 
@@ -351,7 +352,7 @@ export const LandingPage: React.FC<LandingPageProps> = () => {
 
               {/* 12th Box: Request New Adapter */}
               <a
-                href="https://github.com/unfoundbox/agentworth/issues/new?title=Adapter+Request:+[Agent+Name]&labels=enhancement,adapter"
+                href="https://github.com/unfoundbox-crew/agentworth/issues/new?title=Adapter+Request:+[Agent+Name]&labels=enhancement,adapter"
                 target="_blank"
                 rel="noreferrer"
                 className="border border-dashed border-neutral-300 dark:border-neutral-700 hover:border-neutral-500 dark:hover:border-neutral-500 rounded p-3.5 bg-neutral-50/30 dark:bg-neutral-900/30 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition flex items-start gap-3 group text-left"
@@ -397,7 +398,7 @@ export const LandingPage: React.FC<LandingPageProps> = () => {
 
           <div className="mt-8 flex items-center justify-center gap-6 font-mono text-xs text-neutral-400">
             <a
-              href="https://github.com/unfoundbox/agentworth"
+              href="https://github.com/unfoundbox-crew/agentworth"
               target="_blank"
               rel="noreferrer"
               className="hover:text-white transition flex items-center gap-1.5"
