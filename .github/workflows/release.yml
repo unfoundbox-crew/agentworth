@@ -55,6 +55,11 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             binary_name: agentworth
+          # The npm launcher maps win32-x64 -> x86_64-pc-windows-msvc, so without
+          # this target `npx agentworth` on Windows 404s against the downloader.
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary_name: agentworth.exe
 
     steps:
       - name: Checkout repository
@@ -184,7 +189,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v4
