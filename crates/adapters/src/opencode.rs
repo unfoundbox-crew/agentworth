@@ -12,7 +12,9 @@ use agentworth_schema::{
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use directories::BaseDirs;
+use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::normalize_mcp_tool_name;
@@ -36,9 +38,10 @@ impl OpenCodeAdapter {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
-            roots.push(home.join(".opencode"));
-            roots.push(home.join(".opencode").join("sessions"));
+            roots.push(home.join(".local").join("share").join("opencode").join("opencode.db"));
             roots.push(home.join(".local").join("share").join("opencode"));
+            roots.push(home.join(".opencode").join("sessions"));
+            roots.push(home.join(".opencode"));
             roots.push(home.join(".config").join("opencode"));
         }
         roots.push(PathBuf::from(".opencode"));
@@ -81,42 +84,93 @@ impl AgentAdapter for OpenCodeAdapter {
 
     fn enumerate(&self, options: &ScanOptions) -> Result<Vec<SessionSource>> {
         let mut sources = Vec::new();
+        let mut db_paths = Vec::new();
+        let mut dir_roots = Vec::new();
 
-        if !options.custom_paths.is_empty() {
-            for custom in &options.custom_paths {
-                if custom.is_file() {
-                    if is_candidate_opencode_file(custom) {
-                        if let Ok(source) = SessionSource::from_path(custom, self.name()) {
-                            sources.push(source);
-                        }
+        let roots_to_scan = if !options.custom_paths.is_empty() {
+            options.custom_paths.clone()
+        } else {
+            self.candidate_roots()
+        };
+
+        for root in roots_to_scan {
+            if root.is_file() {
+                if root.file_name().and_then(|n| n.to_str()) == Some("opencode.db") {
+                    db_paths.push(root);
+                } else if is_candidate_opencode_file(&root) {
+                    if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                        sources.push(source);
                     }
-                } else if custom.is_dir() {
-                    for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
-                        let path = entry.path();
-                        if path.is_file() && is_candidate_opencode_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
-                                sources.push(source);
-                            }
+                }
+            } else if root.is_dir() {
+                let db_file = root.join("opencode.db");
+                if db_file.exists() {
+                    db_paths.push(db_file);
+                } else {
+                    dir_roots.push(root);
+                }
+            }
+        }
+
+        db_paths.sort();
+        db_paths.dedup();
+
+        for db_path in db_paths {
+            if let Ok(conn) = Connection::open_with_flags(
+                &db_path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+            ) {
+                if let Ok(mut stmt) =
+                    conn.prepare("SELECT id, time_created, time_updated FROM session")
+                {
+                    let session_rows = stmt.query_map([], |row| {
+                        let id: String = row.get(0)?;
+                        let time_created: i64 = row.get(1).unwrap_or(0);
+                        let time_updated: i64 = row.get(2).unwrap_or(time_created);
+                        Ok((id, time_created, time_updated))
+                    });
+
+                    if let Ok(rows) = session_rows {
+                        for row in rows.flatten() {
+                            let (session_id, _created, updated) = row;
+                            let virtual_path =
+                                PathBuf::from(format!("{}#{}", db_path.display(), session_id));
+                            let mtime_secs = if updated > 1_000_000_000_000 {
+                                updated / 1000
+                            } else {
+                                updated
+                            };
+                            let mut hasher = Sha256::new();
+                            hasher.update(session_id.as_bytes());
+                            hasher.update(updated.to_string().as_bytes());
+                            let fingerprint = hex::encode(hasher.finalize());
+
+                            sources.push(SessionSource {
+                                path: virtual_path,
+                                adapter_name: self.name().to_string(),
+                                file_size_bytes: 4096,
+                                mtime_epoch_secs: mtime_secs,
+                                fingerprint,
+                            });
                         }
                     }
                 }
             }
-        } else {
-            for root in self.candidate_roots() {
-                if root.is_file() {
-                    if is_candidate_opencode_file(&root) {
-                        if let Ok(source) = SessionSource::from_path(&root, self.name()) {
-                            sources.push(source);
-                        }
-                    }
-                } else if root.is_dir() {
-                    for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
-                        let path = entry.path();
-                        if path.is_file() && is_candidate_opencode_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
-                                sources.push(source);
-                            }
-                        }
+        }
+
+        for root in dir_roots {
+            for entry in WalkDir::new(&root)
+                .into_iter()
+                .filter_entry(|e| {
+                    let name = e.file_name().to_string_lossy();
+                    name != "node_modules" && name != ".git" && name != "target" && name != "dist"
+                })
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                if path.is_file() && is_candidate_opencode_file(path) {
+                    if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                        sources.push(source);
                     }
                 }
             }
@@ -130,6 +184,19 @@ impl AgentAdapter for OpenCodeAdapter {
     }
 
     fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
+        let path_str = source.path.to_string_lossy();
+        if path_str.contains(".db#") {
+            let mut parts = path_str.splitn(2, '#');
+            if let (Some(db_str), Some(session_id)) = (parts.next(), parts.next()) {
+                return parse_opencode_sqlite_session(
+                    Path::new(db_str),
+                    session_id,
+                    source,
+                    self.name(),
+                );
+            }
+        }
+
         let session_id = derive_session_id(&source.path);
         let provenance = Provenance::new(
             source.path.to_string_lossy().to_string(),
@@ -256,6 +323,318 @@ impl AgentAdapter for OpenCodeAdapter {
             warnings,
         })
     }
+}
+
+fn parse_opencode_sqlite_session(
+    db_path: &Path,
+    session_id: &str,
+    source: &SessionSource,
+    adapter_name: &'static str,
+) -> Result<ParseResult> {
+    let provenance = Provenance::new(
+        source.path.to_string_lossy().to_string(),
+        adapter_name,
+        source.file_size_bytes,
+        source.mtime_epoch_secs,
+        &source.fingerprint,
+    );
+
+    let mut trace = AgentWorthTrace::new(session_id, adapter_name, provenance, Utc::now());
+    let mut malformed_lines = 0;
+    let mut warnings = Vec::new();
+    let mut sequence = 0u64;
+
+    let mut earliest_ts: Option<DateTime<Utc>> = None;
+    let mut latest_ts: Option<DateTime<Utc>> = None;
+
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+
+    // 1. Fetch messages for this session
+    let mut msg_stmt = conn.prepare(
+        "SELECT id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created ASC",
+    )?;
+
+    let msg_rows = msg_stmt.query_map([session_id], |row| {
+        let msg_id: String = row.get(0)?;
+        let time_created: i64 = row.get(1).unwrap_or(0);
+        let data: String = row.get(2)?;
+        Ok((msg_id, time_created, data))
+    })?;
+
+    let messages: Vec<(String, i64, String)> = msg_rows.filter_map(|r| r.ok()).collect();
+
+    for (msg_id, time_created, data_str) in messages {
+        let msg_val: Value = match serde_json::from_str(&data_str) {
+            Ok(v) => v,
+            Err(e) => {
+                malformed_lines += 1;
+                warnings.push(format!("Failed parsing message data: {}", e));
+                continue;
+            }
+        };
+
+        let ts_millis = if time_created > 1_000_000_000_000 {
+            time_created
+        } else {
+            time_created * 1000
+        };
+        let timestamp = DateTime::from_timestamp_millis(ts_millis).unwrap_or_else(Utc::now);
+
+        if earliest_ts.is_none_or(|ts| timestamp < ts) {
+            earliest_ts = Some(timestamp);
+        }
+        if latest_ts.is_none_or(|ts| timestamp > ts) {
+            latest_ts = Some(timestamp);
+        }
+
+        let role = msg_val.get("role").and_then(|r| r.as_str()).unwrap_or("unknown");
+        let model_id = msg_val
+            .get("modelID")
+            .or_else(|| msg_val.get("model").and_then(|m| m.get("modelID")))
+            .and_then(|m| m.as_str());
+
+        // Extract tokens
+        if let Some(tokens_val) = msg_val.get("tokens") {
+            let input = tokens_val.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
+            let output = tokens_val.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
+            let cache_read = tokens_val
+                .get("cache")
+                .and_then(|c| c.get("read"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let cache_write = tokens_val
+                .get("cache")
+                .and_then(|c| c.get("write"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            let usage = TokenUsage {
+                input_tokens: input,
+                output_tokens: output,
+                cache_read_tokens: cache_read,
+                cache_creation_tokens: cache_write,
+            };
+
+            if let Some(model) = model_id {
+                sequence += 1;
+                trace.events.push(NormalizedEvent::new(
+                    sequence,
+                    timestamp,
+                    EventPayload::ModelInvocation {
+                        model: model.to_string(),
+                        token_usage: usage,
+                        cost_usd: msg_val.get("cost").and_then(|c| c.as_f64()),
+                        latency_ms: None,
+                    },
+                ));
+            }
+        }
+
+        // Summary diffs
+        if let Some(diffs) = msg_val
+            .get("summary")
+            .and_then(|s| s.get("diffs"))
+            .and_then(|d| d.as_array())
+        {
+            for diff in diffs {
+                let file = diff.get("file").and_then(|f| f.as_str()).unwrap_or("");
+                let patch = diff.get("patch").and_then(|p| p.as_str()).map(String::from);
+                let adds = diff.get("additions").and_then(|a| a.as_u64()).unwrap_or(0);
+                let dels = diff.get("deletions").and_then(|d| d.as_u64()).unwrap_or(0);
+
+                if !file.is_empty() {
+                    sequence += 1;
+                    trace.events.push(NormalizedEvent::new(
+                        sequence,
+                        timestamp,
+                        EventPayload::FileAction {
+                            action: FileActionType::Edit,
+                            path: file.to_string(),
+                            diff: patch,
+                            lines_changed: Some(adds + dels),
+                        },
+                    ));
+                }
+            }
+        }
+
+        // 2. Fetch parts for this message
+        let mut part_stmt =
+            conn.prepare("SELECT id, data FROM part WHERE message_id = ? ORDER BY id ASC")?;
+        let part_rows = part_stmt.query_map([&msg_id], |row| {
+            let _part_id: String = row.get(0)?;
+            let part_data: String = row.get(1)?;
+            Ok(part_data)
+        })?;
+
+        for part_str in part_rows.filter_map(|r| r.ok()) {
+            let part_val: Value = match serde_json::from_str(&part_str) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let part_type = part_val
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+
+            match part_type {
+                "text" => {
+                    let text = part_val.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                    if !text.is_empty() {
+                        sequence += 1;
+                        if role == "user" {
+                            trace.events.push(NormalizedEvent::new(
+                                sequence,
+                                timestamp,
+                                EventPayload::UserMessage {
+                                    content: text.to_string(),
+                                },
+                            ));
+                        } else {
+                            trace.events.push(NormalizedEvent::new(
+                                sequence,
+                                timestamp,
+                                EventPayload::AssistantMessage {
+                                    content: text.to_string(),
+                                    thinking: None,
+                                },
+                            ));
+                        }
+                    }
+                }
+                "thought" | "reasoning" => {
+                    let thought = part_val
+                        .get("thought")
+                        .or_else(|| part_val.get("text"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    if !thought.is_empty() {
+                        sequence += 1;
+                        trace.events.push(NormalizedEvent::new(
+                            sequence,
+                            timestamp,
+                            EventPayload::AssistantMessage {
+                                content: String::new(),
+                                thinking: Some(thought.to_string()),
+                            },
+                        ));
+                    }
+                }
+                "tool" => {
+                    let raw_tool = part_val.get("tool").and_then(|t| t.as_str()).unwrap_or("");
+                    let call_id = part_val
+                        .get("callID")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or(&msg_id)
+                        .to_string();
+
+                    let state = part_val.get("state");
+                    let input = state
+                        .and_then(|s| s.get("input"))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    let output = state
+                        .and_then(|s| s.get("output"))
+                        .and_then(|o| o.as_str())
+                        .unwrap_or("");
+                    let status = state
+                        .and_then(|s| s.get("status"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("completed");
+                    let is_error = status == "error" || status == "failed";
+
+                    let normalized_name = normalize_mcp_tool_name(raw_tool, &input);
+
+                    sequence += 1;
+                    trace.events.push(NormalizedEvent::new(
+                        sequence,
+                        timestamp,
+                        EventPayload::ToolCall(ToolCall {
+                            id: Some(call_id.clone()),
+                            name: normalized_name.clone(),
+                            arguments: input.clone(),
+                        }),
+                    ));
+
+                    if raw_tool == "bash" || raw_tool == "exec" || raw_tool == "shell" {
+                        let cmd = input
+                            .get("command")
+                            .or_else(|| input.get("cmd"))
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("");
+                        if !cmd.is_empty() {
+                            sequence += 1;
+                            trace.events.push(NormalizedEvent::new(
+                                sequence,
+                                timestamp,
+                                EventPayload::ShellCommand(ShellCommand {
+                                    command: cmd.to_string(),
+                                    cwd: None,
+                                    exit_code: if is_error { Some(1) } else { Some(0) },
+                                    output: Some(output.to_string()),
+                                }),
+                            ));
+                        }
+                    } else if raw_tool == "edit" || raw_tool == "write" || raw_tool == "patch" {
+                        let path = input
+                            .get("path")
+                            .or_else(|| input.get("file"))
+                            .and_then(|p| p.as_str())
+                            .unwrap_or("");
+                        if !path.is_empty() {
+                            sequence += 1;
+                            trace.events.push(NormalizedEvent::new(
+                                sequence,
+                                timestamp,
+                                EventPayload::FileAction {
+                                    action: if raw_tool == "write" {
+                                        FileActionType::Write
+                                    } else {
+                                        FileActionType::Edit
+                                    },
+                                    path: path.to_string(),
+                                    diff: None,
+                                    lines_changed: None,
+                                },
+                            ));
+                        }
+                    }
+
+                    sequence += 1;
+                    trace.events.push(NormalizedEvent::new(
+                        sequence,
+                        timestamp,
+                        EventPayload::ToolResult(ToolResult {
+                            call_id: Some(call_id),
+                            name: Some(normalized_name),
+                            output: Value::String(output.to_string()),
+                            is_error,
+                        }),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(earliest) = earliest_ts {
+        trace.started_at = earliest;
+    }
+    if let Some(latest) = latest_ts {
+        trace.ended_at = Some(latest);
+    }
+
+    trace.recalculate_stats();
+
+    Ok(ParseResult {
+        trace,
+        malformed_lines,
+        warnings,
+    })
 }
 
 fn is_candidate_opencode_file(path: &Path) -> bool {

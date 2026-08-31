@@ -444,7 +444,9 @@ fn print_stats_view(
             style("├──────────────────────────────────────────────────────────┤").bold()
         );
         println!("│ Adapters:                                                │");
-        for (adapter, count) in &stats.sessions_by_adapter {
+        let mut sorted_adapters: Vec<_> = stats.sessions_by_adapter.iter().collect();
+        sorted_adapters.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        for (adapter, count) in sorted_adapters {
             let pct = if stats.total_sessions > 0 {
                 (*count as f64 / stats.total_sessions as f64) * 100.0
             } else {
@@ -1130,7 +1132,9 @@ fn print_scan_summary(summary: &ScanSummary, db_path: Option<&std::path::Path>) 
             style("├──────────────────────────────────────────────────────────┤").bold()
         );
         println!("│ Adapters:                                                │");
-        for (adapter, count) in &summary.aggregate_stats.sessions_by_adapter {
+        let mut sorted_adapters: Vec<_> = summary.aggregate_stats.sessions_by_adapter.iter().collect();
+        sorted_adapters.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        for (adapter, count) in sorted_adapters {
             println!(
                 "│   • {:<20} {:>6} sessions               │",
                 style(adapter).cyan(),

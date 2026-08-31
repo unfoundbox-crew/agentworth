@@ -107,21 +107,37 @@ impl Scanner {
     where
         F: FnMut(usize, usize),
     {
-        let mut all_sources: Vec<(usize, SessionSource)> = Vec::new();
+        // 1. Enumerate all sources across registered adapters in parallel threads
+        let all_sources: Vec<(usize, SessionSource)> = std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(self.adapters.len());
+            for (adapter_idx, adapter) in self.adapters.iter().enumerate() {
+                handles.push(s.spawn(move || {
+                    let res = adapter.enumerate(options);
+                    (adapter_idx, res)
+                }));
+            }
 
-        // 1. Enumerate all sources across registered adapters
-        for (adapter_idx, adapter) in self.adapters.iter().enumerate() {
-            match adapter.enumerate(options) {
-                Ok(sources) => {
-                    for src in sources {
-                        all_sources.push((adapter_idx, src));
+            let mut combined = Vec::new();
+            for handle in handles {
+                if let Ok((adapter_idx, res)) = handle.join() {
+                    match res {
+                        Ok(sources) => {
+                            for src in sources {
+                                combined.push((adapter_idx, src));
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Adapter '{}' failed enumeration: {}",
+                                self.adapters[adapter_idx].name(),
+                                e
+                            );
+                        }
                     }
                 }
-                Err(e) => {
-                    warn!("Adapter '{}' failed enumeration: {}", adapter.name(), e);
-                }
             }
-        }
+            combined
+        });
 
         let total = all_sources.len();
         let mut scanned_sessions = 0;
