@@ -100,12 +100,21 @@ AgentWorth runs 100% offline on your machine. It discovers logs from tools like 
 
 ## Supported Agent Adapters
 
-AgentWorth isolates proprietary log formats inside native streaming adapters. V0 includes 11 adapters:
+AgentWorth isolates proprietary log formats inside native streaming adapters. Version 0.1.2 includes **20 native adapters**:
 
 | Agent / Framework | Adapter ID | Supported History Sources |
 | :--- | :--- | :--- |
 | **Claude Code** | `claude_code` | `~/.claude/projects/`, `~/.claude/sessions/` |
 | **Google Antigravity** | `antigravity` | `~/.gemini/antigravity/`, `~/.gemini/history/`, `~/.antigravity/` |
+| **DeepSeek Code** | `deepseek` | `~/.deepseek/`, `~/.deepseek-coder/` (R1 & V3 reasoning tokens) |
+| **Kimi Code** | `kimi` | `~/.kimi-code/`, `~/.kimi/sessions/wire.jsonl` (Moonshot AI) |
+| **MiniMax** | `minimax` | `~/.minimax/`, `~/.minimax-agent/` (Coding plan trajectories) |
+| **Qwen Code / Qwen-Agent** | `qwen` | `~/.qwen/`, `~/.qwen-agent/` (Alibaba Qwen 2.5) |
+| **Zhipu / CodeGeeX** | `zhipu` | `~/.codegeex/`, `~/.zhipu/` (GLM-4 & IDE extensions) |
+| **Aider** | `aider` | `.aider.chat.history.md`, `~/.aider/` (Git-paired trajectories) |
+| **Cline & Roo-Code** | `cline` | VS Code `globalStorage/saoudrizwan.claude-dev/tasks/`, `roo-cline/` |
+| **Windsurf / Cascade** | `windsurf` | `~/.codeium/windsurf/`, `~/.windsurf/` (Cascade execution caches) |
+| **Manus** | `manus` | `~/.manus/` (Autonomous browser & coding action trajectories) |
 | **Cursor Composer** | `cursor` | `~/.cursor/`, `~/Library/Application Support/Cursor/User/workspaceStorage/` |
 | **OpenAI Codex** | `codex` | `~/.codex/sessions/` |
 | **Block Goose** | `goose` | `~/.config/goose/`, `~/.local/share/goose/sessions/` |
@@ -190,7 +199,7 @@ Every score provides an explainable 5-factor breakdown:
 crates/
   schema/        Canonical data model (AgentWorthTrace, NormalizedEvent, TokenUsage)
   adapter-sdk/   Common traits and scan options for adapter implementations
-  adapters/      11 streaming agent history parsers
+  adapters/      20 streaming agent history parsers
   core/          Scanning orchestrator, incremental SHA-256 fingerprinting
   storage/       SQLite index, transactions, B-tree queries, and pagination
   outcomes/      Evidence hierarchy detection and failure-recovery loop extraction

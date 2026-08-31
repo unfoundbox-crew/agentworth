@@ -15,40 +15,48 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
-/// Adapter for discovering and normalizing Pi agent task sessions and step logs.
-pub struct PiAdapter;
+use crate::normalize_mcp_tool_name;
 
-impl Default for PiAdapter {
+/// Adapter for discovering and normalizing Manus autonomous agent browser and coding trajectories.
+pub struct ManusAdapter;
+
+impl Default for ManusAdapter {
     fn default() -> Self {
         Self
     }
 }
 
-impl PiAdapter {
+impl ManusAdapter {
     pub fn new() -> Self {
         Self
     }
 
-    /// Candidate directory paths for Pi on the host machine.
+    /// Candidate directory paths for Manus on the host machine.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
-            roots.push(home.join(".pi"));
-            roots.push(home.join(".pi").join("tasks"));
-            roots.push(home.join(".pi").join("sessions"));
-            roots.push(home.join(".config").join("pi"));
+            roots.push(home.join(".manus"));
+            roots.push(home.join(".manus").join("sessions"));
+            roots.push(home.join(".manus").join("logs"));
+            roots.push(home.join(".manus-agent"));
+            roots.push(home.join(".manus-agent").join("sessions"));
+            roots.push(home.join(".manus-agent").join("logs"));
+            roots.push(home.join(".config").join("manus"));
+            roots.push(home.join(".config").join("manus-agent"));
         }
-        roots.push(PathBuf::from(".pi"));
-        roots.push(PathBuf::from(".pi").join("tasks"));
-        roots.push(PathBuf::from(".pi").join("sessions"));
+        roots.push(PathBuf::from(".manus"));
+        roots.push(PathBuf::from(".manus").join("sessions"));
+        roots.push(PathBuf::from(".manus-agent"));
+        roots.push(PathBuf::from(".manus-agent").join("sessions"));
+        roots.push(PathBuf::from(".config").join("manus"));
         roots
     }
 }
 
-impl AgentAdapter for PiAdapter {
+impl AgentAdapter for ManusAdapter {
     fn name(&self) -> &'static str {
-        "pi"
+        "manus"
     }
 
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
@@ -61,15 +69,40 @@ impl AgentAdapter for PiAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".pi")
-                    || custom.ends_with("pi")
-                    || custom.to_string_lossy().contains("/.pi/")
-                    || custom.to_string_lossy().contains("/pi/"))
-            {
-                discovered.push(custom.clone());
+            if custom.exists() {
+                let s = custom.to_string_lossy().to_lowercase();
+                if s.contains(".manus")
+                    || s.contains("manus")
+                    || s.contains("manus-agent")
+                    || s.contains("manus_agent")
+                {
+                    discovered.push(custom.clone());
+                } else if custom.is_dir() {
+                    for sub in &[
+                        custom.join(".manus"),
+                        custom.join(".manus-agent"),
+                        custom.join(".config").join("manus"),
+                    ] {
+                        if sub.exists() {
+                            discovered.push(sub.clone());
+                        }
+                    }
+                    if discovered.is_empty() {
+                        for entry in WalkDir::new(custom).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+                            let path = entry.path();
+                            let s = path.to_string_lossy().to_lowercase();
+                            if s.contains(".manus") || s.contains("manus") {
+                                discovered.push(path.to_path_buf());
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        discovered.sort();
+        discovered.dedup();
 
         let is_present = !discovered.is_empty();
         let confidence = if is_present { 0.95 } else { 0.0 };
@@ -88,7 +121,7 @@ impl AgentAdapter for PiAdapter {
         if !options.custom_paths.is_empty() {
             for custom in &options.custom_paths {
                 if custom.is_file() {
-                    if is_candidate_pi_file(custom) {
+                    if is_candidate_manus_file(custom) {
                         if let Ok(source) = SessionSource::from_path(custom, self.name()) {
                             sources.push(source);
                         }
@@ -96,7 +129,7 @@ impl AgentAdapter for PiAdapter {
                 } else if custom.is_dir() {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
-                        if path.is_file() && is_candidate_pi_file(path) {
+                        if path.is_file() && is_candidate_manus_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
                                 sources.push(source);
                             }
@@ -107,7 +140,7 @@ impl AgentAdapter for PiAdapter {
         } else {
             for root in self.candidate_roots() {
                 if root.is_file() {
-                    if is_candidate_pi_file(&root) {
+                    if is_candidate_manus_file(&root) {
                         if let Ok(source) = SessionSource::from_path(&root, self.name()) {
                             sources.push(source);
                         }
@@ -115,7 +148,7 @@ impl AgentAdapter for PiAdapter {
                 } else if root.is_dir() {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
-                        if path.is_file() && is_candidate_pi_file(path) {
+                        if path.is_file() && is_candidate_manus_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
                                 sources.push(source);
                             }
@@ -166,16 +199,17 @@ impl AgentAdapter for PiAdapter {
                 if let Ok(json_val) = serde_json::from_str::<Value>(trimmed) {
                     let items = if let Some(arr) = json_val.as_array() {
                         arr.clone()
-                    } else if let Some(steps) = json_val.get("steps").and_then(|s| s.as_array()) {
-                        steps.clone()
-                    } else if let Some(turns) = json_val.get("turns").and_then(|t| t.as_array()) {
-                        turns.clone()
-                    } else if let Some(tasks) = json_val.get("tasks").and_then(|t| t.as_array()) {
-                        tasks.clone()
-                    } else if let Some(messages) =
-                        json_val.get("messages").and_then(|m| m.as_array())
+                    } else if let Some(steps) = json_val
+                        .get("steps")
+                        .or_else(|| json_val.get("trajectory"))
+                        .or_else(|| json_val.get("actions"))
+                        .or_else(|| json_val.get("turns"))
+                        .or_else(|| json_val.get("messages"))
+                        .or_else(|| json_val.get("events"))
+                        .or_else(|| json_val.get("plan"))
+                        .and_then(|s| s.as_array())
                     {
-                        messages.clone()
+                        steps.clone()
                     } else {
                         vec![json_val]
                     };
@@ -189,7 +223,7 @@ impl AgentAdapter for PiAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_pi_record(item, &mut sequence, timestamp, idx + 1);
+                        let evts = parse_manus_record(item, &mut sequence, timestamp, idx + 1);
                         trace.events.extend(evts);
                     }
 
@@ -234,7 +268,7 @@ impl AgentAdapter for PiAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_pi_record(&val, &mut sequence, timestamp, line_num);
+                let events = parse_manus_record(&val, &mut sequence, timestamp, line_num);
                 trace.events.extend(events);
             }
         }
@@ -256,19 +290,12 @@ impl AgentAdapter for PiAdapter {
     }
 }
 
-fn is_candidate_pi_file(path: &Path) -> bool {
+fn is_candidate_manus_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let lower = filename.to_lowercase();
-
-    if !path_str.contains(".pi")
-        && !path_str.contains("/pi/")
-        && !path_str.contains("\\pi\\")
-        && !path_str.contains("inflection")
-        && !lower.starts_with("pi")
-    {
+    if !path_str.contains("manus") {
         return false;
     }
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if filename.starts_with('.') && !filename.ends_with(".jsonl") && !filename.ends_with(".json") {
         return false;
     }
@@ -303,15 +330,17 @@ fn parse_timestamp(val: &Value) -> Option<DateTime<Utc>> {
             return Some(dt.with_timezone(&Utc));
         }
     }
+    if let Some(ts_str) = val.get("time").and_then(|v| v.as_str()) {
+        if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
+            return Some(dt.with_timezone(&Utc));
+        }
+    }
     if let Some(millis) = val.get("timestamp").and_then(|v| v.as_i64()) {
         return DateTime::from_timestamp_millis(millis);
     }
-    if let Some(epoch) = val.get("created").and_then(|v| v.as_i64()) {
-        if epoch > 1_000_000_000_000 {
-            return DateTime::from_timestamp_millis(epoch);
-        } else {
-            return DateTime::from_timestamp(epoch, 0);
-        }
+    if let Some(secs) = val.get("timestamp").and_then(|v| v.as_f64()) {
+        let millis = (secs * 1000.0) as i64;
+        return DateTime::from_timestamp_millis(millis);
     }
     None
 }
@@ -320,26 +349,25 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
     let input_tokens = usage_val
         .get("prompt_tokens")
         .or_else(|| usage_val.get("input_tokens"))
-        .or_else(|| usage_val.get("promptTokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let output_tokens = usage_val
         .get("completion_tokens")
         .or_else(|| usage_val.get("output_tokens"))
-        .or_else(|| usage_val.get("completionTokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let cache_read_tokens = usage_val
         .get("cached_tokens")
         .or_else(|| usage_val.get("cache_read_tokens"))
-        .or_else(|| usage_val.get("cachedTokens"))
+        .or_else(|| usage_val.get("prompt_cache_hit_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let cache_creation_tokens = usage_val
         .get("cache_creation_tokens")
+        .or_else(|| usage_val.get("prompt_cache_miss_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
@@ -351,7 +379,7 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
     )
 }
 
-fn parse_pi_record(
+fn parse_manus_record(
     val: &Value,
     seq: &mut u64,
     ts: DateTime<Utc>,
@@ -362,11 +390,10 @@ fn parse_pi_record(
 
     let role = val
         .get("role")
-        .or_else(|| val.get("actor"))
+        .or_else(|| val.get("type"))
+        .or_else(|| val.get("kind"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-
-    let event_type = val.get("type").and_then(|v| v.as_str()).unwrap_or(role);
 
     // Model invocation / Token extraction
     if let Some(usage_val) = val
@@ -378,8 +405,9 @@ fn parse_pi_record(
         if usage.total() > 0 {
             let model = val
                 .get("model")
+                .or_else(|| val.get("model_name"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("pi-agent-model")
+                .unwrap_or("manus-v1")
                 .to_string();
 
             *seq += 1;
@@ -390,10 +418,11 @@ fn parse_pi_record(
                     EventPayload::ModelInvocation {
                         model,
                         token_usage: usage,
-                        cost_usd: val.get("cost").and_then(|c| c.as_f64()),
+                        cost_usd: val.get("cost").or_else(|| val.get("cost_usd")).and_then(|c| c.as_f64()),
                         latency_ms: val
                             .get("latency_ms")
                             .or_else(|| val.get("duration_ms"))
+                            .or_else(|| val.get("latency"))
                             .and_then(|d| d.as_u64()),
                     },
                 )
@@ -402,9 +431,9 @@ fn parse_pi_record(
         }
     }
 
-    match event_type {
-        "user" | "human" | "task_input" | "task" => {
-            let content = extract_pi_content(val);
+    match role {
+        "user" | "human" | "goal" | "task" | "request" => {
+            let content = extract_manus_content(val);
             *seq += 1;
             events.push(
                 NormalizedEvent::new(*seq, ts, EventPayload::UserMessage { content })
@@ -412,38 +441,59 @@ fn parse_pi_record(
             );
         }
 
-        "assistant" | "agent" | "step" | "step_result" => {
-            let thinking = val
-                .get("thinking")
+        "assistant" | "model" | "agent" | "planner" | "thought" | "plan" => {
+            let mut content = extract_manus_content(val);
+            let mut thinking = val
+                .get("thought")
+                .or_else(|| val.get("thinking"))
+                .or_else(|| val.get("reasoning"))
                 .or_else(|| val.get("plan"))
-                .or_else(|| val.get("rationale"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
-            let content = extract_pi_content(val);
+            // Extract XML style <thought> or <thinking> tags if embedded in content
+            if thinking.is_none() {
+                if let Some(start) = content.find("<thought>") {
+                    if let Some(end) = content.find("</thought>") {
+                        let th = content[start + 9..end].trim().to_string();
+                        thinking = Some(th);
+                        content = format!("{}{}", &content[..start], &content[end + 10..])
+                            .trim()
+                            .to_string();
+                    }
+                } else if let Some(start) = content.find("<thinking>") {
+                    if let Some(end) = content.find("</thinking>") {
+                        let th = content[start + 10..end].trim().to_string();
+                        thinking = Some(th);
+                        content = format!("{}{}", &content[..start], &content[end + 11..])
+                            .trim()
+                            .to_string();
+                    }
+                }
+            }
 
-            // Extract tool calls / actions
+            // Extract tools / actions / browser operations
             if let Some(tools) = val
                 .get("tool_calls")
                 .or_else(|| val.get("actions"))
                 .or_else(|| val.get("tools"))
+                .or_else(|| val.get("browser_actions"))
                 .and_then(|v| v.as_array())
             {
                 for tc in tools {
                     let id = tc.get("id").and_then(|v| v.as_str()).map(String::from);
-                    let name = tc
+                    let raw_name = tc
                         .get("name")
                         .or_else(|| tc.get("action"))
-                        .or_else(|| tc.get("tool"))
+                        .or_else(|| tc.get("type"))
                         .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    let args = tc
-                        .get("arguments")
-                        .or_else(|| tc.get("args"))
-                        .or_else(|| tc.get("parameters"))
-                        .cloned()
-                        .unwrap_or(Value::Null);
+                        .unwrap_or("unknown");
+                    let args = parse_or_extract_json(
+                        tc.get("arguments")
+                            .or_else(|| tc.get("params"))
+                            .or_else(|| tc.get("parameters")),
+                    );
+                    let name = normalize_mcp_tool_name(raw_name, &args);
 
                     *seq += 1;
                     events.push(
@@ -459,7 +509,28 @@ fn parse_pi_record(
                         .with_raw_ref(&raw_ref),
                     );
 
-                    process_specific_pi_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+                    process_specific_manus_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+                }
+            } else if let Some(action) = val.get("action") {
+                if let Some(action_name) = action.as_str() {
+                    let args = val.get("arguments").or_else(|| val.get("params")).cloned().unwrap_or(Value::Null);
+                    let name = normalize_mcp_tool_name(action_name, &args);
+
+                    *seq += 1;
+                    events.push(
+                        NormalizedEvent::new(
+                            *seq,
+                            ts,
+                            EventPayload::ToolCall(ToolCall {
+                                id: val.get("id").and_then(|v| v.as_str()).map(String::from),
+                                name: name.clone(),
+                                arguments: args.clone(),
+                            }),
+                        )
+                        .with_raw_ref(&raw_ref),
+                    );
+
+                    process_specific_manus_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
                 }
             }
 
@@ -476,21 +547,20 @@ fn parse_pi_record(
             }
         }
 
-        "tool_call" | "action" => {
+        "tool_call" | "tool_use" | "action" | "browser_action" => {
             let id = val.get("id").and_then(|v| v.as_str()).map(String::from);
-            let name = val
+            let raw_name = val
                 .get("name")
                 .or_else(|| val.get("action"))
                 .or_else(|| val.get("tool"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let args = val
-                .get("arguments")
-                .or_else(|| val.get("args"))
-                .or_else(|| val.get("parameters"))
-                .cloned()
-                .unwrap_or(Value::Null);
+                .unwrap_or("unknown");
+            let args = parse_or_extract_json(
+                val.get("arguments")
+                    .or_else(|| val.get("params"))
+                    .or_else(|| val.get("parameters")),
+            );
+            let name = normalize_mcp_tool_name(raw_name, &args);
 
             *seq += 1;
             events.push(
@@ -506,14 +576,14 @@ fn parse_pi_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            process_specific_pi_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+            process_specific_manus_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
         }
 
-        "tool_result" | "action_result" | "observation" => {
+        "tool" | "tool_result" | "observation" | "action_result" => {
             let call_id = val
                 .get("tool_call_id")
-                .or_else(|| val.get("action_id"))
                 .or_else(|| val.get("call_id"))
+                .or_else(|| val.get("id"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let is_error = val
@@ -523,9 +593,9 @@ fn parse_pi_record(
                 .unwrap_or(false);
             let output = val
                 .get("output")
+                .or_else(|| val.get("result"))
                 .or_else(|| val.get("content"))
                 .or_else(|| val.get("observation"))
-                .or_else(|| val.get("result"))
                 .cloned()
                 .unwrap_or(Value::Null);
 
@@ -536,7 +606,7 @@ fn parse_pi_record(
                     ts,
                     EventPayload::ToolResult(ToolResult {
                         call_id,
-                        name: val.get("name").and_then(|v| v.as_str()).map(String::from),
+                        name: val.get("name").or_else(|| val.get("action")).and_then(|v| v.as_str()).map(String::from),
                         output: output.clone(),
                         is_error,
                     }),
@@ -547,7 +617,8 @@ fn parse_pi_record(
             if let Some(out_str) = output.as_str() {
                 if out_str.contains("test result: ok.")
                     || out_str.contains("PASSED")
-                    || out_str.contains("100% tests passed")
+                    || out_str.contains("Deployed successfully")
+                    || out_str.contains("Build succeeded")
                 {
                     *seq += 1;
                     events.push(
@@ -556,25 +627,8 @@ fn parse_pi_record(
                             ts,
                             EventPayload::OutcomeEvidence(OutcomeEvidence {
                                 kind: OutcomeKind::TestOrBuildPassed,
-                                summary: "Test suite executed successfully in Pi step".to_string(),
+                                summary: "Build, test, or autonomous task verified in Manus".to_string(),
                                 confidence: 0.9,
-                            }),
-                        )
-                        .with_raw_ref(&raw_ref),
-                    );
-                } else if out_str.contains("[main ")
-                    || out_str.contains("commit ")
-                    || out_str.contains("files changed,")
-                {
-                    *seq += 1;
-                    events.push(
-                        NormalizedEvent::new(
-                            *seq,
-                            ts,
-                            EventPayload::OutcomeEvidence(OutcomeEvidence {
-                                kind: OutcomeKind::CommitObserved,
-                                summary: "Git commit observed in Pi tool output".to_string(),
-                                confidence: 0.85,
                             }),
                         )
                         .with_raw_ref(&raw_ref),
@@ -588,9 +642,8 @@ fn parse_pi_record(
                 .get("message")
                 .or_else(|| val.get("error"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("Pi execution error")
+                .unwrap_or("Manus execution error")
                 .to_string();
-
             *seq += 1;
             events.push(
                 NormalizedEvent::new(
@@ -612,7 +665,7 @@ fn parse_pi_record(
                     *seq,
                     ts,
                     EventPayload::Custom {
-                        kind: event_type.to_string(),
+                        kind: if role.is_empty() { "unknown".to_string() } else { role.to_string() },
                         data: val.clone(),
                     },
                 )
@@ -624,7 +677,15 @@ fn parse_pi_record(
     events
 }
 
-fn process_specific_pi_tool_call(
+fn parse_or_extract_json(val: Option<&Value>) -> Value {
+    match val {
+        Some(Value::String(s)) => serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone())),
+        Some(v) => v.clone(),
+        None => Value::Null,
+    }
+}
+
+fn process_specific_manus_tool_call(
     name: &str,
     args: &Value,
     seq: &mut u64,
@@ -633,10 +694,11 @@ fn process_specific_pi_tool_call(
     events: &mut Vec<NormalizedEvent>,
 ) {
     let lower = name.to_lowercase();
-    if lower.contains("command")
-        || lower.contains("shell")
+    if lower.contains("shell")
         || lower.contains("bash")
         || lower.contains("exec")
+        || lower.contains("run_command")
+        || lower.contains("terminal")
     {
         if let Some(cmd) = args
             .get("command")
@@ -658,18 +720,34 @@ fn process_specific_pi_tool_call(
                 .with_raw_ref(raw_ref),
             );
         }
-    }
-
-    if lower.contains("edit")
-        || lower.contains("write")
-        || lower.contains("patch")
-        || lower.contains("file")
-    {
+    } else if lower.contains("python") || lower.contains("code_run") || lower.contains("sandbox") {
+        if let Some(code) = args
+            .get("code")
+            .or_else(|| args.get("script"))
+            .or_else(|| args.get("command"))
+            .and_then(|v| v.as_str())
+        {
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::ShellCommand(ShellCommand {
+                        command: format!("python -c {:?}", code),
+                        cwd: args.get("cwd").and_then(|v| v.as_str()).map(String::from),
+                        exit_code: None,
+                        output: None,
+                    }),
+                )
+                .with_raw_ref(raw_ref),
+            );
+        }
+    } else if lower.contains("file") || lower.contains("edit") || lower.contains("write") || lower.contains("create") {
         let path = args
             .get("path")
             .or_else(|| args.get("file_path"))
             .or_else(|| args.get("target_file"))
-            .or_else(|| args.get("file"))
+            .or_else(|| args.get("filename"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -682,11 +760,17 @@ fn process_specific_pi_tool_call(
                     ts,
                     EventPayload::FileAction {
                         path,
-                        action: FileActionType::Edit,
+                        action: if lower.contains("read") {
+                            FileActionType::Read
+                        } else if lower.contains("write") || lower.contains("create") {
+                            FileActionType::Write
+                        } else {
+                            FileActionType::Edit
+                        },
                         diff: args
                             .get("diff")
                             .or_else(|| args.get("content"))
-                            .or_else(|| args.get("patch"))
+                            .or_else(|| args.get("code"))
                             .and_then(|v| v.as_str())
                             .map(String::from),
                         lines_changed: None,
@@ -698,17 +782,20 @@ fn process_specific_pi_tool_call(
     }
 }
 
-fn extract_pi_content(val: &Value) -> String {
+fn extract_manus_content(val: &Value) -> String {
     if let Some(text) = val.get("content").and_then(|v| v.as_str()) {
         return text.to_string();
     }
-    if let Some(text) = val.get("task").and_then(|v| v.as_str()) {
+    if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
         return text.to_string();
     }
     if let Some(text) = val.get("message").and_then(|v| v.as_str()) {
         return text.to_string();
     }
-    if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+    if let Some(text) = val.get("goal").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
+    if let Some(text) = val.get("instruction").and_then(|v| v.as_str()) {
         return text.to_string();
     }
     if let Some(arr) = val.get("content").and_then(|v| v.as_array()) {
@@ -734,16 +821,16 @@ mod tests {
     use tempfile::{tempdir, NamedTempFile};
 
     #[test]
-    fn test_detect_and_enumerate_pi() {
+    fn test_detect_and_enumerate_manus() {
         let temp = tempdir().unwrap();
-        let pi_dir = temp.path().join(".pi").join("tasks");
-        std::fs::create_dir_all(&pi_dir).unwrap();
+        let manus_dir = temp.path().join(".manus").join("sessions");
+        std::fs::create_dir_all(&manus_dir).unwrap();
 
-        let task_file = pi_dir.join("task_001.jsonl");
-        let mut f = File::create(&task_file).unwrap();
-        writeln!(f, "{{\"type\":\"task\",\"content\":\"Analyze telemetry\"}}").unwrap();
+        let session_file = manus_dir.join("manus_trajectory_01.jsonl");
+        let mut f = File::create(&session_file).unwrap();
+        writeln!(f, "{{\"role\":\"user\",\"content\":\"Deploy website and run browser test\"}}").unwrap();
 
-        let adapter = PiAdapter::new();
+        let adapter = ManusAdapter::new();
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
@@ -751,54 +838,54 @@ mod tests {
 
         let detection = adapter.detect(&options).unwrap();
         assert!(detection.is_present);
+        assert_eq!(detection.adapter_name, "manus");
 
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
-        assert_eq!(enumerated[0].adapter_name, "pi");
+        assert_eq!(enumerated[0].adapter_name, "manus");
     }
 
     #[test]
-    fn test_parse_standard_pi_jsonl() {
+    fn test_parse_standard_manus_jsonl_browser_and_coding() {
         let mut temp = NamedTempFile::new().unwrap();
         let sample = r#"
-{"type":"task_input","timestamp":"2026-08-29T10:00:00Z","content":"Process distributed data"}
-{"type":"step","timestamp":"2026-08-29T10:00:03Z","model":"pi-agent-v1","usage":{"prompt_tokens":250,"completion_tokens":90,"cached_tokens":40},"plan":"Execute verification script","actions":[{"name":"execute_command","arguments":{"command":"cargo test"}}]}
-{"type":"observation","timestamp":"2026-08-29T10:00:06Z","output":"test result: ok. 6 passed; 0 failed"}
-{"type":"step","timestamp":"2026-08-29T10:00:08Z","content":"Processing complete."}
+{"role":"user","timestamp":"2026-08-30T16:00:00Z","content":"Navigate to pricing page and verify checkout"}
+{"role":"assistant","timestamp":"2026-08-30T16:00:02Z","model":"manus-v1","usage":{"prompt_tokens":500,"completion_tokens":150,"cached_tokens":200},"thought":"Opening browser and navigating to pricing URL","content":"Navigating to pricing page.","tool_calls":[{"name":"browser_navigate","arguments":{"url":"https://example.com/pricing"}},{"name":"bash","arguments":{"command":"npm test"}}]}
+{"role":"tool","timestamp":"2026-08-30T16:00:06Z","output":"test result: ok. 12 passed; 0 failed"}
+{"role":"assistant","timestamp":"2026-08-30T16:00:08Z","content":"Checkout flow and tests verified."}
 "#;
         temp.write_all(sample.as_bytes()).unwrap();
 
-        let adapter = PiAdapter::new();
+        let adapter = ManusAdapter::new();
         let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
         let result = adapter.parse(&source).expect("parse failed");
 
         assert_eq!(result.malformed_lines, 0);
         let trace = result.trace;
-        assert_eq!(trace.adapter, "pi");
-        assert_eq!(trace.stats.models_used, vec!["pi-agent-v1".to_string()]);
-        assert_eq!(trace.stats.token_usage.input_tokens, 250);
-        assert_eq!(trace.stats.token_usage.output_tokens, 90);
-        assert_eq!(trace.stats.token_usage.cache_read_tokens, 40);
-        assert_eq!(trace.stats.token_usage.total(), 380);
-        assert_eq!(trace.stats.tool_calls_count, 1);
-        assert_eq!(trace.stats.tools_used.get("execute_command"), Some(&1));
+        assert_eq!(trace.adapter, "manus");
+        assert_eq!(trace.stats.models_used, vec!["manus-v1".to_string()]);
+        assert_eq!(trace.stats.token_usage.input_tokens, 500);
+        assert_eq!(trace.stats.token_usage.output_tokens, 150);
+        assert_eq!(trace.stats.token_usage.cache_read_tokens, 200);
+        assert_eq!(trace.stats.token_usage.total(), 850);
+        assert_eq!(trace.stats.tool_calls_count, 2);
         assert_eq!(trace.stats.user_messages_count, 1);
         assert_eq!(trace.stats.assistant_messages_count, 2);
     }
 
     #[test]
-    fn test_parse_pi_tasks_json_object() {
+    fn test_parse_manus_trajectory_json_object() {
         let mut temp = NamedTempFile::new().unwrap();
         let sample = r#"{
-  "task_id": "pi-task-42",
-  "steps": [
-    {"role": "task", "content": "Refactor router"},
-    {"role": "agent", "model": "pi-model", "usage": {"prompt_tokens": 120, "completion_tokens": 45}, "content": "Refactoring router with file_edit", "actions": [{"name": "file_edit", "arguments": {"path": "src/router.rs", "content": "// new router"}}]}
+  "session_id": "manus-agent-999",
+  "trajectory": [
+    {"type": "goal", "content": "Scrape GitHub releases"},
+    {"type": "assistant", "model": "manus-v1", "usage": {"prompt_tokens": 200, "completion_tokens": 50}, "content": "Extracting releases via API", "actions": [{"name": "web_search", "params": {"query": "latest releases"}}]}
   ]
 }"#;
         temp.write_all(sample.as_bytes()).unwrap();
 
-        let adapter = PiAdapter::new();
+        let adapter = ManusAdapter::new();
         let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
         let result = adapter.parse(&source).expect("parse failed");
 
@@ -806,17 +893,16 @@ mod tests {
         assert_eq!(trace.stats.user_messages_count, 1);
         assert_eq!(trace.stats.assistant_messages_count, 1);
         assert_eq!(trace.stats.tool_calls_count, 1);
-        assert_eq!(trace.stats.token_usage.input_tokens, 120);
-        assert_eq!(trace.stats.token_usage.output_tokens, 45);
+        assert_eq!(trace.stats.token_usage.total(), 250);
     }
 
     #[test]
     fn test_parse_graceful_on_malformed_lines() {
         let mut temp = NamedTempFile::new().unwrap();
-        let sample = "{\"type\":\"task\",\"content\":\"run\"}\n{CORRUPT_PI_JSON}\n{\"type\":\"step\",\"content\":\"done\"}\n";
+        let sample = "{\"role\":\"user\",\"content\":\"hello\"}\n{CORRUPT_MANUS_LOG}\n{\"role\":\"assistant\",\"content\":\"hi\"}\n";
         temp.write_all(sample.as_bytes()).unwrap();
 
-        let adapter = PiAdapter::new();
+        let adapter = ManusAdapter::new();
         let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
         let result = adapter.parse(&source).expect("parse failed");
 

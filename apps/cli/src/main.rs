@@ -1217,17 +1217,26 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
 
     // Inspect adapters discovery
     let adapters: Vec<Box<dyn agentworth_adapter_sdk::AgentAdapter>> = vec![
+        Box::new(agentworth_adapters::AiderAdapter::new()),
         Box::new(agentworth_adapters::ClaudeCodeAdapter::new()),
+        Box::new(agentworth_adapters::ClineAdapter::new()),
         Box::new(agentworth_adapters::CursorAdapter::new()),
         Box::new(agentworth_adapters::GeminiAdapter::new()),
         Box::new(agentworth_adapters::CodexAdapter::new()),
+        Box::new(agentworth_adapters::DeepSeekAdapter::new()),
         Box::new(agentworth_adapters::GooseAdapter::new()),
         Box::new(agentworth_adapters::PiAdapter::new()),
         Box::new(agentworth_adapters::HerdrAdapter::new()),
         Box::new(agentworth_adapters::HermesAdapter::new()),
+        Box::new(agentworth_adapters::KimiAdapter::new()),
+        Box::new(agentworth_adapters::ManusAdapter::new()),
+        Box::new(agentworth_adapters::MiniMaxAdapter::new()),
         Box::new(agentworth_adapters::OpenClawAdapter::new()),
         Box::new(agentworth_adapters::GrokAdapter::new()),
         Box::new(agentworth_adapters::OpenCodeAdapter::new()),
+        Box::new(agentworth_adapters::QwenAdapter::new()),
+        Box::new(agentworth_adapters::WindsurfAdapter::new()),
+        Box::new(agentworth_adapters::ZhipuAdapter::new()),
     ];
 
     let scan_opts = ScanOptions::default();

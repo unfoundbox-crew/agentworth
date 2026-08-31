@@ -4,8 +4,10 @@ use std::sync::Arc;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
 use agentworth_adapters::{
-    ClaudeCodeAdapter, CodexAdapter, CursorAdapter, GeminiAdapter, GooseAdapter, GrokAdapter,
-    HerdrAdapter, HermesAdapter, OpenClawAdapter, OpenCodeAdapter, PiAdapter,
+    AiderAdapter, ClaudeCodeAdapter, ClineAdapter, CodexAdapter, CursorAdapter, DeepSeekAdapter,
+    GeminiAdapter, GooseAdapter, GrokAdapter, HerdrAdapter, HermesAdapter, KimiAdapter, ManusAdapter,
+    MiniMaxAdapter, OpenClawAdapter, OpenCodeAdapter, PiAdapter, QwenAdapter, WindsurfAdapter,
+    ZhipuAdapter,
 };
 use agentworth_schema::AgentWorthTrace;
 use agentworth_storage::{AggregateStats, Storage};
@@ -34,17 +36,26 @@ impl Scanner {
     /// Create a new scanner with default registered adapters.
     pub fn new(storage: Arc<Storage>) -> Self {
         let adapters: Vec<Box<dyn AgentAdapter>> = vec![
+            Box::new(AiderAdapter::new()),
             Box::new(ClaudeCodeAdapter::new()),
+            Box::new(ClineAdapter::new()),
             Box::new(CodexAdapter::new()),
             Box::new(CursorAdapter::new()),
+            Box::new(DeepSeekAdapter::new()),
             Box::new(GeminiAdapter::new()),
             Box::new(GooseAdapter::new()),
             Box::new(GrokAdapter::new()),
             Box::new(HerdrAdapter::new()),
             Box::new(HermesAdapter::new()),
+            Box::new(KimiAdapter::new()),
+            Box::new(ManusAdapter::new()),
+            Box::new(MiniMaxAdapter::new()),
             Box::new(OpenClawAdapter::new()),
             Box::new(OpenCodeAdapter::new()),
             Box::new(PiAdapter::new()),
+            Box::new(QwenAdapter::new()),
+            Box::new(WindsurfAdapter::new()),
+            Box::new(ZhipuAdapter::new()),
         ];
         Self { adapters, storage }
     }

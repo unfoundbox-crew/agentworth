@@ -10,8 +10,13 @@ use serde_json::Value;
 pub fn normalize_mcp_tool_name(raw_name: &str, arguments: &Value) -> String {
     let lower_raw = raw_name.to_lowercase();
 
-    // 1. Check for explicit call_mcp_tool invocations
-    if lower_raw == "call_mcp_tool" || lower_raw == "call_mcp" || lower_raw == "mcp_call" {
+    // 1. Check for explicit call_mcp_tool / use_mcp_tool invocations
+    if lower_raw == "call_mcp_tool"
+        || lower_raw == "call_mcp"
+        || lower_raw == "mcp_call"
+        || lower_raw == "use_mcp_tool"
+        || lower_raw == "use_mcp"
+    {
         let server = arguments
             .get("ServerName")
             .or_else(|| arguments.get("server_name"))

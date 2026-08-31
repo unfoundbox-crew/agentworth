@@ -274,6 +274,16 @@ fn is_candidate_claude_file(path: &Path) -> bool {
         || path_str.contains("/.pi/")
         || path_str.contains("/pi/")
         || path_str.contains(".pi")
+        || path_str.contains("deepseek")
+        || path_str.contains("kimi")
+        || path_str.contains("minimax")
+        || path_str.contains("qwen")
+        || path_str.contains("zhipu")
+        || path_str.contains("codegeex")
+        || path_str.contains("manus")
+        || path_str.contains("aider")
+        || path_str.contains("cline")
+        || path_str.contains("windsurf")
     {
         return false;
     }

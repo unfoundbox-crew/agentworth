@@ -45,8 +45,17 @@ export const LandingPage: React.FC<LandingPageProps> = () => {
 
   const adapters = [
     { name: 'Claude Code', id: 'claude_code', path: '~/.claude/projects/' },
-    { name: 'Cursor Composer', id: 'cursor', path: '~/.cursor/User/workspaceStorage/' },
     { name: 'Google Antigravity', id: 'antigravity', path: '~/.gemini/antigravity/' },
+    { name: 'DeepSeek Code', id: 'deepseek', path: '~/.deepseek/' },
+    { name: 'Kimi Code', id: 'kimi', path: '~/.kimi-code/' },
+    { name: 'MiniMax', id: 'minimax', path: '~/.minimax/' },
+    { name: 'Qwen Code', id: 'qwen', path: '~/.qwen/' },
+    { name: 'Zhipu CodeGeeX', id: 'zhipu', path: '~/.codegeex/' },
+    { name: 'Aider', id: 'aider', path: '.aider.chat.history.md' },
+    { name: 'Cline / Roo-Code', id: 'cline', path: '~/.../globalStorage/.../tasks/' },
+    { name: 'Windsurf / Cascade', id: 'windsurf', path: '~/.codeium/windsurf/' },
+    { name: 'Manus', id: 'manus', path: '~/.manus/' },
+    { name: 'Cursor Composer', id: 'cursor', path: '~/.cursor/User/workspaceStorage/' },
     { name: 'OpenAI Codex', id: 'codex', path: '~/.codex/sessions/' },
     { name: 'Block Goose', id: 'goose', path: '~/.config/goose/sessions/' },
     { name: 'OpenCode', id: 'opencode', path: '~/.opencode/' },
@@ -71,7 +80,7 @@ export const LandingPage: React.FC<LandingPageProps> = () => {
               AgentWorth
             </span>
             <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400 border border-neutral-200 dark:border-neutral-800">
-              v0.1.0
+              v0.1.2
             </span>
           </div>
 

@@ -15,40 +15,47 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
-/// Adapter for discovering and normalizing Pi agent task sessions and step logs.
-pub struct PiAdapter;
+use crate::normalize_mcp_tool_name;
 
-impl Default for PiAdapter {
+/// Adapter for discovering and normalizing Moonshot Kimi / Kimi-Code wire sessions and trajectories.
+pub struct KimiAdapter;
+
+impl Default for KimiAdapter {
     fn default() -> Self {
         Self
     }
 }
 
-impl PiAdapter {
+impl KimiAdapter {
     pub fn new() -> Self {
         Self
     }
 
-    /// Candidate directory paths for Pi on the host machine.
+    /// Candidate directory paths for Kimi on the host machine.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
-            roots.push(home.join(".pi"));
-            roots.push(home.join(".pi").join("tasks"));
-            roots.push(home.join(".pi").join("sessions"));
-            roots.push(home.join(".config").join("pi"));
+            roots.push(home.join(".kimi-code"));
+            roots.push(home.join(".kimi-code").join("sessions"));
+            roots.push(home.join(".kimi"));
+            roots.push(home.join(".kimi").join("sessions"));
+            roots.push(home.join(".kimi").join("wire"));
+            roots.push(home.join(".config").join("kimi"));
+            roots.push(home.join(".config").join("kimi-code"));
         }
-        roots.push(PathBuf::from(".pi"));
-        roots.push(PathBuf::from(".pi").join("tasks"));
-        roots.push(PathBuf::from(".pi").join("sessions"));
+        roots.push(PathBuf::from(".kimi-code"));
+        roots.push(PathBuf::from(".kimi-code").join("sessions"));
+        roots.push(PathBuf::from(".kimi"));
+        roots.push(PathBuf::from(".kimi").join("sessions"));
+        roots.push(PathBuf::from(".kimi").join("wire"));
         roots
     }
 }
 
-impl AgentAdapter for PiAdapter {
+impl AgentAdapter for KimiAdapter {
     fn name(&self) -> &'static str {
-        "pi"
+        "kimi"
     }
 
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
@@ -61,15 +68,41 @@ impl AgentAdapter for PiAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".pi")
-                    || custom.ends_with("pi")
-                    || custom.to_string_lossy().contains("/.pi/")
-                    || custom.to_string_lossy().contains("/pi/"))
-            {
-                discovered.push(custom.clone());
+            if custom.exists() {
+                let s = custom.to_string_lossy().to_lowercase();
+                if s.contains(".kimi")
+                    || s.contains("kimi")
+                    || s.contains("kimi-code")
+                    || s.contains("moonshot")
+                    || s.ends_with("wire.jsonl")
+                {
+                    discovered.push(custom.clone());
+                } else if custom.is_dir() {
+                    for sub in &[
+                        custom.join(".kimi"),
+                        custom.join(".kimi-code"),
+                        custom.join(".config").join("kimi"),
+                    ] {
+                        if sub.exists() {
+                            discovered.push(sub.clone());
+                        }
+                    }
+                    if discovered.is_empty() {
+                        for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                            let path = entry.path();
+                            let s = path.to_string_lossy().to_lowercase();
+                            if s.contains(".kimi") || s.contains("kimi") || s.contains("moonshot") {
+                                discovered.push(path.to_path_buf());
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        discovered.sort();
+        discovered.dedup();
 
         let is_present = !discovered.is_empty();
         let confidence = if is_present { 0.95 } else { 0.0 };
@@ -88,7 +121,7 @@ impl AgentAdapter for PiAdapter {
         if !options.custom_paths.is_empty() {
             for custom in &options.custom_paths {
                 if custom.is_file() {
-                    if is_candidate_pi_file(custom) {
+                    if is_candidate_kimi_file(custom) {
                         if let Ok(source) = SessionSource::from_path(custom, self.name()) {
                             sources.push(source);
                         }
@@ -96,7 +129,7 @@ impl AgentAdapter for PiAdapter {
                 } else if custom.is_dir() {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
-                        if path.is_file() && is_candidate_pi_file(path) {
+                        if path.is_file() && is_candidate_kimi_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
                                 sources.push(source);
                             }
@@ -107,7 +140,7 @@ impl AgentAdapter for PiAdapter {
         } else {
             for root in self.candidate_roots() {
                 if root.is_file() {
-                    if is_candidate_pi_file(&root) {
+                    if is_candidate_kimi_file(&root) {
                         if let Ok(source) = SessionSource::from_path(&root, self.name()) {
                             sources.push(source);
                         }
@@ -115,7 +148,7 @@ impl AgentAdapter for PiAdapter {
                 } else if root.is_dir() {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
-                        if path.is_file() && is_candidate_pi_file(path) {
+                        if path.is_file() && is_candidate_kimi_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
                                 sources.push(source);
                             }
@@ -166,16 +199,16 @@ impl AgentAdapter for PiAdapter {
                 if let Ok(json_val) = serde_json::from_str::<Value>(trimmed) {
                     let items = if let Some(arr) = json_val.as_array() {
                         arr.clone()
-                    } else if let Some(steps) = json_val.get("steps").and_then(|s| s.as_array()) {
-                        steps.clone()
-                    } else if let Some(turns) = json_val.get("turns").and_then(|t| t.as_array()) {
-                        turns.clone()
-                    } else if let Some(tasks) = json_val.get("tasks").and_then(|t| t.as_array()) {
-                        tasks.clone()
-                    } else if let Some(messages) =
-                        json_val.get("messages").and_then(|m| m.as_array())
+                    } else if let Some(turns) = json_val
+                        .get("turns")
+                        .or_else(|| json_val.get("messages"))
+                        .or_else(|| json_val.get("events"))
+                        .or_else(|| json_val.get("wire_events"))
+                        .or_else(|| json_val.get("steps"))
+                        .or_else(|| json_val.get("history"))
+                        .and_then(|t| t.as_array())
                     {
-                        messages.clone()
+                        turns.clone()
                     } else {
                         vec![json_val]
                     };
@@ -189,7 +222,7 @@ impl AgentAdapter for PiAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_pi_record(item, &mut sequence, timestamp, idx + 1);
+                        let evts = parse_kimi_record(item, &mut sequence, timestamp, idx + 1);
                         trace.events.extend(evts);
                     }
 
@@ -234,7 +267,7 @@ impl AgentAdapter for PiAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_pi_record(&val, &mut sequence, timestamp, line_num);
+                let events = parse_kimi_record(&val, &mut sequence, timestamp, line_num);
                 trace.events.extend(events);
             }
         }
@@ -256,19 +289,12 @@ impl AgentAdapter for PiAdapter {
     }
 }
 
-fn is_candidate_pi_file(path: &Path) -> bool {
+fn is_candidate_kimi_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let lower = filename.to_lowercase();
-
-    if !path_str.contains(".pi")
-        && !path_str.contains("/pi/")
-        && !path_str.contains("\\pi\\")
-        && !path_str.contains("inflection")
-        && !lower.starts_with("pi")
-    {
+    if !path_str.contains("kimi") && !path_str.contains("moonshot") && !path_str.ends_with("wire.jsonl") {
         return false;
     }
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if filename.starts_with('.') && !filename.ends_with(".jsonl") && !filename.ends_with(".json") {
         return false;
     }
@@ -278,6 +304,8 @@ fn is_candidate_pi_file(path: &Path) -> bool {
         || lower == "credentials.json"
         || lower == "auth.json"
         || lower == "package.json"
+        || lower == "package-lock.json"
+        || lower == "tsconfig.json"
     {
         return false;
     }
@@ -303,6 +331,11 @@ fn parse_timestamp(val: &Value) -> Option<DateTime<Utc>> {
             return Some(dt.with_timezone(&Utc));
         }
     }
+    if let Some(ts_str) = val.get("time").and_then(|v| v.as_str()) {
+        if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
+            return Some(dt.with_timezone(&Utc));
+        }
+    }
     if let Some(millis) = val.get("timestamp").and_then(|v| v.as_i64()) {
         return DateTime::from_timestamp_millis(millis);
     }
@@ -320,26 +353,30 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
     let input_tokens = usage_val
         .get("prompt_tokens")
         .or_else(|| usage_val.get("input_tokens"))
-        .or_else(|| usage_val.get("promptTokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let output_tokens = usage_val
         .get("completion_tokens")
         .or_else(|| usage_val.get("output_tokens"))
-        .or_else(|| usage_val.get("completionTokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let cache_read_tokens = usage_val
         .get("cached_tokens")
+        .or_else(|| usage_val.get("prompt_cache_hit_tokens"))
+        .or_else(|| {
+            usage_val
+                .get("prompt_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+        })
         .or_else(|| usage_val.get("cache_read_tokens"))
-        .or_else(|| usage_val.get("cachedTokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
     let cache_creation_tokens = usage_val
         .get("cache_creation_tokens")
+        .or_else(|| usage_val.get("prompt_cache_miss_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
@@ -351,7 +388,7 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
     )
 }
 
-fn parse_pi_record(
+fn parse_kimi_record(
     val: &Value,
     seq: &mut u64,
     ts: DateTime<Utc>,
@@ -362,24 +399,23 @@ fn parse_pi_record(
 
     let role = val
         .get("role")
-        .or_else(|| val.get("actor"))
+        .or_else(|| val.get("type"))
+        .or_else(|| val.get("event"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-
-    let event_type = val.get("type").and_then(|v| v.as_str()).unwrap_or(role);
 
     // Model invocation / Token extraction
     if let Some(usage_val) = val
         .get("usage")
-        .or_else(|| val.get("token_usage"))
         .or_else(|| val.get("tokens"))
+        .or_else(|| val.get("token_usage"))
     {
         let usage = extract_token_usage(usage_val);
         if usage.total() > 0 {
             let model = val
                 .get("model")
                 .and_then(|v| v.as_str())
-                .unwrap_or("pi-agent-model")
+                .unwrap_or("kimi-k1.5")
                 .to_string();
 
             *seq += 1;
@@ -402,9 +438,9 @@ fn parse_pi_record(
         }
     }
 
-    match event_type {
-        "user" | "human" | "task_input" | "task" => {
-            let content = extract_pi_content(val);
+    match role {
+        "user" | "human" | "user_message" => {
+            let content = extract_kimi_content(val);
             *seq += 1;
             events.push(
                 NormalizedEvent::new(*seq, ts, EventPayload::UserMessage { content })
@@ -412,38 +448,43 @@ fn parse_pi_record(
             );
         }
 
-        "assistant" | "agent" | "step" | "step_result" => {
+        "assistant" | "model" | "kimi" | "assistant_message" => {
             let thinking = val
-                .get("thinking")
-                .or_else(|| val.get("plan"))
-                .or_else(|| val.get("rationale"))
+                .get("reasoning_content")
+                .or_else(|| val.get("thought"))
+                .or_else(|| val.get("thinking"))
+                .or_else(|| val.get("thoughts"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
-            let content = extract_pi_content(val);
+            let content = extract_kimi_content(val);
 
-            // Extract tool calls / actions
+            // Tool calls / subagent delegations in assistant turn
             if let Some(tools) = val
                 .get("tool_calls")
-                .or_else(|| val.get("actions"))
+                .or_else(|| val.get("function_calls"))
                 .or_else(|| val.get("tools"))
                 .and_then(|v| v.as_array())
             {
                 for tc in tools {
                     let id = tc.get("id").and_then(|v| v.as_str()).map(String::from);
-                    let name = tc
+                    let fn_val = tc.get("function").unwrap_or(tc);
+                    let raw_name = fn_val
                         .get("name")
-                        .or_else(|| tc.get("action"))
-                        .or_else(|| tc.get("tool"))
+                        .or_else(|| fn_val.get("tool"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    let args = tc
-                        .get("arguments")
-                        .or_else(|| tc.get("args"))
-                        .or_else(|| tc.get("parameters"))
-                        .cloned()
-                        .unwrap_or(Value::Null);
+
+                    let args: Value = match fn_val.get("arguments").or_else(|| fn_val.get("input")) {
+                        Some(Value::String(s)) => {
+                            serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone()))
+                        }
+                        Some(v) => v.clone(),
+                        None => Value::Null,
+                    };
+
+                    let name = normalize_mcp_tool_name(&raw_name, &args);
 
                     *seq += 1;
                     events.push(
@@ -459,7 +500,15 @@ fn parse_pi_record(
                         .with_raw_ref(&raw_ref),
                     );
 
-                    process_specific_pi_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+                    process_specific_kimi_tool_call(
+                        &raw_name,
+                        &name,
+                        &args,
+                        seq,
+                        ts,
+                        &raw_ref,
+                        &mut events,
+                    );
                 }
             }
 
@@ -476,21 +525,70 @@ fn parse_pi_record(
             }
         }
 
-        "tool_call" | "action" => {
+        // Subagent delegations / wire delegations
+        "subagent_delegation" | "subagent_call" | "agent_call" | "delegate" | "subagent" => {
+            let agent_role = val
+                .get("agent_role")
+                .or_else(|| val.get("target_agent"))
+                .or_else(|| val.get("subagent"))
+                .or_else(|| val.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("subagent")
+                .to_string();
+
+            let prompt = val
+                .get("prompt")
+                .or_else(|| val.get("task"))
+                .or_else(|| val.get("instruction"))
+                .or_else(|| val.get("arguments"))
+                .cloned()
+                .unwrap_or_else(|| Value::String(String::new()));
+
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::ToolCall(ToolCall {
+                        id: val.get("id").and_then(|v| v.as_str()).map(String::from),
+                        name: format!("subagent_delegate:{}", agent_role),
+                        arguments: serde_json::json!({
+                            "agent_role": agent_role,
+                            "prompt": prompt,
+                        }),
+                    }),
+                )
+                .with_raw_ref(&raw_ref),
+            );
+
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::Custom {
+                        kind: "subagent_delegation".to_string(),
+                        data: val.clone(),
+                    },
+                )
+                .with_raw_ref(&raw_ref),
+            );
+        }
+
+        "tool_call" | "function_call" | "tool_use" => {
             let id = val.get("id").and_then(|v| v.as_str()).map(String::from);
-            let name = val
+            let raw_name = val
                 .get("name")
-                .or_else(|| val.get("action"))
                 .or_else(|| val.get("tool"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
             let args = val
                 .get("arguments")
-                .or_else(|| val.get("args"))
-                .or_else(|| val.get("parameters"))
+                .or_else(|| val.get("input"))
                 .cloned()
                 .unwrap_or(Value::Null);
+            let name = normalize_mcp_tool_name(&raw_name, &args);
 
             *seq += 1;
             events.push(
@@ -506,14 +604,14 @@ fn parse_pi_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            process_specific_pi_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
+            process_specific_kimi_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
         }
 
-        "tool_result" | "action_result" | "observation" => {
+        "tool" | "tool_result" | "function" | "tool_output" => {
             let call_id = val
                 .get("tool_call_id")
-                .or_else(|| val.get("action_id"))
                 .or_else(|| val.get("call_id"))
+                .or_else(|| val.get("id"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let is_error = val
@@ -524,10 +622,14 @@ fn parse_pi_record(
             let output = val
                 .get("output")
                 .or_else(|| val.get("content"))
-                .or_else(|| val.get("observation"))
                 .or_else(|| val.get("result"))
                 .cloned()
                 .unwrap_or(Value::Null);
+
+            let tool_name = val
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|n| normalize_mcp_tool_name(n, &Value::Null));
 
             *seq += 1;
             events.push(
@@ -536,7 +638,7 @@ fn parse_pi_record(
                     ts,
                     EventPayload::ToolResult(ToolResult {
                         call_id,
-                        name: val.get("name").and_then(|v| v.as_str()).map(String::from),
+                        name: tool_name,
                         output: output.clone(),
                         is_error,
                     }),
@@ -556,7 +658,7 @@ fn parse_pi_record(
                             ts,
                             EventPayload::OutcomeEvidence(OutcomeEvidence {
                                 kind: OutcomeKind::TestOrBuildPassed,
-                                summary: "Test suite executed successfully in Pi step".to_string(),
+                                summary: "Test suite executed successfully in Kimi".to_string(),
                                 confidence: 0.9,
                             }),
                         )
@@ -573,7 +675,7 @@ fn parse_pi_record(
                             ts,
                             EventPayload::OutcomeEvidence(OutcomeEvidence {
                                 kind: OutcomeKind::CommitObserved,
-                                summary: "Git commit observed in Pi tool output".to_string(),
+                                summary: "Git commit observed in Kimi tool output".to_string(),
                                 confidence: 0.85,
                             }),
                         )
@@ -588,9 +690,8 @@ fn parse_pi_record(
                 .get("message")
                 .or_else(|| val.get("error"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("Pi execution error")
+                .unwrap_or("Kimi execution error")
                 .to_string();
-
             *seq += 1;
             events.push(
                 NormalizedEvent::new(
@@ -612,7 +713,7 @@ fn parse_pi_record(
                     *seq,
                     ts,
                     EventPayload::Custom {
-                        kind: event_type.to_string(),
+                        kind: role.to_string(),
                         data: val.clone(),
                     },
                 )
@@ -624,7 +725,8 @@ fn parse_pi_record(
     events
 }
 
-fn process_specific_pi_tool_call(
+fn process_specific_kimi_tool_call(
+    raw_name: &str,
     name: &str,
     args: &Value,
     seq: &mut u64,
@@ -632,11 +734,16 @@ fn process_specific_pi_tool_call(
     raw_ref: &str,
     events: &mut Vec<NormalizedEvent>,
 ) {
-    let lower = name.to_lowercase();
-    if lower.contains("command")
-        || lower.contains("shell")
-        || lower.contains("bash")
-        || lower.contains("exec")
+    let lower_raw = raw_name.to_lowercase();
+    let lower_name = name.to_lowercase();
+
+    if lower_raw.contains("bash")
+        || lower_raw.contains("terminal")
+        || lower_raw.contains("shell")
+        || lower_raw.contains("exec")
+        || lower_raw.contains("run_command")
+        || lower_name.ends_with(":bash")
+        || lower_name.ends_with(":terminal")
     {
         if let Some(cmd) = args
             .get("command")
@@ -658,12 +765,54 @@ fn process_specific_pi_tool_call(
                 .with_raw_ref(raw_ref),
             );
         }
-    }
+    } else if lower_raw.contains("edit")
+        || lower_raw.contains("write")
+        || lower_raw.contains("create_file")
+        || lower_raw.contains("modify")
+        || lower_raw.contains("patch")
+        || lower_name.ends_with(":edit")
+        || lower_name.ends_with(":write")
+    {
+        let path = args
+            .get("path")
+            .or_else(|| args.get("file_path"))
+            .or_else(|| args.get("target_file"))
+            .or_else(|| args.get("file"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-    if lower.contains("edit")
-        || lower.contains("write")
-        || lower.contains("patch")
-        || lower.contains("file")
+        if !path.is_empty() {
+            let action = if lower_raw.contains("write") || lower_raw.contains("create") {
+                FileActionType::Write
+            } else {
+                FileActionType::Edit
+            };
+
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::FileAction {
+                        path,
+                        action,
+                        diff: args
+                            .get("diff")
+                            .or_else(|| args.get("content"))
+                            .or_else(|| args.get("patch"))
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        lines_changed: None,
+                    },
+                )
+                .with_raw_ref(raw_ref),
+            );
+        }
+    } else if lower_raw.contains("read")
+        || lower_raw.contains("view")
+        || lower_name.ends_with(":read")
+        || lower_name.ends_with(":view")
     {
         let path = args
             .get("path")
@@ -682,27 +831,35 @@ fn process_specific_pi_tool_call(
                     ts,
                     EventPayload::FileAction {
                         path,
-                        action: FileActionType::Edit,
-                        diff: args
-                            .get("diff")
-                            .or_else(|| args.get("content"))
-                            .or_else(|| args.get("patch"))
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
+                        action: FileActionType::Read,
+                        diff: None,
                         lines_changed: None,
                     },
                 )
                 .with_raw_ref(raw_ref),
             );
         }
+    } else if lower_raw.contains("delegate")
+        || lower_raw.contains("subagent")
+        || lower_raw.contains("spawn_agent")
+    {
+        *seq += 1;
+        events.push(
+            NormalizedEvent::new(
+                *seq,
+                ts,
+                EventPayload::Custom {
+                    kind: "subagent_delegation".to_string(),
+                    data: args.clone(),
+                },
+            )
+            .with_raw_ref(raw_ref),
+        );
     }
 }
 
-fn extract_pi_content(val: &Value) -> String {
+fn extract_kimi_content(val: &Value) -> String {
     if let Some(text) = val.get("content").and_then(|v| v.as_str()) {
-        return text.to_string();
-    }
-    if let Some(text) = val.get("task").and_then(|v| v.as_str()) {
         return text.to_string();
     }
     if let Some(text) = val.get("message").and_then(|v| v.as_str()) {
@@ -734,16 +891,16 @@ mod tests {
     use tempfile::{tempdir, NamedTempFile};
 
     #[test]
-    fn test_detect_and_enumerate_pi() {
+    fn test_detect_and_enumerate_kimi() {
         let temp = tempdir().unwrap();
-        let pi_dir = temp.path().join(".pi").join("tasks");
-        std::fs::create_dir_all(&pi_dir).unwrap();
+        let kimi_dir = temp.path().join(".kimi").join("sessions");
+        std::fs::create_dir_all(&kimi_dir).unwrap();
 
-        let task_file = pi_dir.join("task_001.jsonl");
-        let mut f = File::create(&task_file).unwrap();
-        writeln!(f, "{{\"type\":\"task\",\"content\":\"Analyze telemetry\"}}").unwrap();
+        let log_file = kimi_dir.join("wire.jsonl");
+        let mut f = File::create(&log_file).unwrap();
+        writeln!(f, "{{\"role\":\"user\",\"content\":\"Launch Kimi coder\"}}").unwrap();
 
-        let adapter = PiAdapter::new();
+        let adapter = KimiAdapter::new();
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
@@ -754,69 +911,52 @@ mod tests {
 
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
-        assert_eq!(enumerated[0].adapter_name, "pi");
+        assert_eq!(enumerated[0].adapter_name, "kimi");
     }
 
     #[test]
-    fn test_parse_standard_pi_jsonl() {
+    fn test_parse_kimi_wire_session_with_subagents() {
         let mut temp = NamedTempFile::new().unwrap();
         let sample = r#"
-{"type":"task_input","timestamp":"2026-08-29T10:00:00Z","content":"Process distributed data"}
-{"type":"step","timestamp":"2026-08-29T10:00:03Z","model":"pi-agent-v1","usage":{"prompt_tokens":250,"completion_tokens":90,"cached_tokens":40},"plan":"Execute verification script","actions":[{"name":"execute_command","arguments":{"command":"cargo test"}}]}
-{"type":"observation","timestamp":"2026-08-29T10:00:06Z","output":"test result: ok. 6 passed; 0 failed"}
-{"type":"step","timestamp":"2026-08-29T10:00:08Z","content":"Processing complete."}
+{"role":"user","timestamp":"2026-08-30T14:00:00Z","content":"Build an automated parser with subagents"}
+{"role":"assistant","timestamp":"2026-08-30T14:00:02Z","model":"kimi-k1.5","usage":{"prompt_tokens":520,"completion_tokens":180,"cached_tokens":200},"reasoning_content":"Delegating schema analysis to subagent...","content":"Delegating schema validation to subagent."}
+{"role":"subagent_delegation","timestamp":"2026-08-30T14:00:03Z","agent_role":"schema_specialist","task":"Validate JSON schemas against draft-07"}
+{"role":"tool_call","timestamp":"2026-08-30T14:00:05Z","id":"tc_term_1","name":"terminal","arguments":{"command":"cargo test --test parser"}}
+{"role":"tool_result","timestamp":"2026-08-30T14:00:08Z","tool_call_id":"tc_term_1","output":"test result: ok. 12 passed; 0 failed"}
+{"role":"assistant","timestamp":"2026-08-30T14:00:10Z","content":"Subagent completed schema validation and test suite passed."}
 "#;
         temp.write_all(sample.as_bytes()).unwrap();
 
-        let adapter = PiAdapter::new();
+        let adapter = KimiAdapter::new();
         let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
         let result = adapter.parse(&source).expect("parse failed");
 
         assert_eq!(result.malformed_lines, 0);
         let trace = result.trace;
-        assert_eq!(trace.adapter, "pi");
-        assert_eq!(trace.stats.models_used, vec!["pi-agent-v1".to_string()]);
-        assert_eq!(trace.stats.token_usage.input_tokens, 250);
-        assert_eq!(trace.stats.token_usage.output_tokens, 90);
-        assert_eq!(trace.stats.token_usage.cache_read_tokens, 40);
-        assert_eq!(trace.stats.token_usage.total(), 380);
-        assert_eq!(trace.stats.tool_calls_count, 1);
-        assert_eq!(trace.stats.tools_used.get("execute_command"), Some(&1));
+        assert_eq!(trace.adapter, "kimi");
+        assert_eq!(trace.stats.models_used, vec!["kimi-k1.5".to_string()]);
+        assert_eq!(trace.stats.token_usage.input_tokens, 520);
+        assert_eq!(trace.stats.token_usage.output_tokens, 180);
+        assert_eq!(trace.stats.token_usage.cache_read_tokens, 200);
+        assert_eq!(trace.stats.token_usage.total(), 900);
         assert_eq!(trace.stats.user_messages_count, 1);
         assert_eq!(trace.stats.assistant_messages_count, 2);
+
+        // Verify subagent delegation detected
+        let subagent_evt = trace
+            .events
+            .iter()
+            .find(|e| matches!(&e.payload, EventPayload::Custom { kind, .. } if kind == "subagent_delegation"));
+        assert!(subagent_evt.is_some());
     }
 
     #[test]
-    fn test_parse_pi_tasks_json_object() {
+    fn test_parse_kimi_corrupt_lines_graceful() {
         let mut temp = NamedTempFile::new().unwrap();
-        let sample = r#"{
-  "task_id": "pi-task-42",
-  "steps": [
-    {"role": "task", "content": "Refactor router"},
-    {"role": "agent", "model": "pi-model", "usage": {"prompt_tokens": 120, "completion_tokens": 45}, "content": "Refactoring router with file_edit", "actions": [{"name": "file_edit", "arguments": {"path": "src/router.rs", "content": "// new router"}}]}
-  ]
-}"#;
+        let sample = "{\"role\":\"user\",\"content\":\"Hi Kimi\"}\n{INVALID_WIRE_JSON}\n{\"role\":\"assistant\",\"content\":\"Hello\"}\n";
         temp.write_all(sample.as_bytes()).unwrap();
 
-        let adapter = PiAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
-
-        let trace = result.trace;
-        assert_eq!(trace.stats.user_messages_count, 1);
-        assert_eq!(trace.stats.assistant_messages_count, 1);
-        assert_eq!(trace.stats.tool_calls_count, 1);
-        assert_eq!(trace.stats.token_usage.input_tokens, 120);
-        assert_eq!(trace.stats.token_usage.output_tokens, 45);
-    }
-
-    #[test]
-    fn test_parse_graceful_on_malformed_lines() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = "{\"type\":\"task\",\"content\":\"run\"}\n{CORRUPT_PI_JSON}\n{\"type\":\"step\",\"content\":\"done\"}\n";
-        temp.write_all(sample.as_bytes()).unwrap();
-
-        let adapter = PiAdapter::new();
+        let adapter = KimiAdapter::new();
         let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
         let result = adapter.parse(&source).expect("parse failed");
 

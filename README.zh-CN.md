@@ -60,21 +60,30 @@ agentworth serve --open
 
 ---
 
-## 已支持的 11 种智能体适配器
+## 已支持的 20 种智能体适配器
 
-AgentWorth 能自动识别本机上的以下智能体日志：
+AgentWorth 能够完全离线、自动流式解析本机上的 20 种主流智能体日志：
 
-1. **Claude Code** (`~/.claude/projects/`)
+1. **Claude Code** (`~/.claude/projects/`, `~/.claude/sessions/`)
 2. **Google Antigravity / Gemini CLI** (`~/.gemini/antigravity-cli/`)
-3. **OpenAI Codex** (`~/.codex/`)
-4. **Cursor Composer** (`~/Library/Application Support/Cursor/` / `~/.config/Cursor/`)
-5. **Block Goose** (`~/.local/share/goose/`)
-6. **Pi Task Agent** (`~/.pi/agent/`)
-7. **Herdr Orchestrator** (`~/.herdr/`)
-8. **Nous Hermes** (`~/.hermes/`)
-9. **OpenClaw** (`~/.openclaw/`)
-10. **xAI Grok CLI** (`~/.grok/`)
-11. **OpenCode** (`~/.opencode/`)
+3. 🐋 **DeepSeek Code** (`~/.deepseek/`, `~/.deepseek-coder/` - 原生解析 R1/V3 推理思考 Token)
+4. 🌙 **Kimi Code (月之暗面)** (`~/.kimi-code/`, `~/.kimi/sessions/wire.jsonl` - Wire 协议与子智能体)
+5. ⚡ **MiniMax** (`~/.minimax/`, `~/.minimax-agent/` - 编码规划与轨迹)
+6. 🐉 **Qwen Code / 通义千问 (阿里)** (`~/.qwen/`, `~/.qwen-agent/` - Qwen 2.5 Coder 轨迹)
+7. 🧠 **智谱 CodeGeeX / GLM-4** (`~/.codegeex/`, `~/.zhipu/` - IDE 插件与 CLI 历史)
+8. 🛠️ **Aider** (`.aider.chat.history.md`, `~/.aider/` - Git 提交与 Diff 轨迹)
+9. 👁️ **Cline & Roo-Code** (VSCode `globalStorage/saoudrizwan.claude-dev/tasks/`, `roo-cline/`)
+10. 🌊 **Windsurf / Cascade** (`~/.codeium/windsurf/`, `~/.windsurf/` - 级联执行缓存)
+11. 🦾 **Manus** (`~/.manus/` - 自主浏览器与编码轨迹)
+12. **OpenAI Codex** (`~/.codex/`)
+13. **Cursor Composer** (`~/Library/Application Support/Cursor/` / `~/.config/Cursor/`)
+14. **Block Goose** (`~/.local/share/goose/`)
+15. **Pi Task Agent** (`~/.pi/agent/`)
+16. **Herdr Orchestrator** (`~/.herdr/`)
+17. **Nous Hermes** (`~/.hermes/`)
+18. **OpenClaw** (`~/.openclaw/`)
+19. **xAI Grok CLI** (`~/.grok/`)
+20. **OpenCode** (`~/.opencode/`)
 
 ---
 

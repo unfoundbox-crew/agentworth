@@ -60,21 +60,30 @@ agentworth serve --open
 
 ---
 
-## サポートされているエージェント (11種類)
+## サポートされているエージェント (20種類)
 
-AgentWorthは、ローカル環境に存在する以下のエージェントログを自動検出します：
+AgentWorthは、ローカル環境に存在する以下の20種類のエージェントログを完全にオフラインで自動ストリーミング解析します：
 
-1. **Claude Code** (`~/.claude/projects/`)
+1. **Claude Code** (`~/.claude/projects/`, `~/.claude/sessions/`)
 2. **Google Antigravity / Gemini CLI** (`~/.gemini/antigravity-cli/`)
-3. **OpenAI Codex** (`~/.codex/`)
-4. **Cursor Composer** (`~/Library/Application Support/Cursor/` / `~/.config/Cursor/`)
-5. **Block Goose** (`~/.local/share/goose/`)
-6. **Pi Task Agent** (`~/.pi/agent/`)
-7. **Herdr Orchestrator** (`~/.herdr/`)
-8. **Nous Hermes** (`~/.hermes/`)
-9. **OpenClaw** (`~/.openclaw/`)
-10. **xAI Grok CLI** (`~/.grok/`)
-11. **OpenCode** (`~/.opencode/`)
+3. 🐋 **DeepSeek Code** (`~/.deepseek/`, `~/.deepseek-coder/` - R1/V3 思考推論トークン解析)
+4. 🌙 **Kimi Code (Moonshot)** (`~/.kimi-code/`, `~/.kimi/sessions/wire.jsonl` - Wireプロトコル・サブエージェント)
+5. ⚡ **MiniMax** (`~/.minimax/`, `~/.minimax-agent/` - コーディング計画・軌跡ログ)
+6. 🐉 **Qwen Code / 通義千問 (Alibaba)** (`~/.qwen/`, `~/.qwen-agent/` - Qwen 2.5 Coder 軌跡)
+7. 🧠 **智譜 CodeGeeX / GLM-4** (`~/.codegeex/`, `~/.zhipu/` - IDE拡張機能・CLI履歴)
+8. 🛠️ **Aider** (`.aider.chat.history.md`, `~/.aider/` - Gitコミット・Diff軌跡)
+9. 👁️ **Cline & Roo-Code** (VSCode `globalStorage/saoudrizwan.claude-dev/tasks/`, `roo-cline/`)
+10. 🌊 **Windsurf / Cascade** (`~/.codeium/windsurf/`, `~/.windsurf/` - 実行キャッシュ解析)
+11. 🦾 **Manus** (`~/.manus/` - 自律ブラウザ操作・コーディング軌跡)
+12. **OpenAI Codex** (`~/.codex/`)
+13. **Cursor Composer** (`~/Library/Application Support/Cursor/` / `~/.config/Cursor/`)
+14. **Block Goose** (`~/.local/share/goose/`)
+15. **Pi Task Agent** (`~/.pi/agent/`)
+16. **Herdr Orchestrator** (`~/.herdr/`)
+17. **Nous Hermes** (`~/.hermes/`)
+18. **OpenClaw** (`~/.openclaw/`)
+19. **xAI Grok CLI** (`~/.grok/`)
+20. **OpenCode** (`~/.opencode/`)
 
 ---
 
