@@ -132,13 +132,16 @@
   background: var(--mv-warn-soft);
 }
 .status-pill.is-warn .dot { background: var(--mv-warn); }
+/* "Bad" here is only ever "no evidence yet" — OutcomeKind has no failure
+   state. See list.css for the full reasoning; this is the same change applied
+   to the shared components the landing page and Overview both use. */
 .status-pill.is-bad {
-  color: var(--mv-danger);
+  color: var(--mv-muted);
   border-style: dashed;
-  border-color: var(--mv-danger-border);
-  background: var(--mv-danger-soft);
+  border-color: var(--mv-border);
+  background: var(--mv-surface-2);
 }
-.status-pill.is-bad .dot { border: 1.5px dashed var(--mv-danger); background: transparent; }
+.status-pill.is-bad .dot { border: 1.5px solid var(--mv-faint); background: transparent; }
 .status-pill.is-neutral {
   color: var(--mv-muted);
   border-color: var(--mv-border);
@@ -367,7 +370,7 @@ select.field {
 .ladder-rung[data-rung="4"] .ladder-node { width: 13px; height: 13px; background: var(--mv-success); box-shadow: 0 0 0 3px var(--mv-success-soft); }
 .ladder-rung[data-rung="3"] .ladder-node { width: 11px; height: 11px; background: var(--mv-success); opacity: 0.85; }
 .ladder-rung[data-rung="2"] .ladder-node { width: 10px; height: 10px; border: 1.5px solid var(--mv-success); background: var(--mv-success-soft); }
-.ladder-rung[data-rung="1"] .ladder-node { width: 9px; height: 9px; border: 1.5px dashed var(--mv-danger); background: transparent; }
+.ladder-rung[data-rung="1"] .ladder-node { width: 9px; height: 9px; border: 1.5px solid var(--mv-faint); background: transparent; }
 .ladder-body .meta {
   display: flex;
   align-items: center;
@@ -418,7 +421,7 @@ select.field {
   border-left: 2px solid var(--mv-success-border);
 }
 .ladder-connector.is-cliff {
-  border-left: 2px dashed var(--mv-danger-border);
+  border-left: 2px dashed var(--mv-border);
 }
 
 @media (max-width: 760px) {

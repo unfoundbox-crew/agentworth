@@ -1,4 +1,5 @@
 import { OutcomeEvidence, OutcomeKind } from '../types';
+import { IconVerified, IconUnflown } from './dsIcons';
 
 export interface LadderRungDef {
   level: 1 | 2 | 3 | 4 | 5;
@@ -86,10 +87,11 @@ export function OutcomeLadder({ reachedLevel, captions = {} }: OutcomeLadderProp
           <div key={rung.kind}>
             <div className={`ol-rung${reached ? '' : ' ol-rung-dim'}`} role="listitem">
               <div className="ol-node-col">
-                <div
-                  className={`ol-node${rung.level === 1 ? ' ol-node-hollow' : ''}`}
-                  style={{ width: size, height: size }}
-                />
+                {rung.level === 1 ? (
+                  <IconUnflown size={size} className="ol-node" />
+                ) : (
+                  <IconVerified size={size} className="ol-node" />
+                )}
               </div>
               <div className="ol-rung-text">
                 <span className="ol-rung-name">

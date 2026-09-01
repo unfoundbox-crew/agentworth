@@ -24,7 +24,7 @@ type ChipKey = 'all' | 'ci' | 'failed' | 'claude_code';
 const CHIPS: { key: ChipKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'ci', label: 'CI Green' },
-  { key: 'failed', label: 'Failed' },
+  { key: 'failed', label: 'Unverified' },
   { key: 'claude_code', label: 'Claude Code' },
 ];
 
@@ -53,9 +53,11 @@ const COMPACT_ROW_HEIGHT = 30;
 const COMFORTABLE_ROW_HEIGHT = 48;
 
 function dotClass(level: number): string {
-  if (level >= 4) return 'ol-dot-success';
-  if (level === 3) return 'ol-dot-warn';
-  return 'ol-dot-danger';
+  // Confidence, not alarm. Nothing here means failure — see list.css.
+  if (level >= 4) return 'ol-dot-success'; // externally verified
+  if (level === 3) return 'ol-dot-warn';   // machine-checked, local
+  if (level === 2) return 'ol-dot-danger'; // something moved on disk
+  return 'ol-dot-none';                    // the agent's word alone
 }
 
 function formatScore(score?: number): string {

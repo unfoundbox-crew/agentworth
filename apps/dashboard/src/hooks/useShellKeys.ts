@@ -7,6 +7,8 @@ export interface ShellNav {
 }
 
 export interface UseShellKeysOptions {
+  /** Returns true if it actually collapsed something, so escape stops there. */
+  exitTrajectoryFocus?: () => boolean;
   /** Ref populated by the session list's registerNav callback. */
   navRef: RefObject<ShellNav | null>;
   paletteOpen: boolean;
@@ -29,7 +31,7 @@ function isTypingTarget(el: EventTarget | null): boolean {
  * move the session selection.
  */
 export function useShellKeys(opts: UseShellKeysOptions): void {
-  const { navRef, paletteOpen, openPalette, closePalette, focusInspector } = opts;
+  const { navRef, paletteOpen, openPalette, closePalette, focusInspector, exitTrajectoryFocus } = opts;
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -45,6 +47,12 @@ export function useShellKeys(opts: UseShellKeysOptions): void {
         if (paletteOpen) {
           e.preventDefault();
           closePalette();
+          return;
+        }
+        // The expanded trajectory hides the session list, so escape has to be
+        // able to get you back to it — the Collapse button already promises this.
+        if (exitTrajectoryFocus && exitTrajectoryFocus()) {
+          e.preventDefault();
           return;
         }
         const active = document.activeElement;
@@ -84,5 +92,7 @@ export function useShellKeys(opts: UseShellKeysOptions): void {
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [navRef, paletteOpen, openPalette, closePalette, focusInspector]);
+    // exitTrajectoryFocus MUST be here: without it the handler closes over the
+    // first render, where nothing was expanded, and escape silently does nothing.
+  }, [navRef, paletteOpen, openPalette, closePalette, focusInspector, exitTrajectoryFocus]);
 }
