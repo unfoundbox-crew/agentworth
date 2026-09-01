@@ -1282,6 +1282,13 @@ fn row_to_blame_match(row: &rusqlite::Row) -> Result<BlameMatch> {
 }
 
 /// Estimate developer token cost in USD based on standard blended pricing.
+///
+/// This collapses to `ModelRates::default()` (Claude 3.5 Sonnet's rate) regardless of
+/// what model actually ran — correct only when there is genuinely no model to attribute
+/// tokens to (e.g. summing across models/adapters in one SQL aggregate). Any call site
+/// that has a specific model, or a per-model breakdown, should use
+/// `estimate_model_tokens_cost_usd` or `estimate_total_cost_from_per_model_usage` instead;
+/// using this on a single known session silently mis-prices every non-Sonnet model.
 pub fn estimate_tokens_cost_usd(
     input: u64,
     output: u64,
@@ -1289,6 +1296,30 @@ pub fn estimate_tokens_cost_usd(
     cache_creation: u64,
 ) -> f64 {
     estimate_model_tokens_cost_usd(None, input, output, cache_read, cache_creation)
+}
+
+/// Sum a per-model token usage breakdown into one total cost, pricing each model's own
+/// tokens at that model's own real rate. This is what a session's total spend should look
+/// like whenever a per-model breakdown (`TraceStats.per_model_token_usage`) is available —
+/// never collapse it to `estimate_tokens_cost_usd`'s single blended rate, which mis-prices
+/// every model except the default. Mirrors `TraceScorer::compute_per_model_attribution`'s
+/// summation for call sites that only need the total, not the full per-model/outcome
+/// breakdown a `TraceScorer` computes.
+pub fn estimate_total_cost_from_per_model_usage(
+    per_model_usage: &BTreeMap<String, TokenUsage>,
+) -> f64 {
+    per_model_usage
+        .iter()
+        .map(|(model, usage)| {
+            estimate_model_tokens_cost_usd(
+                Some(model),
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_tokens,
+                usage.cache_creation_tokens,
+            )
+        })
+        .sum()
 }
 
 /// Calculate prompt cache hit percentage.

@@ -7,7 +7,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use agentworth_core::Scanner;
-use agentworth_storage::{estimate_tokens_cost_usd, SessionFilter, SessionOrderBy, Storage};
+use agentworth_storage::{
+    estimate_total_cost_from_per_model_usage, SessionFilter, SessionOrderBy, Storage,
+};
 use anyhow::Result;
 use console::style;
 use serde::{Deserialize, Serialize};
@@ -90,19 +92,15 @@ pub fn generate_blind_spots_report(
         // Blind spots: only self-claimed done or unverified file action -- the two rungs
         // below TestOrBuildPassed on the outcome hierarchy (see agentworth_schema::OutcomeKind).
         if outcome == "done_claimed" || outcome == "artifact_changed" {
-            // The indexed SessionSummary only carries an aggregate total_tokens; the
-            // input/output/cache breakdown estimate_tokens_cost_usd needs lives on the full
-            // trace, so load it lazily just for the sessions that actually match.
-            let token_usage = scanner
+            // The indexed SessionSummary only carries an aggregate total_tokens with no
+            // per-model breakdown; the full per-model usage estimate_total_cost_from_per_model_usage
+            // needs lives on the full trace, so load it lazily just for the sessions that
+            // actually match. Priced per model (each model's tokens at that model's own
+            // rate, then summed), not blended at a single default rate.
+            let spend = scanner
                 .load_trace(&s.session_id)
-                .map(|t| t.stats.token_usage)
-                .unwrap_or_default();
-            let spend = estimate_tokens_cost_usd(
-                token_usage.input_tokens,
-                token_usage.output_tokens,
-                token_usage.cache_read_tokens,
-                token_usage.cache_creation_tokens,
-            );
+                .map(|t| estimate_total_cost_from_per_model_usage(&t.stats.per_model_token_usage))
+                .unwrap_or(0.0);
 
             total_unverified_tokens += s.total_tokens;
             total_unverified_spend_usd += spend;
@@ -204,11 +202,15 @@ pub fn run_blind_spots_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentworth_adapter_sdk::ScanOptions;
+    use agentworth_adapters::ClaudeCodeAdapter;
     use agentworth_outcomes::{highest_outcome, outcome_kind_name, OutcomeHierarchyDetector};
     use agentworth_schema::{
         AgentWorthTrace, EventPayload, NormalizedEvent, Provenance, TokenUsage,
     };
     use chrono::{Duration, Utc};
+    use serde_json::json;
+    use std::io::Write;
     use tempfile::NamedTempFile;
 
     /// Store a trace the same way `Scanner::run_scan` does: detect outcomes first and persist
@@ -260,6 +262,75 @@ mod tests {
         let report = generate_blind_spots_report(&storage, None).unwrap();
         assert_eq!(report.total_blind_spots, 1);
         assert_eq!(report.entries[0].session_id, "sess-unverified-1");
+    }
+
+    /// Regression test for the pricing bug: `generate_blind_spots_report` used to price
+    /// every entry's spend via the blended `estimate_tokens_cost_usd` (model_id = None ->
+    /// always Claude 3.5 Sonnet's rate), regardless of which model actually ran. Scans a
+    /// real, adapter-parsed session run on a cheap non-Sonnet model (DeepSeek Chat) that
+    /// only self-claims done (a blind spot) and asserts the reported spend matches
+    /// DeepSeek's real rate, not Sonnet's.
+    #[test]
+    fn test_blind_spots_prices_non_sonnet_model_correctly() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Arc::new(Storage::open_path(tmp.path()).unwrap());
+
+        let mut session_file = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let line1 = json!({
+            "type": "user",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "content": "Please fix the failing build.",
+        });
+        let line2 = json!({
+            "type": "assistant",
+            "timestamp": "2026-01-01T00:00:05Z",
+            "model": "deepseek-chat",
+            "usage": {
+                "input_tokens": 1_000_000,
+                "output_tokens": 500_000,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+            "content": [{"type": "text", "text": "I have completed the task!"}],
+        });
+        writeln!(session_file, "{}", line1).unwrap();
+        writeln!(session_file, "{}", line2).unwrap();
+
+        let scan_only_claude =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+        let scan_summary = scan_only_claude
+            .run_scan(
+                &ScanOptions {
+                    custom_paths: vec![session_file.path().to_path_buf()],
+                    force: true,
+                },
+                |_, _| {},
+            )
+            .expect("scan the real session");
+        assert_eq!(scan_summary.scanned_sessions, 1);
+
+        let report = generate_blind_spots_report(&storage, None).unwrap();
+        assert_eq!(report.total_blind_spots, 1, "the done-claimed session must be a blind spot");
+
+        // Real DeepSeek Chat rate: $0.14/M input, $0.28/M output.
+        let expected_real_cost = 1_000_000.0 / 1_000_000.0 * 0.14 + 500_000.0 / 1_000_000.0 * 0.28;
+        assert!(
+            (report.entries[0].spend_usd - expected_real_cost).abs() < 1e-9,
+            "expected deepseek-chat's real rate (${:.4}), got ${:.4}",
+            expected_real_cost,
+            report.entries[0].spend_usd
+        );
+
+        // What the old blended-Sonnet bug would have produced: $3.00/M input, $15.00/M output.
+        let wrong_blended_sonnet_cost =
+            1_000_000.0 / 1_000_000.0 * 3.00 + 500_000.0 / 1_000_000.0 * 15.00;
+        assert!(
+            (report.entries[0].spend_usd - wrong_blended_sonnet_cost).abs() > 1.0,
+            "entry spend (${:.4}) must not collapse to the blended-Sonnet figure (${:.4})",
+            report.entries[0].spend_usd,
+            wrong_blended_sonnet_cost
+        );
+        assert_eq!(report.total_unverified_spend_usd, report.entries[0].spend_usd);
     }
 
     /// Regression test for the old `Some(10000)` cap on

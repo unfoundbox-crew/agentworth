@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use agentworth_core::Scanner;
-use agentworth_storage::{estimate_tokens_cost_usd, Storage};
+use agentworth_storage::{estimate_total_cost_from_per_model_usage, Storage};
 use anyhow::Result;
 use console::style;
 use serde::{Deserialize, Serialize};
@@ -69,19 +69,16 @@ pub fn annotate_pr_files(
             let (outcome, conf, spend) = if let Some(s) = session_opt {
                 let outcome = s.primary_outcome.unwrap_or_else(|| "done_claimed".to_string());
                 let conf = confidence_for_outcome(&outcome);
-                // BlameMatch/SessionSummary only carry an aggregate total_tokens; the
-                // input/output/cache breakdown estimate_tokens_cost_usd needs lives on the
-                // full trace. Fall back to zero spend if the source file has since moved.
-                let token_usage = scanner
+                // BlameMatch/SessionSummary only carry an aggregate total_tokens with no
+                // per-model breakdown; the full per-model usage
+                // estimate_total_cost_from_per_model_usage needs lives on the full trace.
+                // Fall back to zero spend if the source file has since moved. Priced per
+                // model (each model's tokens at that model's own rate, then summed), not
+                // blended at a single default rate.
+                let spend = scanner
                     .load_trace(&first.session_id)
-                    .map(|t| t.stats.token_usage)
-                    .unwrap_or_default();
-                let spend = estimate_tokens_cost_usd(
-                    token_usage.input_tokens,
-                    token_usage.output_tokens,
-                    token_usage.cache_read_tokens,
-                    token_usage.cache_creation_tokens,
-                );
+                    .map(|t| estimate_total_cost_from_per_model_usage(&t.stats.per_model_token_usage))
+                    .unwrap_or(0.0);
                 (Some(outcome), Some(conf), Some(spend))
             } else {
                 (None, None, None)
@@ -226,8 +223,12 @@ pub fn run_pr_blame_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentworth_adapter_sdk::ScanOptions;
+    use agentworth_adapters::ClaudeCodeAdapter;
     use agentworth_schema::{AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, Provenance};
     use chrono::Utc;
+    use serde_json::json;
+    use std::io::Write;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -261,5 +262,84 @@ mod tests {
         assert_eq!(report.ai_authored_files, 1);
         assert!(report.annotations[0].ai_touched);
         assert!(!report.annotations[1].ai_touched);
+    }
+
+    /// Regression test for the pricing bug: `annotate_pr_files` used to price a file's
+    /// blamed spend via the blended `estimate_tokens_cost_usd` (model_id = None -> always
+    /// Claude 3.5 Sonnet's rate), regardless of which model actually touched the file.
+    /// Scans a real, adapter-parsed session that edits a target file on a cheap non-Sonnet
+    /// model (DeepSeek Chat) and asserts the reported spend matches DeepSeek's real rate.
+    #[test]
+    fn test_annotate_pr_files_prices_non_sonnet_model_correctly() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Arc::new(Storage::open_path(tmp.path()).unwrap());
+
+        let mut session_file = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let line1 = json!({
+            "type": "user",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "content": "Please add a helper function.",
+        });
+        let line2 = json!({
+            "type": "assistant",
+            "timestamp": "2026-01-01T00:00:05Z",
+            "model": "deepseek-chat",
+            "usage": {
+                "input_tokens": 1_000_000,
+                "output_tokens": 500_000,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+            "content": [
+                {"type": "text", "text": "Adding the helper now."},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "Write",
+                    "input": {"file_path": "src/pr_blame_target.rs", "content": "fn helper() {}"},
+                },
+            ],
+        });
+        writeln!(session_file, "{}", line1).unwrap();
+        writeln!(session_file, "{}", line2).unwrap();
+
+        let scan_only_claude =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+        let scan_summary = scan_only_claude
+            .run_scan(
+                &ScanOptions {
+                    custom_paths: vec![session_file.path().to_path_buf()],
+                    force: true,
+                },
+                |_, _| {},
+            )
+            .expect("scan the real session");
+        assert_eq!(scan_summary.scanned_sessions, 1);
+
+        let report =
+            annotate_pr_files(&storage, &["src/pr_blame_target.rs".to_string()]).unwrap();
+        assert_eq!(report.ai_authored_files, 1, "the file must resolve to the scanned session");
+        let spend = report.annotations[0]
+            .spend_usd
+            .expect("spend must be computed for an AI-touched file");
+
+        // Real DeepSeek Chat rate: $0.14/M input, $0.28/M output.
+        let expected_real_cost = 1_000_000.0 / 1_000_000.0 * 0.14 + 500_000.0 / 1_000_000.0 * 0.28;
+        assert!(
+            (spend - expected_real_cost).abs() < 1e-9,
+            "expected deepseek-chat's real rate (${:.4}), got ${:.4}",
+            expected_real_cost,
+            spend
+        );
+
+        // What the old blended-Sonnet bug would have produced: $3.00/M input, $15.00/M output.
+        let wrong_blended_sonnet_cost =
+            1_000_000.0 / 1_000_000.0 * 3.00 + 500_000.0 / 1_000_000.0 * 15.00;
+        assert!(
+            (spend - wrong_blended_sonnet_cost).abs() > 1.0,
+            "blamed spend (${:.4}) must not collapse to the blended-Sonnet figure (${:.4})",
+            spend,
+            wrong_blended_sonnet_cost
+        );
     }
 }
