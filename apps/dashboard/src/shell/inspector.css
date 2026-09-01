@@ -161,21 +161,26 @@
   height: 100%;
   min-width: 2px;
 }
+/* Four categories, not four intensities. A zinc ramp made the legend
+   unmatchable — you cannot tell "muted" from "faint" in a 6px bar, and cache
+   read versus cache creation is the whole point of this chart. */
 .shell-root .shell-tokens-seg.is-input,
 .shell-root .shell-tokens-swatch.is-input {
-  background: var(--mv-ink);
+  background: var(--mv-cat-1);
 }
 .shell-root .shell-tokens-seg.is-output,
 .shell-root .shell-tokens-swatch.is-output {
-  background: var(--mv-text);
+  background: var(--mv-cat-3);
 }
 .shell-root .shell-tokens-seg.is-cache-read,
 .shell-root .shell-tokens-swatch.is-cache-read {
-  background: var(--mv-muted);
+  background: var(--mv-cat-5);
 }
+/* Cache creation is the expensive one — warn, because here it IS a cost
+   signal rather than just another category. */
 .shell-root .shell-tokens-seg.is-cache-creation,
 .shell-root .shell-tokens-swatch.is-cache-creation {
-  background: var(--mv-faint);
+  background: var(--mv-warn);
 }
 
 .shell-root .shell-tokens-rows {

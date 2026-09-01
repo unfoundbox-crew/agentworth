@@ -26,6 +26,25 @@
   --mv-muted: #52525b;
   --mv-faint: #a1a1aa;
   --mv-accent: #7c6bb3;
+
+  /* ── Categorical series ───────────────────────────────────────────────────
+     Distinct identity, not state and not emphasis. A stacked bar with eight
+     segments cannot be read in one hue plus greys — the legend stops matching
+     anything. So category gets real colour, while --mv-accent stays reserved
+     for selection and focus and the semantic three stay reserved for state.
+
+     Ordered so the first few are furthest apart in hue: a two-series chart
+     should look deliberate, not like the start of a rainbow. Anchored on the
+     violet accent's family so a chart sits in the same room as the rest of
+     the UI. */
+  --mv-cat-1: #6b7fc7;
+  --mv-cat-2: #c78a4a;
+  --mv-cat-3: #4f9d76;
+  --mv-cat-4: #b06a94;
+  --mv-cat-5: #5b9bb5;
+  --mv-cat-6: #a3843f;
+  --mv-cat-7: #8b74c4;
+  --mv-cat-8: #9a9aa4;
   --mv-accent-soft: rgba(124, 107, 179, 0.08);
   --mv-accent-border: rgba(124, 107, 179, 0.28);
   --mv-accent-contrast: #ffffff;
@@ -56,6 +75,16 @@
   --stagger-step: 40ms;
 
   color-scheme: light;
+
+  /* Categorical series, lifted for dark ground — same hue order. */
+  --mv-cat-1: #8b9ee0;
+  --mv-cat-2: #dda86a;
+  --mv-cat-3: #6fbf95;
+  --mv-cat-4: #cd8ab2;
+  --mv-cat-5: #7bb9d2;
+  --mv-cat-6: #c3a45c;
+  --mv-cat-7: #a996dd;
+  --mv-cat-8: #b4b4bd;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -85,7 +114,17 @@
     --mv-danger: #f87171;
     --mv-danger-soft: rgba(248, 113, 113, 0.1);
     --mv-danger-border: rgba(248, 113, 113, 0.3);
-  }
+  
+  /* Categorical series, lifted for dark ground — same hue order. */
+  --mv-cat-1: #8b9ee0;
+  --mv-cat-2: #dda86a;
+  --mv-cat-3: #6fbf95;
+  --mv-cat-4: #cd8ab2;
+  --mv-cat-5: #7bb9d2;
+  --mv-cat-6: #c3a45c;
+  --mv-cat-7: #a996dd;
+  --mv-cat-8: #b4b4bd;
+}
 }
 
 /* Explicit Dark choice. Kept in sync with the .dark class the existing
@@ -118,6 +157,16 @@
   --mv-danger: #f87171;
   --mv-danger-soft: rgba(248, 113, 113, 0.1);
   --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+  /* Categorical series, lifted for dark ground — same hue order. */
+  --mv-cat-1: #8b9ee0;
+  --mv-cat-2: #dda86a;
+  --mv-cat-3: #6fbf95;
+  --mv-cat-4: #cd8ab2;
+  --mv-cat-5: #7bb9d2;
+  --mv-cat-6: #c3a45c;
+  --mv-cat-7: #a996dd;
+  --mv-cat-8: #b4b4bd;
 }
 
 @media (prefers-reduced-motion: reduce) {
