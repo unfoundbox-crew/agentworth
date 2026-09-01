@@ -287,7 +287,7 @@ impl VectorStore for SqliteVectorStore {
     }
 
     fn indexed_session_ids(&self) -> Result<HashSet<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn.prepare("SELECT DISTINCT session_id FROM trajectory_chunks")?;
         let mut rows = stmt.query([])?;
         let mut ids = HashSet::new();

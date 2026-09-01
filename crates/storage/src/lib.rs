@@ -2164,6 +2164,32 @@ mod tests {
         assert_eq!(busy_timeout, 5000);
     }
 
+    /// Regression test for mutex-poisoning recovery: `agentworth serve` shares one
+    /// `Storage` across every request handler on a multi-threaded Axum server, so a
+    /// panic inside one handler while the lock is held must not wedge it for every
+    /// other endpoint. Poison the lock on another thread, then confirm a normal
+    /// `Storage` call still succeeds instead of panic-propagating the poison.
+    #[test]
+    fn test_recovers_from_poisoned_mutex() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let conn = Arc::clone(&storage.conn);
+
+        let panicked = std::thread::spawn(move || {
+            let _guard = conn.lock().unwrap();
+            panic!("simulated panic while holding the connection lock");
+        })
+        .join();
+        assert!(panicked.is_err(), "spawned thread should have panicked");
+        assert!(
+            storage.conn.is_poisoned(),
+            "the mutex should now be poisoned"
+        );
+
+        storage
+            .get_aggregate_stats(false)
+            .expect("Storage must recover from a poisoned mutex instead of propagating it");
+    }
+
     /// Regression test for `prompt_preview`: previously always empty (zero Rust population,
     /// existed only in the frontend's mock data/types). Covers extraction of the first
     /// non-empty `UserMessage`, truncation past 200 chars with an ellipsis, an all-whitespace
