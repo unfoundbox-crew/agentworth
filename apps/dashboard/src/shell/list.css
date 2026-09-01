@@ -212,3 +212,51 @@
     transition: none;
   }
 }
+
+/* ── Outcome dots ───────────────────────────────────────────────────────────
+   OutcomeKind has no failure state. Its six values are degrees of evidence —
+   done_claimed, artifact_changed, test_or_build_passed, commit_observed,
+   ci_or_deployment_verified, unresolved — and none of them mean "it went
+   wrong". Painting the weak end danger-red said error where the data said
+   no evidence found, and since most sessions legitimately sit at the weak
+   end, the list read as one long alarm.
+
+   So form carries confidence and colour is spent only where it is earned,
+   reusing the ladder's own language: filled and green when something external
+   actually verified the work, filled and neutral when a machine checked
+   something, hollow when the only evidence is the agent's own word. */
+
+.shell-root .shell-row-dot {
+  box-sizing: border-box;
+  background: none;
+  border: 1.5px solid var(--mv-faint);
+}
+
+/* 5 · CI or deployment green — the only rung an outside system confirmed */
+.shell-root .shell-row-dot.ol-dot-success {
+  background: var(--mv-success);
+  border-color: var(--mv-success);
+}
+
+/* 4 · commit observed, 3 · test or build passed — machine-checkable, but
+   local. Solid, so they read as evidence, in ink rather than a state colour. */
+.shell-root .shell-row-dot.ol-dot-warn {
+  background: var(--mv-ink);
+  border-color: var(--mv-ink);
+  opacity: 0.7;
+}
+
+/* 2 · artifact changed — something moved on disk, weakest checkable signal */
+.shell-root .shell-row-dot.ol-dot-danger {
+  background: var(--mv-muted);
+  border-color: var(--mv-muted);
+  opacity: 0.55;
+}
+
+/* 1 · done claimed, and unresolved — hollow. Nothing outside the agent
+   agrees yet, and an empty ring says that without shouting it. */
+.shell-root .shell-row-dot.ol-dot-none,
+.shell-root .shell-row-dot.ol-dot-claimed {
+  background: none;
+  border-color: var(--mv-faint);
+}
