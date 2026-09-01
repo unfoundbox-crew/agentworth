@@ -2,10 +2,12 @@
 
 pub mod audit;
 pub mod blunder;
+pub mod blunder_blame;
 pub mod search;
 
 pub use audit::run_audit_command;
 pub use blunder::run_blunder_command;
+pub use blunder_blame::run_blunder_blame_command;
 pub use search::run_search_command;
 
 /// Canonical shared list of assistant apology and remorse patterns across all commands.

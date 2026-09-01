@@ -587,3 +587,172 @@ fn test_cli_blunder_command() {
         .stdout(predicate::str::contains("\"submission\""))
         .stdout(predicate::str::contains("\"status\""));
 }
+
+/// End-to-end fixture for the Blunder-to-Blame Bridge: one session that both trips the
+/// same CRITICAL leaked-shell-variable blunder rule as `test_cli_blunder_command` above,
+/// AND records a real file edit, so both bridge directions have something to resolve
+/// through the real adapter parse + SQLite index (not a hand-built in-memory trace).
+fn setup_sweep_blunder_session(dir: &std::path::Path) -> (std::path::PathBuf, String) {
+    let project_dir = dir.join(".claude").join("projects").join("danger");
+    fs::create_dir_all(&project_dir).unwrap();
+
+    let session_file = project_dir.join("sweep_blunder_session.jsonl");
+    let mut file = File::create(&session_file).unwrap();
+
+    writeln!(
+        file,
+        r#"{{"type":"user","timestamp":"2026-09-01T10:00:00Z","content":"Clean up merged worktrees"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-09-01T10:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"for d in \"${{PROTECTED_PATHS[@]}}\"; do rm -rf \"$d\"; done"}}}}]}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-09-01T10:00:04Z","tool_use_id":"t1","content":"Deleted 12 GB","is_error":false}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-09-01T10:00:05Z","content":[{{"type":"text","text":"I apologize, the path was deleted precisely because it was on the protect list."}},{{"type":"tool_use","id":"t2","name":"FileEdit","input":{{"file_path":"crates/danger/src/sweep.rs","diff":"+ fn guard() {{}}"}}}}]}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-09-01T10:00:07Z","tool_use_id":"t2","content":"File modified successfully","is_error":false}}"#
+    )
+    .unwrap();
+
+    ("crates/danger/src/sweep.rs".into(), "sweep_blunder_session".to_string())
+}
+
+#[test]
+fn test_cli_blunder_blame_bridge_command() {
+    let temp = tempdir().unwrap();
+    let (blamed_file, session_id) = setup_sweep_blunder_session(temp.path());
+    let db_path = temp.path().join("test_agentworth.db");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Blunder -> blame direction, one session: `--session <ID>` must resolve the
+    // CRITICAL blunder forward to the exact file AI Code Blame attributes to it.
+    let mut session_json_cmd = Command::cargo_bin("agwt").unwrap();
+    session_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--session")
+        .arg(&session_id)
+        .arg("--json");
+
+    session_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""))
+        .stdout(predicate::str::contains("\"severity\": \"CRITICAL\""))
+        .stdout(predicate::str::contains(format!("\"session_id\": \"{}\"", session_id)))
+        .stdout(predicate::str::contains("\"blamed_files\""))
+        .stdout(predicate::str::contains(blamed_file.to_string_lossy().to_string()));
+
+    // ASCII text mode for the same direction.
+    let mut session_text_cmd = Command::cargo_bin("agwt").unwrap();
+    session_text_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--session")
+        .arg(&session_id);
+
+    session_text_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("BLUNDER-TO-BLAME BRIDGE"))
+        .stdout(predicate::str::contains("CRITICAL"))
+        .stdout(predicate::str::contains("Blamed files"))
+        .stdout(predicate::str::contains("sweep.rs"));
+
+    // 2. Blame -> blunder direction: `--file <PATH>` must resolve the file's blame
+    // history backward to the real recorded blunder in the session blamed for it.
+    let mut file_json_cmd = Command::cargo_bin("agwt").unwrap();
+    file_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--file")
+        .arg("sweep.rs")
+        .arg("--json");
+
+    file_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("\"file_path\": \"{}\"", "sweep.rs")))
+        .stdout(predicate::str::contains(format!("\"session_id\": \"{}\"", session_id)))
+        .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""))
+        .stdout(predicate::str::contains("\"severity\": \"CRITICAL\""));
+
+    // A file nothing ever touched resolves to an empty match list, not an error.
+    let mut file_no_match_cmd = Command::cargo_bin("agwt").unwrap();
+    file_no_match_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--file")
+        .arg("never_existed_anywhere.rs")
+        .arg("--json");
+
+    file_no_match_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"matches\": []"));
+
+    // 3. Default (batch) direction: top-N blunders, each resolved to its blamed files.
+    let mut top_json_cmd = Command::cargo_bin("agwt").unwrap();
+    top_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--top")
+        .arg("3")
+        .arg("--json");
+
+    top_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("\"session_id\": \"{}\"", session_id)))
+        .stdout(predicate::str::contains("\"blamed_files\""))
+        .stdout(predicate::str::contains(blamed_file.to_string_lossy().to_string()));
+
+    // 4. An unindexed session ID resolves to a plain `null`, not an error.
+    let mut unknown_session_cmd = Command::cargo_bin("agwt").unwrap();
+    unknown_session_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--session")
+        .arg("does_not_exist_anywhere")
+        .arg("--json");
+
+    unknown_session_cmd.assert().success().stdout(predicate::str::contains("null"));
+
+    // 5. --file and --session are mutually exclusive directions, not composable.
+    let mut conflict_cmd = Command::cargo_bin("agwt").unwrap();
+    conflict_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--file")
+        .arg("sweep.rs")
+        .arg("--session")
+        .arg(&session_id);
+
+    conflict_cmd.assert().failure();
+}
