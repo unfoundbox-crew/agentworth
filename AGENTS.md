@@ -292,3 +292,69 @@ To maintain strict separation between personal and autonomous collective operati
    - SSH Key: `~/.ssh/id_ed25519_unfoundbox_crew` (Configured Host: `github.com-crew`).
    - Role: Public tool repos (`agentworth`, `memes`, `commongain`, `worldtrainer`).
    - Command Execution: Always use `GITHUB_TOKEN=$GITHUB_CREW_TOKEN gh ...` or SSH host `git@github.com-crew:...`.
+
+## Traps a fresh session will hit
+
+Written 2026-09-01 after a day that cost several of these twice. Each one cost
+real tokens to find and none of them are visible from reading the code.
+
+1. **The design system is not on disk.** It lives in Claude Design. Run
+   `DesignSync list_projects` — the SpacePilot project holds
+   `icons/icon-sprite.html` (27 icons, 24 grid, 1.5 stroke, square caps, miter
+   joins) plus `verdict-chips` and `provenance-chips`, which are this product's
+   own vocabulary. Searching the filesystem finds only brand marks and favicons
+   and will convince you no icon set exists. It needs a one-time
+   `/design-login` from an interactive terminal, and it is main-session only —
+   subagents cannot reach it, so fetch files yourself and hand them the content.
+
+2. **Rust and TypeScript drift, silently, and it is the recurring bug class.**
+   Three independent instances found in one day: the DB stores `OutcomeKind`
+   PascalCase while everything else expects snake_case; `/api/traces/:id`
+   returns an envelope `{outcomes, recoveries, score, trace}` and the trace is
+   nested; and five field names never matched (`cache_read_tokens` not
+   `cache_read_input_tokens`, plus `adapter_name`, `mtime_epoch_secs`,
+   `content_fingerprint`). There is no shared schema. Never trust
+   `types/index.ts` — curl the endpoint and read the actual keys.
+
+3. **`/api/traces` returns 50 by default and hides stubs.** Without an explicit
+   `limit` the UI shows the newest 50 of thousands and every client-side filter
+   and sort silently operates on that slice. It also excludes
+   `total_events <= 1 OR total_tokens = 0`, so `/api/stats` says 10,188 while
+   `/api/traces` returns 2,903. Same word, two meanings.
+
+4. **`OutcomeKind` has no failure state.** All six values are degrees of
+   evidence or its absence — nothing means the work went wrong. Never colour a
+   low rung as danger; that says error where the data says not confirmed yet.
+   Form carries confidence, colour is spent only where earned. The design
+   system's word for the bottom of the ladder is *unflown*.
+
+5. **The dashboard is compiled into the binary.** `rust-embed` pulls
+   `apps/dashboard/dist`, so `npm run build` in apps/dashboard MUST run before
+   cargo or the binary ships a stub — which is exactly what every release before
+   0.1.6 did. `ci.yml` greps the built binary to prove the UI is inside it.
+
+6. **Test the dashboard without touching Rust.**
+   `agentworth serve --port 3250 --dist apps/dashboard/dist` serves any local
+   build against the real index. Much faster than rebuilding the CLI, and the
+   owner's machine has ~10k real sessions to test against.
+
+7. **`git push origin <branch>` pushes that named branch, not HEAD.** If you
+   are standing on a different branch it is a silent no-op that reports success.
+   This orphaned two finished fixes on an already-merged branch in one day, and
+   both were reported as shipped. After any push:
+   `[ "$(git rev-parse origin/<branch>)" = "$(git rev-parse HEAD)" ]`.
+
+8. **Deleting a base branch closes its stacked PRs.** `gh pr merge --delete-branch`
+   on a PR that another PR is based on auto-closes the child, and a closed PR
+   cannot be retargeted or reopened. Rebase onto main and open a new one.
+
+9. **Browser-verify the route you changed, not the index.** `base: './'` in a
+   Vite config resolves assets against the current path, so `/` worked while
+   every `/s/<id>` deep link was a blank page. The build was clean and the
+   screenshot of `/` looked perfect.
+
+10. **Subagent reports are reliable about what they built and unreliable about
+    provenance.** One reported files it had written itself an hour earlier as
+    "already present when I arrived". Check `git status` and the browser, not
+    the summary. They are worth trusting when they push back — one correctly
+    refused to fabricate SVG paths for a source it could not read.
