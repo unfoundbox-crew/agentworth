@@ -80,7 +80,7 @@ fn resolve_from_cwds(events: &[NormalizedEvent]) -> Option<PathBuf> {
         }
     }
     let mut candidates: Vec<(&str, usize)> = counts.into_iter().collect();
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
     candidates
         .into_iter()
         .find_map(|(cwd, _)| walk_up_to_git_root(Path::new(cwd)))
@@ -385,7 +385,7 @@ static COMMIT_HASH_REGEX: OnceLock<regex::Regex> = OnceLock::new();
 /// `[main 9f3e1a2] feat: implement feature` -> `9f3e1a2`.
 fn extract_short_hash(output: &str) -> Option<String> {
     let re = COMMIT_HASH_REGEX
-        .get_or_init(|| regex::Regex::new(r"\[[^\s\]]+\s+([0-9a-fA-F]{7,40})\]").unwrap());
+        .get_or_init(|| regex::Regex::new(r"\[[^\s\]]+\s+([0-9a-fA-F]{7,40})\]").expect("valid regex"));
     re.captures(output)?.get(1).map(|m| m.as_str().to_string())
 }
 

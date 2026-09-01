@@ -230,26 +230,27 @@ impl RecoveryDetector {
         }
 
         let rust_arrow = RUST_ARROW_REGEX
-            .get_or_init(|| regex::Regex::new(r"-->\s+([^\s:]+)(?::\d+)*").unwrap());
-        let jest_fail = JEST_FAIL_REGEX
-            .get_or_init(|| regex::Regex::new(r"(?:FAIL|PASS)\s+([^\s:]+\.[a-zA-Z0-9]+)").unwrap());
+            .get_or_init(|| regex::Regex::new(r"-->\s+([^\s:]+)(?::\d+)*").expect("valid regex"));
+        let jest_fail = JEST_FAIL_REGEX.get_or_init(|| {
+            regex::Regex::new(r"(?:FAIL|PASS)\s+([^\s:]+\.[a-zA-Z0-9]+)").expect("valid regex")
+        });
         let stack_trace = STACK_TRACE_REGEX.get_or_init(|| {
             regex::Regex::new(
                 r#"(?:File\s+["']|at\s+(?:[^\(]*\()?|in\s+file\s+["']?)([^\s"':\(\)]+\.[a-zA-Z0-9]+)"#,
             )
-            .unwrap()
+            .expect("valid regex")
         });
         let compiler_loc = COMPILER_LOC_REGEX.get_or_init(|| {
             regex::Regex::new(
                 r#"([a-zA-Z0-9_.\-\\/]+\.(?:rs|ts|tsx|js|jsx|py|go|c|cpp|h|hpp|toml|json|yaml|yml|sql|sh|html|css|vue|svelte|java|rb|php|swift|kt))(?::\d+|\(\d+)"#,
             )
-            .unwrap()
+            .expect("valid regex")
         });
         let file_token = FILE_TOKEN_REGEX.get_or_init(|| {
             regex::Regex::new(
                 r#"(?:^|[\s"'\(`<])([a-zA-Z0-9_.\-\\/]+\.(?:rs|ts|tsx|js|jsx|py|go|c|cpp|h|hpp|toml|json|yaml|yml|sql|sh|html|css|vue|svelte|java|rb|php|swift|kt))(?:$|[\s"'\)`>:,])"#,
             )
-            .unwrap()
+            .expect("valid regex")
         });
 
         // 1. Rust arrow pointer
@@ -470,8 +471,8 @@ pub fn paths_match(path_a: &str, path_b: &str) -> bool {
         return true;
     }
     // Filename match
-    let fname_a = a.split('/').last().unwrap_or(&a);
-    let fname_b = b.split('/').last().unwrap_or(&b);
+    let fname_a = a.split('/').next_back().unwrap_or(&a);
+    let fname_b = b.split('/').next_back().unwrap_or(&b);
     if fname_a == fname_b {
         return true;
     }
