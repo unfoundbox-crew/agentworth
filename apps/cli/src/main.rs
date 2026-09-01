@@ -22,6 +22,8 @@ mod cache_doctor;
 mod blind_spots;
 #[path = "commands/autopsy.rs"]
 mod autopsy;
+#[path = "commands/recall.rs"]
+mod recall;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -239,6 +241,7 @@ enum Commands {
         json: bool,
     },
 
+<<<<<<< HEAD
     /// Merge another local SQLite index database into this index
     Merge {
         /// Path to the source SQLite database file to merge from
@@ -296,6 +299,24 @@ enum Commands {
         /// Minimum number of occurrences across sessions to report (default: 2)
         #[arg(short, long, default_value_t = 2)]
         min_occurrences: usize,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Semantically recall past solutions joined with outcome validation and cost
+    Recall {
+        /// Search query to match against previous trajectories
+        query: String,
+
+        /// Maximum number of results to return (default: 5)
+        #[arg(short, long, default_value_t = 5)]
+        limit: usize,
+
+        /// Minimum similarity score threshold (0.0 to 1.0)
+        #[arg(long, default_value_t = 0.0)]
+        min_score: f32,
 
         /// Output results as JSON
         #[arg(long)]
@@ -423,6 +444,14 @@ fn main() -> Result<()> {
             json,
         } => {
             autopsy::run_autopsy_command(min_occurrences, json, cli.db_path)?;
+        }
+        Commands::Recall {
+            query,
+            limit,
+            min_score,
+            json,
+        } => {
+            recall::run_recall_command(&query, limit, min_score, json, cli.db_path)?;
         }
     }
 
