@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.9] - 2026-09-01
+
+### Added
+
+- **Trajectory view in the dashboard inspector** — a timeline strip (bucketed ticks across three rows), a virtualized event stream, and a detail panel. Before this, the inspector scored a session (`80/100`) without ever showing what the agent actually did; `trace.events` was fully populated and rendered nowhere.
+- **Categorical colour palette** for the dashboard's data views — eight identity hues, full light and dark sets, with a colour/monochrome toggle. A stacked token-economics bar in one hue plus greys wasn't readable; cache read vs. cache creation is the whole point of that chart.
+- **SpacePilot icon sprite** replaces most hand-drawn icons in the dashboard topbar, rail, and outcome ladder (27 icons ported).
+- **Landing state now shows an overview** ("how am I doing") instead of "Select a session to inspect it."
+
+### Fixed
+
+- Escape now actually collapses the expanded trajectory view. Its tooltip had promised `Collapse (esc)` since the explorer shell shipped, but no handler existed — and once one was wired up, a stale-closure bug in the key handler's dependency array kept it doing nothing anyway.
+- Danger red no longer marks sessions that simply lack evidence yet. `OutcomeKind` has no failure state — every value is a degree of evidence or its absence — so red is now reserved for an actual cost signal (a cache-invalidation spike), and unverified work reads as neutral or hollow instead of a wall of alarms.
+
+---
+
+## [0.1.8] - 2026-09-01
+
+### Fixed
+
+- **`npx agentworth@<version>` now runs the version you asked for.** Every release before this deferred to any `agentworth` already on `PATH`, so a pinned request silently ran whatever was installed locally instead — four releases stale, in the case that surfaced it. This is the fix 0.1.7 was tagged for; see below — it didn't actually ship until now.
+- The release smoke test no longer races the npm registry. A good release could previously report itself broken because the check ran before the published version had propagated.
+
+---
+
+## [0.1.7] - 2026-09-01
+
+This release shipped no code changes. The tag and PR are titled "restore the substance the shell replaced" — the same title as the previous release's PR — but the commit changes zero files against 0.1.6. Whatever it was meant to carry landed on the wrong branch and never reached `main` before this tag was cut; the real fix (above) shipped for real in 0.1.8. If you're already on 0.1.6, there is nothing here for you.
+
+---
+
+## [0.1.6] - 2026-09-01
+
+### Added
+
+- **MotionVector design system** applied across the marketing landing page and the new dashboard.
+- **Keyboard-first, three-pane explorer shell** for the dashboard, splitting `apps/web` into a marketing site and a standalone `apps/dashboard`.
+- Inspector detail restored after the shell's first pass thinned it out: a five-component score breakdown with the audit explanations underneath, token economics shown as a proportion (cache read vs. cache creation), a provenance block (source path, fingerprint, on-disk-verified chip), and recovery signals. The session list regained its seven sort modes, cross-field search, and a density toggle.
+- `ci.yml` — the repo's first Rust CI. Before this, only page-deploy and the tag-triggered release existed, so nothing compiled the workspace on a pull request.
+
+### Fixed
+
+- **The installed binary now actually contains the dashboard.** Every release back to 0.1.0 built no web app in `release.yml` and looked for `apps/dashboard/dist` by a relative path that only resolved inside a repo checkout — so every npm and cargo install served a hardcoded stub page, silently, for months.
+- The session list was showing 50 of 2,903 sessions, because `/api/traces` defaults to `limit=50` and nothing asked for more — every filter, sort, and search ran against just the newest 50 and looked normal doing it.
+- Every deep link was a blank page: Vite's `base: './'` resolves asset URLs against the current route, so `/s/<id>` requested `/s/assets/...`, got the SPA fallback's `index.html` back, and died on a MIME check before React ever mounted.
+- Five TypeScript field names never matched the server's actual response shape (`cache_read_tokens`/`cache_creation_tokens` vs. `cache_*_input_tokens`; `adapter_name`, `mtime_epoch_secs`, `content_fingerprint` vs. `adapter`, `modified_timestamp`, `fingerprint`) — cache economics silently read as zero and provenance as em-dashes even though the real data was there.
+- The adapter column was 54px, truncating `claude_code` — the single most common value in any real index — down to `claude_c`.
+- `agwt blame` now persists file modifications so lineage lookups actually match; previously edits went unrecorded and blame silently came up empty.
+
+---
+
+## [0.1.5] - 2026-08-31
+
+### Fixed
+
+- **`npx agentworth` no longer spawns itself into an `EAGAIN` crash loop on macOS.** The launcher's PATH-resolution step found npm's `node_modules/.bin/agentworth` symlink — which points back at the launcher itself — before the GitHub-release binary downloader ever got a chance to run. The old anti-recursion guard compared unresolved paths and didn't follow the symlink, so it missed it. Fixed with three independent guards: realpath-based self-detection, rejecting `.js`/`.cjs`/`.mjs` shim files outright, and an `AGENTWORTH_LAUNCHER_ACTIVE` flag that skips PATH lookup once already inside a launcher.
+
+---
+
+## [0.1.4] - 2026-08-31
+
+### Fixed
+
+- **`npm install agentworth` actually installs something again.** 0.1.3's `npm publish` failed with a 404 that looked like a missing package but was really an npm auth failure, so every `npx agentworth` invocation — including every landing-page CTA — had been silently stuck on 0.1.1 since. Publishing now goes over trusted publishing (OIDC) instead of a token; classic and even bypass-2FA granular tokens both got a hard 403 when tested against a real publish, which matches npm's own policy of retiring token-based publishing for this case.
+- A version gate now blocks a release where the git tag, `Cargo.toml`, and `package.json` versions disagree. 0.1.3 was tagged from a tree where `Cargo.toml` still said 0.1.2, so the binary it built reported the wrong version.
+- `npm whoami` now runs before publish, so a broken publish fails in seconds naming the real cause instead of ending in a confusing 404.
+
+### Added
+
+- A clean-room smoke test: `npx -y agentworth@<version> --version` and `usage --pacing`, run on a fresh Ubuntu and macOS runner with no checkout and no cargo cache — the exact conditions 0.1.3 shipped broken under.
+
+### Removed
+
+- `brew install agentworth` and the `curl | sh` installer, from the missing-binary message. Neither exists: there's no Homebrew tap, and that install URL just returns the site's HTML with a 200 — so the advertised command would have piped a webpage into a shell. Points at the GitHub releases page instead.
+
+---
+
+## [0.1.3] - 2026-08-31
+
+Tagged, but never published to npm — `npm view agentworth versions` jumps straight from `0.1.1` to `0.1.4`. Same root cause as the 0.1.4 fix above: `npm publish` returned a 404 here that looked like a missing package but was an auth failure.
+
+This commit is a large squash that also carries the full adapter-fleet-to-20 change already described under [0.1.2] below — there's no separate 0.1.2 tag; the two shipped as one commit. What's new beyond that:
+
+### Added
+
+- Local semantic search (`agwt search`), backed by a FastEmbed ONNX embedding engine that runs fully offline.
+- Forensic safety auditor (`agwt audit --safety`).
+- Five-rung outcome ladder indexing in SQLite, plus a cache-cliff visualizer and `agwt matrix` in the (not-yet-shipped) dashboard UI.
+- `agwt blunder` — dispatches a redacted incident report to stfuopus.lol, stripping secrets before anything leaves the machine.
+- Adapter discovery now runs across multiple cores in parallel, with adapter stats sorted; native SQLite ingestion for OpenCode sessions.
+
+### Fixed
+
+- `primary_outcome` and `composite_score` now migrate before index creation in `initialize_schema`, instead of after.
+
+---
+
 ## [0.1.2] - 2026-08-31
 
 ### Added
