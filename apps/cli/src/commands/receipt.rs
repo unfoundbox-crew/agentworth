@@ -1035,16 +1035,16 @@ pub fn run_receipt_command(
     let scorer = TraceScorer::default();
     let score = scorer.score(&trace);
 
+    // The named alternatives in the last arm below are redundant with `_` but kept as
+    // documentation of the recognized `--format` values; any unrecognized value
+    // intentionally falls back to the terminal receipt rather than erroring.
+    #[allow(clippy::wildcard_in_or_patterns)]
     let content = match format.to_lowercase().as_str() {
         "svg" => render_svg_receipt(&trace, &score),
         "json" => {
             let flight_data = extract_flight_data(&trace, &score);
             serde_json::to_string_pretty(&flight_data)?
         }
-        // The named alternatives are redundant with `_` but kept as documentation of the
-        // recognized `--format` values; any unrecognized value intentionally falls back to
-        // the terminal receipt rather than erroring.
-        #[allow(clippy::wildcard_in_or_patterns)]
         "terminal" | "ansi" | "receipt" | _ => render_terminal_receipt(&trace, &score),
     };
 
