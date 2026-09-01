@@ -172,7 +172,14 @@ describe('npm-wrapper / launcher', () => {
       const binDir = path.join(tempDir, 'custom-bin');
       fs.mkdirSync(binDir, { recursive: true });
       const pathBin = path.join(binDir, 'agentworth');
-      fs.writeFileSync(pathBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      // pathBinaryMatchesVersion (971ce93) now requires a PATH binary to report the
+      // launcher's own version via --version before it's trusted -- getPackageVersion falls
+      // back to '0.1.3' here since this isolated tempDir has no package.json of its own.
+      fs.writeFileSync(
+        pathBin,
+        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "agentworth 0.1.3"; fi\nexit 0\n',
+        { mode: 0o755 },
+      );
 
       const isolatedDir = path.join(tempDir, 'isolated-path');
       fs.mkdirSync(isolatedDir, { recursive: true });
