@@ -12,6 +12,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
+#[path = "commands/pr_blame.rs"]
+mod pr_blame;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "agentworth",
@@ -222,6 +225,17 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Annotate changed PR files with AI agent authoring provenance and outcome validation
+    #[command(name = "pr-blame")]
+    PrBlame {
+        /// List of files to check (if omitted, infers from git diff)
+        files: Vec<String>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -319,6 +333,9 @@ fn main() -> Result<()> {
             });
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
+        }
+        Commands::PrBlame { files, json } => {
+            pr_blame::run_pr_blame_command(files, json, cli.db_path)?;
         }
     }
 
