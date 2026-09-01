@@ -93,9 +93,14 @@ pub struct SessionSummary {
     pub total_events: usize,
     pub tool_calls_count: usize,
     pub models_used: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // Unlike the other Option fields below, these two are never skipped when absent: the
+    // `/api/traces` list endpoint (apps/cli/src/server/routes.rs::get_traces_handler) returns
+    // `SessionSummary` directly, and a client scanning that list for outcome/score needs the
+    // key present (as `null`) to distinguish "not yet scored" from "field doesn't exist" --
+    // omitting it silently on every un-scored session made the field look dropped entirely.
+    #[serde(default)]
     pub primary_outcome: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub composite_score: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_preview: Option<String>,
