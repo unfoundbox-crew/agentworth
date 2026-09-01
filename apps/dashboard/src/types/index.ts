@@ -39,6 +39,18 @@ export interface TraceStats {
   models_used: string[];
   tools_used: Record<string, number>;
   duration_seconds?: number;
+  /** Times this session's context was compacted. 0 (not absent) when never compacted. */
+  compaction_count: number;
+  /** Sum of each compaction round's own pre/post token delta. */
+  compaction_tokens_dropped: number;
+}
+
+export interface CompactionEvent {
+  trigger: string;
+  pre_tokens?: number;
+  post_tokens?: number;
+  dropped_tokens?: number;
+  duration_ms?: number;
 }
 
 export type FileActionType = 'read' | 'write' | 'edit' | 'delete';
@@ -101,6 +113,7 @@ export type EventPayload =
   | { type: 'outcome_evidence'; data: OutcomeEvidence }
   | { type: 'error'; data: { message: string; is_recovered: boolean } }
   | { type: 'human_intervention'; data: HumanIntervention }
+  | { type: 'compaction'; data: CompactionEvent }
   | { type: 'custom'; data: { kind: string; data: any } };
 
 export interface NormalizedEvent {
@@ -160,6 +173,10 @@ export interface SessionSummary {
   composite_score?: number;
   /** Source file mtime. Absent on builds that do not join `sources.mtime` yet. */
   source_mtime_epoch_secs?: number;
+  /** Times this session's context was compacted. 0 (not absent) when never compacted. */
+  compaction_count?: number;
+  /** Sum of each compaction round's own pre/post token delta. */
+  compaction_tokens_dropped?: number;
 }
 
 export interface ArchaeologyTask {
