@@ -72,6 +72,12 @@ impl Scanner {
         &self.storage
     }
 
+    /// Read-only access to the registered adapters, e.g. for callers that need each
+    /// adapter's on-disk detection/session roots without running a full scan.
+    pub fn adapters(&self) -> &[Box<dyn AgentAdapter>] {
+        &self.adapters
+    }
+
     /// Load full AgentWorthTrace for a given session ID by looking up its indexed source
     /// and lazily parsing the raw session file on disk.
     pub fn load_trace(&self, session_id: &str) -> Result<AgentWorthTrace> {

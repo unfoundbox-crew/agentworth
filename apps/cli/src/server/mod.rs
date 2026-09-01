@@ -1,6 +1,7 @@
 //! AgentWorth local API and web server module.
 
 pub mod archaeology;
+pub mod live_tail;
 pub mod routes;
 pub mod static_files;
 
@@ -15,6 +16,7 @@ use anyhow::{Context, Result};
 use console::style;
 
 pub use archaeology::*;
+pub use live_tail::*;
 pub use routes::*;
 pub use static_files::*;
 
@@ -29,10 +31,24 @@ pub async fn start_server(
     dist_dir: Option<PathBuf>,
 ) -> Result<()> {
     let scanner = Arc::new(Scanner::new(storage.clone()));
+
+    let (live_tail_tx, _) = tokio::sync::broadcast::channel(LIVE_TAIL_CHANNEL_CAPACITY);
+    let watch_roots = discover_session_roots(&scanner);
+    // Kept alive for the whole server lifetime by staying bound in this function's scope —
+    // dropping it would silently stop the filesystem watch with no error anywhere.
+    let _live_tail_watcher = match spawn_live_tail_watcher(&watch_roots, live_tail_tx.clone()) {
+        Ok(watcher) => Some(watcher),
+        Err(e) => {
+            tracing::warn!("Failed to start live-tail filesystem watcher: {}", e);
+            None
+        }
+    };
+
     let state = AppState {
         storage: storage.clone(),
         scanner,
         dist_dir: dist_dir.clone(),
+        live_tail: live_tail_tx,
     };
 
     let app = create_router(state);
@@ -73,6 +89,10 @@ pub async fn start_server(
     println!(
         "│ API Archaeology: {:<40}│",
         style(format!("{}/api/archaeology", url)).dim()
+    );
+    println!(
+        "│ Live Tail (SSE): {:<40}│",
+        style(format!("{}/api/live-tail", url)).dim()
     );
     if let Some(path) = storage.db_path() {
         let path_str = path.to_string_lossy();

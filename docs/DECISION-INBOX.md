@@ -14,7 +14,7 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 | Per-model token attribution | Done, on integration branch | |
 | Dashboard crash fix | Done, on integration branch | **Blocked from landing on main** — needs rebase onto PR #13 + #14 first, see Blocked below |
 | Batch-2 (9 fixes) | **Done.** Verified, fixed, tested | 8 of 9 branches did not compile as originally committed (agy again). All fixed for real — see Batch-2 findings below |
-| SSE / live-tail endpoint | Building now | own branch `feat/sse-live-tail`, folds in when done |
+| SSE / live-tail endpoint | **Done, merged into integration branch.** | `GET /api/live-tail`, `notify`-based watcher + broadcast channel, no polling. 25/25 tests pass on lenovo (7 new). See SSE findings below |
 | Batch-2b (7 items dispatched, 4 deferred) | Building now | 7 agents in flight, own worktrees, see table below |
 | Cost-Aware Task Router | Deferred, not scoped | Different shape of feature — needs a live per-agent hook, not an index query. Needs its own design pass |
 | Final PR + version bump | Not yet | Saurabh's call — one PR, one version bump, only once everything this session touches is done |
@@ -31,7 +31,13 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 - `verdict_breakdown.real_verified_rate: 1.09` (over 100%) showed up in a real `stats` smoke-test run. Pre-existing scoring bug, unrelated to batch-2. Not triaged yet — added to the punch list below.
 - `HANDOFF_BATCH_2.md`'s documented flags don't match what actually shipped for 5 of 9 items (e.g. docs say `watch --interval`, code has `--interval-secs`; docs say `cache-doctor --threshold`, code hardcodes the value). The verify pass treated the real committed code as ground truth and didn't invent flags to match stale docs. Cosmetic doc-drift, not a bug — low priority.
 
-Integration branch: `integrate/handoff-batch-1`, currently at commit `c438719`, 57 commits ahead of `origin/main`, working tree clean.
+Integration branch: `integrate/handoff-batch-1`, working tree clean, ahead of `origin/main`. Check `git log --oneline -1` for the current tip — it moves fast today.
+
+## SSE findings (2026-09-01)
+
+Built `GET /api/live-tail`: a `notify`-based filesystem watcher (real OS events, no polling) feeding a `tokio::broadcast` channel, consumed by an SSE handler. Watch roots come from each adapter's own `.detect()` (same logic `/api/matrix` already uses, so the watch set can't drift from what's actually scanned). Lag turns into a `lagged` SSE event rather than silently dropping the client. 25/25 tests pass on lenovo.
+
+While verifying, the branch's own isolated test run showed the `agentworth`/`agwt` CLI binaries failing to compile — the same 8 files from the batch-2 findings above. **False alarm, not a new bug**: that branch (`feat/sse-live-tail`) was forked from the integration tip *before* the batch-2 fixes landed (merge-base `a2342ff`, batch-2 fixes start at `8f60e3e`), so it was testing against a stale, pre-fix snapshot. Confirmed resolved on the real integration tip (which already has 211 passing tests, workspace-wide, binaries included). A task chip flagging this as a live break was raised and has been withdrawn as stale.
 
 ## Batch-2b — dispatched today
 
