@@ -1,0 +1,177 @@
+<!--
+  Source for public/og.png — the social card. Regenerate after editing:
+
+    chrome-headless-shell --headless --force-device-scale-factor=2 \
+      --window-size=1200,630 --screenshot=og@2x.png \
+      --virtual-time-budget=6000 file://$PWD/apps/web/og-card.html
+    magick og@2x.png -resize 1200x630 -strip apps/web/public/og.png
+
+  Rendered at 2x then downscaled, so the type stays crisp; the final file is
+  exactly 1200x630 to match the og:image:width/height already in index.html.
+
+  Every figure in the receipt is measured, not invented — see the PR that
+  introduced this file. Do not add a number here that cannot be checked.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --mv-ground: #ffffff;
+    --mv-surface: #f4f4f5;
+    --mv-surface-3: #e4e4e7;
+    --mv-border: #e4e4e7;
+    --mv-border-soft: #ececee;
+    --mv-ink: #111113;
+    --mv-text: #3f3f46;
+    --mv-muted: #52525b;
+    --mv-faint: #a1a1aa;
+    --mv-accent: #7c6bb3;
+    --mv-accent-soft: rgba(124, 107, 179, 0.08);
+    --mv-accent-border: rgba(124, 107, 179, 0.28);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; }
+  body {
+    background: var(--mv-ground);
+    font-family: var(--font-sans);
+    display: grid;
+    grid-template-columns: 1fr 432px;
+    gap: 52px;
+    align-items: center;
+    padding: 58px 64px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .eyebrow {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--mv-faint);
+    margin-bottom: 26px;
+  }
+
+  h1 {
+    font-size: 84px;
+    line-height: 1;
+    letter-spacing: -0.035em;
+    font-weight: 700;
+    color: var(--mv-ink);
+    margin-bottom: 26px;
+  }
+
+  .thesis {
+    font-size: 29px;
+    line-height: 1.3;
+    letter-spacing: -0.011em;
+    color: var(--mv-text);
+    max-width: 32ch;
+    margin-bottom: 40px;
+  }
+  .thesis b { color: var(--mv-ink); font-weight: 600; }
+
+  .cmd {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 13px 20px;
+    border: 1px solid var(--mv-border);
+    border-radius: 10px;
+    background: var(--mv-surface);
+    font-family: var(--font-mono);
+    font-size: 21px;
+    color: var(--mv-ink);
+  }
+  .cmd .sigil { color: var(--mv-faint); }
+
+  /* The receipt is the brand's own motif: this product's claim is that your
+     agents already left receipts, so the card shows one. */
+  .receipt {
+    background: var(--mv-ground);
+    border: 1px solid var(--mv-border);
+    border-radius: 4px;
+    padding: 30px 28px 26px;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 1px 2px rgba(17, 17, 19, 0.04), 0 8px 24px rgba(17, 17, 19, 0.05);
+  }
+  .receipt-head {
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    color: var(--mv-ink);
+    text-align: center;
+    padding-bottom: 16px;
+    border-bottom: 1px dashed var(--mv-border);
+    margin-bottom: 18px;
+  }
+  .row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 16px;
+    color: var(--mv-muted);
+    padding: 6px 0;
+  }
+  .row .k { white-space: nowrap; }
+  .row .dots {
+    flex: 1 1 auto;
+    border-bottom: 1px dotted var(--mv-surface-3);
+    transform: translateY(-4px);
+  }
+  .row .v { color: var(--mv-ink); font-weight: 500; white-space: nowrap; }
+
+  /* The one earned accent: the number that proves the whole privacy claim. */
+  .row.total {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px dashed var(--mv-border);
+    font-size: 17px;
+  }
+  .row.total .k { color: var(--mv-text); }
+  .row.total .v {
+    color: var(--mv-accent);
+    background: var(--mv-accent-soft);
+    border: 1px solid var(--mv-accent-border);
+    border-radius: 5px;
+    padding: 3px 9px;
+  }
+
+  .foot {
+    margin-top: 22px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--mv-faint);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <main>
+    <span class="eyebrow">agentworth.dev</span>
+    <h1>AgentWorth</h1>
+    <p class="thesis">Every agent says it is done.<br /><b>AgentWorth checks the git log.</b></p>
+    <span class="cmd"><span class="sigil">$</span>npx agentworth</span>
+  </main>
+
+  <aside class="receipt">
+    <div class="receipt-head">RECEIPT</div>
+    <div class="row"><span class="k">Sessions found</span><span class="dots"></span><span class="v">10,188</span></div>
+    <div class="row"><span class="k">Harnesses</span><span class="dots"></span><span class="v">9</span></div>
+    <div class="row"><span class="k">Adapters shipped</span><span class="dots"></span><span class="v">21</span></div>
+    <div class="row total"><span class="k">Data uploaded</span><span class="dots"></span><span class="v">0 B</span></div>
+    <div class="foot">one real machine · nothing left it</div>
+  </aside>
+</body>
+</html>

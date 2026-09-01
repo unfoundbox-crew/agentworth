@@ -6,15 +6,27 @@
 
 mod outcome;
 mod recovery;
+mod verify;
 
 pub use outcome::{outcome_kind_name, outcome_rank, OutcomeDetector, OutcomeHierarchyDetector};
 pub use recovery::{RecoveryDetector, RecoverySignal};
+pub use verify::VerificationNote;
 
-/// Evaluates a trace and extracts all inferred outcome evidence.
+/// Evaluates a trace and extracts all inferred outcome evidence, independently verified
+/// against real git/filesystem state wherever the session's repository can be found. See
+/// `OutcomeDetector::detect_outcomes_with_verification` for the verification detail.
 pub fn evaluate_trace_outcomes(
     trace: &agentworth_schema::AgentWorthTrace,
 ) -> Vec<agentworth_schema::OutcomeEvidence> {
     OutcomeDetector::new().detect_outcomes(trace)
+}
+
+/// Same as `evaluate_trace_outcomes`, but also returns a note for every claim whose confidence
+/// or kind was adjusted because reality did (or didn't) back it up.
+pub fn evaluate_trace_outcomes_with_verification(
+    trace: &agentworth_schema::AgentWorthTrace,
+) -> (Vec<agentworth_schema::OutcomeEvidence>, Vec<VerificationNote>) {
+    OutcomeDetector::new().detect_outcomes_with_verification(trace)
 }
 
 /// Returns the highest confidence outcome in the trace, if any.
@@ -360,6 +372,27 @@ mod tests {
         assert!(!rec.correlated_files.is_empty());
         assert!(rec.correlated_files.iter().any(|f| f.contains("recovery.rs")));
         assert!(rec.recovery_summary.contains("recovery.rs"));
+    }
+
+    #[test]
+    fn test_chinese_done_claimed_detection() {
+        let mut trace = make_test_trace();
+        let start = trace.started_at;
+
+        // Assistant responds in Chinese
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start + Duration::seconds(1),
+            EventPayload::AssistantMessage {
+                content: "任务已完成，所有测试已全部通过，代码已修改完毕。".to_string(),
+                thinking: None,
+            },
+        ));
+
+        let outcomes = evaluate_trace_outcomes(&trace);
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].kind, OutcomeKind::DoneClaimed);
+        assert!(outcomes[0].summary.contains("已完成") || outcomes[0].summary.contains("测试"));
     }
 }
 

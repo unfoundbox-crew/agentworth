@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { NormalizedEvent } from '../types';
-import { TimelineStrip } from './TimelineStrip';
+import { TrajectoryScrubber } from './TrajectoryScrubber';
 import { EventDetail, RawPayload, getPrimaryText, getResultPreview, getRoleLabel, getRoleWeight } from './EventDetail';
 import './trajectory.css';
 
@@ -29,17 +29,26 @@ export function TrajectoryView({ events, focused = false, onToggleFocus }: Traje
   }, [events]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [brushedIds, setBrushedIds] = useState<Set<string> | null>(null);
   const listScrollRef = useRef<HTMLDivElement>(null);
+
+  // The strip's brush filters the stream, so both must be computed from one
+  // event set — the stream is the source of truth for what is actually shown.
+  const shown = useMemo(
+    () => (brushedIds ? sorted.filter((e) => brushedIds.has(e.id)) : sorted),
+    [sorted, brushedIds]
+  );
 
   // A new session means a new `events` array reference (InspectorPane
   // fetches fresh trace state per selection) — clear the stale selection
   // rather than let a sequence number from the previous session linger.
   useEffect(() => {
     setSelectedId(null);
+    setBrushedIds(null);
   }, [events]);
 
   const virtualizer = useVirtualizer({
-    count: sorted.length,
+    count: shown.length,
     getScrollElement: () => listScrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 20,
@@ -52,7 +61,7 @@ export function TrajectoryView({ events, focused = false, onToggleFocus }: Traje
 
   function selectEvent(id: string) {
     setSelectedId(id);
-    const idx = sorted.findIndex((e) => e.id === id);
+    const idx = shown.findIndex((e) => e.id === id);
     if (idx >= 0) virtualizer.scrollToIndex(idx, { align: 'auto' });
   }
 
@@ -61,7 +70,9 @@ export function TrajectoryView({ events, focused = false, onToggleFocus }: Traje
       <div className="traj-header">
         <span className="shell-section-title">Trajectory</span>
         <span className="traj-count">
-          {sorted.length.toLocaleString()} event{sorted.length === 1 ? '' : 's'}
+          {brushedIds
+            ? `${shown.length.toLocaleString()} of ${sorted.length.toLocaleString()} events`
+            : `${sorted.length.toLocaleString()} event${sorted.length === 1 ? '' : 's'}`}
         </span>
         {onToggleFocus && (
           <button
@@ -82,7 +93,12 @@ export function TrajectoryView({ events, focused = false, onToggleFocus }: Traje
         )}
       </div>
 
-      <TimelineStrip events={sorted} selectedId={selectedId} onSelect={selectEvent} />
+      <TrajectoryScrubber
+        events={sorted}
+        selectedId={selectedId}
+        onSelect={selectEvent}
+        onBrushChange={setBrushedIds}
+      />
 
       {sorted.length === 0 ? (
         <div className="traj-empty">No events recorded for this session.</div>
@@ -91,7 +107,7 @@ export function TrajectoryView({ events, focused = false, onToggleFocus }: Traje
           <div className="traj-list" ref={listScrollRef}>
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {virtualizer.getVirtualItems().map((vRow) => {
-                const evt = sorted[vRow.index];
+                const evt = shown[vRow.index];
                 const payload: RawPayload = evt.payload ?? { type: 'unknown' };
                 const type = payload.type || 'unknown';
                 const isTurnStart = type === 'user_message';

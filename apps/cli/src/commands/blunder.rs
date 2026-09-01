@@ -9,11 +9,13 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::commands::{is_high_risk_rm_path, is_leaked_katana_var, APOLOGY_PATTERNS};
 use agentworth_core::Scanner;
 use agentworth_redaction::Redactor;
 use agentworth_schema::{AgentWorthTrace, EventPayload};
 use agentworth_storage::{
-    estimate_tokens_cost_usd, extract_repository_or_workspace, SessionFilter, Storage,
+    estimate_total_cost_from_per_model_usage, extract_repository_or_workspace, SessionFilter,
+    Storage,
 };
 use anyhow::{Context, Result};
 use console::style;
@@ -163,11 +165,20 @@ fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
 }
 
 /// Discover, score, and rank blunder exhibits across all indexed sessions.
+///
+/// Scans the whole index (`limit: None`), not a capped page. `list_sessions_filtered`
+/// defaults to most-recent-first order, so a fixed cap here silently drops the oldest
+/// sessions forever -- the same bug shape fixed today in `compute_verdict_breakdown`
+/// (50-cap) and `get_stats_handler` (10000-cap). This function loads a full trace per
+/// session, so it costs more per row than those two, but `agwt blunder` is a manually
+/// invoked command, not a polling endpoint -- the extra scan time on a large index is a
+/// bounded, one-time cost, and a blunder hunter that can't see your worst mistake
+/// because it happened before session #5000 defeats its own purpose.
 pub fn discover_blunders(storage: &Arc<Storage>, top_n: usize) -> Result<Vec<BlunderExhibit>> {
     let scanner = Scanner::new(storage.clone());
 
     let all_sessions = storage.list_sessions_filtered(&SessionFilter {
-        limit: Some(5000),
+        limit: None,
         include_stubs: Some(true),
         ..Default::default()
     })?;
@@ -219,21 +230,12 @@ pub fn evaluate_trace_for_blunder(
 
                 if is_test_cmd(&lower) {
                     if let Some(code) = cmd.exit_code {
-                        if code != 0 {
-                            had_failed_test = true;
-                        } else {
-                            had_failed_test = false;
-                        }
+                        had_failed_test = code != 0;
                     }
                 }
 
                 // 1. Critical: Leaked shell variable in destructive rm -rf (Katana Incident)
-                if (lower.contains("rm -rf") || lower.contains("rm -fr"))
-                    && (lower.contains("$d")
-                        || lower.contains("${d}")
-                        || lower.contains("$target")
-                        || lower.contains("$dir"))
-                {
+                if is_leaked_katana_var(&lower) {
                     critical_rule_id = Some("LEAKED_SHELL_VARIABLE");
                     fatal_command = Some(cmd_str.clone());
                     title_override =
@@ -243,9 +245,7 @@ pub fn evaluate_trace_for_blunder(
                     critical_rule_id = Some("WINDOWS_DRIVE_WIPE");
                     fatal_command = Some(cmd_str.clone());
                     title_override = Some("The 2TB Windows C:\\ Wipe".to_string());
-                } else if (lower.contains("rm -rf") || lower.contains("rm -fr"))
-                    && is_root_or_home_rm(&lower)
-                {
+                } else if is_high_risk_rm_path(&lower) {
                     // Root or Home unconstrained rm -rf
                     if critical_rule_id.is_none() {
                         critical_rule_id = Some("FORBIDDEN_RM_RF");
@@ -284,21 +284,22 @@ pub fn evaluate_trace_for_blunder(
                     }
                 }
 
-                if is_fake_test_claim_str(&lower_content) && had_failed_test {
-                    if critical_rule_id.is_none() && high_rule_id.is_none() {
-                        high_rule_id = Some("FALSE_SUCCESS_CLAIM");
-                        title_override =
-                            Some("False Victory Claim Over Failing Test Suite".to_string());
-                    }
+                if is_fake_test_claim_str(&lower_content)
+                    && had_failed_test
+                    && critical_rule_id.is_none()
+                    && high_rule_id.is_none()
+                {
+                    high_rule_id = Some("FALSE_SUCCESS_CLAIM");
+                    title_override = Some("False Victory Claim Over Failing Test Suite".to_string());
                 }
             }
 
-            EventPayload::ToolCall(tool) => {
-                if fatal_command.is_none() && (tool.name.contains("bash") || tool.name.contains("exec") || tool.name.contains("delete")) {
-                    let args = tool.arguments.to_string();
-                    if args.len() > 10 {
-                        fatal_command = Some(format!("{}({})", tool.name, truncate_snippet(&args, 120)));
-                    }
+            EventPayload::ToolCall(tool)
+                if fatal_command.is_none() && (tool.name.contains("bash") || tool.name.contains("exec") || tool.name.contains("delete")) =>
+            {
+                let args = tool.arguments.to_string();
+                if args.len() > 10 {
+                    fatal_command = Some(format!("{}({})", tool.name, truncate_snippet(&args, 120)));
                 }
             }
 
@@ -306,14 +307,11 @@ pub fn evaluate_trace_for_blunder(
         }
     }
 
-    // Token and Cost calculation
+    // Token and Cost calculation. Priced per model (each model's tokens at that model's own
+    // rate, then summed) rather than blended at a single default rate -- a session run on a
+    // cheap or expensive non-Sonnet model must not be billed as if it were Sonnet.
     let tokens = trace.stats.token_usage.total();
-    let input = trace.stats.token_usage.input_tokens;
-    let output = trace.stats.token_usage.output_tokens;
-    let cache_read = trace.stats.token_usage.cache_read_tokens;
-    let cache_creation = trace.stats.token_usage.cache_creation_tokens;
-
-    let mut spend_usd = estimate_tokens_cost_usd(input, output, cache_read, cache_creation);
+    let mut spend_usd = estimate_total_cost_from_per_model_usage(&trace.stats.per_model_token_usage);
     for e in &trace.events {
         if let EventPayload::ModelInvocation { cost_usd: Some(c), .. } = &e.payload {
             if *c > spend_usd {
@@ -332,23 +330,19 @@ pub fn evaluate_trace_for_blunder(
     let turns = trace.events.len();
 
     // Check high token / spend threshold
-    if spend_usd >= 1000.0 || tokens >= 10_000_000 {
-        if critical_rule_id.is_none() && high_rule_id.is_none() {
-            high_rule_id = Some("MASSIVE_TOKEN_BURN");
-            title_override = Some(format!(
-                "The ${:.0} Token Burn Cascade ({})",
-                spend_usd,
-                format_compact_tokens(tokens)
-            ));
-        }
+    if (spend_usd >= 1000.0 || tokens >= 10_000_000) && critical_rule_id.is_none() && high_rule_id.is_none() {
+        high_rule_id = Some("MASSIVE_TOKEN_BURN");
+        title_override = Some(format!(
+            "The ${:.0} Token Burn Cascade ({})",
+            spend_usd,
+            format_compact_tokens(tokens)
+        ));
     }
 
     // Check apology remorse marathon
-    if apology_count >= 3 {
-        if critical_rule_id.is_none() && high_rule_id.is_none() {
-            high_rule_id = Some("REMORSE_MARATHON");
-            title_override = Some(format!("The {}-Turn Remorse Marathon", apology_count));
-        }
+    if apology_count >= 3 && critical_rule_id.is_none() && high_rule_id.is_none() {
+        high_rule_id = Some("REMORSE_MARATHON");
+        title_override = Some(format!("The {}-Turn Remorse Marathon", apology_count));
     }
 
     // Determine rule_id and severity
@@ -673,17 +667,6 @@ fn is_test_cmd(cmd: &str) -> bool {
         || cmd.contains("jest")
 }
 
-fn is_root_or_home_rm(cmd: &str) -> bool {
-    cmd.contains(" / ")
-        || cmd.contains(" /users")
-        || cmd.contains(" /home")
-        || cmd.contains(" ~")
-        || cmd.contains(" *")
-        || cmd.contains("/katana")
-        || cmd.contains("/code")
-        || cmd.contains("/projects")
-}
-
 fn check_destructive_sweeps(cmd: &str) -> Option<&'static str> {
     if cmd.contains("chmod -r 777") || cmd.contains("chmod 777") {
         return Some("chmod -R 777");
@@ -727,19 +710,13 @@ fn is_fake_test_claim_str(content: &str) -> bool {
         || content.contains("tests passed successfully")
         || content.contains("all 8 tests are now passing")
         || content.contains("test suite is green")
+        // Chinese fake test claim phrases
+        || content.contains("测试已全部通过")
+        || content.contains("所有测试通过")
+        || content.contains("测试通过")
+        || content.contains("所有测试均已通过")
+        || content.contains("测试全部通过")
 }
-
-const APOLOGY_PATTERNS: &[&str] = &[
-    "my mistake",
-    "i apologize",
-    "my apologies",
-    "i am sorry",
-    "i'm sorry",
-    "turned my safety mechanism into a weapon",
-    "lost track",
-    "accidentally deleted",
-    "i made an error",
-];
 
 fn extract_best_remorse_sentence(text: &str) -> Option<String> {
     for line in text.lines() {
@@ -780,11 +757,9 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     for paragraph in text.lines() {
         let mut current = String::new();
         for word in paragraph.split_whitespace() {
-            if current.len() + word.len() + 1 > max_width {
-                if !current.is_empty() {
-                    lines.push(current);
-                    current = String::new();
-                }
+            if current.len() + word.len() + 1 > max_width && !current.is_empty() {
+                lines.push(current);
+                current = String::new();
             }
             if !current.is_empty() {
                 current.push(' ');
@@ -829,6 +804,12 @@ mod tests {
             cache_creation_tokens: 100_000,
         };
         trace.stats.models_used = vec!["Claude Opus 5 (Extended Thinking)".to_string()];
+        // Real traces always populate this alongside token_usage (both come from the same
+        // recalculate_stats loop) -- set it by hand here since this fixture bypasses that.
+        trace
+            .stats
+            .per_model_token_usage
+            .insert("Claude Opus 5 (Extended Thinking)".to_string(), trace.stats.token_usage);
 
         trace.events.push(agentworth_schema::NormalizedEvent {
             id: "e1".to_string(),
@@ -860,6 +841,53 @@ mod tests {
         assert!(exhibit.blunder_score >= 100_000.0);
         assert!(exhibit.apology_count >= 1);
         assert!(exhibit.code_snippet.contains("PROTECTED_PATHS"));
+    }
+
+    /// Regression test for the pricing bug: `evaluate_trace_for_blunder` used to price every
+    /// session's spend via the blended `estimate_tokens_cost_usd` (model_id = None -> always
+    /// Claude 3.5 Sonnet's rate), regardless of which model actually ran. A session run on a
+    /// cheap non-Sonnet model (here DeepSeek Chat) must be billed at its own real rate.
+    #[test]
+    fn test_blunder_spend_uses_real_per_model_rate_not_blended_sonnet() {
+        let mut trace = AgentWorthTrace::new(
+            "sess-deepseek-1",
+            "opencode",
+            Provenance::new("/tmp/deepseek.jsonl", "opencode", 1024, 1720000000, "ds123"),
+            Utc::now(),
+        );
+
+        trace.events.push(agentworth_schema::NormalizedEvent::new(
+            1,
+            Utc::now(),
+            EventPayload::ModelInvocation {
+                model: "deepseek-chat".to_string(),
+                token_usage: TokenUsage::new(1_000_000, 500_000, 0, 0),
+                cost_usd: None,
+                latency_ms: None,
+            },
+        ));
+        trace.recalculate_stats();
+
+        let exhibit = evaluate_trace_for_blunder(&trace, "some-project").expect("exhibit produced");
+
+        // Real DeepSeek Chat rate: $0.14/M input, $0.28/M output.
+        let expected_real_cost = 1_000_000.0 / 1_000_000.0 * 0.14 + 500_000.0 / 1_000_000.0 * 0.28;
+        assert!(
+            (exhibit.spend_usd - expected_real_cost).abs() < 1e-9,
+            "expected deepseek-chat's real rate (${:.4}), got ${:.4}",
+            expected_real_cost,
+            exhibit.spend_usd
+        );
+
+        // What the old blended-Sonnet bug would have produced: $3.00/M input, $15.00/M output.
+        let wrong_blended_sonnet_cost =
+            1_000_000.0 / 1_000_000.0 * 3.00 + 500_000.0 / 1_000_000.0 * 15.00;
+        assert!(
+            (exhibit.spend_usd - wrong_blended_sonnet_cost).abs() > 1.0,
+            "spend_usd (${:.4}) must not collapse to the blended-Sonnet figure (${:.4})",
+            exhibit.spend_usd,
+            wrong_blended_sonnet_cost
+        );
     }
 
     #[test]
@@ -902,5 +930,185 @@ mod tests {
         let redacted = redactor.redact_text(sensitive_quote);
         assert!(!redacted.contains("sk-ant-api03-"));
         assert!(!redacted.contains("/Users/saurabh/"));
+    }
+
+    #[test]
+    fn test_high_risk_rm_path_precision() {
+        // Safe user-space nested paths should NOT be flagged as high-risk root/home deletion
+        assert!(!is_high_risk_rm_path("rm -rf /Users/saurabh/code/agentworth/target"));
+        assert!(!is_high_risk_rm_path("rm -rf ~/code/my-app/node_modules"));
+        assert!(!is_high_risk_rm_path("rm -rf ./projects/foo/dist"));
+
+        // Dangerous top-level root paths MUST be flagged
+        assert!(is_high_risk_rm_path("rm -rf /"));
+        assert!(is_high_risk_rm_path("rm -rf /*"));
+        assert!(is_high_risk_rm_path("rm -rf /Users"));
+        assert!(is_high_risk_rm_path("rm -rf /home"));
+        assert!(is_high_risk_rm_path("rm -rf ~"));
+        assert!(is_high_risk_rm_path("rm -rf $HOME"));
+        assert!(is_high_risk_rm_path("rm -rf /code"));
+        assert!(is_high_risk_rm_path("rm -rf /projects"));
+    }
+
+    #[test]
+    fn test_leaked_katana_var_precision() {
+        // Normal words starting with $d should NOT be flagged
+        assert!(!is_leaked_katana_var("rm -rf $dist"));
+        assert!(!is_leaked_katana_var("rm -rf $data"));
+        assert!(!is_leaked_katana_var("rm -rf $destination/tmp"));
+
+        // Unscoped Katana loop variable $d or ${d} MUST be flagged
+        assert!(is_leaked_katana_var("rm -rf $d"));
+        assert!(is_leaked_katana_var("rm -rf \"$d\""));
+        assert!(is_leaked_katana_var("rm -rf ${d}"));
+        assert!(is_leaked_katana_var("rm -rf \"${d}\""));
+        assert!(is_leaked_katana_var("rm -rf $d/protected"));
+    }
+
+    #[test]
+    fn test_chinese_remorse_and_false_claim_detection() {
+        let mut trace = AgentWorthTrace::new(
+            "qwen-sess-1",
+            "qwen",
+            Provenance::new(
+                "/tmp/qwen.jsonl",
+                "qwen",
+                1024,
+                1720000000,
+                "qwen123",
+            ),
+            Utc::now(),
+        );
+
+        // Turn 1: Failing test
+        trace.events.push(agentworth_schema::NormalizedEvent {
+            id: "e1".to_string(),
+            sequence: 1,
+            timestamp: Utc::now(),
+            payload: EventPayload::ShellCommand(ShellCommand {
+                command: "pytest tests/".to_string(),
+                cwd: None,
+                exit_code: Some(1),
+                output: Some("1 failed, 0 passed".to_string()),
+            }),
+            raw_ref: None,
+        });
+
+        // Turn 2: Chinese apology and false test claim
+        trace.events.push(agentworth_schema::NormalizedEvent {
+            id: "e2".to_string(),
+            sequence: 2,
+            timestamp: Utc::now(),
+            payload: EventPayload::AssistantMessage {
+                content: "非常抱歉！刚才代码有误。现在测试已全部通过，任务已完成。".to_string(),
+                thinking: Some("这是我的错误，必须向用户道歉".to_string()),
+            },
+            raw_ref: None,
+        });
+
+        let exhibit = evaluate_trace_for_blunder(&trace, "qwen-project").expect("Must detect blunder");
+        assert_eq!(exhibit.rule_id, "FALSE_SUCCESS_CLAIM");
+        assert_eq!(exhibit.severity, "HIGH");
+        assert_eq!(exhibit.apology_count, 1);
+        assert!(exhibit.apology_quote.contains("抱歉"));
+    }
+
+    /// Regression test for the same bug shape already fixed today in
+    /// `compute_verdict_breakdown` (50-cap) and `get_stats_handler` (10000-cap):
+    /// `discover_blunders` used to pass `limit: Some(5000)`, and since
+    /// `list_sessions_filtered` defaults to most-recent-first order, any session older
+    /// than the 5000 most recently *started* ones was silently never even loaded, let
+    /// alone scored. A real CRITICAL blunder sitting in old history could never surface
+    /// in `agwt blunder`'s ranking on an index bigger than 5000 sessions.
+    ///
+    /// Seeds 5000 filler session rows (all newer than the real blunder below) plus one
+    /// session that is the single oldest row in the whole index -- guaranteed to be the
+    /// one row `ORDER BY started_at DESC LIMIT 5000` would cut. The filler sessions'
+    /// source files intentionally don't exist on disk, so `Scanner::load_trace` fails
+    /// fast (a `Path::exists()` check) and they contribute no exhibits -- only their
+    /// *rows* matter, to exercise the cap/order-by at realistic scale. The old session
+    /// gets a real, on-disk, adapter-parseable fixture carrying the same leaked-shell-
+    /// variable pattern `test_evaluate_katana_blunder` above already proves triggers a
+    /// CRITICAL/LEAKED_SHELL_VARIABLE exhibit.
+    ///
+    /// Under the old `Some(5000)` cap, this session is never in `all_sessions` at all,
+    /// so `exhibits` comes back completely empty (every filler fails to load). Only
+    /// with the cap removed does the oldest session get loaded, scored, and surfaced.
+    #[test]
+    fn test_discover_blunders_surfaces_blunder_beyond_old_5000_cap() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let base = Utc::now();
+
+        for i in 0..5000i64 {
+            let started_at = base - chrono::Duration::seconds(i);
+            let prov = Provenance::new(
+                format!("/nonexistent/filler-{i}.jsonl"),
+                "claude_code",
+                10,
+                10,
+                format!("fp-filler-{i}"),
+            );
+            let trace = AgentWorthTrace::new(format!("filler-{i}"), "claude_code", prov, started_at);
+            storage.upsert_trace(&trace).expect("seed filler session");
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        // Scanner::load_trace re-parses this file via the real ClaudeCodeAdapter, which
+        // derives its trace's session_id from the file's *stem* (derive_session_id in
+        // crates/adapters/src/claude.rs), not from whatever session_id was passed to
+        // upsert_trace below -- so the returned exhibit's session_id will be
+        // "old-critical-blunder" only because the filename matches. Keep them in sync.
+        let old_blunder_path = temp.path().join("old-critical-blunder.jsonl");
+        std::fs::write(
+            &old_blunder_path,
+            concat!(
+                r#"{"type":"user","timestamp":"2025-09-01T09:00:00Z","content":"Clean up"}"#,
+                "\n",
+                r#"{"type":"assistant","timestamp":"2025-09-01T09:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"for d in \"${PROTECTED_PATHS[@]}\"; do rm -rf \"$d\"; done"}}]}"#,
+                "\n",
+            ),
+        )
+        .expect("write old blunder fixture");
+
+        let old_blunder_trace = AgentWorthTrace::new(
+            "old-critical-blunder",
+            "claude_code",
+            Provenance::new(
+                old_blunder_path.to_string_lossy().to_string(),
+                "claude_code",
+                200,
+                100,
+                "fp-old-blunder",
+            ),
+            base - chrono::Duration::days(365),
+        );
+        storage
+            .upsert_trace(&old_blunder_trace)
+            .expect("seed old blunder session");
+
+        // Sanity: the index really does hold 5001 sessions -- one more than the old cap.
+        let indexed_count = storage
+            .list_sessions_filtered(&SessionFilter {
+                limit: None,
+                include_stubs: Some(true),
+                ..Default::default()
+            })
+            .expect("count sessions")
+            .len();
+        assert_eq!(indexed_count, 5001);
+
+        let exhibits = discover_blunders(&storage, 5).expect("discover blunders");
+
+        assert!(
+            exhibits.iter().any(|e| e.session_id == "old-critical-blunder"
+                && e.rule_id == "LEAKED_SHELL_VARIABLE"
+                && e.severity == "CRITICAL"),
+            "expected the oldest session's real CRITICAL blunder to survive once the \
+             5000-session cap is removed; got exhibits: {:?}",
+            exhibits
+                .iter()
+                .map(|e| (e.session_id.as_str(), e.rule_id.as_str(), e.severity.as_str()))
+                .collect::<Vec<_>>()
+        );
     }
 }

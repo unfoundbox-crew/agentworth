@@ -2,11 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { AgentWorthTrace } from '../types';
 import { formatDate, formatDuration } from '../utils/formatters';
 import { useSessions } from '../hooks/useSessions';
+import { fetchTraceDetail } from '../services/api';
 import { OutcomeLadder, captionsFromOutcomes, determineReachedLevel } from './OutcomeLadder';
 import { TrajectoryView } from './TrajectoryView';
 import { OverviewPane } from './OverviewPane';
 import { ScoreBreakdown } from './ScoreBreakdown';
 import { TokenEconomics } from './TokenEconomics';
+import { CacheWarmth } from './CacheWarmth';
+import { LooseEnds } from './LooseEnds';
+import { ContextComposition } from './ContextComposition';
 import { ProvenanceBlock } from './ProvenanceBlock';
 
 export interface InspectorPaneProps {
@@ -48,28 +52,19 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
     setLoading(true);
     setError(null);
 
-    (async () => {
-      try {
-        const res = await fetch(`/api/traces/${encodeURIComponent(sessionId)}`);
-        if (!res.ok) throw new Error(`/api/traces/${sessionId} returned ${res.status}`);
-        const data = await res.json();
-        const normalized: AgentWorthTrace = data.trace
-          ? {
-              ...data.trace,
-              score: data.score ?? data.trace.score,
-              outcomes: data.outcomes ?? data.trace.outcomes,
-              recoveries: data.recoveries ?? data.trace.recoveries,
-            }
-          : data;
-        if (cancelled) return;
-        setTrace(normalized);
-        setLoading(false);
-      } catch (_err) {
-        if (cancelled) return;
+    // fetchTraceDetail also normalizes the backend's short-form token_usage
+    // field names (cache_read_tokens/cache_creation_tokens) to the long
+    // names this component reads — don't re-fetch/re-normalize by hand here,
+    // that's exactly the duplication that let this drift out of sync before.
+    fetchTraceDetail(sessionId).then((data) => {
+      if (cancelled) return;
+      if (!data) {
         setError('Could not load this session.');
-        setLoading(false);
+      } else {
+        setTrace(data);
       }
-    })();
+      setLoading(false);
+    });
 
     return () => {
       cancelled = true;
@@ -175,7 +170,14 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
           {trace?.stats?.token_usage && (
             <div className="shell-tokens-section">
               <TokenEconomics tokenUsage={trace.stats.token_usage} />
+              <CacheWarmth events={trace.events} />
             </div>
+          )}
+
+          {trace?.events && <ContextComposition events={trace.events} />}
+
+          {trace?.events && (
+            <LooseEnds events={trace.events} sessionId={trace.session_id} />
           )}
 
           {trace?.recoveries && trace.recoveries.length > 0 && (

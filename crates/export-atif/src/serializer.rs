@@ -52,7 +52,7 @@ impl AtifTrajectory {
                         thinking: t,
                     } => {
                         content = Some(c.clone());
-                        thinking = t.clone();
+                        thinking.clone_from(t);
                         (AtifStepSource::Agent, "assistant_message".to_string())
                     }
                     EventPayload::ModelInvocation {

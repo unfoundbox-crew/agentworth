@@ -6,7 +6,7 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
     Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
@@ -70,12 +70,33 @@ impl AgentAdapter for GooseAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".goose")
-                    || custom.ends_with("goose")
-                    || custom.to_string_lossy().contains("goose"))
-            {
+            if !custom.exists() {
+                continue;
+            }
+            let s = custom.to_string_lossy().to_lowercase();
+            if s.contains(".goose") || s.contains("goose") {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // custom_paths may point at a generic parent directory rather than
+                // the adapter-specific dir itself; look a few levels in before
+                // giving up, matching how `enumerate()` already recurses.
+                let mut found_nested = false;
+                for sub in &[custom.join(".goose"), custom.join(".config").join("goose")] {
+                    if sub.exists() {
+                        discovered.push(sub.clone());
+                        found_nested = true;
+                    }
+                }
+                if !found_nested {
+                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        let ps = path.to_string_lossy().to_lowercase();
+                        if ps.contains(".goose") || ps.contains("goose") {
+                            discovered.push(path.to_path_buf());
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -153,6 +174,7 @@ impl AgentAdapter for GooseAdapter {
         let mut malformed_lines = 0;
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
+        let mut last_model: Option<String> = None;
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -195,7 +217,7 @@ impl AgentAdapter for GooseAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_goose_record(item, &mut sequence, timestamp, idx + 1);
+                        let evts = parse_goose_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -241,7 +263,7 @@ impl AgentAdapter for GooseAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_goose_record(&val, &mut sequence, timestamp, line_num);
+                let events = parse_goose_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -357,6 +379,7 @@ fn parse_goose_record(
     seq: &mut u64,
     ts: DateTime<Utc>,
     line_num: usize,
+    last_model: &mut Option<String>,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -385,6 +408,25 @@ fn parse_goose_record(
                 .and_then(|v| v.as_str())
                 .unwrap_or("goose-model")
                 .to_string();
+
+            if last_model.as_deref() != Some(model.as_str()) {
+                if let Some(prev) = last_model.take() {
+                    *seq += 1;
+                    events.push(
+                        NormalizedEvent::new(
+                            *seq,
+                            ts,
+                            EventPayload::ModelSwitch(ModelSwitch {
+                                from_model: Some(prev),
+                                to_model: model.clone(),
+                                reason: None,
+                            }),
+                        )
+                        .with_raw_ref(&raw_ref),
+                    );
+                }
+                *last_model = Some(model.clone());
+            }
 
             *seq += 1;
             events.push(

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.10] - 2026-09-02
+
+### Fixed
+
+- **The outcome ladder now actually renders.** `primary_outcome` was written to the index in hand-rolled PascalCase (`"CommitObserved"`) while the API contract and the whole frontend expect snake_case — every session with a real outcome silently read as unresolved, and `verified_outcomes_count` was 0 for everyone. A data migration corrects every row already on disk the first time this version opens your index; nothing to run by hand.
+- No `busy_timeout` was set on the SQLite connection — `agentworth serve` and `agentworth scan` running at the same time could return `SQLITE_BUSY` immediately on a write collision instead of waiting.
+- `prompt_preview` was always empty. It's now populated from each session's first real user message, truncated past 200 characters.
+- `/api/stats` and `/api/traces` disagreed on how many sessions existed (one counted near-empty stub sessions, the other didn't) — several report/dashboard numbers were quietly dividing against the wrong population. Fixed at the source rather than patched per call site.
+- Several commands (`audit`, `threat-digest`, `stats`, `archaeology`, `blind_spots`, and more) silently capped how many sessions they looked at while presenting the result as "all sessions" — on an index above the cap, that read as a clean bill of health when it wasn't. All now scan the real total.
+- `agwt search`'s background indexing only ever ran once per process; any session scanned after the first successful run was never indexed for search again. Rebuilt as a real incremental indexer.
+- Every dollar figure in `agentworth`'s reports was priced as Claude 3.5 Sonnet regardless of which model actually ran the session.
+
+### Added
+
+- `agentworth version` / `agentworth update` — checks whether a newer release exists and tells you how to get it (never replaces the binary itself).
+- `agentworth threat-digest` and `agwt blunder-blame` — rank indexed sessions by real secret exposure, and connect a blunder back to the files it touched (or a file back to the sessions that touched it).
+- A real-time `GET /api/live-tail` (SSE) endpoint — filesystem-watch-based, no polling.
+- Outcome claims are now cross-checked against real trace state before being trusted — a bare tool-call request with no observed result no longer counts as verified.
+- `ModelSwitch` events, tracked across all 20 supported harnesses.
+- `agentworth config` — persisted defaults for `json`/`limit`/`period`, explicit flags always win.
+- A context-rot marker and a human-vs-agent recovery-loop classifier, both intentionally conservative (weak-to-moderate confidence, documented as such) rather than dressed up as more certain than the underlying signal supports.
+- Redaction now covers a session's own repository/project name (previously only a home directory's username was stripped, so `export --redact` still leaked project identity) and reaches outcome/recovery evidence, not just raw event content — closing a gap flagged ahead of the read-only MCP server spec in `docs/specs/mcp-server.md`.
+
+---
+
 ## [0.1.9] - 2026-09-01
 
 ### Added

@@ -1,8 +1,10 @@
 //! Axum HTTP routes and handlers for the AgentWorth local API server.
 
 use std::collections::BTreeMap;
+use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions};
 use agentworth_adapters::{
@@ -22,14 +24,19 @@ use agentworth_storage::{
 use anyhow::Result;
 use axum::extract::{Path, Query, State};
 use axum::http::{Request, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{body::Body, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+use tokio_stream::{Stream, StreamExt};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use super::archaeology::{compute_archaeology_highlights, ArchaeologyHighlights};
+use super::live_tail::LiveTailEvent;
 use super::static_files::serve_static_or_spa;
 
 /// Shared application state across API handlers.
@@ -38,6 +45,9 @@ pub struct AppState {
     pub storage: Arc<Storage>,
     pub scanner: Arc<Scanner>,
     pub dist_dir: Option<PathBuf>,
+    /// Sender side of the live-tail filesystem-event broadcast. Each SSE connection calls
+    /// `.subscribe()` for its own receiver; cloning the sender itself is cheap.
+    pub live_tail: broadcast::Sender<LiveTailEvent>,
 }
 
 /// Query parameters for listing and filtering indexed traces.
@@ -155,6 +165,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/blame", get(get_blame_handler))
         .route("/matrix", get(get_matrix_handler))
         .route("/archaeology", get(get_archaeology_handler))
+        .route("/live-tail", get(get_live_tail_handler))
         .route("/scan", post(post_scan_handler))
         .route("/export/:id", post(post_export_handler));
 
@@ -171,18 +182,58 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Maps a stored `primary_outcome` value to the snake_case key the web dashboard's
+/// `OutcomeDistribution` type expects.
+///
+/// `agentworth_outcomes::outcome_kind_name` now writes the snake_case form directly (it defers
+/// to `OutcomeKind`'s own serde encoding — see `crates/outcomes/src/outcome.rs`), and the
+/// storage-layer migration in `crates/storage/src/lib.rs::initialize_schema` corrects any
+/// pre-existing PascalCase rows on open. So in the common case this is close to an identity
+/// mapping. It still recognizes the legacy PascalCase literals (e.g. `"CommitObserved"`) as a
+/// defense-in-depth fallback — belt and suspenders in case some row is ever read before a
+/// migration runs — and anything else unrecognized (including the "Unresolved" sentinel used
+/// below for a session that hasn't been scored) folds into "unresolved" rather than silently
+/// minting a new bucket.
+fn outcome_distribution_key(outcome: &str) -> &'static str {
+    match outcome {
+        "ci_or_deployment_verified" | "CiOrDeploymentVerified" => "ci_or_deployment_verified",
+        "commit_observed" | "CommitObserved" => "commit_observed",
+        "test_or_build_passed" | "TestOrBuildPassed" => "test_or_build_passed",
+        "artifact_changed" | "ArtifactChanged" => "artifact_changed",
+        "done_claimed" | "DoneClaimed" => "done_claimed",
+        _ => "unresolved",
+    }
+}
+
 /// GET /api/stats -> machine-wide experience stats JSON with outcome distributions and verification telemetry
 async fn get_stats_handler(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let storage = state.storage.clone();
 
+    // `limit: None` means genuinely unlimited (see SessionFilter::limit's doc comment in
+    // crates/storage/src/lib.rs). This used to be `Some(10000)`, which silently undercounted
+    // outcome_distribution/average_composite_score on any index bigger than 10,000 non-stub
+    // sessions (a real peer index already has 10,188) while total_sessions -- computed
+    // separately via the unbounded get_aggregate_stats -- kept reporting the true count. That
+    // mismatch is the same "presented as complete but silently truncated" shape already fixed
+    // for compute_verdict_breakdown's old default-50 cap. There's no response-size or
+    // query-shape reason to keep a cap here: this handler's own get_aggregate_stats and
+    // get_top_repositories calls already do unbounded full-table scans of `sessions` on every
+    // request, the response only ever carries fixed-shape aggregates (not the session list
+    // itself), and the frontend fetches this endpoint once per pane-mount, not on a poll.
+    // get_aggregate_stats(false): this handler's own outcome_distribution/average_composite_score
+    // below are already computed from the stub-excluded `all_sessions` list, so total_sessions
+    // and the other aggregates must exclude stubs too or every percentage derived from them
+    // (e.g. VerdictBoard's ladder bars, dividing an outcome count by total_sessions) silently
+    // corrupts against an inflated denominator. See docs/DECISION-INBOX.md,
+    // stats/stub-count-mismatch entry.
     let (stats_res, top_repos_res, all_sessions_res) = tokio::task::spawn_blocking(move || {
         (
-            storage.get_aggregate_stats(),
+            storage.get_aggregate_stats(false),
             storage.get_top_repositories(),
             storage.list_sessions_filtered(&SessionFilter {
-                limit: Some(10000),
+                limit: None,
                 ..Default::default()
             }),
         )
@@ -212,23 +263,19 @@ async fn get_stats_handler(
     let all_sessions = all_sessions_res.unwrap_or_default();
 
     let mut outcome_dist: BTreeMap<String, usize> = BTreeMap::new();
-    let mut verified_count = 0usize;
     let mut total_score = 0.0f64;
     let mut scored_count = 0usize;
 
     for s in &all_sessions {
-        let outcome_str = s
-            .primary_outcome
-            .as_deref()
-            .unwrap_or("done_claimed");
-        *outcome_dist.entry(outcome_str.to_string()).or_insert(0) += 1;
-
-        if outcome_str == "test_or_build_passed"
-            || outcome_str == "commit_observed"
-            || outcome_str == "ci_or_deployment_verified"
-        {
-            verified_count += 1;
-        }
+        // `primary_outcome` is stored as the snake_case OutcomeKind variant name (see
+        // crates/outcomes/src/outcome.rs), matching the keys below directly. An unpopulated
+        // column used to fall back to the literal string "done_claimed", which fabricated a
+        // fake verified-outcome bucket for every un-scored session instead of reporting it as
+        // unresolved — "Unresolved" here is just a sentinel for outcome_distribution_key to
+        // fold into the "unresolved" bucket, not an OutcomeKind value.
+        let outcome_str = s.primary_outcome.as_deref().unwrap_or("Unresolved");
+        let key = outcome_distribution_key(outcome_str);
+        *outcome_dist.entry(key.to_string()).or_insert(0) += 1;
 
         if let Some(score) = s.composite_score {
             total_score += score;
@@ -259,9 +306,8 @@ async fn get_stats_handler(
         "sessions_by_adapter": stats.sessions_by_adapter,
         "models_usage_count": stats.models_usage_count,
         "tools_usage_count": stats.tools_usage_count,
-        "verified_outcomes_count": verified_count,
+        "verified_outcomes_count": stats.verified_outcomes_count,
         "outcome_distribution": outcome_dist,
-        "outcomes_distribution": outcome_dist,
         "average_composite_score": average_composite_score,
         "top_repositories": top_repos.iter().map(|(path, count)| json!({
             "repository": path,
@@ -449,7 +495,9 @@ async fn get_matrix_handler(
 
 /// Compute capability and detection matrix across all registered adapters.
 fn compute_adapter_matrix(storage: &Storage) -> AdapterMatrixResponse {
-    let stats = storage.get_aggregate_stats().unwrap_or_default();
+    // false: per-adapter `sessions_count` below should agree with what `/api/traces?adapter=X`
+    // reports for the same adapter, which is stub-excluded by default.
+    let stats = storage.get_aggregate_stats(false).unwrap_or_default();
     let scan_opts = ScanOptions::default();
 
     #[allow(clippy::type_complexity)]
@@ -810,6 +858,38 @@ async fn get_archaeology_handler(
     Ok(Json(highlights))
 }
 
+/// GET /api/live-tail -> Server-Sent Events stream of live filesystem changes under
+/// watched adapter session directories. Each event carries a `change` name; a subscriber
+/// that falls too far behind the broadcast channel's buffer gets a `lagged` event instead
+/// of the stream silently dropping or terminating.
+async fn get_live_tail_handler(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let receiver = state.live_tail.subscribe();
+
+    let stream = BroadcastStream::new(receiver).map(|item| {
+        let event = match item {
+            Ok(live_event) => Event::default()
+                .event("change")
+                .json_data(&live_event)
+                .unwrap_or_else(|e| {
+                    tracing::warn!("live-tail: failed to serialize event: {}", e);
+                    Event::default().event("change").data("{}")
+                }),
+            Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                Event::default().event("lagged").data(skipped.to_string())
+            }
+        };
+        Ok(event)
+    });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
+}
+
 /// POST /api/scan -> triggers scanner background sync
 async fn post_scan_handler(
     State(state): State<AppState>,
@@ -872,13 +952,23 @@ async fn post_export_handler(
     }
 
     let format = req.format.as_deref().unwrap_or("json");
-    let content = match format {
+    let content = match format.to_lowercase().as_str() {
         "atif" => agentworth_export_atif::export_to_atif(&trace, true).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": format!("ATIF export failed: {}", e) })),
             )
         })?,
+        "svg" => {
+            let scorer = TraceScorer::default();
+            let score = scorer.score(&trace);
+            crate::commands::receipt::render_svg_receipt(&trace, &score)
+        }
+        "receipt" | "terminal" | "ansi" => {
+            let scorer = TraceScorer::default();
+            let score = scorer.score(&trace);
+            crate::commands::receipt::render_terminal_receipt(&trace, &score)
+        }
         _ => serde_json::to_string_pretty(&trace).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -887,9 +977,223 @@ async fn post_export_handler(
         })?,
     };
 
+
     Ok(Json(ExportResponse {
         session_id: id,
         format: format.to_string(),
         content,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentworth_schema::{Provenance, TokenUsage};
+    use chrono::{Duration, Utc};
+    use tempfile::NamedTempFile;
+
+    /// Regression test for the old `Some(10000)` cap on get_stats_handler's
+    /// `list_sessions_filtered` call. Seeds more non-stub sessions than that old cap and
+    /// asserts total_sessions and the outcome_distribution buckets account for every one of
+    /// them. Before the fix, outcome_distribution (and average_composite_score) silently
+    /// reflected only the first 10,000 sessions while total_sessions -- computed separately via
+    /// the always-unbounded get_aggregate_stats -- kept reporting the true, larger count. The
+    /// fixture size (10,050) is deliberately chosen to exceed the old cap: a smaller fixture
+    /// would pass on both the old and new code and wouldn't actually exercise the fix.
+    #[tokio::test]
+    async fn test_get_stats_handler_scans_beyond_old_10000_cap() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+        let start = Utc::now();
+
+        const SESSION_COUNT: i64 = 10_050;
+        for i in 0..SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/test/stats_cap_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_stats_cap_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-stats-cap-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            // Non-stub: list_sessions_filtered's default excludes total_events <= 1 or
+            // total_tokens <= 0.
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).unwrap();
+        }
+
+        let storage = Arc::new(storage);
+        let scanner = Arc::new(Scanner::new(storage.clone()));
+        let (live_tail_tx, _live_tail_rx) = broadcast::channel::<LiveTailEvent>(16);
+        let state = AppState {
+            storage,
+            scanner,
+            dist_dir: None,
+            live_tail: live_tail_tx,
+        };
+
+        let response = get_stats_handler(State(state))
+            .await
+            .expect("get_stats_handler should succeed")
+            .0;
+
+        let total_sessions = response["total_sessions"]
+            .as_u64()
+            .expect("total_sessions should be present and numeric");
+        assert_eq!(
+            total_sessions, SESSION_COUNT as u64,
+            "total_sessions should reflect every seeded session"
+        );
+
+        let outcome_dist = response["outcome_distribution"]
+            .as_object()
+            .expect("outcome_distribution should be a JSON object");
+
+        // Every seeded session has no primary_outcome (upsert_trace leaves it NULL), so they
+        // should all land in the "unresolved" bucket.
+        let unresolved = outcome_dist
+            .get("unresolved")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        assert_eq!(
+            unresolved, SESSION_COUNT as u64,
+            "every seeded session should land in the 'unresolved' bucket -- a lower count means \
+             get_stats_handler silently dropped sessions past its old 10,000 cap"
+        );
+
+        let scanned: u64 = outcome_dist.values().filter_map(|v| v.as_u64()).sum();
+        assert_eq!(
+            scanned, SESSION_COUNT as u64,
+            "get_stats_handler must scan every session, not silently cap at 10,000"
+        );
+    }
+
+    /// Regression test for the `/api/stats` stub-count mismatch (docs/DECISION-INBOX.md,
+    /// stats/stub-count-mismatch entry): `get_aggregate_stats` used to run an unconditional
+    /// `COUNT(*)` over every row including stubs, while this same handler's own
+    /// `outcome_distribution` (computed from a `list_sessions_filtered` call a few lines below
+    /// it) already excluded them by default -- so `/api/stats` reported a `total_sessions` that
+    /// disagreed with its own `outcome_distribution` bucket sum, and every percentage the
+    /// frontend derives by dividing an outcome count by `total_sessions` (VerdictBoard's ladder
+    /// bars) was silently corrupted against an inflated denominator. Seeds a fixture DB with a
+    /// mix of stub and real sessions -- including a stub carrying a "verified" outcome, so a fix
+    /// that only touches `total_sessions` and misses `verified_outcomes_count` still fails this
+    /// test -- and asserts every population-sized number in the `/api/stats` response agrees
+    /// with `list_sessions_filtered`'s own stub-excluded count for the same DB.
+    #[tokio::test]
+    async fn test_stats_handler_total_sessions_matches_non_stub_population() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+        let start = Utc::now();
+
+        // Two stubs -- one below the event floor, one with zero tokens -- neither should count
+        // toward any population-sized field in the /api/stats response.
+        let stub_specs: &[(&str, i64, u64, Option<&str>)] = &[
+            ("stub_low_events", 1, 500, None),
+            ("stub_zero_tokens", 5, 0, Some("commit_observed")),
+        ];
+        for (id, events, tokens, outcome) in stub_specs.iter().copied() {
+            let prov = Provenance::new(format!("/test/{id}.jsonl"), "claude_code", 10, 100, format!("fp_{id}"));
+            let mut trace = AgentWorthTrace::new(id, "claude_code", prov, start);
+            trace.stats.total_events = events as usize;
+            trace.stats.token_usage = TokenUsage::new(tokens, 0, 0, 0);
+            storage.upsert_session(&trace, outcome, outcome.map(|_| 0.9)).unwrap();
+        }
+
+        // Five real sessions, two of them verified.
+        const REAL_COUNT: i64 = 5;
+        let real_outcomes: [Option<&str>; 5] = [
+            Some("ci_or_deployment_verified"),
+            Some("commit_observed"),
+            None,
+            Some("done_claimed"),
+            None,
+        ];
+        for i in 0..REAL_COUNT {
+            let prov = Provenance::new(
+                format!("/test/stats_pop_{i}.jsonl"),
+                "claude_code",
+                10,
+                100,
+                format!("fp_stats_pop_{i}"),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-stats-pop-{i}"),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            trace.stats.total_events = 10;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            let outcome = real_outcomes[i as usize];
+            storage.upsert_session(&trace, outcome, outcome.map(|_| 0.8)).unwrap();
+        }
+
+        let storage = Arc::new(storage);
+
+        // The ground truth this test holds /api/stats to: whatever list_sessions_filtered's own
+        // stub-excluded default reports for this exact DB (the same population /api/traces and
+        // the CLI's `traces` command use).
+        let non_stub_sessions = storage
+            .list_sessions_filtered(&SessionFilter {
+                limit: None,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            non_stub_sessions.len(),
+            REAL_COUNT as usize,
+            "fixture sanity check: exactly the 5 real sessions should pass the non-stub filter"
+        );
+
+        let scanner = Arc::new(Scanner::new(storage.clone()));
+        let (live_tail_tx, _live_tail_rx) = broadcast::channel::<LiveTailEvent>(16);
+        let state = AppState {
+            storage,
+            scanner,
+            dist_dir: None,
+            live_tail: live_tail_tx,
+        };
+
+        let response = get_stats_handler(State(state))
+            .await
+            .expect("get_stats_handler should succeed")
+            .0;
+
+        let total_sessions = response["total_sessions"]
+            .as_u64()
+            .expect("total_sessions should be present and numeric");
+        assert_eq!(
+            total_sessions,
+            non_stub_sessions.len() as u64,
+            "total_sessions must match list_sessions_filtered's default (non-stub) count, not a \
+             raw unfiltered COUNT(*) that includes the 2 seeded stubs"
+        );
+
+        let outcome_dist = response["outcome_distribution"]
+            .as_object()
+            .expect("outcome_distribution should be a JSON object");
+        let dist_sum: u64 = outcome_dist.values().filter_map(|v| v.as_u64()).sum();
+        assert_eq!(
+            dist_sum, total_sessions,
+            "outcome_distribution's own bucket sum must equal total_sessions in the same response"
+        );
+
+        let verified_outcomes_count = response["verified_outcomes_count"]
+            .as_u64()
+            .expect("verified_outcomes_count should be present and numeric");
+        assert_eq!(
+            verified_outcomes_count, 2,
+            "only the two real verified sessions (ci_or_deployment_verified, commit_observed) \
+             should count -- the stub carrying commit_observed must be excluded even though it's \
+             a 'verified' outcome kind, or the verified/total ratio would mix two different \
+             populations"
+        );
+    }
 }

@@ -10,7 +10,7 @@ pub use event::{
     EventPayload, EventType, FileActionType, HumanIntervention, ModelSwitch, NormalizedEvent,
     OutcomeEvidence, OutcomeKind, ShellCommand, ToolCall, ToolResult,
 };
-pub use provenance::Provenance;
+pub use provenance::{extract_repository_or_workspace, Provenance};
 pub use tokens::TokenUsage;
 pub use trace::{AgentWorthTrace, TraceStats};
 pub use vector::{ChunkKind, TrajectoryChunk, VectorSearchResult, VectorStats};

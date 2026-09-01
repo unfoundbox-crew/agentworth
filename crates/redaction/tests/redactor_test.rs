@@ -64,12 +64,27 @@ API_KEY='xyz987654321'
 PASSWORD=my_strong_password!
 AUTH_TOKEN=tok_123456789
 AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+OPENAI_API_KEY=sk-proj-supersecretkey123
+STRIPE_SECRET_KEY="sk_test_51Mzxyz12345"
+DEEPSEEK_API_KEY='sk-deepseeksecret'
+MY_CUSTOM_DB_PASSWORD: super_secure_db_pass
+GITHUB_ACCESS_TOKEN=ghp_secrettokenvalue123
 "#;
     let redacted = redactor.redact_text(text);
     assert!(!redacted.contains("super_secret_value_12345"));
     assert!(!redacted.contains("my_strong_password!"));
     assert!(!redacted.contains("tok_123456789"));
     assert!(!redacted.contains("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"));
+    assert!(!redacted.contains("sk-proj-supersecretkey123"));
+    assert!(!redacted.contains("sk_test_51Mzxyz12345"));
+    assert!(!redacted.contains("sk-deepseeksecret"));
+    assert!(!redacted.contains("super_secure_db_pass"));
+    assert!(!redacted.contains("ghp_secrettokenvalue123"));
+    assert!(redacted.contains("OPENAI_API_KEY=[REDACTED_ENV_VAR]"));
+    assert!(redacted.contains("STRIPE_SECRET_KEY=[REDACTED_ENV_VAR]"));
+    assert!(redacted.contains("DEEPSEEK_API_KEY=[REDACTED_ENV_VAR]"));
+    assert!(redacted.contains("MY_CUSTOM_DB_PASSWORD=[REDACTED_ENV_VAR]"));
+    assert!(redacted.contains("GITHUB_ACCESS_TOKEN=[REDACTED_ENV_VAR]"));
 }
 
 #[test]
@@ -379,6 +394,191 @@ fn test_all_event_variants_redaction() {
     }
 }
 
+// --- High-entropy fallback detector ---------------------------------------
+//
+// The regex rules above only catch secrets with a known shape. These tests cover
+// the complementary fallback: Shannon-entropy detection of secret-*shaped* strings
+// that don't match any named vendor pattern. The false-positive tests are the
+// point of this layer — git SHAs, UUIDs, and content-hash fingerprints are exactly
+// the high-entropy-looking strings that are routine, non-secret data in AgentWorth's
+// own session/provenance model (see crates/schema, crates/adapters), and must
+// never be redacted.
+
+#[test]
+fn test_high_entropy_detector_flags_novel_secret_shapes() {
+    let redactor = Redactor::new();
+
+    // A made-up prefix that doesn't match any of the 13 named formats above.
+    let text = "Found leaked credential: xk_live_9fH2mQ7vB4nR8pL1sT6wZ3jC0aD5eG in output";
+    let redacted = redactor.redact_text(text);
+    assert!(!redacted.contains("9fH2mQ7vB4nR8pL1sT6wZ3jC0aD5eG"));
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+
+    // A real-shaped AWS secret access key, standalone with no `AWS_SECRET_ACCESS_KEY=`
+    // label to trigger the env-var rule -- today this leaks straight through.
+    let text = "the value was wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY at the time";
+    let redacted = redactor.redact_text(text);
+    assert!(!redacted.contains("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"));
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+
+    // A Stripe-shaped test key with no `STRIPE_SECRET_KEY=` label -- the existing
+    // env-var test only proves the *labeled* form is caught; this is the gap.
+    let text = "printed sk_test_51Mzxyz12345abcdefGHIJKL9876 to the console by mistake";
+    let redacted = redactor.redact_text(text);
+    assert!(!redacted.contains("sk_test_51Mzxyz12345abcdefGHIJKL9876"));
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+
+    // A generic random mixed-case/digit blob with no recognizable prefix at all.
+    let text = "unlabeled token dump: Kx9mQ2vLpT4wZ8nR1jH6fD3gB0cA5eSy7uNiO end of dump";
+    let redacted = redactor.redact_text(text);
+    assert!(!redacted.contains("Kx9mQ2vLpT4wZ8nR1jH6fD3gB0cA5eSy7uNiO"));
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+}
+
+#[test]
+fn test_high_entropy_detector_report_category() {
+    let redactor = Redactor::new();
+    let text = "unlabeled token dump: Kx9mQ2vLpT4wZ8nR1jH6fD3gB0cA5eSy7uNiO end of dump";
+    let mut report = RedactionReport::new();
+    let redacted = redactor.redact_text_with_counts(text, &mut report);
+
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+    assert_eq!(report.high_entropy_secrets_count, 1);
+    assert_eq!(report.total(), 1);
+    assert_eq!(
+        report.breakdown_by_category.get("High-Entropy Secret"),
+        Some(&1)
+    );
+}
+
+#[test]
+fn test_high_entropy_detector_spares_git_shas() {
+    let redactor = Redactor::new();
+
+    let text = "Merge commit a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 into main";
+    let redacted = redactor.redact_text(text);
+    assert_eq!(redacted, text, "full 40-char git SHA must survive untouched");
+
+    // Both 32 hex chars: long enough to clear min_length, so this specifically
+    // exercises the pure-hex exclusion rather than the length gate.
+    let text = "seen in blame output: 9f86d081884c7d659a2feaa0c55ad015 and c438719d2b0f00a08cd15d6c15b0f00a";
+    let redacted = redactor.redact_text(text);
+    assert_eq!(
+        redacted, text,
+        "long hex-only SHA fragments must survive untouched"
+    );
+}
+
+#[test]
+fn test_high_entropy_detector_spares_uuids() {
+    let redactor = Redactor::new();
+
+    let text = "Session f47ac10b-58cc-4372-a567-0e02b2c3d479 completed successfully";
+    let redacted = redactor.redact_text(text);
+    assert_eq!(redacted, text, "dashed UUID v4 must survive untouched");
+
+    let text = "trace id f47ac10b58cc4372a5670e02b2c3d479 was recorded for this run";
+    let redacted = redactor.redact_text(text);
+    assert_eq!(
+        redacted, text,
+        "undashed UUID (pure hex) must survive untouched"
+    );
+}
+
+#[test]
+fn test_high_entropy_detector_spares_content_fingerprint_hashes() {
+    let redactor = Redactor::new();
+
+    // Shape matches `agentworth_schema::Provenance::content_fingerprint` and
+    // `compute_fast_fingerprint` in crates/adapter-sdk: hex::encode(Sha256::finalize()).
+    let prov = Provenance::new(
+        "claude-session.jsonl",
+        "claude_code",
+        4096,
+        1_720_000_000,
+        "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    );
+    let redacted_fingerprint = redactor.redact_text(&prov.content_fingerprint);
+    assert_eq!(
+        redacted_fingerprint, prov.content_fingerprint,
+        "a SHA-256 content fingerprint must never be flagged as a secret"
+    );
+
+    // Fallback session-id shape used by every adapter's derive_session_id() when a
+    // filename stem isn't available (crates/adapters/src/*.rs): uuid::Uuid::new_v4().
+    let session_id = "f47ac10b-58cc-4372-a567-0e02b2c3d479".to_string();
+    let redacted_session_id = redactor.redact_text(&session_id);
+    assert_eq!(redacted_session_id, session_id);
+}
+
+#[test]
+fn test_high_entropy_detector_spares_agentworth_identifiers() {
+    let redactor = Redactor::new();
+
+    // Real snake_case signature, lifted from crates/storage/src/lib.rs.
+    let text = "fn find_sessions_for_blame(file_path_pattern: &str) -> Result<Vec<BlameMatch>>";
+    assert_eq!(redactor.redact_text(text), text);
+
+    // Adapter test-fixture session-id slugs (crates/adapters/src/hermes.rs, storage tests).
+    let text = "session hermes-session-007 and sess_blame_1 are both routine slugs, not secrets";
+    assert_eq!(redactor.redact_text(text), text);
+
+    // A long kebab-case CLI flag/name, and a CONSTANT_CASE env var *name* (not value).
+    let text = "run with --high-entropy-secret-detector-threshold-override flag set";
+    assert_eq!(redactor.redact_text(text), text);
+
+    // An adversarial, deliberately long chained camelCase identifier -- the hardest
+    // realistic case for a naive entropy check, since it's what the shape checks
+    // (hex/underscore exclusion) can't split apart.
+    let text = "pub fn computeFastFingerprintFromPathAndSizeAndMtime(path, size, mtime)";
+    assert_eq!(redactor.redact_text(text), text);
+}
+
+#[test]
+fn test_high_entropy_detector_selective_within_mixed_shell_output() {
+    let redactor = Redactor::new();
+
+    let event = NormalizedEvent::new(
+        1,
+        Utc::now(),
+        EventPayload::ShellCommand(ShellCommand {
+            command: "git log --oneline -1 && env | grep TOKEN".to_string(),
+            cwd: Some("~/code/unfoundbox/agentworth".to_string()),
+            exit_code: Some(0),
+            output: Some(
+                "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 fix: entropy detector\n\
+                 SOME_NEW_SERVICE_TOKEN=xk_live_9fH2mQ7vB4nR8pL1sT6wZ3jC0aD5eG"
+                    .to_string(),
+            ),
+        }),
+    );
+
+    let redacted = redactor.redact_event(&event);
+    if let EventPayload::ShellCommand(cmd) = &redacted.payload {
+        let output = cmd.output.as_ref().unwrap();
+        assert!(
+            output.contains("a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"),
+            "git SHA in the same blob must survive: {output}"
+        );
+        assert!(
+            !output.contains("9fH2mQ7vB4nR8pL1sT6wZ3jC0aD5eG"),
+            "the secret in the same blob must be redacted: {output}"
+        );
+    } else {
+        panic!("expected ShellCommand");
+    }
+}
+
+#[test]
+fn test_high_entropy_detector_spares_short_random_token() {
+    // Below the 24-char minimum length, random-token and natural-identifier entropy
+    // distributions overlap too much to call reliably -- so this detector deliberately
+    // doesn't try. Short well-known formats are the named regex rules' job.
+    let redactor = Redactor::new();
+    let text = "short token abc123XYZ789 seen here";
+    assert_eq!(redactor.redact_text(text), text);
+}
+
 #[test]
 fn test_custom_rule_addition() {
     use regex::Regex;
@@ -398,4 +598,176 @@ fn test_custom_rule_addition() {
     assert_eq!(redacted, "User SSN is [REDACTED_SSN].");
     assert_eq!(report.custom_count, 1);
     assert_eq!(report.total(), 1);
+}
+
+// Regression coverage for docs/specs/mcp-server.md's "What it must not expose" gap: none of
+// the named rules cover repository/project names, and neither `outcomes` nor `recoveries` were
+// redacted anywhere at all.
+
+#[test]
+fn test_repository_identity_rule_builder_skips_sentinel_values() {
+    use agentworth_redaction::repository_identity_rule;
+
+    assert!(repository_identity_rule("").is_none());
+    assert!(repository_identity_rule("unknown").is_none());
+    assert!(repository_identity_rule("plugins/cache").is_none());
+}
+
+#[test]
+fn test_repository_identity_rule_builder_matches_real_identity() {
+    use agentworth_redaction::repository_identity_rule;
+
+    let rule = repository_identity_rule("unfoundbox/agentworth").expect("real identity");
+    let redacted = rule.pattern.replace_all(
+        "the unfoundbox/agentworth repo has a bug",
+        rule.replacement.as_str(),
+    );
+    assert_eq!(redacted, "the [REDACTED_REPOSITORY] repo has a bug");
+}
+
+#[test]
+fn test_redact_trace_masks_repository_identity() {
+    let redactor = Redactor::new();
+    let start = Utc::now();
+    let prov = Provenance::new(
+        "/Users/saurabh/code/unfoundbox/agentworth/session.jsonl",
+        "claude_code",
+        100,
+        12345,
+        "fp_repo",
+    );
+    let mut trace = AgentWorthTrace::new("sess-repo", "claude_code", prov, start);
+    trace.events.push(NormalizedEvent::new(
+        1,
+        start,
+        EventPayload::UserMessage {
+            content: "clone unfoundbox/agentworth and run the tests".to_string(),
+        },
+    ));
+
+    let redacted_trace = redactor.redact_trace(&trace);
+    assert_eq!(
+        redacted_trace.provenance.source_path,
+        "~/code/[REDACTED_REPOSITORY]/session.jsonl"
+    );
+    if let EventPayload::UserMessage { content } = &redacted_trace.events[0].payload {
+        assert!(!content.contains("unfoundbox/agentworth"));
+        assert!(content.contains("[REDACTED_REPOSITORY]"));
+    } else {
+        panic!("expected UserMessage");
+    }
+}
+
+#[test]
+fn test_redact_trace_home_path_only_case_is_unaffected_by_repository_rule() {
+    // Same fixture shape as test_redact_trace_and_preview above (a path that resolves to
+    // "unknown" via extract_repository_or_workspace's fallback) -- confirms the new rule is a
+    // true no-op here, not just "doesn't crash".
+    let redactor = Redactor::new();
+    let start = Utc::now();
+    let prov = Provenance::new(
+        "/Users/saurabh/logs/trace.jsonl",
+        "claude_code",
+        100,
+        12345,
+        "fp123",
+    );
+    let trace = AgentWorthTrace::new("sess-1", "claude_code", prov, start);
+    let redacted_trace = redactor.redact_trace(&trace);
+    assert_eq!(redacted_trace.provenance.source_path, "~/logs/trace.jsonl");
+}
+
+#[test]
+fn test_redact_outcome_evidence_scrubs_summary() {
+    let redactor = Redactor::new();
+    let evidence = vec![OutcomeEvidence {
+        kind: OutcomeKind::CommitObserved,
+        summary: "committed with key sk-1234567890abcdef1234567890 in the message".to_string(),
+        confidence: 0.9,
+    }];
+
+    let redacted = redactor.redact_outcome_evidence(&evidence);
+    assert_eq!(redacted.len(), 1);
+    assert_eq!(redacted[0].kind, OutcomeKind::CommitObserved);
+    assert_eq!(redacted[0].confidence, 0.9);
+    assert!(!redacted[0].summary.contains("sk-1234567890abcdef1234567890"));
+    assert!(redacted[0].summary.contains("[REDACTED_API_KEY]"));
+}
+
+#[test]
+fn test_redact_recovery_signal_scrubs_summaries_and_files() {
+    use agentworth_outcomes::RecoverySignal;
+
+    let redactor = Redactor::new();
+    let signals = vec![RecoverySignal {
+        failure_sequence: 3,
+        failure_summary: "build failed reading /Users/saurabh/app.js".to_string(),
+        recovery_sequence: 7,
+        recovery_summary: "fixed after checking DATABASE_URL=postgres://u:p@host/db"
+            .to_string(),
+        steps_to_recover: 4,
+        duration_seconds: Some(12.5),
+        corrective_actions_count: 2,
+        correlated_files: vec!["/Users/saurabh/app.js".to_string()],
+    }];
+
+    let redacted = redactor.redact_recovery_signal(&signals);
+    assert_eq!(redacted.len(), 1);
+    assert!(!redacted[0].failure_summary.contains("/Users/saurabh"));
+    assert!(redacted[0].failure_summary.contains("~/app.js"));
+    assert!(!redacted[0].recovery_summary.contains("postgres://u:p@host/db"));
+    assert_eq!(redacted[0].correlated_files, vec!["~/app.js".to_string()]);
+    // Non-text fields pass through unchanged.
+    assert_eq!(redacted[0].failure_sequence, 3);
+    assert_eq!(redacted[0].steps_to_recover, 4);
+    assert_eq!(redacted[0].duration_seconds, Some(12.5));
+}
+
+#[test]
+fn test_for_trace_composes_repository_redaction_across_trace_outcomes_and_recoveries() {
+    use agentworth_outcomes::RecoverySignal;
+
+    let start = Utc::now();
+    let prov = Provenance::new(
+        "/Users/saurabh/code/unfoundbox/agentworth/session.jsonl",
+        "claude_code",
+        100,
+        12345,
+        "fp_repo2",
+    );
+    let trace = AgentWorthTrace::new("sess-repo2", "claude_code", prov, start);
+
+    // The base Redactor has no idea about this trace's identity until for_trace augments it.
+    let base = Redactor::new();
+    let unaugmented = base.redact_outcome_evidence(&[OutcomeEvidence {
+        kind: OutcomeKind::CommitObserved,
+        summary: "fixed a bug in unfoundbox/agentworth".to_string(),
+        confidence: 0.8,
+    }]);
+    assert!(unaugmented[0].summary.contains("unfoundbox/agentworth"));
+
+    // The same redactor, augmented for this trace, catches it on outcomes AND recoveries --
+    // not just on the trace object redact_trace already covers.
+    let augmented = base.for_trace(&trace);
+    let redacted_outcomes = augmented.redact_outcome_evidence(&[OutcomeEvidence {
+        kind: OutcomeKind::CommitObserved,
+        summary: "fixed a bug in unfoundbox/agentworth".to_string(),
+        confidence: 0.8,
+    }]);
+    assert!(!redacted_outcomes[0].summary.contains("unfoundbox/agentworth"));
+    assert!(redacted_outcomes[0].summary.contains("[REDACTED_REPOSITORY]"));
+
+    let redacted_recoveries = augmented.redact_recovery_signal(&[RecoverySignal {
+        failure_sequence: 1,
+        failure_summary: "unfoundbox/agentworth failed to build".to_string(),
+        recovery_sequence: 2,
+        recovery_summary: "ok now".to_string(),
+        steps_to_recover: 1,
+        duration_seconds: None,
+        corrective_actions_count: 1,
+        correlated_files: vec![],
+    }]);
+    assert!(!redacted_recoveries[0]
+        .failure_summary
+        .contains("unfoundbox/agentworth"));
 }

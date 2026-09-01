@@ -5,8 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 agentworth-schema.workspace = true
+agentworth-outcomes.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 regex = "1.10"

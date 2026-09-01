@@ -5,6 +5,9 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 agentworth-schema.workspace = true
 agentworth-adapter-sdk.workspace = true
@@ -22,5 +25,5 @@ sha2.workspace = true
 fastembed = { version = "4", optional = true }
 
 [features]
-default = ["fastembed"]
+default = []
 fastembed = ["dep:fastembed"]

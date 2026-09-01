@@ -332,3 +332,374 @@
 .shell-root .ol-spine-seg.ol-spine-cliff {
   border-left-color: var(--mv-faint);
 }
+
+/* ---------------- cache warmth ----------------
+   How much of a session ran on reused context. Warmth is not a verdict: a
+   cold session was resumed, not failed, so the re-created share uses --mv-warn
+   (money actually spent) and nothing here reaches for --mv-danger. */
+.shell-root .cache-warmth {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--mv-border-soft);
+}
+
+.shell-root .cache-warmth-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.shell-root .cache-warmth-label {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+
+.shell-root .cache-warmth-bar {
+  flex: 0 0 84px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--mv-warn-soft);
+  overflow: hidden;
+}
+.shell-root .cache-warmth-fill {
+  display: block;
+  height: 100%;
+  background: var(--mv-cat-5);
+}
+
+.shell-root .cache-warmth-value {
+  color: var(--mv-text);
+  font-weight: 550;
+}
+.shell-root .cache-warmth-detail {
+  color: var(--mv-muted);
+}
+.shell-root .cache-warmth-sep {
+  color: var(--mv-faint);
+}
+
+.shell-root .cache-warmth-worst {
+  margin: 0;
+  font-size: 11px;
+  color: var(--mv-muted);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .cache-warmth-worst strong {
+  color: var(--mv-warn);
+  font-weight: 550;
+}
+.shell-root .cache-warmth-count {
+  color: var(--mv-faint);
+}
+
+/* ---------------- loose ends ----------------
+   Stated intents with no evidence of action. Deliberately not styled as an
+   error: about half of what this finds is work the user cancelled, so it uses
+   neutral surfaces and the accent only on the action, never --mv-danger. */
+.shell-root .loose-ends {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 9px;
+  background: var(--mv-surface);
+}
+
+.shell-root .loose-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-root .loose-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+
+.shell-root .loose-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-muted);
+  padding: 1px 6px;
+  border: 1px solid var(--mv-border);
+  border-radius: 999px;
+}
+
+.shell-root .loose-copy {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--mv-accent-border);
+  border-radius: 6px;
+  background: var(--mv-accent-soft);
+  color: var(--mv-accent);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.shell-root .loose-copy:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+}
+
+.shell-root .loose-intro {
+  margin: 7px 0 9px;
+  font-size: 11px;
+  color: var(--mv-faint);
+}
+
+.shell-root .loose-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.shell-root .loose-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--mv-border);
+}
+
+.shell-root .loose-quote {
+  flex: 1 1 auto;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mv-text);
+}
+
+.shell-root .loose-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .loose-model {
+  color: var(--mv-muted);
+}
+
+.shell-root .loose-more {
+  margin-top: 9px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mv-muted);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.shell-root .loose-more:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .loose-copy { transition: none; }
+}
+
+/* ---------------- context composition ----------------
+   Categorical series, never state colours: a session that is mostly tool
+   output used a lot of tools, which is not a failure. The accent stays out
+   entirely — nothing here is a state or a selection. */
+.shell-root .ctx-comp {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 9px;
+  background: var(--mv-surface);
+}
+
+.shell-root .ctx-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.shell-root .ctx-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+.shell-root .ctx-total {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .ctx-overhead {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--mv-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.shell-root .ctx-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--mv-surface-2);
+}
+.shell-root .ctx-seg {
+  display: block;
+  height: 100%;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+.shell-root .ctx-bar:hover .ctx-seg { opacity: 0.55; }
+.shell-root .ctx-bar .ctx-seg:hover { opacity: 1; }
+
+.shell-root .ctx-seg-dialogue    { background: var(--mv-cat-1); }
+.shell-root .ctx-seg-tools       { background: var(--mv-cat-2); }
+.shell-root .ctx-seg-injected    { background: var(--mv-cat-3); }
+.shell-root .ctx-seg-bookkeeping { background: var(--mv-cat-4); }
+
+.shell-root .ctx-legend {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.shell-root .ctx-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--mv-muted);
+}
+.shell-root .ctx-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.shell-root .ctx-legend-value {
+  color: var(--mv-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.shell-root .ctx-biggest {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--mv-muted);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .ctx-biggest strong {
+  color: var(--mv-text);
+  font-weight: 550;
+  font-family: var(--font-mono);
+}
+
+.shell-root .ctx-toggle {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mv-muted);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.shell-root .ctx-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+  border-radius: 3px;
+}
+
+.shell-root .ctx-contributors {
+  list-style: none;
+  margin: 9px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.shell-root .ctx-contributor {
+  display: grid;
+  grid-template-columns: 1fr 80px 46px 44px;
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+  color: var(--mv-muted);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .ctx-c-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shell-root .ctx-c-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--mv-surface-2);
+  overflow: hidden;
+}
+.shell-root .ctx-c-fill {
+  display: block;
+  height: 100%;
+  background: var(--mv-cat-3);
+}
+.shell-root .ctx-c-value { color: var(--mv-text); text-align: right; }
+.shell-root .ctx-c-count { color: var(--mv-faint); text-align: right; }
+
+.shell-root .ctx-caveat {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--mv-border-soft);
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--mv-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .ctx-seg { transition: none; }
+}
+
+.shell-root .ctx-peak {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--mv-muted);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .ctx-peak-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  margin-right: 7px;
+}
+.shell-root .ctx-peak strong {
+  color: var(--mv-text);
+  font-weight: 550;
+}

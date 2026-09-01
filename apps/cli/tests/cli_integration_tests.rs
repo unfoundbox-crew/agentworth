@@ -120,7 +120,11 @@ fn test_cli_matrix_command_table_and_json() {
         .stdout(predicate::str::contains("qwen"))
         .stdout(predicate::str::contains("zhipu"))
         .stdout(predicate::str::contains("manus"))
-        .stdout(predicate::str::contains("100% extraction parity"));
+        // fix/matrix-coverage replaced the old hardcoded "100% extraction parity" claim
+        // with a real per-adapter capability score; see the --json assertion below for
+        // the exact computed rate (27.1%, fixed given the current 4 real + 16 default
+        // capability profiles).
+        .stdout(predicate::str::contains("Grounded extraction coverage across feature dimensions:"));
 
     // 2. agwt matrix (--json)
     let mut matrix_json_cmd = Command::cargo_bin("agwt").unwrap();
@@ -130,7 +134,11 @@ fn test_cli_matrix_command_table_and_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"total_adapters\": 20"))
-        .stdout(predicate::str::contains("\"coverage_rate\": \"100%\""))
+        // Real computed rate: 4 adapters have full/partial hand-written capability
+        // profiles (claude_code 7/7, codex 6/7, cursor 2/7, gemini 7/7 = 22 of 28); the
+        // other 16 fall back to the trait default (prompts only = 1/7 = 16). Total
+        // 38 / 140 = 27.1%, fixed regardless of what's actually detected on this machine.
+        .stdout(predicate::str::contains("\"coverage_rate\": \"27.1%\""))
         .stdout(predicate::str::contains("\"adapter\": \"claude_code\""))
         .stdout(predicate::str::contains("\"prompts\": true"))
         .stdout(predicate::str::contains("\"tokens\": true"))
@@ -319,7 +327,11 @@ fn test_cli_export_command_json_and_atif_and_redaction() {
         .assert()
         .success()
         .stdout(predicate::str::contains("sk-testsecretkey12345678901234567890").not())
-        .stdout(predicate::str::contains("[REDACTED_API_KEY]"));
+        // fix/redaction-regex now matches this OPENAI_API_KEY=<value> form as a prefixed
+        // env-var assignment (ENV_VAR_VALUE_REGEX) rather than a bare API-key literal, so
+        // it is labeled REDACTED_ENV_VAR. The secret value itself is still fully scrubbed
+        // (see the assertion above).
+        .stdout(predicate::str::contains("[REDACTED_ENV_VAR]"));
 
     // 3. Export ATIF format to a file
     let atif_out_file = temp.path().join("exports").join("trace.atif.json");
@@ -480,6 +492,74 @@ fn test_cli_audit_command_safety_detection() {
         .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""));
 }
 
+/// End-to-end proof (real binary, real scan, real storage) that `agwt audit --safety` now
+/// shares `agentworth_redaction::Redactor`'s detection instead of the old hand-rolled
+/// `cred_regex`: a secret in a `ToolResult` (an event kind the old regex never inspected) and a
+/// newer-format `github_pat_...` token (a format the old regex never matched) both surface as
+/// `CREDENTIAL_LEAK` findings.
+#[test]
+fn test_cli_audit_command_detects_secrets_via_shared_redactor() {
+    let temp = tempdir().unwrap();
+    let claude_dir = temp.path().join(".claude").join("projects").join("secret-repo");
+    fs::create_dir_all(&claude_dir).unwrap();
+
+    let session_file = claude_dir.join("secret_session.jsonl");
+    let mut file = File::create(&session_file).unwrap();
+
+    // A high-entropy secret with no recognized vendor prefix, inside a ToolResult -- the old
+    // regex had no high-entropy fallback at all, and never inspected ToolResult output.
+    writeln!(
+        file,
+        r#"{{"type":"user","timestamp":"2026-08-31T11:00:00Z","content":"print the deploy token"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-08-31T11:00:02Z","tool_use_id":"t1","content":"deploy token: K7xQ2mZpL9vNaC4tRfY6sJ1hWbE8dU3o","is_error":false}}"#
+    )
+    .unwrap();
+    // A newer-format GitHub PAT (`github_pat_...`), inside an AssistantMessage -- the old
+    // regex's github alternative was `ghp_[a-zA-Z0-9]{{36}}` only, and never inspected assistant
+    // text for credentials at all.
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T11:00:03Z","content":[{{"type":"text","text":"here: github_pat_11ABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJ"}}]}}"#
+    )
+    .unwrap();
+
+    let db_path = temp.path().join("test_agentworth.db");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    let mut audit_cmd = Command::cargo_bin("agwt").unwrap();
+    audit_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("audit")
+        .arg("--safety")
+        .arg("--json");
+
+    audit_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"rule_id\": \"CREDENTIAL_LEAK\""))
+        // Both secrets must be masked, never printed raw, in either finding's snippet.
+        .stdout(predicate::str::contains("K7xQ2mZpL9vNaC4tRfY6sJ1hWbE8dU3o").not())
+        .stdout(
+            predicate::str::contains(
+                "github_pat_11ABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJ",
+            )
+            .not(),
+        );
+}
+
 #[test]
 fn test_cli_blunder_command() {
     let temp = tempdir().unwrap();
@@ -574,4 +654,298 @@ fn test_cli_blunder_command() {
         .success()
         .stdout(predicate::str::contains("\"submission\""))
         .stdout(predicate::str::contains("\"status\""));
+}
+
+/// End-to-end fixture for the Blunder-to-Blame Bridge: one session that both trips the
+/// same CRITICAL leaked-shell-variable blunder rule as `test_cli_blunder_command` above,
+/// AND records a real file edit, so both bridge directions have something to resolve
+/// through the real adapter parse + SQLite index (not a hand-built in-memory trace).
+fn setup_sweep_blunder_session(dir: &std::path::Path) -> (std::path::PathBuf, String) {
+    let project_dir = dir.join(".claude").join("projects").join("danger");
+    fs::create_dir_all(&project_dir).unwrap();
+
+    let session_file = project_dir.join("sweep_blunder_session.jsonl");
+    let mut file = File::create(&session_file).unwrap();
+
+    writeln!(
+        file,
+        r#"{{"type":"user","timestamp":"2026-09-01T10:00:00Z","content":"Clean up merged worktrees"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-09-01T10:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"for d in \"${{PROTECTED_PATHS[@]}}\"; do rm -rf \"$d\"; done"}}}}]}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-09-01T10:00:04Z","tool_use_id":"t1","content":"Deleted 12 GB","is_error":false}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-09-01T10:00:05Z","content":[{{"type":"text","text":"I apologize, the path was deleted precisely because it was on the protect list."}},{{"type":"tool_use","id":"t2","name":"FileEdit","input":{{"file_path":"crates/danger/src/sweep.rs","diff":"+ fn guard() {{}}"}}}}]}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-09-01T10:00:07Z","tool_use_id":"t2","content":"File modified successfully","is_error":false}}"#
+    )
+    .unwrap();
+
+    ("crates/danger/src/sweep.rs".into(), "sweep_blunder_session".to_string())
+}
+
+#[test]
+fn test_cli_blunder_blame_bridge_command() {
+    let temp = tempdir().unwrap();
+    let (blamed_file, session_id) = setup_sweep_blunder_session(temp.path());
+    let db_path = temp.path().join("test_agentworth.db");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Blunder -> blame direction, one session: `--session <ID>` must resolve the
+    // CRITICAL blunder forward to the exact file AI Code Blame attributes to it.
+    let mut session_json_cmd = Command::cargo_bin("agwt").unwrap();
+    session_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--session")
+        .arg(&session_id)
+        .arg("--json");
+
+    session_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""))
+        .stdout(predicate::str::contains("\"severity\": \"CRITICAL\""))
+        .stdout(predicate::str::contains(format!("\"session_id\": \"{}\"", session_id)))
+        .stdout(predicate::str::contains("\"blamed_files\""))
+        .stdout(predicate::str::contains(blamed_file.to_string_lossy().to_string()));
+
+    // ASCII text mode for the same direction.
+    let mut session_text_cmd = Command::cargo_bin("agwt").unwrap();
+    session_text_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--session")
+        .arg(&session_id);
+
+    session_text_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("BLUNDER-TO-BLAME BRIDGE"))
+        .stdout(predicate::str::contains("CRITICAL"))
+        .stdout(predicate::str::contains("Blamed files"))
+        .stdout(predicate::str::contains("sweep.rs"));
+
+    // 2. Blame -> blunder direction: `--file <PATH>` must resolve the file's blame
+    // history backward to the real recorded blunder in the session blamed for it.
+    let mut file_json_cmd = Command::cargo_bin("agwt").unwrap();
+    file_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--file")
+        .arg("sweep.rs")
+        .arg("--json");
+
+    file_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("\"file_path\": \"{}\"", "sweep.rs")))
+        .stdout(predicate::str::contains(format!("\"session_id\": \"{}\"", session_id)))
+        .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""))
+        .stdout(predicate::str::contains("\"severity\": \"CRITICAL\""));
+
+    // A file nothing ever touched resolves to an empty match list, not an error.
+    let mut file_no_match_cmd = Command::cargo_bin("agwt").unwrap();
+    file_no_match_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--file")
+        .arg("never_existed_anywhere.rs")
+        .arg("--json");
+
+    file_no_match_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"matches\": []"));
+
+    // 3. Default (batch) direction: top-N blunders, each resolved to its blamed files.
+    let mut top_json_cmd = Command::cargo_bin("agwt").unwrap();
+    top_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--top")
+        .arg("3")
+        .arg("--json");
+
+    top_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("\"session_id\": \"{}\"", session_id)))
+        .stdout(predicate::str::contains("\"blamed_files\""))
+        .stdout(predicate::str::contains(blamed_file.to_string_lossy().to_string()));
+
+    // 4. An unindexed session ID resolves to a plain `null`, not an error.
+    let mut unknown_session_cmd = Command::cargo_bin("agwt").unwrap();
+    unknown_session_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--session")
+        .arg("does_not_exist_anywhere")
+        .arg("--json");
+
+    unknown_session_cmd.assert().success().stdout(predicate::str::contains("null"));
+
+    // 5. --file and --session are mutually exclusive directions, not composable.
+    let mut conflict_cmd = Command::cargo_bin("agwt").unwrap();
+    conflict_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("blunder-blame")
+        .arg("--file")
+        .arg("sweep.rs")
+        .arg("--session")
+        .arg(&session_id);
+
+    conflict_cmd.assert().failure();
+}
+
+#[test]
+fn test_cli_receipt_command_ansi_svg_and_export() {
+    let temp = tempdir().unwrap();
+    let (_session_file, session_id) = setup_sample_claude_session(temp.path());
+
+    let db_path = temp.path().join("test_agentworth.db");
+
+    // Index the sample session
+    let mut scan_cmd = Command::cargo_bin("agwt").unwrap();
+    scan_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    // 1. Run receipt command with default format (Terminal ANSI)
+    let mut receipt_term_cmd = Command::cargo_bin("agwt").unwrap();
+    receipt_term_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("receipt")
+        .arg(&session_id);
+
+    receipt_term_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AGENTWORTH FLIGHT RECEIPT"))
+        .stdout(predicate::str::contains("TYPED PROVENANCE:"))
+        .stdout(predicate::str::contains("FLOWN"))
+        .stdout(predicate::str::contains("COMPOSITE SCORE:"))
+        .stdout(predicate::str::contains("TOKEN USAGE & FINANCIALS:"))
+        .stdout(predicate::str::contains("APOLOGY TAX & REMORSE AUDIT:"))
+        .stdout(predicate::str::contains("AUTONOMOUS RESILIENCE & RECOVERY:"))
+        .stdout(predicate::str::contains("VERIFIED BY AGENTWORTH"));
+
+    // 2. Run receipt command with format svg
+    let mut receipt_svg_cmd = Command::cargo_bin("agwt").unwrap();
+    receipt_svg_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("receipt")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("svg");
+
+    receipt_svg_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"))
+        .stdout(predicate::str::contains("<svg width=\"1200\" height=\"630\""))
+        .stdout(predicate::str::contains("AGENTWORTH"))
+        .stdout(predicate::str::contains("FLIGHT RECEIPT"))
+        .stdout(predicate::str::contains("FLOWN"))
+        .stdout(predicate::str::contains("TOKEN USAGE &amp; SPEND"))
+        .stdout(predicate::str::contains("AGENTWORTH VERIFIED"));
+
+    // 3. Run receipt command with format json
+    let mut receipt_json_cmd = Command::cargo_bin("agwt").unwrap();
+    receipt_json_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("receipt")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("json");
+
+    receipt_json_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"session_id\":"))
+        .stdout(predicate::str::contains("\"provenance_status\": \"Flown\""))
+        .stdout(predicate::str::contains("\"composite_score\":"));
+
+    // 4. Output SVG to a file using --output
+    let svg_out_path = temp.path().join("exports").join("flight_receipt.svg");
+    let mut receipt_out_cmd = Command::cargo_bin("agwt").unwrap();
+    receipt_out_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("receipt")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("svg")
+        .arg("--output")
+        .arg(&svg_out_path);
+
+    receipt_out_cmd.assert().success();
+    assert!(svg_out_path.exists());
+    let svg_content = fs::read_to_string(&svg_out_path).unwrap();
+    assert!(svg_content.contains("<svg width=\"1200\" height=\"630\""));
+
+    // 5. Test export command with --format receipt
+    let mut export_receipt_cmd = Command::cargo_bin("agwt").unwrap();
+    export_receipt_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("export")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("receipt");
+
+    export_receipt_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AGENTWORTH FLIGHT RECEIPT"))
+        .stdout(predicate::str::contains("TYPED PROVENANCE:"));
+
+    // 6. Test export command with --format svg
+    let mut export_svg_cmd = Command::cargo_bin("agwt").unwrap();
+    export_svg_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("export")
+        .arg(&session_id)
+        .arg("--format")
+        .arg("svg");
+
+    export_svg_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("<svg width=\"1200\" height=\"630\""));
 }

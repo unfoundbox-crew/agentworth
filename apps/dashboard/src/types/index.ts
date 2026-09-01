@@ -158,6 +158,8 @@ export interface SessionSummary {
   prompt_preview?: string;
   primary_outcome?: OutcomeKind;
   composite_score?: number;
+  /** Source file mtime. Absent on builds that do not join `sources.mtime` yet. */
+  source_mtime_epoch_secs?: number;
 }
 
 export interface ArchaeologyTask {

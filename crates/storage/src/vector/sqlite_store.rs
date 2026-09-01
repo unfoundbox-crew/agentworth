@@ -3,6 +3,7 @@
 //! Stores trajectory chunks and their raw float embeddings in SQLite,
 //! performing high-efficiency cosine distance vector ranking.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -14,6 +15,11 @@ use rusqlite::{params, Connection};
 use super::{bytes_to_f32_vec, cosine_similarity, f32_slice_to_bytes, VectorStore};
 
 /// SQLite-backed implementation of `VectorStore`.
+///
+/// `conn` recovers from lock poisoning rather than propagating it -- see the doc
+/// comment on `Storage::conn` in `crates/storage/src/lib.rs` for why. `from_shared_connection`
+/// means this can be the very same `Arc<Mutex<Connection>>` as a `Storage`, so the two
+/// types must agree on this policy or a panic in one would still wedge the other.
 pub struct SqliteVectorStore {
     conn: Arc<Mutex<Connection>>,
     db_path: Option<PathBuf>,
@@ -64,7 +70,7 @@ impl SqliteVectorStore {
 
 impl VectorStore for SqliteVectorStore {
     fn initialize(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         conn.execute_batch(
             r#"
@@ -129,7 +135,7 @@ impl VectorStore for SqliteVectorStore {
             return Ok(());
         }
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let tx = conn.transaction()?;
 
         {
@@ -184,7 +190,7 @@ impl VectorStore for SqliteVectorStore {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let mut sql = String::from(
             r#"
@@ -272,7 +278,7 @@ impl VectorStore for SqliteVectorStore {
     }
 
     fn delete_session(&self, session_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         conn.execute(
             "DELETE FROM trajectory_chunks WHERE session_id = ?1",
             params![session_id],
@@ -280,8 +286,19 @@ impl VectorStore for SqliteVectorStore {
         Ok(())
     }
 
-    fn stats(&self) -> Result<VectorStats> {
+    fn indexed_session_ids(&self) -> Result<HashSet<String>> {
         let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT DISTINCT session_id FROM trajectory_chunks")?;
+        let mut rows = stmt.query([])?;
+        let mut ids = HashSet::new();
+        while let Some(row) = rows.next()? {
+            ids.insert(row.get::<_, String>(0)?);
+        }
+        Ok(ids)
+    }
+
+    fn stats(&self) -> Result<VectorStats> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let mut count_stmt = conn.prepare(
             r#"
@@ -407,5 +424,59 @@ mod tests {
         let stats_after_delete = store.stats().expect("stats after delete");
         assert_eq!(stats_after_delete.total_chunks, 1);
         assert_eq!(stats_after_delete.total_sessions, 1);
+    }
+
+    #[test]
+    fn test_indexed_session_ids_tracks_distinct_sessions_and_updates_on_delete() {
+        let store = SqliteVectorStore::open_in_memory().expect("open in memory");
+        assert!(store.indexed_session_ids().unwrap().is_empty());
+
+        let chunks = vec![
+            TrajectoryChunk::new(
+                "sess_a",
+                "claude_code",
+                ChunkKind::SessionSummary,
+                0,
+                "2026-08-30T12:00:00Z",
+                "summary a",
+                "{}",
+            )
+            .with_chunk_id("chunk_a1"),
+            TrajectoryChunk::new(
+                "sess_a",
+                "claude_code",
+                ChunkKind::ErrorRecovery,
+                1,
+                "2026-08-30T12:01:00Z",
+                "recovery a",
+                "{}",
+            )
+            .with_chunk_id("chunk_a2"),
+            TrajectoryChunk::new(
+                "sess_b",
+                "codex",
+                ChunkKind::SessionSummary,
+                0,
+                "2026-08-30T13:00:00Z",
+                "summary b",
+                "{}",
+            )
+            .with_chunk_id("chunk_b1"),
+        ];
+        let embeddings = vec![vec![0.1, 0.2], vec![0.3, 0.4], vec![0.5, 0.6]];
+        store.insert_embeddings(&chunks, &embeddings).expect("insert");
+
+        // Two distinct session_ids across three chunks -- must not count per-chunk.
+        let ids = store.indexed_session_ids().expect("indexed ids");
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("sess_a"));
+        assert!(ids.contains("sess_b"));
+
+        store.delete_session("sess_a").expect("delete");
+        let ids_after = store
+            .indexed_session_ids()
+            .expect("indexed ids after delete");
+        assert_eq!(ids_after.len(), 1);
+        assert!(ids_after.contains("sess_b"));
     }
 }

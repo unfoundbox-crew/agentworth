@@ -290,32 +290,30 @@ impl TrajectoryChunker {
                 action,
                 diff,
                 lines_changed,
-            } => {
-                if *action == FileActionType::Delete {
-                    let text = format!(
-                        "[Destructive File Deletion at Turn {}]\nPath: {}\nAction: delete\nLines: {:?}",
-                        event.sequence,
-                        path,
-                        lines_changed
-                    );
-                    let metadata = json!({
-                        "sequence": event.sequence,
-                        "event_index": idx,
-                        "tool": "file_action",
-                        "danger_signature": "file_delete",
-                        "path": path,
-                        "diff": diff,
-                    });
-                    return Some(TrajectoryChunk::new(
-                        &trace.session_id,
-                        &trace.adapter,
-                        ChunkKind::ToolInvocation,
-                        event.sequence as usize,
-                        event.timestamp.to_rfc3339(),
-                        truncate_text(&text, self.max_chunk_chars),
-                        metadata.to_string(),
-                    ));
-                }
+            } if *action == FileActionType::Delete => {
+                let text = format!(
+                    "[Destructive File Deletion at Turn {}]\nPath: {}\nAction: delete\nLines: {:?}",
+                    event.sequence,
+                    path,
+                    lines_changed
+                );
+                let metadata = json!({
+                    "sequence": event.sequence,
+                    "event_index": idx,
+                    "tool": "file_action",
+                    "danger_signature": "file_delete",
+                    "path": path,
+                    "diff": diff,
+                });
+                return Some(TrajectoryChunk::new(
+                    &trace.session_id,
+                    &trace.adapter,
+                    ChunkKind::ToolInvocation,
+                    event.sequence as usize,
+                    event.timestamp.to_rfc3339(),
+                    truncate_text(&text, self.max_chunk_chars),
+                    metadata.to_string(),
+                ));
             }
             _ => {}
         }
@@ -679,7 +677,11 @@ fn truncate_text(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}... [truncated]", &s[..max_len])
+        let mut boundary = max_len;
+        while !s.is_char_boundary(boundary) && boundary > 0 {
+            boundary -= 1;
+        }
+        format!("{}... [truncated]", &s[..boundary])
     }
 }
 
@@ -875,5 +877,24 @@ mod tests {
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].kind, ChunkKind::SessionSummary);
         assert!(chunks[0].text_content.contains("No explicit user prompt"));
+    }
+
+    #[test]
+    fn test_truncate_text_utf8_char_boundaries() {
+        // String with multibyte characters: emoji (4 bytes), em-dash (3 bytes), Chinese characters (3 bytes)
+        let s = "Hello 🚀 world — 测试文本 extra long string for testing truncation boundary";
+        // Find a byte offset that lands in the middle of the emoji (bytes 6..10)
+        let truncated_at_7 = truncate_text(s, 7);
+        assert_eq!(truncated_at_7, "Hello ... [truncated]");
+
+        // Find a byte offset that lands inside the em-dash
+        let em_dash_offset = s.find('—').unwrap();
+        let truncated_inside_dash = truncate_text(s, em_dash_offset + 1);
+        assert!(truncated_inside_dash.ends_with("... [truncated]"));
+        // Does not panic and preserves valid UTF-8
+        assert_eq!(truncated_inside_dash, format!("{}... [truncated]", &s[..em_dash_offset]));
+
+        // Exact length returns original string
+        assert_eq!(truncate_text("Hello 🚀", 10), "Hello 🚀");
     }
 }

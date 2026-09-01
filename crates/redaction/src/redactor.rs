@@ -1,5 +1,6 @@
 use crate::report::RedactionReport;
 use crate::rules::{default_rules, RedactionRule};
+use agentworth_outcomes::RecoverySignal;
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, NormalizedEvent, OutcomeEvidence, ShellCommand, ToolCall,
     ToolResult,
@@ -259,16 +260,18 @@ impl Redactor {
         trace: &AgentWorthTrace,
         report: &mut Option<&mut RedactionReport>,
     ) -> AgentWorthTrace {
+        let augmented = self.with_repository_identity_rule(&trace.provenance.source_path);
+
         let mut sanitized_provenance = trace.provenance.clone();
         sanitized_provenance.source_path =
-            self.redact_text_internal(&trace.provenance.source_path, report);
+            augmented.redact_text_internal(&trace.provenance.source_path, report);
 
-        let sanitized_metadata = self.redact_json_internal(&trace.metadata, report);
+        let sanitized_metadata = augmented.redact_json_internal(&trace.metadata, report);
 
         let sanitized_events = trace
             .events
             .iter()
-            .map(|e| self.redact_event_internal(e, report))
+            .map(|e| augmented.redact_event_internal(e, report))
             .collect();
 
         AgentWorthTrace {
@@ -281,5 +284,72 @@ impl Redactor {
             events: sanitized_events,
             metadata: sanitized_metadata,
         }
+    }
+
+    /// Returns a copy of this redactor with an extra rule added that masks this session's own
+    /// repository/workspace identity, if one can be derived from `source_path`. A plain clone
+    /// (no-op addition) when it can't -- see [`crate::rules::repository_identity_rule`].
+    fn with_repository_identity_rule(&self, source_path: &str) -> Self {
+        let mut augmented = self.clone();
+        let identity = agentworth_schema::extract_repository_or_workspace(source_path);
+        if let Some(rule) = crate::rules::repository_identity_rule(&identity) {
+            augmented.add_rule(rule);
+        }
+        augmented
+    }
+
+    /// Returns a copy of this redactor augmented with `trace`'s own repository/workspace
+    /// identity rule -- the same augmentation [`Redactor::redact_trace`] applies internally,
+    /// exposed so callers can redact auxiliary data derived from a trace but not part of the
+    /// `AgentWorthTrace` struct itself (outcome evidence, recovery signals, and similar), which
+    /// [`Redactor::redact_trace`] alone doesn't touch. Call this once, then use the *same*
+    /// returned instance for [`Redactor::redact_trace`] and for
+    /// [`Redactor::redact_outcome_evidence`] / [`Redactor::redact_recovery_signal`] on that
+    /// trace's own outcomes/recoveries, so repository identity gets masked consistently across
+    /// all three rather than only on the trace object.
+    pub fn for_trace(&self, trace: &AgentWorthTrace) -> Self {
+        self.with_repository_identity_rule(&trace.provenance.source_path)
+    }
+
+    /// Redacts free-text fields on outcome evidence.
+    ///
+    /// `OutcomeEvidence.summary` is derived from event content and can carry the same secrets
+    /// an event can, but nothing redacts it today -- [`Redactor::redact_trace`] only ever walks
+    /// `trace.events`, `trace.provenance`, and `trace.metadata`. Resolves the gap
+    /// `docs/specs/mcp-server.md`'s `session_get` design flagged as new, unbuilt work. Call this
+    /// on the same (optionally [`Redactor::for_trace`]-augmented) instance used to redact the
+    /// trace itself, so repository/workspace identity gets masked here too.
+    pub fn redact_outcome_evidence(&self, evidence: &[OutcomeEvidence]) -> Vec<OutcomeEvidence> {
+        evidence
+            .iter()
+            .map(|e| OutcomeEvidence {
+                kind: e.kind,
+                summary: self.redact_text(&e.summary),
+                confidence: e.confidence,
+            })
+            .collect()
+    }
+
+    /// Redacts free-text fields on recovery signals -- `failure_summary`/`recovery_summary` are
+    /// derived from event content, and `correlated_files` carries real file paths. Same gap and
+    /// same usage note as [`Redactor::redact_outcome_evidence`] above.
+    pub fn redact_recovery_signal(&self, signals: &[RecoverySignal]) -> Vec<RecoverySignal> {
+        signals
+            .iter()
+            .map(|s| RecoverySignal {
+                failure_sequence: s.failure_sequence,
+                failure_summary: self.redact_text(&s.failure_summary),
+                recovery_sequence: s.recovery_sequence,
+                recovery_summary: self.redact_text(&s.recovery_summary),
+                steps_to_recover: s.steps_to_recover,
+                duration_seconds: s.duration_seconds,
+                corrective_actions_count: s.corrective_actions_count,
+                correlated_files: s
+                    .correlated_files
+                    .iter()
+                    .map(|f| self.redact_text(f))
+                    .collect(),
+            })
+            .collect()
     }
 }
