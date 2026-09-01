@@ -197,6 +197,11 @@ enum Commands {
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
 
+        /// Group the rollup by model instead of adapter (e.g. how many tokens
+        /// each of claude-opus-5 / claude-sonnet-5 / claude-fable-5 used)
+        #[arg(long)]
+        by_model: bool,
+
         /// Output usage data as JSON
         #[arg(long)]
         json: bool,
@@ -287,9 +292,10 @@ fn main() -> Result<()> {
             pacing,
             hours,
             limit,
+            by_model,
             json,
         } => {
-            run_usage_command(&period, pacing, hours, limit, json, cli.db_path)?;
+            run_usage_command(&period, pacing, hours, limit, by_model, json, cli.db_path)?;
         }
         Commands::Blame { file_path, json } => {
             run_blame_command(&file_path, json, cli.db_path)?;
@@ -793,9 +799,27 @@ fn run_traces_command(
     }
 
     if json {
+        // When filtering by model, the session-wide `total_tokens` can be misleading
+        // for a multi-model session (it's every model's usage, not just the matched
+        // one) — so also surface the matched model's own contribution.
+        let model_needle = filter.model.as_deref().map(|m| m.to_lowercase());
+
         let json_rows: Vec<_> = rows
             .iter()
             .map(|(badge, score, kind, s)| {
+                let model_filter_tokens: Option<u64> = model_needle.as_deref().and_then(|needle| {
+                    match storage.get_session_model_usage(&s.session_id) {
+                        Ok(usages) if !usages.is_empty() => Some(
+                            usages
+                                .iter()
+                                .filter(|(m, _)| m.to_lowercase().contains(needle))
+                                .map(|(_, u)| u.total())
+                                .sum(),
+                        ),
+                        _ => None,
+                    }
+                });
+
                 json!({
                     "session_id": s.session_id,
                     "adapter": s.adapter,
@@ -809,6 +833,7 @@ fn run_traces_command(
                     "verdict_badge": badge,
                     "primary_outcome": kind.map(|k| format!("{:?}", k)),
                     "score": score,
+                    "model_filter_tokens": model_filter_tokens,
                 })
             })
             .collect();
@@ -1865,6 +1890,7 @@ fn run_usage_command(
     pacing: bool,
     hours: i64,
     limit: usize,
+    by_model: bool,
     json: bool,
     db_path: Option<PathBuf>,
 ) -> Result<()> {
@@ -1959,6 +1985,97 @@ fn run_usage_command(
             style("└──────────────────────────────────────────────────────────┘").bold()
         );
         println!();
+        return Ok(());
+    }
+
+    if by_model {
+        let records = storage.get_model_usage(period, limit)?;
+
+        if json {
+            println!("{}", serde_json::to_string_pretty(&records)?);
+            return Ok(());
+        }
+
+        if records.is_empty() {
+            println!("No usage records found. Run `agwt scan` to index local sessions.");
+            return Ok(());
+        }
+
+        let title = match period {
+            "week" => "📅 AgentWorth Weekly Usage Rollup (by model)",
+            "month" => "🗓️  AgentWorth Monthly Usage Rollup (by model)",
+            _ => "📊 AgentWorth Daily Usage Ledger (by model)",
+        };
+
+        println!();
+        println!("{}", style(format!("┌─ {} ───────────────────────────────────────────┐", title)).bold());
+        println!(
+            "{}",
+            style("├────────────┬─────────────┬───────────┬────────────┬────────────┬────────────┬───────────┤").bold()
+        );
+        println!(
+            "│ {:<10} │ {:<11} │ {:<9} │ {:<10} │ {:<10} │ {:<10} │ {:<9} │",
+            style("PERIOD").bold(),
+            style("MODEL").bold(),
+            style("SESSIONS").bold(),
+            style("INPUT").bold(),
+            style("OUTPUT").bold(),
+            style("CACHE READ").bold(),
+            style("EST. COST").bold()
+        );
+        println!(
+            "{}",
+            style("├────────────┼─────────────┼───────────┼────────────┼────────────┼────────────┼───────────┤").bold()
+        );
+
+        let mut total_sessions = 0;
+        let mut total_tokens = 0;
+        let mut total_cost = 0.0;
+
+        for r in &records {
+            total_sessions += r.session_count;
+            total_tokens += r.total_tokens;
+            total_cost += r.estimated_cost_usd;
+
+            let model_disp = if r.model.len() > 11 {
+                format!("{}...", &r.model[..8])
+            } else {
+                r.model.clone()
+            };
+            let input_disp = format_number(r.input_tokens);
+            let output_disp = format_number(r.output_tokens);
+            let cache_disp = format_number(r.cache_read_tokens);
+            let cost_disp = format!("${:.2}", r.estimated_cost_usd);
+
+            println!(
+                "│ {:<10} │ {:<11} │ {:>9} │ {:>10} │ {:>10} │ {:>10} │ {:>9} │",
+                style(&r.period).cyan(),
+                style(model_disp).green(),
+                r.session_count,
+                input_disp,
+                output_disp,
+                cache_disp,
+                style(cost_disp).magenta()
+            );
+        }
+
+        println!(
+            "{}",
+            style("├────────────┴─────────────┼───────────┼────────────┴────────────┼────────────┼───────────┤").bold()
+        );
+        println!(
+            "│ TOTAL (Displayed)        │ {:>9} │ {:<23} │ {:>10} │ {:>9} │",
+            style(total_sessions).bold(),
+            "",
+            style(format_number(total_tokens)).bold(),
+            style(format!("${:.2}", total_cost)).bold().magenta()
+        );
+        println!(
+            "{}",
+            style("└──────────────────────────┴───────────┴─────────────────────────┴────────────┴───────────┘").bold()
+        );
+        println!();
+
         return Ok(());
     }
 

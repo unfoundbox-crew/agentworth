@@ -825,6 +825,62 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_multi_model_session_tracks_per_model_usage() {
+        let mut temp = NamedTempFile::new().unwrap();
+        // A session where the primary model delegates to a subagent running a
+        // different model, then hands back — the shape that made session-level
+        // token totals unusable for a per-model cost/usage breakdown.
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Delegate the search to a subagent"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-opus-5","usage":{"input_tokens":500,"output_tokens":120,"cache_read_input_tokens":200,"cache_creation_input_tokens":50},"content":[{"type":"text","text":"Delegating."}]}
+{"type":"assistant","timestamp":"2026-08-29T10:00:10Z","model":"claude-fable-5","usage":{"input_tokens":300,"output_tokens":80,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Subagent result."}]}
+{"type":"assistant","timestamp":"2026-08-29T10:00:15Z","model":"claude-opus-5","usage":{"input_tokens":100,"output_tokens":40,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Done."}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+        let trace = result.trace;
+
+        assert_eq!(
+            trace.stats.models_used,
+            vec!["claude-opus-5".to_string(), "claude-fable-5".to_string()]
+        );
+
+        // Opus ran twice (500+100 in, 120+40 out, plus its cache activity); Fable ran once.
+        let opus_usage = trace
+            .stats
+            .per_model_token_usage
+            .get("claude-opus-5")
+            .expect("opus usage present");
+        assert_eq!(opus_usage.input_tokens, 600);
+        assert_eq!(opus_usage.output_tokens, 160);
+        assert_eq!(opus_usage.cache_read_tokens, 200);
+        assert_eq!(opus_usage.cache_creation_tokens, 50);
+
+        let fable_usage = trace
+            .stats
+            .per_model_token_usage
+            .get("claude-fable-5")
+            .expect("fable usage present");
+        assert_eq!(fable_usage.input_tokens, 300);
+        assert_eq!(fable_usage.output_tokens, 80);
+        assert_eq!(fable_usage.cache_read_tokens, 0);
+        assert_eq!(fable_usage.cache_creation_tokens, 0);
+
+        // The pre-existing flat aggregate is untouched (backward compat).
+        assert_eq!(trace.stats.token_usage.input_tokens, 900);
+        assert_eq!(trace.stats.token_usage.output_tokens, 240);
+        assert_eq!(trace.stats.token_usage.cache_read_tokens, 200);
+        assert_eq!(trace.stats.token_usage.cache_creation_tokens, 50);
+        assert_eq!(
+            opus_usage.total() + fable_usage.total(),
+            trace.stats.token_usage.total()
+        );
+    }
+
+    #[test]
     fn test_parse_graceful_on_malformed_lines() {
         let mut temp = NamedTempFile::new().unwrap();
         let sample = "{\"type\":\"user\",\"content\":\"hello\"}\n{CORRUPT_JSON}\n{\"type\":\"assistant\",\"content\":\"hi\"}\n";
