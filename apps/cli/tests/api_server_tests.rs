@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use agentworth_cli::server::{create_router, AppState};
 use agentworth_core::Scanner;
-use agentworth_schema::{AgentWorthTrace, Provenance, TokenUsage};
+use agentworth_schema::{
+    AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, Provenance, TokenUsage,
+};
 use agentworth_storage::Storage;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -664,7 +666,7 @@ async fn test_api_get_blame_endpoint() {
     let (app, storage, _) = setup_test_app(None);
 
     let prov = Provenance::new(
-        "/Users/dev/code/engine/src/pipeline.rs.jsonl",
+        "/Users/dev/.claude/projects/-Users-dev-code-engine/sess-blame-abc.jsonl",
         "claude_code",
         1024,
         1700000000,
@@ -674,6 +676,16 @@ async fn test_api_get_blame_endpoint() {
     trace.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
     trace.stats.tools_used.insert("replace_file_content".to_string(), 4);
     trace.stats.token_usage = TokenUsage::new(4000, 1000, 0, 0);
+    trace.events.push(NormalizedEvent::new(
+        1,
+        Utc::now(),
+        EventPayload::FileAction {
+            path: "src/pipeline.rs".to_string(),
+            action: FileActionType::Edit,
+            diff: None,
+            lines_changed: None,
+        },
+    ));
     storage.upsert_trace(&trace).expect("upsert blame trace");
 
     let (status, matches) = request_json(app, "GET", "/api/blame?file=pipeline.rs", None).await;
@@ -683,6 +695,8 @@ async fn test_api_get_blame_endpoint() {
     assert_eq!(arr[0]["session_id"], "sess_blame_abc");
     assert_eq!(arr[0]["adapter"], "claude_code");
     assert_eq!(arr[0]["total_tokens"], 5000);
+    assert_eq!(arr[0]["file_path"], "src/pipeline.rs");
+    assert_eq!(arr[0]["action"], "edit");
 }
 
 #[tokio::test]

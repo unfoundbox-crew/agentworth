@@ -583,21 +583,37 @@ fn parse_claude_record(
                                     }
                                 } else if raw_name == "FileEdit"
                                     || raw_name == "Edit"
+                                    || raw_name == "MultiEdit"
                                     || raw_name == "Write"
+                                    || raw_name == "NotebookEdit"
                                     || raw_name == "create_file"
                                     || name.ends_with(":edit_file")
                                     || name.ends_with(":write_file")
                                     || name.ends_with(":text_editor")
                                 {
+                                    // NotebookEdit addresses the target file via `notebook_path`,
+                                    // not `file_path`; every other Claude Code file-editing tool
+                                    // uses `file_path` (MultiEdit predates its Oct-2025 removal
+                                    // but historical session logs still carry it).
                                     let path = input
                                         .get("file_path")
                                         .or_else(|| input.get("path"))
                                         .or_else(|| input.get("target_file"))
+                                        .or_else(|| input.get("notebook_path"))
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("")
                                         .to_string();
 
                                     if !path.is_empty() {
+                                        let action = if raw_name == "Write"
+                                            || raw_name == "create_file"
+                                            || name.ends_with(":write_file")
+                                        {
+                                            FileActionType::Write
+                                        } else {
+                                            FileActionType::Edit
+                                        };
+
                                         *seq += 1;
                                         events.push(
                                             NormalizedEvent::new(
@@ -605,7 +621,7 @@ fn parse_claude_record(
                                                 ts,
                                                 EventPayload::FileAction {
                                                     path,
-                                                    action: FileActionType::Edit,
+                                                    action,
                                                     diff: input
                                                         .get("diff")
                                                         .and_then(|v| v.as_str())
@@ -875,6 +891,42 @@ mod tests {
         assert_eq!(
             trace.stats.tools_used.get("mcp:developer:text_editor"),
             Some(&1)
+        );
+    }
+
+    #[test]
+    fn test_parse_claude_file_action_tool_variants() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"type":"assistant","timestamp":"2026-08-29T10:00:01Z","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"src/session.rs","old_string":"a","new_string":"b"}}]}
+{"type":"assistant","timestamp":"2026-08-29T10:00:02Z","content":[{"type":"tool_use","id":"t2","name":"Write","input":{"file_path":"src/new_file.rs","content":"fn main() {}"}}]}
+{"type":"assistant","timestamp":"2026-08-29T10:00:03Z","content":[{"type":"tool_use","id":"t3","name":"MultiEdit","input":{"file_path":"src/session.rs","edits":[{"old_string":"c","new_string":"d"}]}}]}
+{"type":"assistant","timestamp":"2026-08-29T10:00:04Z","content":[{"type":"tool_use","id":"t4","name":"NotebookEdit","input":{"notebook_path":"analysis.ipynb","cell_id":"abc123","new_source":"print(1)"}}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        let file_actions: Vec<_> = result
+            .trace
+            .events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::FileAction { path, action, .. } => Some((path.clone(), *action)),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            file_actions,
+            vec![
+                ("src/session.rs".to_string(), FileActionType::Edit),
+                ("src/new_file.rs".to_string(), FileActionType::Write),
+                ("src/session.rs".to_string(), FileActionType::Edit),
+                ("analysis.ipynb".to_string(), FileActionType::Edit),
+            ]
         );
     }
 }
