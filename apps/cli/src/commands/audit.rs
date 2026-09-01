@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use crate::commands::{is_high_risk_rm_path, is_leaked_katana_var, APOLOGY_PATTERNS};
 use agentworth_core::Scanner;
-use agentworth_schema::{AgentWorthTrace, EventPayload};
+use agentworth_redaction::{RedactionCategory, RedactionReport, Redactor};
+use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent};
 use agentworth_storage::{extract_repository_or_workspace, SessionFilter, Storage};
 use anyhow::Result;
 use console::style;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 /// Severity levels for forensic safety findings.
@@ -83,14 +83,15 @@ pub fn run_audit_command(
         findings: Vec::new(),
     };
 
-    let cred_regex = Regex::new(
-        r"(?i)(sk-ant-[a-zA-Z0-9_\-]{20,}|sk-proj-[a-zA-Z0-9_\-]{20,}|ghp_[a-zA-Z0-9]{36}|AIzaSy[a-zA-Z0-9_\-]{33}|AKIA[0-9A-Z]{16}|bearer\s+eyJ[a-zA-Z0-9_\-\.]{20,}|(?:OPENAI|ANTHROPIC|GITHUB|AWS)_[A-Z_]*KEY\s*=\s*[^\s]+|-----BEGIN [A-Z ]*PRIVATE KEY-----)"
-    ).unwrap();
+    // Shared with `agentworth threat-digest` and `agentworth export --redact` -- using the
+    // same `Redactor` here means `agwt audit --safety` can no longer disagree with either of
+    // them about what counts as a leaked secret. See `detect_credential_leak` below.
+    let redactor = Redactor::new();
 
     for sess in &all_sessions {
         if let Ok(trace) = scanner.load_trace(&sess.session_id) {
             let project = extract_repository_or_workspace(&sess.source_path);
-            audit_trace(&trace, &project, safety_only, &cred_regex, &mut report);
+            audit_trace(&trace, &project, safety_only, &redactor, &mut report);
         }
     }
 
@@ -124,7 +125,7 @@ fn audit_trace(
     trace: &AgentWorthTrace,
     project: &str,
     safety_only: bool,
-    cred_regex: &Regex,
+    redactor: &Redactor,
     report: &mut SafetyAuditReport,
 ) {
     let mut had_failed_test = false;
@@ -135,6 +136,17 @@ fn audit_trace(
     for (idx, event) in trace.events.iter().enumerate() {
         let turn_num = event.sequence as usize;
         let ts = event.timestamp.to_rfc3339();
+
+        // Runs for every event kind, unconditionally (a leaked secret is a safety concern
+        // whether or not `--safety` was passed -- matches how the credential checks below used
+        // to run unconditionally too, before this call replaced them). See
+        // `detect_credential_leak` for why this now covers every event kind instead of just
+        // ShellCommand/ToolCall/UserMessage.
+        if let Some(finding) = detect_credential_leak(event, redactor, trace, project, turn_num, &ts)
+        {
+            report.high_count += 1;
+            report.findings.push(finding);
+        }
 
         match &event.payload {
             // 1. Shell Command Checks
@@ -218,65 +230,9 @@ fn audit_trace(
                         project: project.to_string(),
                     });
                 }
-
-                // Check Credential Leaks in shell commands
-                if let Some(mat) = cred_regex.find(cmd_str) {
-                    report.high_count += 1;
-                    report.findings.push(SafetyFinding {
-                        severity: SafetySeverity::High,
-                        session_id: trace.session_id.clone(),
-                        adapter: trace.adapter.clone(),
-                        timestamp: ts.clone(),
-                        rule_id: "CREDENTIAL_LEAK".to_string(),
-                        title: "Exposed API Key / Secret in Shell Command".to_string(),
-                        description: "Agent logged or executed a shell command containing an unmasked API key or authentication token.".to_string(),
-                        offending_snippet: sanitize_snippet(cmd_str, mat.as_str()),
-                        turn_index: turn_num,
-                        project: project.to_string(),
-                    });
-                }
             }
 
-            // 2. Tool Call Checks
-            EventPayload::ToolCall(tool) => {
-                let args_str = tool.arguments.to_string();
-                if let Some(mat) = cred_regex.find(&args_str) {
-                    report.high_count += 1;
-                    report.findings.push(SafetyFinding {
-                        severity: SafetySeverity::High,
-                        session_id: trace.session_id.clone(),
-                        adapter: trace.adapter.clone(),
-                        timestamp: ts.clone(),
-                        rule_id: "CREDENTIAL_LEAK".to_string(),
-                        title: format!("Exposed Secret in Tool '{}'", tool.name),
-                        description: "Tool arguments payload contained plaintext secrets or credentials.".to_string(),
-                        offending_snippet: sanitize_snippet(&args_str, mat.as_str()),
-                        turn_index: turn_num,
-                        project: project.to_string(),
-                    });
-                }
-            }
-
-            // 3. User Message Credential Checks
-            EventPayload::UserMessage { content } => {
-                if let Some(mat) = cred_regex.find(content) {
-                    report.high_count += 1;
-                    report.findings.push(SafetyFinding {
-                        severity: SafetySeverity::High,
-                        session_id: trace.session_id.clone(),
-                        adapter: trace.adapter.clone(),
-                        timestamp: ts.clone(),
-                        rule_id: "CREDENTIAL_LEAK".to_string(),
-                        title: "Exposed Secret in User Prompt".to_string(),
-                        description: "User prompt history contains plaintext secrets or tokens.".to_string(),
-                        offending_snippet: sanitize_snippet(content, mat.as_str()),
-                        turn_index: turn_num,
-                        project: project.to_string(),
-                    });
-                }
-            }
-
-            // 4. Assistant Message Checks (Fake Claims & Apology Cascades - only when not safety_only)
+            // 2. Assistant Message Checks (Fake Claims & Apology Cascades - only when not safety_only)
             EventPayload::AssistantMessage { content, thinking } => {
                 if !safety_only {
                     let lower_content = content.to_lowercase();
@@ -412,9 +368,152 @@ fn is_fake_test_claim(content: &str) -> bool {
         || content.contains("测试全部通过")
 }
 
-fn sanitize_snippet(full_str: &str, matched_secret: &str) -> String {
-    let sanitized = full_str.replace(matched_secret, "[REDACTED_SECRET]");
-    truncate_str(&sanitized, 200)
+/// Redaction categories this audit treats as an actual leaked credential/secret: a named
+/// vendor key, a private key blob, a URL with embedded credentials, a bearer/JWT, a
+/// `KEY=`-shaped env var, a user-defined custom rule, or the high-entropy fallback for a
+/// novel/unrecognized secret format. This is the same Critical/High tier that
+/// `threat_digest::category_severity` scores a session by -- `FilePath`, `Email`, and
+/// `IpAddress` are deliberately excluded (threat_digest's Medium/Low tier): routine noise
+/// present in nearly every real session, not something to rotate. Without this filter, running
+/// the full `Redactor` over every event would turn "credential leak audit" into "flag every
+/// home directory path and email address," which is not what `agwt audit --safety` is for.
+const CREDENTIAL_CATEGORIES: [RedactionCategory; 7] = [
+    RedactionCategory::ApiKey,
+    RedactionCategory::PrivateKey,
+    RedactionCategory::Credential,
+    RedactionCategory::JwtToken,
+    RedactionCategory::EnvVar,
+    RedactionCategory::HighEntropySecret,
+    RedactionCategory::Custom,
+];
+
+/// Reads a single category's count out of a `RedactionReport`. Exhaustive match (mirrors
+/// `RedactionReport::add`'s own match over the same fields, in `crates/redaction/src/report.rs`)
+/// so a new `RedactionCategory` variant fails to compile here instead of silently reading zero.
+fn category_count(report: &RedactionReport, category: RedactionCategory) -> usize {
+    match category {
+        RedactionCategory::ApiKey => report.api_keys_count,
+        RedactionCategory::EnvVar => report.env_vars_count,
+        RedactionCategory::FilePath => report.paths_count,
+        RedactionCategory::Email => report.emails_count,
+        RedactionCategory::Credential => report.credentials_count,
+        RedactionCategory::JwtToken => report.jwt_tokens_count,
+        RedactionCategory::IpAddress => report.ip_addresses_count,
+        RedactionCategory::PrivateKey => report.private_keys_count,
+        RedactionCategory::HighEntropySecret => report.high_entropy_secrets_count,
+        RedactionCategory::Custom => report.custom_count,
+    }
+}
+
+/// Which of `CREDENTIAL_CATEGORIES` actually fired in `report`, in fixed declaration order.
+fn credential_categories_in(report: &RedactionReport) -> Vec<RedactionCategory> {
+    CREDENTIAL_CATEGORIES
+        .into_iter()
+        .filter(|&c| category_count(report, c) > 0)
+        .collect()
+}
+
+/// Human label for where a finding was found, for the safety report's `title` field.
+/// Presentation only -- unlike `credential_categories_in`, this does not need to be exhaustive
+/// for correctness. A new/uncommon event kind just falls back to its `EventType` debug name
+/// until someone gives it a nicer label; detection itself never depends on this function.
+fn event_kind_label(payload: &EventPayload) -> String {
+    match payload {
+        EventPayload::ShellCommand(_) => "Shell Command".to_string(),
+        EventPayload::ToolCall(tc) => format!("Tool Call '{}'", tc.name),
+        EventPayload::ToolResult(tr) => match &tr.name {
+            Some(name) => format!("Tool Result '{}'", name),
+            None => "Tool Result".to_string(),
+        },
+        EventPayload::UserMessage { .. } => "User Prompt".to_string(),
+        EventPayload::AssistantMessage { .. } => "Assistant Response".to_string(),
+        EventPayload::FileAction { path, .. } => format!("File Action '{}'", path),
+        EventPayload::Error { .. } => "Error Message".to_string(),
+        EventPayload::ModelSwitch(_) => "Model Switch".to_string(),
+        EventPayload::HumanIntervention(_) => "Human Intervention".to_string(),
+        other => format!("{:?}", other.event_type()),
+    }
+}
+
+/// Best-effort human-readable text for a finding's `offending_snippet`, extracted from an
+/// *already-redacted* payload (see `detect_credential_leak`, which is the only caller) so this
+/// never has to re-derive which substring was the secret -- whatever it returns is always safe
+/// to display verbatim. The fallback (`other => format!("{:?}", other)`) covers event kinds
+/// unlikely to ever carry a credential (`ModelInvocation`, `OutcomeEvidence`, `Custom`) with a
+/// plain struct dump rather than a bespoke branch for each.
+fn snippet_from_payload(payload: &EventPayload) -> String {
+    match payload {
+        EventPayload::ShellCommand(cmd) => {
+            let mut parts = vec![cmd.command.clone()];
+            if let Some(out) = &cmd.output {
+                parts.push(format!("output: {}", out));
+            }
+            parts.join(" | ")
+        }
+        EventPayload::ToolCall(tc) => format!("{}({})", tc.name, tc.arguments),
+        EventPayload::ToolResult(tr) => tr.output.to_string(),
+        EventPayload::UserMessage { content } => content.clone(),
+        EventPayload::AssistantMessage { content, .. } => content.clone(),
+        EventPayload::FileAction { diff, path, .. } => diff.clone().unwrap_or_else(|| path.clone()),
+        EventPayload::Error { message, .. } => message.clone(),
+        EventPayload::ModelSwitch(ms) => format!(
+            "{} -> {}{}",
+            ms.from_model.as_deref().unwrap_or("?"),
+            ms.to_model,
+            ms.reason.as_ref().map(|r| format!(" ({})", r)).unwrap_or_default()
+        ),
+        EventPayload::HumanIntervention(hi) => match &hi.details {
+            Some(d) => format!("{}: {}", hi.action, d),
+            None => hi.action.clone(),
+        },
+        other => format!("{:?}", other),
+    }
+}
+
+/// Scans one event for a leaked credential/secret via the shared `Redactor` -- the same rule
+/// set `agentworth threat-digest` and `agentworth export --redact` use, so `agwt audit --safety`
+/// can no longer disagree with either of them about what counts as a leak. Runs over the
+/// *whole* event via `Redactor::redact_event_with_counts`, which already knows the full field
+/// list for every event kind (command/cwd/output for a shell command, name/arguments for a tool
+/// call, output for a tool result, content/thinking for messages, and so on) -- so this covers
+/// every event kind Redactor covers, not just the three the old hand-rolled regex checked.
+///
+/// Runs unconditionally regardless of `safety_only`: a leaked credential is a safety concern in
+/// both modes, matching how the old ShellCommand/ToolCall/UserMessage checks were never gated
+/// behind `safety_only` either (only the fake-test-claim/apology-cascade *quality* checks are).
+fn detect_credential_leak(
+    event: &NormalizedEvent,
+    redactor: &Redactor,
+    trace: &AgentWorthTrace,
+    project: &str,
+    turn_num: usize,
+    ts: &str,
+) -> Option<SafetyFinding> {
+    let mut event_report = RedactionReport::new();
+    let redacted_event = redactor.redact_event_with_counts(event, &mut event_report);
+
+    let categories = credential_categories_in(&event_report);
+    if categories.is_empty() {
+        return None;
+    }
+
+    let category_names: Vec<String> = categories.iter().map(|c| c.to_string()).collect();
+
+    Some(SafetyFinding {
+        severity: SafetySeverity::High,
+        session_id: trace.session_id.clone(),
+        adapter: trace.adapter.clone(),
+        timestamp: ts.to_string(),
+        rule_id: "CREDENTIAL_LEAK".to_string(),
+        title: format!("Exposed Secret in {}", event_kind_label(&event.payload)),
+        description: format!(
+            "Event content contained plaintext secrets or credentials ({}).",
+            category_names.join(", ")
+        ),
+        offending_snippet: truncate_str(&snippet_from_payload(&redacted_event.payload), 200),
+        turn_index: turn_num,
+        project: project.to_string(),
+    })
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
@@ -555,8 +654,9 @@ fn wrap_line(text: &str, max_width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentworth_schema::{NormalizedEvent, Provenance, ShellCommand};
+    use agentworth_schema::{NormalizedEvent, Provenance, ShellCommand, ToolResult};
     use chrono::Utc;
+    use serde_json::json;
 
     #[test]
     fn test_audit_safety_only_filters_warn_checks() {
@@ -602,13 +702,11 @@ mod tests {
             },
         ));
 
-        let cred_regex = Regex::new(
-            r"(?i)(sk-ant-[a-zA-Z0-9_\-]{20,}|sk-proj-[a-zA-Z0-9_\-]{20,})"
-        ).unwrap();
+        let redactor = Redactor::new();
 
         // 1. Audit with safety_only = false (standard mode: both safety and quality warnings)
         let mut full_report = SafetyAuditReport::default();
-        audit_trace(&trace, "test-proj", false, &cred_regex, &mut full_report);
+        audit_trace(&trace, "test-proj", false, &redactor, &mut full_report);
         assert_eq!(full_report.critical_count, 1);
         assert_eq!(full_report.warn_count, 1);
         assert_eq!(full_report.findings.len(), 2);
@@ -617,10 +715,128 @@ mod tests {
 
         // 2. Audit with safety_only = true (safety-only mode: only critical/high safety threats)
         let mut safety_report = SafetyAuditReport::default();
-        audit_trace(&trace, "test-proj", true, &cred_regex, &mut safety_report);
+        audit_trace(&trace, "test-proj", true, &redactor, &mut safety_report);
         assert_eq!(safety_report.critical_count, 1);
         assert_eq!(safety_report.warn_count, 0);
         assert_eq!(safety_report.findings.len(), 1);
         assert_eq!(safety_report.findings[0].rule_id, "LEAKED_SHELL_VARIABLE");
+    }
+
+    /// Proves the two coverage gaps the hand-rolled `cred_regex` had, both called out in the
+    /// dispatch brief: (1) it only ever checked ShellCommand/ToolCall/UserMessage, never
+    /// ToolResult or AssistantMessage; (2) it had no high-entropy fallback, so a real secret in
+    /// a format with no recognized vendor prefix sailed through undetected. Uses the redaction
+    /// crate's own `Redactor` (via `audit_trace`) to prove both are now caught, and that each
+    /// still surfaces through the same `CREDENTIAL_LEAK` rule_id / `High` severity `audit
+    /// --safety` already used for the three original event kinds.
+    #[test]
+    fn test_credential_leak_covers_new_event_kinds_and_high_entropy_fallback() {
+        let start = Utc::now();
+        let prov = Provenance::new("/test/path.jsonl", "claude_code", 100, 12345, "fp124");
+        let mut trace = AgentWorthTrace::new("sess-secret-test", "claude_code", prov, start);
+
+        // Turn 1: a ToolResult carrying a *newer*-format GitHub PAT (`github_pat_...`) in its
+        // output -- a format the old regex's `ghp_[a-zA-Z0-9]{36}` alternative never matched at
+        // all, and ToolResult is an event kind the old code never inspected for credentials.
+        let github_pat_body = format!("11{}", "ABCDEFGHIJ".repeat(7)); // 72 chars, within {60,100}
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::ToolResult(ToolResult {
+                call_id: Some("t1".to_string()),
+                name: Some("Bash".to_string()),
+                output: json!(format!("token: github_pat_{github_pat_body}")),
+                is_error: false,
+            }),
+        ));
+
+        // Turn 2: an AssistantMessage containing a high-entropy secret with no recognized vendor
+        // prefix -- exactly the shape the old code had *no* fallback for at all, and
+        // AssistantMessage is another event kind the old code never credential-scanned.
+        let high_entropy_secret = "K7xQ2mZpL9vNaC4tRfY6sJ1hWbE8dU3o"; // 32 chars, ~5 bits/char
+        trace.events.push(NormalizedEvent::new(
+            2,
+            start,
+            EventPayload::AssistantMessage {
+                content: format!("Sure, here's the token you asked for: {high_entropy_secret}"),
+                thinking: None,
+            },
+        ));
+
+        let redactor = Redactor::new();
+        let mut report = SafetyAuditReport::default();
+        audit_trace(&trace, "test-proj", true, &redactor, &mut report);
+
+        let leaks: Vec<&SafetyFinding> = report
+            .findings
+            .iter()
+            .filter(|f| f.rule_id == "CREDENTIAL_LEAK")
+            .collect();
+        assert_eq!(
+            leaks.len(),
+            2,
+            "expected one CREDENTIAL_LEAK finding per event, got: {:?}",
+            report.findings
+        );
+        assert!(leaks.iter().all(|f| f.severity == SafetySeverity::High));
+
+        let tool_result_leak = leaks
+            .iter()
+            .find(|f| f.turn_index == 1)
+            .expect("ToolResult credential leak detected");
+        assert!(tool_result_leak.description.contains("API Key"));
+        assert!(!tool_result_leak.offending_snippet.contains(&github_pat_body));
+
+        let assistant_leak = leaks
+            .iter()
+            .find(|f| f.turn_index == 2)
+            .expect("AssistantMessage credential leak detected");
+        assert!(assistant_leak.description.contains("High-Entropy Secret"));
+        assert!(!assistant_leak.offending_snippet.contains(high_entropy_secret));
+
+        // Sanity check against the redaction crate directly: proves this isn't a coincidence of
+        // the test's own regex but a real property of the shared default rule set.
+        assert!(Redactor::new().redact_text(high_entropy_secret) != high_entropy_secret);
+    }
+
+    /// Negative case: routine PII (a home path, an email, a private IP) must *not* trigger
+    /// `CREDENTIAL_LEAK`, even though `Redactor` itself does redact all three. Without this
+    /// filter, scanning every event with the full `Redactor` would turn "credential leak audit"
+    /// into "flag every file path," which would make `agwt audit --safety` useless noise on
+    /// almost every real session.
+    ///
+    /// Uses a `ToolResult` fixture rather than `ShellCommand` deliberately: `audit_trace`'s
+    /// `EventPayload::ShellCommand` arm has a separate, pre-existing bug (unrelated to this
+    /// change, not fixed here -- flagged instead, see `docs/DECISION-INBOX.md`) where its
+    /// rm-detection `if/else-if/else` has no guard confirming the command is actually an `rm`
+    /// before falling through to an unconditional `RECURSIVE_DELETION` finding. A `ShellCommand`
+    /// fixture here would trip that unrelated bug and make this test's failure ambiguous about
+    /// which behavior broke.
+    #[test]
+    fn test_credential_leak_does_not_fire_on_routine_pii_categories() {
+        let start = Utc::now();
+        let prov = Provenance::new("/test/path.jsonl", "claude_code", 100, 12345, "fp125");
+        let mut trace = AgentWorthTrace::new("sess-pii-only", "claude_code", prov, start);
+
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::ToolResult(ToolResult {
+                call_id: Some("t1".to_string()),
+                name: Some("ls".to_string()),
+                output: json!("contact me@example.com from /Users/dev/project at 192.168.1.5"),
+                is_error: false,
+            }),
+        ));
+
+        let redactor = Redactor::new();
+        let mut report = SafetyAuditReport::default();
+        audit_trace(&trace, "test-proj", true, &redactor, &mut report);
+
+        assert!(
+            report.findings.is_empty(),
+            "a home path / email / private IP alone must not read as a credential leak: {:?}",
+            report.findings
+        );
     }
 }

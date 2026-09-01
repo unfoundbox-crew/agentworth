@@ -492,6 +492,74 @@ fn test_cli_audit_command_safety_detection() {
         .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""));
 }
 
+/// End-to-end proof (real binary, real scan, real storage) that `agwt audit --safety` now
+/// shares `agentworth_redaction::Redactor`'s detection instead of the old hand-rolled
+/// `cred_regex`: a secret in a `ToolResult` (an event kind the old regex never inspected) and a
+/// newer-format `github_pat_...` token (a format the old regex never matched) both surface as
+/// `CREDENTIAL_LEAK` findings.
+#[test]
+fn test_cli_audit_command_detects_secrets_via_shared_redactor() {
+    let temp = tempdir().unwrap();
+    let claude_dir = temp.path().join(".claude").join("projects").join("secret-repo");
+    fs::create_dir_all(&claude_dir).unwrap();
+
+    let session_file = claude_dir.join("secret_session.jsonl");
+    let mut file = File::create(&session_file).unwrap();
+
+    // A high-entropy secret with no recognized vendor prefix, inside a ToolResult -- the old
+    // regex had no high-entropy fallback at all, and never inspected ToolResult output.
+    writeln!(
+        file,
+        r#"{{"type":"user","timestamp":"2026-08-31T11:00:00Z","content":"print the deploy token"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"tool_result","timestamp":"2026-08-31T11:00:02Z","tool_use_id":"t1","content":"deploy token: K7xQ2mZpL9vNaC4tRfY6sJ1hWbE8dU3o","is_error":false}}"#
+    )
+    .unwrap();
+    // A newer-format GitHub PAT (`github_pat_...`), inside an AssistantMessage -- the old
+    // regex's github alternative was `ghp_[a-zA-Z0-9]{{36}}` only, and never inspected assistant
+    // text for credentials at all.
+    writeln!(
+        file,
+        r#"{{"type":"assistant","timestamp":"2026-08-31T11:00:03Z","content":[{{"type":"text","text":"here: github_pat_11ABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJ"}}]}}"#
+    )
+    .unwrap();
+
+    let db_path = temp.path().join("test_agentworth.db");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    let mut audit_cmd = Command::cargo_bin("agwt").unwrap();
+    audit_cmd
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("audit")
+        .arg("--safety")
+        .arg("--json");
+
+    audit_cmd
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"rule_id\": \"CREDENTIAL_LEAK\""))
+        // Both secrets must be masked, never printed raw, in either finding's snippet.
+        .stdout(predicate::str::contains("K7xQ2mZpL9vNaC4tRfY6sJ1hWbE8dU3o").not())
+        .stdout(
+            predicate::str::contains(
+                "github_pat_11ABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJABCDEFGHIJ",
+            )
+            .not(),
+        );
+}
+
 #[test]
 fn test_cli_blunder_command() {
     let temp = tempdir().unwrap();
