@@ -18,6 +18,7 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 | Batch-2b (7 items dispatched, 4 deferred) | **Done — all 7 merged into integration branch.** | Final full-workspace build+test on the complete merge (batch-1 + batch-2 + SSE + all 7 batch-2b items together): 298 passed, 0 failed, 0 ignored. See table below |
 | `OutcomeKind` PascalCase/snake_case encoding fix | **Done, merged into integration branch.** | Real bug, confirmed against a peer session's live 10,188-session index. Root cause was one level deeper than reported — see findings below. 301 passed on lenovo |
 | Cost-Aware Task Router | Deferred, not scoped | Different shape of feature — needs a live per-agent hook, not an index query. Needs its own design pass |
+| PR #11 (Skill + Receipts) | **Done, verified and merged.** | Was open/unclaimed since 2026-08-31, real bugs found and fixed (unrelated adapter bug + fabricated CLI docs) — see PR #11 findings below |
 | Final PR + version bump | Not yet | Saurabh's call — one PR, one version bump, only once everything this session touches is done |
 
 ## Batch-2 findings (2026-09-01, verify-and-integrate pass)
@@ -160,5 +161,19 @@ Fixed: `fetchTraceDetail()` now normalizes via a shared `normalizeTokenUsage()` 
 
 - **This session**: all agentworth backend/CLI work — everything in the status table above.
 - **landing-page-ux-review session**: `feat/web-design-system` (PR #13), `feat/explorer-shell` (PR #14), `fix/launcher-self-recursion` (merged), the npm-publish/release/windows-target chain (PR #6, #10).
-- **Not currently claimed by anyone confirmed** — leave alone, ask Saurabh before touching: PR #9 (`docs/architecture`), PR #11 (`agentworth-skill-and-receipts`), PR #5 (`claude/trusting-volhard-dadc3e`).
+- **Not currently claimed by anyone confirmed** — leave alone, ask Saurabh before touching: PR #9 (`docs/architecture`), PR #5 (`claude/trusting-volhard-dadc3e`).
 - **Director role** (AgentWorth promo video coordination): don't proactively contact about agentworth work — ask Saurabh directly instead if something's needed from that side.
+
+## PR #11 findings (2026-09-01) — Skill + Receipts, verified and merged
+
+Adds `SKILL.md`, `apps/cli/src/commands/receipt.rs` (ANSI + SVG "Flight Receipt" rendering, `agwt receipt <SESSION_ID>` and `export --format receipt|svg`), `docs/SHOW_HN.md`, `docs/TRENDSHIFT.md`, a README rewrite. Was open and unclaimed since 2026-08-31; verify-and-land dispatched after today's repo-wide unbuilt-features audit flagged it as real, substantial, untested work.
+
+**Did not compile clean on the first try.** `cargo test --workspace` first run: 81 passed, 4 failed, and stopped there (cargo halts at the first red crate without `--no-fail-fast`) — meaning this PR's own tests never even ran until the failure was fixed. Root cause, unrelated to this PR's own diff and already present on `main` at this branch's base (`e1970a6`): `pi`/`herdr`/`openclaw`/`goose`'s `detect()` only checked whether the *passed* custom path was itself named after the adapter, with no fallback to look one level down — the other 16 adapters already handle this. Fixed with the same "direct hit, then check one level down" pattern; kept out the further WalkDir substring fallback (`pi` is a 2-letter substring with real false-positive risk on an unbounded walk).
+
+**SKILL.md had a fully invented `agentworth gym` command** (`--chaos-level`, `--scenario`, full options table) — zero implementation anywhere, confirmed by grep across the whole repo. Removed it, documented the real `receipt` command in its place (which had no docs at all before this fix). **Cross-repo lead, not confirmed**: today's separate worldtrainer audit found `worldtrainer.xyz`'s quickstart page references `npx agentworth gym --chaos-level 9` as real — that exact flag name only ever existed in this PR's now-fixed SKILL.md. Strong circumstantial match (same invented command, same invented flag), not a confirmed causal link — nobody checked commit dates or which side copied which.
+
+Also fixed: 4 more SKILL.md sections with invented flags on real commands (`scan`, `blunder`, `audit`, `export`, plus a wrong default port for `serve`), all checked against the real `Commands` enum in `main.rs`.
+
+**Staleness check against the integration branch**: merge-base is `e1970a6`, this branch's direct parent — predates every fix that landed on `integrate/handoff-batch-1` today. Diffed every symbol `receipt.rs` actually calls (`OutcomeKind`, `EventPayload` variants, `TraceScore` fields, `Scanner`/`Storage`/`RecoveryDetector`/`estimate_tokens_cost_usd`) against the integration tip, read-only — no breaking renames found, `receipt.rs` only reads fields and matches enums with wildcard arms, so nothing added elsewhere broke it.
+
+Verified on lenovo: 177 passed, 0 failed, 0 ignored, `cargo build --workspace` clean. Commits `db06270` (original) → `4df56f1` (adapter fix) → `e29955a` (SKILL.md fixes) → `5f779e9` (docs), all folded into the integration branch.

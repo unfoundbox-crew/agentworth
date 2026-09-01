@@ -135,14 +135,29 @@ enum Commands {
         #[arg(short, long)]
         redact: bool,
 
-        /// Export format: json (default) or atif
-        #[arg(short, long, default_value = "json", value_parser = ["json", "atif"])]
+        /// Export format: json (default), atif, receipt, or svg
+        #[arg(short, long, default_value = "json", value_parser = ["json", "atif", "receipt", "terminal", "ansi", "svg"])]
         format: String,
 
         /// Optional file path to write export output to (defaults to stdout)
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// Generate and render an authentic ANSI or SVG Flight Receipt for a trace session
+    Receipt {
+        /// The session ID to generate flight receipt for
+        session_id: String,
+
+        /// Output format: terminal (default), ansi, svg, receipt, or json
+        #[arg(short, long, default_value = "terminal", value_parser = ["terminal", "ansi", "svg", "receipt", "json"])]
+        format: String,
+
+        /// Optional file path to write receipt or SVG output to (defaults to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
 
     /// Semantic vector search across indexed trajectory turns with ASCII thermal receipts
     Search {
@@ -497,6 +512,14 @@ fn main() -> Result<()> {
         } => {
             run_export_command(&session_id, redact, &format, output.as_deref(), cli.db_path)?;
         }
+        Commands::Receipt {
+            session_id,
+            format,
+            output,
+        } => {
+            agentworth_cli::run_receipt_command(&session_id, &format, output, cli.db_path)?;
+        }
+
         Commands::Search {
             query,
             limit,
@@ -1690,10 +1713,21 @@ fn run_export_command(
         trace = agentworth_redaction::redact_trace(&trace);
     }
 
-    let output_content = match format {
+    let output_content = match format.to_lowercase().as_str() {
         "atif" => agentworth_export_atif::export_to_atif(&trace, true)?,
+        "svg" => {
+            let scorer = agentworth_scoring::TraceScorer::default();
+            let score = scorer.score(&trace);
+            agentworth_cli::render_svg_receipt(&trace, &score)
+        }
+        "receipt" | "terminal" | "ansi" => {
+            let scorer = agentworth_scoring::TraceScorer::default();
+            let score = scorer.score(&trace);
+            agentworth_cli::render_terminal_receipt(&trace, &score)
+        }
         _ => serde_json::to_string_pretty(&trace)?,
     };
+
 
     if let Some(out_path) = output {
         if let Some(parent) = out_path.parent() {

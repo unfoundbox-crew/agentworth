@@ -944,13 +944,23 @@ async fn post_export_handler(
     }
 
     let format = req.format.as_deref().unwrap_or("json");
-    let content = match format {
+    let content = match format.to_lowercase().as_str() {
         "atif" => agentworth_export_atif::export_to_atif(&trace, true).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": format!("ATIF export failed: {}", e) })),
             )
         })?,
+        "svg" => {
+            let scorer = TraceScorer::default();
+            let score = scorer.score(&trace);
+            crate::commands::receipt::render_svg_receipt(&trace, &score)
+        }
+        "receipt" | "terminal" | "ansi" => {
+            let scorer = TraceScorer::default();
+            let score = scorer.score(&trace);
+            crate::commands::receipt::render_terminal_receipt(&trace, &score)
+        }
         _ => serde_json::to_string_pretty(&trace).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -958,6 +968,7 @@ async fn post_export_handler(
             )
         })?,
     };
+
 
     Ok(Json(ExportResponse {
         session_id: id,
