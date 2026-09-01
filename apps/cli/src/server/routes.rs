@@ -211,12 +211,23 @@ async fn get_stats_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let storage = state.storage.clone();
 
+    // `limit: None` means genuinely unlimited (see SessionFilter::limit's doc comment in
+    // crates/storage/src/lib.rs). This used to be `Some(10000)`, which silently undercounted
+    // outcome_distribution/average_composite_score on any index bigger than 10,000 non-stub
+    // sessions (a real peer index already has 10,188) while total_sessions -- computed
+    // separately via the unbounded get_aggregate_stats -- kept reporting the true count. That
+    // mismatch is the same "presented as complete but silently truncated" shape already fixed
+    // for compute_verdict_breakdown's old default-50 cap. There's no response-size or
+    // query-shape reason to keep a cap here: this handler's own get_aggregate_stats and
+    // get_top_repositories calls already do unbounded full-table scans of `sessions` on every
+    // request, the response only ever carries fixed-shape aggregates (not the session list
+    // itself), and the frontend fetches this endpoint once per pane-mount, not on a poll.
     let (stats_res, top_repos_res, all_sessions_res) = tokio::task::spawn_blocking(move || {
         (
             storage.get_aggregate_stats(),
             storage.get_top_repositories(),
             storage.list_sessions_filtered(&SessionFilter {
-                limit: Some(10000),
+                limit: None,
                 ..Default::default()
             }),
         )
@@ -953,4 +964,94 @@ async fn post_export_handler(
         format: format.to_string(),
         content,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentworth_schema::{Provenance, TokenUsage};
+    use chrono::{Duration, Utc};
+    use tempfile::NamedTempFile;
+
+    /// Regression test for the old `Some(10000)` cap on get_stats_handler's
+    /// `list_sessions_filtered` call. Seeds more non-stub sessions than that old cap and
+    /// asserts total_sessions and the outcome_distribution buckets account for every one of
+    /// them. Before the fix, outcome_distribution (and average_composite_score) silently
+    /// reflected only the first 10,000 sessions while total_sessions -- computed separately via
+    /// the always-unbounded get_aggregate_stats -- kept reporting the true, larger count. The
+    /// fixture size (10,050) is deliberately chosen to exceed the old cap: a smaller fixture
+    /// would pass on both the old and new code and wouldn't actually exercise the fix.
+    #[tokio::test]
+    async fn test_get_stats_handler_scans_beyond_old_10000_cap() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+        let start = Utc::now();
+
+        const SESSION_COUNT: i64 = 10_050;
+        for i in 0..SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/test/stats_cap_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_stats_cap_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-stats-cap-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            // Non-stub: list_sessions_filtered's default excludes total_events <= 1 or
+            // total_tokens <= 0.
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).unwrap();
+        }
+
+        let storage = Arc::new(storage);
+        let scanner = Arc::new(Scanner::new(storage.clone()));
+        let (live_tail_tx, _live_tail_rx) = broadcast::channel::<LiveTailEvent>(16);
+        let state = AppState {
+            storage,
+            scanner,
+            dist_dir: None,
+            live_tail: live_tail_tx,
+        };
+
+        let response = get_stats_handler(State(state))
+            .await
+            .expect("get_stats_handler should succeed")
+            .0;
+
+        let total_sessions = response["total_sessions"]
+            .as_u64()
+            .expect("total_sessions should be present and numeric");
+        assert_eq!(
+            total_sessions, SESSION_COUNT as u64,
+            "total_sessions should reflect every seeded session"
+        );
+
+        let outcome_dist = response["outcome_distribution"]
+            .as_object()
+            .expect("outcome_distribution should be a JSON object");
+
+        // Every seeded session has no primary_outcome (upsert_trace leaves it NULL), so they
+        // should all land in the "unresolved" bucket.
+        let unresolved = outcome_dist
+            .get("unresolved")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        assert_eq!(
+            unresolved, SESSION_COUNT as u64,
+            "every seeded session should land in the 'unresolved' bucket -- a lower count means \
+             get_stats_handler silently dropped sessions past its old 10,000 cap"
+        );
+
+        let scanned: u64 = outcome_dist.values().filter_map(|v| v.as_u64()).sum();
+        assert_eq!(
+            scanned, SESSION_COUNT as u64,
+            "get_stats_handler must scan every session, not silently cap at 10,000"
+        );
+    }
 }
