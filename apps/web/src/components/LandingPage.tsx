@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@ui/ThemeToggle";
+import { BrandMark } from "@ui/BrandMark";
+import { Wordmark } from "@ui/Wordmark";
 import { IconCheck, IconCopy, IconGithub } from "@ui/icons";
 import { trackEvent } from "../analytics";
 
@@ -100,7 +102,8 @@ export const LandingPage: React.FC = () => {
       <header className="wrap">
         <nav className="nav">
           <a className="mark" href="/">
-            AgentWorth
+            <BrandMark size={20} />
+            <Wordmark height={13} />
           </a>
           <div className="nav-right">
             <a

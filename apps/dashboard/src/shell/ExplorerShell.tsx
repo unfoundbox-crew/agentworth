@@ -7,6 +7,8 @@ import { Rail } from './Rail';
 import type { RailViewId } from './Rail';
 import { CommandPalette } from './CommandPalette';
 import { ThemeToggle } from '@ui/ThemeToggle';
+import { BrandMark } from '@ui/BrandMark';
+import { Wordmark } from '@ui/Wordmark';
 import { SessionList } from './SessionList';
 import { InspectorPane } from './InspectorPane';
 import { PaletteToggle } from './PaletteToggle';
@@ -108,20 +110,8 @@ export function ExplorerShell() {
     <div className="shell-root">
       <header className="topbar">
         <div className="brand">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 20 20"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M3 14 L7 6 L10 12 L13 4 L17 14" />
-          </svg>
-          AgentWorth
+          <BrandMark size={18} />
+          <Wordmark height={12} />
         </div>
         <div className="topbar-spacer" />
         <button
