@@ -254,12 +254,9 @@ export async function downloadAndExtractBinary(options = {}) {
 
   await downloadFile(url, archivePath);
 
-  // Extract archive. --force-local matters on Windows: a drive-letter path like
-  // "C:\Users\...\agentworth.tar.gz" otherwise gets parsed as a "host:path" remote-tar
-  // spec (the "C" before the colon reads as a hostname), and tar tries to rsh/ssh to it
-  // instead of opening a local file.
+  // Extract archive.
   try {
-    execFileSync('tar', ['--force-local', '-xzf', archivePath, '-C', cacheDir]);
+    execFileSync('tar', ['-xzf', archivePath, '-C', cacheDir]);
   } catch (err) {
     throw new Error(`Failed to extract ${archiveName}: ${err.message}`);
   } finally {
