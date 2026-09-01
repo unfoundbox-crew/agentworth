@@ -755,6 +755,7 @@ fn run_traces_command(
         adapter,
         model,
         limit: None,
+        include_stubs: if all_stubs { Some(true) } else { None },
         order_by: Some(SessionOrderBy::StartedAtDesc),
         ..Default::default()
     };
@@ -2129,4 +2130,68 @@ fn run_blame_command(
     println!();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent, Provenance};
+    use chrono::Utc;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_traces_all_stubs_filter_wiring() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+
+        // Session 1: A stub session (only 1 event: UserMessage)
+        let start = Utc::now();
+        let prov1 = Provenance::new("/test/stub.jsonl", "claude_code", 10, 100, "fp1");
+        let mut trace1 = AgentWorthTrace::new("sess-stub-1", "claude_code", prov1, start);
+        trace1.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage {
+                content: "help".to_string(),
+            },
+        ));
+        storage.insert_trace(&trace1).unwrap();
+
+        // Session 2: A multi-turn session (2 events)
+        let prov2 = Provenance::new("/test/full.jsonl", "claude_code", 20, 200, "fp2");
+        let mut trace2 = AgentWorthTrace::new("sess-full-2", "claude_code", prov2, start);
+        trace2.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage {
+                content: "write tests".to_string(),
+            },
+        ));
+        trace2.events.push(NormalizedEvent::new(
+            2,
+            start,
+            EventPayload::AssistantMessage {
+                content: "tests written".to_string(),
+                thinking: None,
+            },
+        ));
+        storage.insert_trace(&trace2).unwrap();
+
+        // Without all_stubs (default): stubs excluded (total_events > 1)
+        let default_filter = SessionFilter {
+            include_stubs: None,
+            ..Default::default()
+        };
+        let default_results = storage.list_sessions_filtered(&default_filter).unwrap();
+        assert_eq!(default_results.len(), 1);
+        assert_eq!(default_results[0].session_id, "sess-full-2");
+
+        // With all_stubs: stubs included
+        let all_stubs_filter = SessionFilter {
+            include_stubs: Some(true),
+            ..Default::default()
+        };
+        let all_stubs_results = storage.list_sessions_filtered(&all_stubs_filter).unwrap();
+        assert_eq!(all_stubs_results.len(), 2);
+    }
 }
