@@ -79,15 +79,29 @@ While verifying, the branch's own isolated test run showed the `agentworth`/`agw
 
 ## New punch-list items (not yet actioned)
 
-- `verdict_breakdown.real_verified_rate` can exceed 1.0 — triage the scoring crate for a wrong denominator or double-count.
 - `models_usage_count` / `tools_usage_count` zero-seeding (low priority, see Decisions below).
 - Leftover dirty state in 9 local worktrees + `lane3-bundle` on lenovo — Saurabh's call.
-- `Cargo.lock` carries a stale package version (`0.1.3`) against the workspace's declared `0.1.5` — confirmed pre-existing (reproduces on unmodified `f45c6b1` too, not caused by any batch-2b item). Worth a clean `cargo update`/regenerate pass before the final PR, not urgent before then.
 
-## Blocked on someone else
+## Wave 2 — dispatched after batch-2b landed (2026-09-01)
 
-- **PR #13 merged to main. PR #14 merging shortly** (landing-page-ux-review session, confirmed via cross-session message, told them to go ahead rather than wait on this session's unrelated backend work). #14 restructures the frontend tree: `apps/web` splits into `apps/web` (marketing only, no API client), `apps/dashboard` (the actual local app the CLI serves), and `packages/ui` (shared `--mv-*` tokens, `ThemeToggle`, `useTheme`, icons). `App.tsx` is gone — replaced by a three-pane shell. `SessionInspector.tsx` and `services/api.ts` move to `apps/dashboard/src/`. The dashboard-crash-fix here needs a rebase onto that structure once #14 lands — not done yet. The other session says the optional-chaining fix came along verbatim in the move; re-verify that directly rather than assume when actually rebasing. `ErrorBoundary.tsx` doesn't exist on main yet — it's this session's own new file, will land under `apps/dashboard/src/components/`.
-- **`apps/cli/src/main.rs:300`** now reads `let default_dist = PathBuf::from("apps/dashboard/dist");` — a one-line fix made by the other session to match the new build output path. Not built/tested by them (no cargo, fan rule) — plain string literal so low risk, but confirm it compiles the next time this file is touched here rather than assume.
+A peer session (landing-page-ux-review) independently found a severe, verified bug against their own real 10,188-session index while we were closing out batch-2b: `OutcomeKind` has two competing string encodings (writer uses hardcoded PascalCase via `outcome_kind_name()`, reader/schema expects serde's snake_case) — `verified_outcomes_count` is silently 0 for every session with an existing index, and `outcome_distribution`/`primary_outcome` can't be read by the frontend at all. This is likely the same root cause as the `verdict_breakdown.real_verified_rate > 1.0` punch-list item above — folded into the same fix rather than tracked separately.
+
+| Item | Branch | Status |
+| --- | --- | --- |
+| OutcomeKind PascalCase/snake_case fix (+ real DB migration, + check verdict_breakdown link) | `fix/outcome-kind-encoding-mismatch` | Building — highest priority, real production-data-affecting bug |
+| Cargo.lock version drift | `fix/punchlist-lockfile-and-verdict-rate` | Building |
+| Dashboard-crash-fix rebase onto `apps/dashboard` | `fix/dashboard-rebase-apps-dashboard` (based on `origin/main`, not the integration branch — different git ancestry, merges in separately once verified) | Building — PR #13 and #15 (superseding #14) are both merged, no longer blocked |
+| Threat Digest | `feat/threat-digest` | Building — was gated on the secret detector, which is now merged |
+| Blunder-to-Blame Bridge | `feat/blunder-blame-bridge` | Building — was gated on blame + blunder detection both being stable, which they now are |
+
+**Personal Leaderboard and Hall of Blunders Share Pack**: still not dispatched — genuinely Saurabh's call on product fit (local-first/zero-telemetry vs. features implying other users or external sharing), asked directly rather than assumed either way.
+
+**Also running**: two read-only research agents auditing `agentworth` and `worldtrainer` for features scoped in docs/branches/PRs/worktrees that never got built, per Saurabh's direct request. Findings will land as a report, not code.
+
+## No longer blocked
+
+- **PR #13 and #15 (superseding #14) both merged to `origin/main`.** Confirmed directly (`gh pr list`, `git log origin/main`): `App.tsx` is gone, `apps/dashboard/src/components/SessionInspector.tsx` exists, `apps/web`/`apps/dashboard`/`packages/ui` split is real. The dashboard-crash-fix rebase is now unblocked and dispatched (see Wave 2 table above) rather than assumed-still-blocked.
+- **`apps/cli/src/main.rs:300`** now reads `let default_dist = PathBuf::from("apps/dashboard/dist");` — a one-line fix made by the other session to match the new build output path, not built/tested by them (no cargo, fan rule). Plain string literal, low risk — worth a real compile check next time this file is touched, not yet independently confirmed.
 
 ## Decisions made this session
 
