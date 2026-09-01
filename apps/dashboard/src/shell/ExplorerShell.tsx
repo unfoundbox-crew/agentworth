@@ -38,6 +38,13 @@ export function ExplorerShell() {
   // A trajectory line is a command plus its result; in the 290px inspector
   // column both truncate to roughly eight characters and read as nothing.
   const [trajectoryFocused, setTrajectoryFocused] = useState(false);
+  // Stable identity per focus state, so the key handler re-registers exactly
+  // when the answer changes rather than on every render.
+  const exitTrajectoryFocus = useCallback(() => {
+    if (!trajectoryFocused) return false;
+    setTrajectoryFocused(false);
+    return true;
+  }, [trajectoryFocused]);
   const [scanning, setScanning] = useState(false);
   const [scanSignal, setScanSignal] = useState(0);
 
@@ -85,6 +92,7 @@ export function ExplorerShell() {
   }, []);
 
   useShellKeys({
+    exitTrajectoryFocus: exitTrajectoryFocus,
     navRef,
     paletteOpen,
     openPalette,
