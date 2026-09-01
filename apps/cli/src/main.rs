@@ -296,11 +296,11 @@ fn main() -> Result<()> {
         } => {
             run_usage_command(
                 &period,
-                *pacing,
-                *hours,
-                *alert_above,
-                *limit,
-                *json,
+                pacing,
+                hours,
+                alert_above,
+                limit,
+                json,
                 cli.db_path,
             )?;
         }
@@ -2222,7 +2222,7 @@ mod tests {
                 content: "help".to_string(),
             },
         ));
-        storage.insert_trace(&trace1).unwrap();
+        storage.upsert_trace(&trace1).unwrap();
 
         // Session 2: A multi-turn session (2 events)
         let prov2 = Provenance::new("/test/full.jsonl", "claude_code", 20, 200, "fp2");
@@ -2242,7 +2242,7 @@ mod tests {
                 thinking: None,
             },
         ));
-        storage.insert_trace(&trace2).unwrap();
+        storage.upsert_trace(&trace2).unwrap();
 
         // Without all_stubs (default): stubs excluded (total_events > 1)
         let default_filter = SessionFilter {
@@ -2271,7 +2271,7 @@ mod tests {
         let prov = Provenance::new("/tmp/test.jsonl", "claude_code", 100, 1000, "fp1");
         let mut trace = AgentWorthTrace::new("sess-pacing-1", "claude_code", prov, now - Duration::hours(1));
 
-        trace.token_usage = TokenUsage {
+        trace.stats.token_usage = TokenUsage {
             input_tokens: 10_000_000,   // 10M input = $30.00
             output_tokens: 2_000_000,  // 2M output = $30.00
             cache_read_tokens: 0,
@@ -2286,7 +2286,7 @@ mod tests {
             },
         ));
 
-        storage.insert_trace(&trace).unwrap();
+        storage.upsert_trace(&trace).unwrap();
 
         let pacing = storage.get_pacing_window(5).unwrap();
         assert!(pacing.estimated_cost_usd >= 50.0);
