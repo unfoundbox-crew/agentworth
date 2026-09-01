@@ -16,6 +16,8 @@ use tracing_subscriber::EnvFilter;
 mod merge;
 #[path = "commands/watch.rs"]
 mod watch;
+#[path = "commands/cache_doctor.rs"]
+mod cache_doctor;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -261,6 +263,17 @@ enum Commands {
         #[arg(short, long)]
         paths: Vec<PathBuf>,
     },
+
+    /// Diagnose turn-by-turn prompt caching dynamics and identify cache drop root causes
+    #[command(name = "cache-doctor")]
+    CacheDoctor {
+        /// Target session ID to inspect
+        session_id: String,
+
+        /// Output findings as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -371,6 +384,9 @@ fn main() -> Result<()> {
             paths,
         } => {
             watch::run_watch_command(interval_secs, poll_once, json, paths)?;
+        }
+        Commands::CacheDoctor { session_id, json } => {
+            cache_doctor::run_cache_doctor_command(&session_id, json, cli.db_path)?;
         }
     }
 
