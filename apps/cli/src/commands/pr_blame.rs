@@ -6,11 +6,27 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 
+use agentworth_core::Scanner;
 use agentworth_storage::{estimate_tokens_cost_usd, Storage};
 use anyhow::Result;
 use console::style;
 use serde::{Deserialize, Serialize};
+
+/// Confidence weight for a `primary_outcome` label, matching the constants
+/// `OutcomeDetector` assigns when it first classifies these outcome kinds
+/// (see `crates/outcomes/src/outcome.rs`).
+fn confidence_for_outcome(outcome: &str) -> f64 {
+    match outcome {
+        "DoneClaimed" => 0.35,
+        "ArtifactChanged" => 0.60,
+        "TestOrBuildPassed" => 0.85,
+        "CommitObserved" => 0.88,
+        "CiOrDeploymentVerified" => 0.95,
+        _ => 0.50,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileAiProvenance {
@@ -34,26 +50,34 @@ pub struct PrBlameReport {
 
 /// Annotate a list of changed files with AI authoring provenance from SQLite index.
 pub fn annotate_pr_files(
-    storage: &Storage,
+    storage: &Arc<Storage>,
     files: &[String],
 ) -> Result<PrBlameReport> {
+    let scanner = Scanner::new(storage.clone());
     let mut annotations = Vec::new();
     let mut ai_count = 0usize;
 
     for path in files {
-        let blame_matches = storage.find_file_blame(path)?;
+        let blame_matches = storage.find_sessions_for_blame(path)?;
         if let Some(first) = blame_matches.first() {
             ai_count += 1;
-            let session_opt = storage.get_session(&first.session_id)?;
+            let session_opt = storage.get_session_by_id(&first.session_id)?;
 
             let (outcome, conf, spend) = if let Some(s) = session_opt {
-                let outcome = s.primary_outcome.unwrap_or_else(|| "done_claimed".to_string());
-                let conf = s.primary_outcome_confidence.unwrap_or(0.50);
+                let outcome = s.primary_outcome.unwrap_or_else(|| "DoneClaimed".to_string());
+                let conf = confidence_for_outcome(&outcome);
+                // BlameMatch/SessionSummary only carry an aggregate total_tokens; the
+                // input/output/cache breakdown estimate_tokens_cost_usd needs lives on the
+                // full trace. Fall back to zero spend if the source file has since moved.
+                let token_usage = scanner
+                    .load_trace(&first.session_id)
+                    .map(|t| t.stats.token_usage)
+                    .unwrap_or_default();
                 let spend = estimate_tokens_cost_usd(
-                    s.input_tokens as u64,
-                    s.output_tokens as u64,
-                    s.cache_read_tokens as u64,
-                    s.cache_creation_tokens as u64,
+                    token_usage.input_tokens,
+                    token_usage.output_tokens,
+                    token_usage.cache_read_tokens,
+                    token_usage.cache_creation_tokens,
                 );
                 (Some(outcome), Some(conf), Some(spend))
             } else {
@@ -99,10 +123,10 @@ pub fn run_pr_blame_command(
     json: bool,
     db_path: Option<PathBuf>,
 ) -> Result<()> {
-    let storage = match db_path {
+    let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
         None => Storage::open_default()?,
-    };
+    });
 
     // If files list is empty, attempt to infer from `git diff --name-only HEAD`
     let target_files = if files.is_empty() {
@@ -206,7 +230,7 @@ mod tests {
     #[test]
     fn test_annotate_pr_files() {
         let tmp = NamedTempFile::new().unwrap();
-        let storage = Storage::open_path(tmp.path()).unwrap();
+        let storage = Arc::new(Storage::open_path(tmp.path()).unwrap());
 
         let now = Utc::now();
         let prov = Provenance::new("/tmp/test.jsonl", "claude_code", 100, 1000, "fp1");
@@ -222,7 +246,7 @@ mod tests {
                 lines_changed: Some(5),
             },
         ));
-        storage.insert_trace(&trace).unwrap();
+        storage.upsert_trace(&trace).unwrap();
 
         let files = vec![
             "crates/storage/src/chunker.rs".to_string(),
