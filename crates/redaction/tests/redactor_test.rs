@@ -394,6 +394,191 @@ fn test_all_event_variants_redaction() {
     }
 }
 
+// --- High-entropy fallback detector ---------------------------------------
+//
+// The regex rules above only catch secrets with a known shape. These tests cover
+// the complementary fallback: Shannon-entropy detection of secret-*shaped* strings
+// that don't match any named vendor pattern. The false-positive tests are the
+// point of this layer — git SHAs, UUIDs, and content-hash fingerprints are exactly
+// the high-entropy-looking strings that are routine, non-secret data in AgentWorth's
+// own session/provenance model (see crates/schema, crates/adapters), and must
+// never be redacted.
+
+#[test]
+fn test_high_entropy_detector_flags_novel_secret_shapes() {
+    let redactor = Redactor::new();
+
+    // A made-up prefix that doesn't match any of the 13 named formats above.
+    let text = "Found leaked credential: xk_live_9fH2mQ7vB4nR8pL1sT6wZ3jC0aD5eG in output";
+    let redacted = redactor.redact_text(text);
+    assert!(!redacted.contains("9fH2mQ7vB4nR8pL1sT6wZ3jC0aD5eG"));
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+
+    // A real-shaped AWS secret access key, standalone with no `AWS_SECRET_ACCESS_KEY=`
+    // label to trigger the env-var rule -- today this leaks straight through.
+    let text = "the value was wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY at the time";
+    let redacted = redactor.redact_text(text);
+    assert!(!redacted.contains("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"));
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+
+    // A Stripe-shaped test key with no `STRIPE_SECRET_KEY=` label -- the existing
+    // env-var test only proves the *labeled* form is caught; this is the gap.
+    let text = "printed sk_test_51Mzxyz12345abcdefGHIJKL9876 to the console by mistake";
+    let redacted = redactor.redact_text(text);
+    assert!(!redacted.contains("sk_test_51Mzxyz12345abcdefGHIJKL9876"));
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+
+    // A generic random mixed-case/digit blob with no recognizable prefix at all.
+    let text = "unlabeled token dump: Kx9mQ2vLpT4wZ8nR1jH6fD3gB0cA5eSy7uNiO end of dump";
+    let redacted = redactor.redact_text(text);
+    assert!(!redacted.contains("Kx9mQ2vLpT4wZ8nR1jH6fD3gB0cA5eSy7uNiO"));
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+}
+
+#[test]
+fn test_high_entropy_detector_report_category() {
+    let redactor = Redactor::new();
+    let text = "unlabeled token dump: Kx9mQ2vLpT4wZ8nR1jH6fD3gB0cA5eSy7uNiO end of dump";
+    let mut report = RedactionReport::new();
+    let redacted = redactor.redact_text_with_counts(text, &mut report);
+
+    assert!(redacted.contains("[REDACTED_HIGH_ENTROPY_SECRET]"));
+    assert_eq!(report.high_entropy_secrets_count, 1);
+    assert_eq!(report.total(), 1);
+    assert_eq!(
+        report.breakdown_by_category.get("High-Entropy Secret"),
+        Some(&1)
+    );
+}
+
+#[test]
+fn test_high_entropy_detector_spares_git_shas() {
+    let redactor = Redactor::new();
+
+    let text = "Merge commit a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 into main";
+    let redacted = redactor.redact_text(text);
+    assert_eq!(redacted, text, "full 40-char git SHA must survive untouched");
+
+    // Both 32 hex chars: long enough to clear min_length, so this specifically
+    // exercises the pure-hex exclusion rather than the length gate.
+    let text = "seen in blame output: 9f86d081884c7d659a2feaa0c55ad015 and c438719d2b0f00a08cd15d6c15b0f00a";
+    let redacted = redactor.redact_text(text);
+    assert_eq!(
+        redacted, text,
+        "long hex-only SHA fragments must survive untouched"
+    );
+}
+
+#[test]
+fn test_high_entropy_detector_spares_uuids() {
+    let redactor = Redactor::new();
+
+    let text = "Session f47ac10b-58cc-4372-a567-0e02b2c3d479 completed successfully";
+    let redacted = redactor.redact_text(text);
+    assert_eq!(redacted, text, "dashed UUID v4 must survive untouched");
+
+    let text = "trace id f47ac10b58cc4372a5670e02b2c3d479 was recorded for this run";
+    let redacted = redactor.redact_text(text);
+    assert_eq!(
+        redacted, text,
+        "undashed UUID (pure hex) must survive untouched"
+    );
+}
+
+#[test]
+fn test_high_entropy_detector_spares_content_fingerprint_hashes() {
+    let redactor = Redactor::new();
+
+    // Shape matches `agentworth_schema::Provenance::content_fingerprint` and
+    // `compute_fast_fingerprint` in crates/adapter-sdk: hex::encode(Sha256::finalize()).
+    let prov = Provenance::new(
+        "claude-session.jsonl",
+        "claude_code",
+        4096,
+        1_720_000_000,
+        "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    );
+    let redacted_fingerprint = redactor.redact_text(&prov.content_fingerprint);
+    assert_eq!(
+        redacted_fingerprint, prov.content_fingerprint,
+        "a SHA-256 content fingerprint must never be flagged as a secret"
+    );
+
+    // Fallback session-id shape used by every adapter's derive_session_id() when a
+    // filename stem isn't available (crates/adapters/src/*.rs): uuid::Uuid::new_v4().
+    let session_id = "f47ac10b-58cc-4372-a567-0e02b2c3d479".to_string();
+    let redacted_session_id = redactor.redact_text(&session_id);
+    assert_eq!(redacted_session_id, session_id);
+}
+
+#[test]
+fn test_high_entropy_detector_spares_agentworth_identifiers() {
+    let redactor = Redactor::new();
+
+    // Real snake_case signature, lifted from crates/storage/src/lib.rs.
+    let text = "fn find_sessions_for_blame(file_path_pattern: &str) -> Result<Vec<BlameMatch>>";
+    assert_eq!(redactor.redact_text(text), text);
+
+    // Adapter test-fixture session-id slugs (crates/adapters/src/hermes.rs, storage tests).
+    let text = "session hermes-session-007 and sess_blame_1 are both routine slugs, not secrets";
+    assert_eq!(redactor.redact_text(text), text);
+
+    // A long kebab-case CLI flag/name, and a CONSTANT_CASE env var *name* (not value).
+    let text = "run with --high-entropy-secret-detector-threshold-override flag set";
+    assert_eq!(redactor.redact_text(text), text);
+
+    // An adversarial, deliberately long chained camelCase identifier -- the hardest
+    // realistic case for a naive entropy check, since it's what the shape checks
+    // (hex/underscore exclusion) can't split apart.
+    let text = "pub fn computeFastFingerprintFromPathAndSizeAndMtime(path, size, mtime)";
+    assert_eq!(redactor.redact_text(text), text);
+}
+
+#[test]
+fn test_high_entropy_detector_selective_within_mixed_shell_output() {
+    let redactor = Redactor::new();
+
+    let event = NormalizedEvent::new(
+        1,
+        Utc::now(),
+        EventPayload::ShellCommand(ShellCommand {
+            command: "git log --oneline -1 && env | grep TOKEN".to_string(),
+            cwd: Some("~/code/unfoundbox/agentworth".to_string()),
+            exit_code: Some(0),
+            output: Some(
+                "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 fix: entropy detector\n\
+                 SOME_NEW_SERVICE_TOKEN=xk_live_9fH2mQ7vB4nR8pL1sT6wZ3jC0aD5eG"
+                    .to_string(),
+            ),
+        }),
+    );
+
+    let redacted = redactor.redact_event(&event);
+    if let EventPayload::ShellCommand(cmd) = &redacted.payload {
+        let output = cmd.output.as_ref().unwrap();
+        assert!(
+            output.contains("a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"),
+            "git SHA in the same blob must survive: {output}"
+        );
+        assert!(
+            !output.contains("9fH2mQ7vB4nR8pL1sT6wZ3jC0aD5eG"),
+            "the secret in the same blob must be redacted: {output}"
+        );
+    } else {
+        panic!("expected ShellCommand");
+    }
+}
+
+#[test]
+fn test_high_entropy_detector_spares_short_random_token() {
+    // Below the 24-char minimum length, random-token and natural-identifier entropy
+    // distributions overlap too much to call reliably -- so this detector deliberately
+    // doesn't try. Short well-known formats are the named regex rules' job.
+    let redactor = Redactor::new();
+    let text = "short token abc123XYZ789 seen here";
+    assert_eq!(redactor.redact_text(text), text);
+}
+
 #[test]
 fn test_custom_rule_addition() {
     use regex::Regex;
