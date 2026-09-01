@@ -164,11 +164,20 @@ fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
 }
 
 /// Discover, score, and rank blunder exhibits across all indexed sessions.
+///
+/// Scans the whole index (`limit: None`), not a capped page. `list_sessions_filtered`
+/// defaults to most-recent-first order, so a fixed cap here silently drops the oldest
+/// sessions forever -- the same bug shape fixed today in `compute_verdict_breakdown`
+/// (50-cap) and `get_stats_handler` (10000-cap). This function loads a full trace per
+/// session, so it costs more per row than those two, but `agwt blunder` is a manually
+/// invoked command, not a polling endpoint -- the extra scan time on a large index is a
+/// bounded, one-time cost, and a blunder hunter that can't see your worst mistake
+/// because it happened before session #5000 defeats its own purpose.
 pub fn discover_blunders(storage: &Arc<Storage>, top_n: usize) -> Result<Vec<BlunderExhibit>> {
     let scanner = Scanner::new(storage.clone());
 
     let all_sessions = storage.list_sessions_filtered(&SessionFilter {
-        limit: Some(5000),
+        limit: None,
         include_stubs: Some(true),
         ..Default::default()
     })?;
@@ -960,5 +969,99 @@ mod tests {
         assert_eq!(exhibit.severity, "HIGH");
         assert_eq!(exhibit.apology_count, 1);
         assert!(exhibit.apology_quote.contains("抱歉"));
+    }
+
+    /// Regression test for the same bug shape already fixed today in
+    /// `compute_verdict_breakdown` (50-cap) and `get_stats_handler` (10000-cap):
+    /// `discover_blunders` used to pass `limit: Some(5000)`, and since
+    /// `list_sessions_filtered` defaults to most-recent-first order, any session older
+    /// than the 5000 most recently *started* ones was silently never even loaded, let
+    /// alone scored. A real CRITICAL blunder sitting in old history could never surface
+    /// in `agwt blunder`'s ranking on an index bigger than 5000 sessions.
+    ///
+    /// Seeds 5000 filler session rows (all newer than the real blunder below) plus one
+    /// session that is the single oldest row in the whole index -- guaranteed to be the
+    /// one row `ORDER BY started_at DESC LIMIT 5000` would cut. The filler sessions'
+    /// source files intentionally don't exist on disk, so `Scanner::load_trace` fails
+    /// fast (a `Path::exists()` check) and they contribute no exhibits -- only their
+    /// *rows* matter, to exercise the cap/order-by at realistic scale. The old session
+    /// gets a real, on-disk, adapter-parseable fixture carrying the same leaked-shell-
+    /// variable pattern `test_evaluate_katana_blunder` above already proves triggers a
+    /// CRITICAL/LEAKED_SHELL_VARIABLE exhibit.
+    ///
+    /// Under the old `Some(5000)` cap, this session is never in `all_sessions` at all,
+    /// so `exhibits` comes back completely empty (every filler fails to load). Only
+    /// with the cap removed does the oldest session get loaded, scored, and surfaced.
+    #[test]
+    fn test_discover_blunders_surfaces_blunder_beyond_old_5000_cap() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let base = Utc::now();
+
+        for i in 0..5000i64 {
+            let started_at = base - chrono::Duration::seconds(i);
+            let prov = Provenance::new(
+                format!("/nonexistent/filler-{i}.jsonl"),
+                "claude_code",
+                10,
+                10,
+                format!("fp-filler-{i}"),
+            );
+            let trace = AgentWorthTrace::new(format!("filler-{i}"), "claude_code", prov, started_at);
+            storage.upsert_trace(&trace).expect("seed filler session");
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let old_blunder_path = temp.path().join("old_blunder.jsonl");
+        std::fs::write(
+            &old_blunder_path,
+            concat!(
+                r#"{"type":"user","timestamp":"2025-09-01T09:00:00Z","content":"Clean up"}"#,
+                "\n",
+                r#"{"type":"assistant","timestamp":"2025-09-01T09:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"for d in \"${PROTECTED_PATHS[@]}\"; do rm -rf \"$d\"; done"}}]}"#,
+                "\n",
+            ),
+        )
+        .expect("write old blunder fixture");
+
+        let old_blunder_trace = AgentWorthTrace::new(
+            "old-critical-blunder",
+            "claude_code",
+            Provenance::new(
+                old_blunder_path.to_string_lossy().to_string(),
+                "claude_code",
+                200,
+                100,
+                "fp-old-blunder",
+            ),
+            base - chrono::Duration::days(365),
+        );
+        storage
+            .upsert_trace(&old_blunder_trace)
+            .expect("seed old blunder session");
+
+        // Sanity: the index really does hold 5001 sessions -- one more than the old cap.
+        let indexed_count = storage
+            .list_sessions_filtered(&SessionFilter {
+                limit: None,
+                include_stubs: Some(true),
+                ..Default::default()
+            })
+            .expect("count sessions")
+            .len();
+        assert_eq!(indexed_count, 5001);
+
+        let exhibits = discover_blunders(&storage, 5).expect("discover blunders");
+
+        assert!(
+            exhibits.iter().any(|e| e.session_id == "old-critical-blunder"
+                && e.rule_id == "LEAKED_SHELL_VARIABLE"
+                && e.severity == "CRITICAL"),
+            "expected the oldest session's real CRITICAL blunder to survive once the \
+             5000-session cap is removed; got exhibits: {:?}",
+            exhibits
+                .iter()
+                .map(|e| (e.session_id.as_str(), e.rule_id.as_str(), e.severity.as_str()))
+                .collect::<Vec<_>>()
+        );
     }
 }
