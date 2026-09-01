@@ -282,6 +282,37 @@
   font-size: 12px;
   padding: 8px 0 20px;
 }
+
+/* ---------------- rail view panes ---------------- */
+/* A non-Sessions rail view (Overview / Coverage / Archaeology / Exports)
+   replaces both .list-region and .inspector-region: one pane, full width
+   right of the rail, scrolling internally so .shell-body itself never
+   scrolls (hard rule 4). The moved-in components (VerdictBoard,
+   CacheCliffWidget, CoverageMatrix, ArchaeologyPanel) were built for a
+   scrolling marketing/dashboard page — .view-stack gives them the
+   max-width + vertical rhythm they expect, centered in the pane. */
+.shell-root .view-region {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px 26px 40px;
+}
+.shell-root .view-stack {
+  max-width: 920px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+/* Exports: ExportModal (embedded) already manages its own internal scroll
+   regions and header/footer chrome, so the pane gives it the full box
+   with no extra padding or max-width to fight against. */
+.shell-root .view-region-flush {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
 .shell-root .shell-inspector-error {
   color: var(--mv-danger);
   font-size: 12px;

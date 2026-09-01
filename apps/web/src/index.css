@@ -1,171 +1,8 @@
+@import "@ui/tokens.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* =========================================================================
-   MotionVector design tokens — see /design.md for the binding spec.
-   Bare :root carries the full light palette (the default). The two dark
-   blocks below only override it: a guarded prefers-color-scheme query for
-   an unset ("system") choice, and an explicit [data-theme="dark"] / .dark
-   override that wins regardless of OS preference. Never give a token its
-   only definition inside either override block.
-   ========================================================================= */
-:root {
-  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
-
-  --mv-ground: #ffffff;
-  --mv-surface: #f4f4f5;
-  --mv-surface-2: #efeff1;
-  --mv-surface-3: #e4e4e7;
-  --mv-border: #e4e4e7;
-  --mv-border-soft: #ececee;
-  --mv-ink: #111113;
-  --mv-text: #3f3f46;
-  --mv-muted: #52525b;
-  --mv-faint: #a1a1aa;
-  --mv-accent: #7c6bb3;
-  --mv-accent-soft: rgba(124, 107, 179, 0.08);
-  --mv-accent-border: rgba(124, 107, 179, 0.28);
-  --mv-accent-contrast: #ffffff;
-
-  /* Semantic status tokens — the dashboard's evidence ladder and coverage
-     matrix need verified/warn/unverified colour that is NOT the brand
-     accent (design.md hard rule: semantic colour is separate from accent).
-     Same recipe as --mv-accent: soft/border opacity bumps +0.02 in dark. */
-  --mv-success: #15803d;
-  --mv-success-soft: rgba(21, 128, 61, 0.08);
-  --mv-success-border: rgba(21, 128, 61, 0.28);
-  --mv-warn: #b45309;
-  --mv-warn-soft: rgba(180, 83, 9, 0.08);
-  --mv-warn-border: rgba(180, 83, 9, 0.28);
-  --mv-danger: #b91c1c;
-  --mv-danger-soft: rgba(185, 28, 28, 0.08);
-  --mv-danger-border: rgba(185, 28, 28, 0.28);
-
-  --mv-rise: 10px;
-  --motion-fast: 120ms;
-  --motion-base: 160ms;
-  --motion-slow: 220ms;
-  --motion-slower: 300ms;
-  --motion-exit: 120ms;
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
-  --motion-enter-scale: 0.98;
-  --stagger-step: 40ms;
-
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --mv-ground: #000000;
-    --mv-surface: #18181b;
-    --mv-surface-2: #1d1d20;
-    --mv-surface-3: #27272a;
-    --mv-border: #2a2a2d;
-    --mv-border-soft: #1c1c1f;
-    --mv-ink: #ffffff;
-    --mv-text: #d4d4d8;
-    --mv-muted: #a1a1aa;
-    --mv-faint: #52525b;
-    --mv-accent: #a396d6;
-    --mv-accent-soft: rgba(163, 150, 214, 0.1);
-    --mv-accent-border: rgba(163, 150, 214, 0.3);
-    --mv-accent-contrast: #0d0d0f;
-
-    --mv-success: #34d399;
-    --mv-success-soft: rgba(52, 211, 153, 0.1);
-    --mv-success-border: rgba(52, 211, 153, 0.3);
-    --mv-warn: #fbbf24;
-    --mv-warn-soft: rgba(251, 191, 36, 0.1);
-    --mv-warn-border: rgba(251, 191, 36, 0.3);
-    --mv-danger: #f87171;
-    --mv-danger-soft: rgba(248, 113, 113, 0.1);
-    --mv-danger-border: rgba(248, 113, 113, 0.3);
-  }
-}
-
-/* Explicit Dark choice. Kept in sync with the .dark class the existing
-   theme hook toggles (needed for Tailwind's class-based dark: utilities
-   used elsewhere in this app) so both selectors always agree. */
-:root[data-theme="dark"],
-:root.dark {
-  color-scheme: dark;
-  --mv-ground: #000000;
-  --mv-surface: #18181b;
-  --mv-surface-2: #1d1d20;
-  --mv-surface-3: #27272a;
-  --mv-border: #2a2a2d;
-  --mv-border-soft: #1c1c1f;
-  --mv-ink: #ffffff;
-  --mv-text: #d4d4d8;
-  --mv-muted: #a1a1aa;
-  --mv-faint: #52525b;
-  --mv-accent: #a396d6;
-  --mv-accent-soft: rgba(163, 150, 214, 0.1);
-  --mv-accent-border: rgba(163, 150, 214, 0.3);
-  --mv-accent-contrast: #0d0d0f;
-
-  --mv-success: #34d399;
-  --mv-success-soft: rgba(52, 211, 153, 0.1);
-  --mv-success-border: rgba(52, 211, 153, 0.3);
-  --mv-warn: #fbbf24;
-  --mv-warn-soft: rgba(251, 191, 36, 0.1);
-  --mv-warn-border: rgba(251, 191, 36, 0.3);
-  --mv-danger: #f87171;
-  --mv-danger-soft: rgba(248, 113, 113, 0.1);
-  --mv-danger-border: rgba(248, 113, 113, 0.3);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --mv-rise: 0px;
-    --motion-enter-scale: 1;
-    --stagger-step: 0ms;
-  }
-}
-
-@layer base {
-  * {
-    box-sizing: border-box;
-  }
-
-  html {
-    color-scheme: light;
-    scroll-behavior: smooth;
-  }
-  html.dark {
-    color-scheme: dark;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    html {
-      scroll-behavior: auto;
-    }
-  }
-
-  body {
-    margin: 0;
-    background: var(--mv-ground);
-    color: var(--mv-text);
-    font-family: var(--font-sans);
-    font-size: 17px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-
-  ::selection {
-    background: var(--mv-accent-soft);
-  }
-
-  :focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
-    border-radius: 4px;
-  }
-}
 
 /* =========================================================================
    Page shell — design.md "Page shell"
@@ -749,14 +586,15 @@ figure.diagram.reveal-pending.is-visible {
 }
 
 /* =========================================================================
-   Dashboard patterns — data-view adaptations of design.md's document
-   patterns (see design.md "What matters" for why these exist: a dashboard
-   is scanned, not read, so a card/table/pill vocabulary replaces prose
-   patterns like term-grid/gap-list). Same tokens throughout.
+   Dashboard-pattern classes used by the landing page's own demo widgets
+   (VerdictBoard, CacheCliffWidget, VerdictStamp — the evidence-ladder and
+   cache-cliff sections embedded directly in LandingPage.tsx). These
+   components also live in apps/dashboard for the real, live-data views;
+   this is the one deliberate CSS duplication in the split, matched by the
+   duplicated .tsx files themselves (see docs/HANDOFF.md and the split's
+   own commit message for why: the landing page renders live UI, not
+   screenshots, so it needs the same panel/pill/ladder vocabulary).
    ========================================================================= */
-
-/* Panel — the dashboard's equivalent of a term-card: a filled, hairline-
-   bordered card. Replaces the old shadow-heavy "brutalist" wrapper. */
 .panel {
   border: 0.5px solid var(--mv-border);
   border-radius: 14px;
@@ -792,7 +630,6 @@ figure.diagram.reveal-pending.is-visible {
   margin: 6px 0 0;
 }
 
-/* Tag pill — a small mono bordered label, e.g. "21 ADAPTERS", "EVIDENCE LADDER" */
 .tag-pill {
   display: inline-flex;
   align-items: center;
@@ -809,9 +646,6 @@ figure.diagram.reveal-pending.is-visible {
   white-space: nowrap;
 }
 
-/* Status pill — semantic verified/warn/unverified state. Solid border = a
-   checkable fact; dashed border = unverified or speculative, echoing the
-   solid/dashed diagram convention from design.md. */
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -858,116 +692,6 @@ figure.diagram.reveal-pending.is-visible {
 }
 .status-pill.is-neutral .dot { background: var(--mv-faint); }
 
-/* Chip — a filter toggle. Selection state matches the theme-toggle's own
-   "pressed" recipe (surface-3 + ink), keeping filter UI inside the zinc
-   rule rather than spending the accent on it. */
-.chip {
-  appearance: none;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: var(--mv-muted);
-  background: var(--mv-ground);
-  border: 0.5px solid var(--mv-border);
-  border-radius: 999px;
-  padding: 5px 12px;
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
-}
-.chip:hover { color: var(--mv-ink); border-color: var(--mv-faint); }
-.chip.is-active {
-  background: var(--mv-surface-3);
-  color: var(--mv-ink);
-  border-color: var(--mv-surface-3);
-  font-weight: 500;
-}
-
-/* Form fields — search input / select, shared recipe */
-.field {
-  width: 100%;
-  font-family: var(--font-mono);
-  font-size: 0.8125rem;
-  color: var(--mv-ink);
-  background: var(--mv-ground);
-  border: 0.5px solid var(--mv-border);
-  border-radius: 10px;
-  padding: 8px 12px;
-  transition: border-color var(--motion-fast) var(--ease-out);
-}
-.field::placeholder { color: var(--mv-faint); }
-.field:focus { outline: none; border-color: var(--mv-accent-border); }
-select.field {
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23a1a1aa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.5 8l4.5 4.5L14.5 8'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  background-size: 14px;
-  padding-right: 32px;
-}
-
-/* Table frame — a diagram-frame sibling for tabular data instead of an
-   SVG: hairline border, radius, its own horizontal scroll (hard rule 4)
-   so a wide table never breaks page layout. */
-.table-frame {
-  border: 0.5px solid var(--mv-border);
-  border-radius: 14px;
-  overflow: hidden;
-}
-.table-scroll {
-  overflow-x: auto;
-}
-.data-table {
-  width: 100%;
-  min-width: 760px;
-  border-collapse: collapse;
-  font-size: 0.8125rem;
-}
-.data-table th {
-  text-align: left;
-  font-family: var(--font-mono);
-  font-weight: 500;
-  font-size: 0.6875rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--mv-faint);
-  background: var(--mv-surface);
-  padding: 10px 16px;
-  border-bottom: 0.5px solid var(--mv-border);
-  white-space: nowrap;
-}
-.data-table td {
-  padding: 12px 16px;
-  color: var(--mv-text);
-  border-bottom: 0.5px solid var(--mv-border-soft);
-  vertical-align: top;
-}
-.data-table tr:last-child td { border-bottom: none; }
-.data-table tbody tr {
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--ease-out);
-}
-.data-table tbody tr:hover { background: var(--mv-surface); }
-.data-table tbody tr.is-selected { background: var(--mv-surface-2); }
-.data-table td.is-center { text-align: center; }
-.data-table td.is-right { text-align: right; }
-.data-table .num {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Matrix table — a mini-table variant with a vertical rule between columns,
-   for adapter-by-capability grids where every cell needs to read as its
-   own fact. */
-.matrix-table th,
-.matrix-table td {
-  border-right: 0.5px solid var(--mv-border-soft);
-}
-.matrix-table th:last-child,
-.matrix-table td:last-child {
-  border-right: none;
-}
-
-/* Quote block — a mono, muted callout for a verbatim line lifted from a
-   trace (a prompt, a shell error, a criterion). */
 .quote-block {
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -988,63 +712,10 @@ select.field {
   margin-bottom: 6px;
 }
 
-/* Key/value row — metadata ribbons, token economics, score explanations */
-.kv-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 0.8125rem;
-  padding: 7px 0;
-  border-bottom: 0.5px solid var(--mv-border-soft);
-}
-.kv-row:last-child { border-bottom: none; }
-.kv-row .k { color: var(--mv-muted); }
-.kv-row .v {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--mv-ink);
-  text-align: right;
-}
-
-/* Score bar — a labeled progress track used by the score breakdown panel */
-.score-bar { margin-bottom: 10px; }
-.score-bar:last-child { margin-bottom: 0; }
-.score-bar .row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.75rem;
-  color: var(--mv-muted);
-  margin-bottom: 4px;
-}
-.score-bar .row .v {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--mv-ink);
-}
-.score-bar .track {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--mv-surface-3);
-  overflow: hidden;
-}
-.score-bar .fill {
-  height: 100%;
-  border-radius: 3px;
-  background: var(--mv-ink);
-}
-.score-bar.is-good .fill { background: var(--mv-success); }
-
-/* =========================================================================
-   The evidence ladder — VerdictBoard's centerpiece. Five rungs read as one
-   ordered confidence hierarchy, not five unrelated badges: node size and
-   fill shrink going down the ladder, and the connecting spine switches
-   from a solid line to a dashed one exactly where the evidence stops being
-   verifiable (rung 2 → rung 1) — the same solid-is-true / dashed-is-not
-   convention design.md's diagrams use.
-   ========================================================================= */
+/* The evidence ladder — VerdictBoard's centerpiece. Five rungs read as one
+   ordered confidence hierarchy: node size and fill shrink going down the
+   ladder, and the connecting spine switches from a solid line to a dashed
+   one exactly where the evidence stops being verifiable (rung 2 → rung 1). */
 .ladder {
   display: flex;
   flex-direction: column;
@@ -1139,8 +810,7 @@ select.field {
   border-left: 2px dashed var(--mv-danger-border);
 }
 
-/* Distribution bar — the ladder's volume summary, one segment per rung,
-   ordered and shaded to match the ladder above it exactly. */
+/* Distribution bar — the ladder's volume summary, one segment per rung. */
 .dist-bar {
   height: 10px;
   border-radius: 5px;
@@ -1149,50 +819,6 @@ select.field {
   overflow: hidden;
 }
 .dist-bar .seg { height: 100%; }
-
-/* =========================================================================
-   Overlay motion — slideover (SessionInspector) and modal (ExportModal).
-   Entrances get time and distance; exits are fast and stay in place
-   (design.md "Motion rules" / --motion-exit), so closing never travels,
-   it only fades.
-   ========================================================================= */
-.overlay-backdrop {
-  animation: overlay-backdrop-in var(--motion-base) var(--ease-out) forwards;
-}
-.overlay-backdrop.is-closing {
-  animation: overlay-backdrop-out var(--motion-exit) var(--ease-in-out) forwards;
-}
-@keyframes overlay-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes overlay-backdrop-out { to { opacity: 0; } }
-
-.slideover-panel {
-  opacity: 0;
-  transform: translateX(var(--mv-rise));
-  animation: slideover-in var(--motion-slower) var(--ease-out) forwards;
-}
-.slideover-panel.is-closing {
-  animation: overlay-fade-out var(--motion-exit) var(--ease-in-out) forwards;
-}
-@keyframes slideover-in { to { opacity: 1; transform: translateX(0); } }
-
-.modal-panel {
-  opacity: 0;
-  transform: translateY(var(--mv-rise)) scale(var(--motion-enter-scale));
-  animation: modal-in var(--motion-slow) var(--ease-out) forwards;
-}
-.modal-panel.is-closing {
-  animation: overlay-fade-out var(--motion-exit) var(--ease-in-out) forwards;
-}
-@keyframes modal-in { to { opacity: 1; transform: translateY(0) scale(1); } }
-@keyframes overlay-fade-out { to { opacity: 0; } }
-
-@media (prefers-reduced-motion: reduce) {
-  .overlay-backdrop,
-  .slideover-panel,
-  .modal-panel {
-    animation-duration: var(--motion-fast);
-  }
-}
 
 /* =========================================================================
    Mobile breakpoint — design.md "Mobile breakpoint"
@@ -1225,12 +851,12 @@ select.field {
   }
 }
 
-/* The explorer Navbar packs more controls (view toggle, rescan, GitHub,
-   theme toggle) into .topbar than the landing header does, and .topbar
-   itself has no flex-wrap — below ~560px that control cluster no longer
-   fits on one line and would overflow the page horizontally (hard rule 4:
-   the body itself never scrolls horizontally). Wrapping is a CSS-only fix
-   that doesn't require touching Navbar.tsx. */
+/* The Navbar (used only on the pre-existing explorer-mode preview, kept
+   for now — see HeroReceipt.tsx note) packs more controls into .topbar
+   than the landing header does, and .topbar itself has no flex-wrap —
+   below ~560px that control cluster no longer fits on one line and would
+   overflow the page horizontally (hard rule 4: the body itself never
+   scrolls horizontally). Wrapping is a CSS-only fix. */
 @media (max-width: 560px) {
   .topbar {
     flex-wrap: wrap;
@@ -1251,58 +877,4 @@ select.field {
   .topbar {
     padding-inline: 14px;
   }
-}
-
-/* Monospace brutalist borders (still used by dashboard-side components) */
-.box-border-thin {
-  border: 1px solid #18181b;
-}
-
-.box-border-subtle {
-  border: 1px solid #e4e4e7;
-}
-
-/* Custom scrollbars */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--mv-surface);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--mv-faint);
-  border-radius: 2px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--mv-muted);
-}
-
-/* Cursor blink */
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-.animate-cursor-blink {
-  animation: blink 1s infinite;
-}
-
-/* Smooth Marquee */
-@keyframes marquee {
-  0% { transform: translateX(0%); }
-  100% { transform: translateX(-50%); }
-}
-
-.animate-marquee {
-  display: flex;
-  width: max-content;
-  animation: marquee 25s linear infinite;
-}
-
-.animate-marquee:hover {
-  animation-play-state: paused;
 }

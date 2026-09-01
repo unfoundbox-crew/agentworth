@@ -16,10 +16,17 @@ import {
 
 interface ExportModalProps {
   trace: AgentWorthTrace;
-  onClose: () => void;
+  onClose?: () => void;
+  /**
+   * Renders as a plain pane (no fixed backdrop, no close button) instead of
+   * an overlay modal — used by the rail's "Exports" view, which is always
+   * on-screen rather than opened/closed. The slideover-triggered export
+   * flow (SessionInspector's "Export" button) keeps the modal presentation.
+   */
+  embedded?: boolean;
 }
 
-export const ExportModal: React.FC<ExportModalProps> = ({ trace, onClose }) => {
+export const ExportModal: React.FC<ExportModalProps> = ({ trace, onClose, embedded = false }) => {
   const [format, setFormat] = useState<'atif' | 'raw'>('atif');
   const [redact, setRedact] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
@@ -28,6 +35,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({ trace, onClose }) => {
   // Exits are fast and stay in place (design.md "Motion rules"): fade out,
   // then unmount via the real onClose — no travel on the way out.
   const handleClose = () => {
+    if (!onClose) return;
     setIsClosing(true);
     setTimeout(onClose, 120);
   };
@@ -70,9 +78,17 @@ export const ExportModal: React.FC<ExportModalProps> = ({ trace, onClose }) => {
     URL.revokeObjectURL(url);
   };
 
+  const outerClass = embedded
+    ? 'h-full flex flex-col overflow-hidden'
+    : `overlay-backdrop fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 ${isClosing ? 'is-closing' : ''}`;
+
+  const panelClass = embedded
+    ? 'bg-ground flex-1 flex flex-col overflow-hidden min-h-0'
+    : `modal-panel bg-ground border border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden ${isClosing ? 'is-closing' : ''}`;
+
   return (
-    <div className={`overlay-backdrop fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 ${isClosing ? 'is-closing' : ''}`}>
-      <div className={`modal-panel bg-ground border border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden ${isClosing ? 'is-closing' : ''}`}>
+    <div className={outerClass}>
+      <div className={panelClass}>
 
         {/* Header */}
         <div className="bg-ink text-ground p-4 flex items-center justify-between shrink-0">
@@ -82,13 +98,15 @@ export const ExportModal: React.FC<ExportModalProps> = ({ trace, onClose }) => {
               Safe redaction &amp; trajectory export
             </span>
           </div>
-          <button
-            onClick={handleClose}
-            className="text-ground/60 hover:text-ground transition-colors"
-            aria-label="Close export modal"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {!embedded && (
+            <button
+              onClick={handleClose}
+              className="text-ground/60 hover:text-ground transition-colors"
+              aria-label="Close export modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {/* Options Toolbar */}

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { useTheme } from '../hooks/useTheme';
-import type { Theme } from '../hooks/useTheme';
+import { useTheme } from '@ui/useTheme';
+import type { Theme } from '@ui/useTheme';
+import type { RailViewId } from './Rail';
 
 interface Command {
   id: string;
@@ -18,6 +19,8 @@ export interface CommandPaletteProps {
   onToggleLiveTail: () => void;
   sessionId: string | null;
   showToast: (message: string) => void;
+  /** Switches the rail's active view — same state Rail's buttons drive. */
+  onNavigateView: (view: RailViewId) => void;
 }
 
 const THEME_ORDER: Theme[] = ['light', 'dark', 'system'];
@@ -34,6 +37,7 @@ export function CommandPalette({
   onToggleLiveTail,
   sessionId,
   showToast,
+  onNavigateView,
 }: CommandPaletteProps) {
   const { theme, setTheme } = useTheme();
   const [query, setQuery] = useState('');
@@ -60,9 +64,9 @@ export function CommandPalette({
       },
       {
         id: 'export',
-        label: 'Export ATIF',
-        tag: 'demo',
-        run: () => showToast('Exported ATIF bundle (demo).'),
+        label: 'Go to Exports',
+        tag: 'real',
+        run: () => onNavigateView('exports'),
       },
       {
         id: 'filter-failed',
@@ -81,16 +85,28 @@ export function CommandPalette({
         },
       },
       {
+        id: 'overview',
+        label: 'Go to Overview',
+        tag: 'real',
+        run: () => onNavigateView('overview'),
+      },
+      {
         id: 'coverage',
         label: 'Go to Coverage',
-        tag: 'demo',
-        run: () => showToast('Coverage view — not wired yet.'),
+        tag: 'real',
+        run: () => onNavigateView('coverage'),
       },
       {
         id: 'archaeology',
         label: 'Go to Archaeology',
-        tag: 'demo',
-        run: () => showToast('Archaeology view — not wired yet.'),
+        tag: 'real',
+        run: () => onNavigateView('archaeology'),
+      },
+      {
+        id: 'sessions',
+        label: 'Go to Sessions',
+        tag: 'real',
+        run: () => onNavigateView('sessions'),
       },
       {
         id: 'copyid',
@@ -112,7 +128,7 @@ export function CommandPalette({
         },
       },
     ],
-    [liveTail, onToggleLiveTail, sessionId, showToast, theme, setTheme]
+    [liveTail, onToggleLiveTail, sessionId, showToast, theme, setTheme, onNavigateView]
   );
 
   const filtered = useMemo(() => {
