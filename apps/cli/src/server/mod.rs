@@ -23,6 +23,53 @@ pub use static_files::*;
 /// Default port used by AgentWorth local server.
 pub const DEFAULT_PORT: u16 = 3000;
 
+/// The conventional build output location `agentworth serve` falls back to when no `--dist`
+/// flag is given, relative to the process's current directory.
+pub const DEFAULT_DIST_DIR: &str = "apps/dashboard/dist";
+
+/// Resolves the dist directory `agentworth serve` should serve the web UI from.
+///
+/// An explicit `--dist` path is a user assertion, not a hint: if it doesn't exist, isn't a
+/// directory, or has no `index.html`, this fails loudly rather than silently falling back to
+/// the dashboard embedded in the binary (which previously served a 200 whose asset hashes
+/// didn't match anything in the directory the user pointed at, which is indistinguishable from
+/// `--dist` being entirely ignored). No `--dist` flag still probes the conventional
+/// `apps/dashboard/dist` location as an opportunistic default -- that path was never asserted
+/// by the user, so its absence is not an error.
+pub fn resolve_dist_dir(explicit: Option<PathBuf>) -> Result<Option<PathBuf>> {
+    match explicit {
+        Some(dist) => {
+            if !dist.exists() {
+                anyhow::bail!(
+                    "--dist path does not exist: {}",
+                    dist.display()
+                );
+            }
+            if !dist.is_dir() {
+                anyhow::bail!(
+                    "--dist path is not a directory: {}",
+                    dist.display()
+                );
+            }
+            if !dist.join("index.html").exists() {
+                anyhow::bail!(
+                    "--dist path has no index.html, so it doesn't look like a built web frontend: {}",
+                    dist.display()
+                );
+            }
+            Ok(Some(dist))
+        }
+        None => {
+            let default_dist = PathBuf::from(DEFAULT_DIST_DIR);
+            if default_dist.exists() {
+                Ok(Some(default_dist))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
 /// Starts the AgentWorth local API and Web UI server.
 pub async fn start_server(
     storage: Arc<Storage>,

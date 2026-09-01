@@ -11,7 +11,9 @@ import { TokenEconomics } from './TokenEconomics';
 import { CacheWarmth } from './CacheWarmth';
 import { LooseEnds } from './LooseEnds';
 import { ContextComposition } from './ContextComposition';
+import { Compaction } from './Compaction';
 import { ProvenanceBlock } from './ProvenanceBlock';
+import { analyzeComposition } from '../utils/contextComposition';
 
 export interface InspectorPaneProps {
   trajectoryFocused?: boolean;
@@ -74,6 +76,14 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
   const summary = useMemo(
     () => sessions.find((s) => s.session_id === sessionId) ?? null,
     [sessions, sessionId]
+  );
+
+  // Computed once here (rather than only inside Compaction/TrajectoryView)
+  // so the scrubber's marker layer and the compaction pane agree on exactly
+  // which events are compaction boundaries.
+  const compactionEventIds = useMemo(
+    () => (trace?.events ? analyzeComposition(trace.events).compactions.map((c) => c.eventId) : []),
+    [trace?.events]
   );
 
   if (!sessionId) {
@@ -158,6 +168,7 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
               events={trace.events}
               focused={trajectoryFocused}
               onToggleFocus={onToggleTrajectoryFocus}
+              compactionEventIds={compactionEventIds}
             />
           )}
 
@@ -175,6 +186,8 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
           )}
 
           {trace?.events && <ContextComposition events={trace.events} />}
+
+          {trace?.events && <Compaction events={trace.events} />}
 
           {trace?.events && (
             <LooseEnds events={trace.events} sessionId={trace.session_id} />

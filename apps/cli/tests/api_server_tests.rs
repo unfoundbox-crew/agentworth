@@ -839,3 +839,166 @@ async fn test_api_live_tail_sse_reports_lag_without_closing_stream() {
     assert!(text.contains("event: lagged"), "frame was: {}", text);
 }
 
+/// Regression test for `agentworth serve --dist <path>` silently falling back to the dashboard
+/// embedded in the binary instead of serving from the given directory. `resolve_dist_dir` (used
+/// by `main.rs`'s `Serve` command) is what enforces this now; this test exercises the router's
+/// serving path directly by writing a marker string into a temp dist dir's `index.html` and
+/// asserting the marker -- not anything from the embedded fallback -- comes back for both an
+/// exact-path request and an SPA-fallback request.
+#[tokio::test]
+async fn test_serve_custom_dist_dir_marker_is_returned_not_embedded_fallback() {
+    let temp_dist = TempDir::new().unwrap();
+    let marker = "AGENTWORTH-CUSTOM-DIST-MARKER-4f1c9a";
+    std::fs::write(
+        temp_dist.path().join("index.html"),
+        format!("<html><body>{marker}</body></html>"),
+    )
+    .unwrap();
+
+    let (app, _, _) = setup_test_app(Some(temp_dist.path().to_path_buf()));
+
+    let (status, root_html) = request_raw(app.clone(), "GET", "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        root_html.contains(marker),
+        "expected the custom dist's index.html marker, got: {}",
+        root_html
+    );
+
+    // SPA client-side route: still the custom dist's index.html, never the embedded fallback.
+    let (status, spa_html) = request_raw(app, "GET", "/some/client/route").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        spa_html.contains(marker),
+        "expected the custom dist's index.html marker on SPA fallback, got: {}",
+        spa_html
+    );
+}
+
+/// `resolve_dist_dir` must fail loudly when given a `--dist` path that doesn't exist, rather
+/// than silently falling back to the embedded dashboard -- that silent fallback is exactly what
+/// made `--dist` look "ignored" (evidence: a 200 response whose served index.html referenced
+/// asset hashes absent from the directory the user pointed `--dist` at).
+#[test]
+fn test_resolve_dist_dir_rejects_nonexistent_path() {
+    let missing = std::env::temp_dir().join("agentworth-test-dist-does-not-exist-4f1c9a");
+    let err = agentworth_cli::server::resolve_dist_dir(Some(missing.clone()))
+        .expect_err("a nonexistent --dist path must be a hard error, not a silent fallback");
+    assert!(
+        err.to_string().contains(&missing.display().to_string()),
+        "error should name the offending path: {}",
+        err
+    );
+}
+
+/// A `--dist` path that exists but isn't a built web frontend (no `index.html`) must also fail
+/// loudly rather than silently falling back to the embedded dashboard.
+#[test]
+fn test_resolve_dist_dir_rejects_directory_without_index_html() {
+    let empty_dir = TempDir::new().unwrap();
+    let err = agentworth_cli::server::resolve_dist_dir(Some(empty_dir.path().to_path_buf()))
+        .expect_err("a --dist dir with no index.html must be a hard error");
+    assert!(
+        err.to_string().contains("index.html"),
+        "error should mention the missing index.html: {}",
+        err
+    );
+}
+
+/// A valid `--dist` directory (exists, is a directory, has an `index.html`) must resolve
+/// successfully to that same path.
+#[test]
+fn test_resolve_dist_dir_accepts_valid_directory() {
+    let dist = TempDir::new().unwrap();
+    std::fs::write(dist.path().join("index.html"), "<html></html>").unwrap();
+
+    let resolved = agentworth_cli::server::resolve_dist_dir(Some(dist.path().to_path_buf()))
+        .expect("a valid --dist directory should resolve");
+    assert_eq!(resolved, Some(dist.path().to_path_buf()));
+}
+
+/// Regression test: `/api/traces` used to omit `primary_outcome` and `composite_score` from
+/// every row via `#[serde(skip_serializing_if = "Option::is_none")]` on `SessionSummary`, which
+/// on real (scored) sessions meant the keys should be present but on any never-scored session
+/// made the fields disappear from the payload entirely rather than reading as `null`. Seeds one
+/// scored and one unscored session and asserts both keys are always present, and that a real
+/// outcome value comes back snake_case (matching `OutcomeKind`'s own serde encoding).
+#[tokio::test]
+async fn test_api_traces_includes_primary_outcome_and_composite_score() {
+    let (app, storage, _) = setup_test_app(None);
+    let now = Utc::now();
+
+    let scored_prov = Provenance::new(
+        "/Users/dev/code/org/scored/log.jsonl",
+        "claude_code",
+        1024,
+        1700000000,
+        "fp_scored",
+    );
+    let mut scored_trace = AgentWorthTrace::new("sess_scored", "claude_code", scored_prov, now);
+    // Non-stub: list_sessions_filtered's default excludes total_events <= 1 or total_tokens <= 0
+    // (NON_STUB_SQL_PREDICATE), and this test needs the session to survive that filter to prove
+    // anything about /api/traces's payload.
+    scored_trace.stats.total_events = 10;
+    scored_trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+    storage
+        .upsert_session(&scored_trace, Some("commit_observed"), Some(0.87))
+        .expect("upsert scored session");
+
+    let unscored_prov = Provenance::new(
+        "/Users/dev/code/org/unscored/log.jsonl",
+        "claude_code",
+        1024,
+        1700000000,
+        "fp_unscored",
+    );
+    let mut unscored_trace = AgentWorthTrace::new(
+        "sess_unscored",
+        "claude_code",
+        unscored_prov,
+        now + Duration::minutes(1),
+    );
+    unscored_trace.stats.total_events = 10;
+    unscored_trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+    storage.upsert_trace(&unscored_trace).expect("upsert unscored trace");
+
+    let (status, traces) = request_json(app, "GET", "/api/traces", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = traces.as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+
+    let scored = arr
+        .iter()
+        .find(|t| t["session_id"] == "sess_scored")
+        .expect("scored session present");
+    assert!(
+        scored.get("primary_outcome").is_some(),
+        "primary_outcome key must be present: {}",
+        scored
+    );
+    assert_eq!(scored["primary_outcome"], "commit_observed");
+    assert!(
+        scored.get("composite_score").is_some(),
+        "composite_score key must be present: {}",
+        scored
+    );
+    assert_eq!(scored["composite_score"], 0.87);
+
+    let unscored = arr
+        .iter()
+        .find(|t| t["session_id"] == "sess_unscored")
+        .expect("unscored session present");
+    assert!(
+        unscored.get("primary_outcome").is_some(),
+        "primary_outcome key must be present even when null: {}",
+        unscored
+    );
+    assert!(unscored["primary_outcome"].is_null());
+    assert!(
+        unscored.get("composite_score").is_some(),
+        "composite_score key must be present even when null: {}",
+        unscored
+    );
+    assert!(unscored["composite_score"].is_null());
+}
+

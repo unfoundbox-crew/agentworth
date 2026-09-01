@@ -515,6 +515,18 @@
   border-right: 2px solid var(--mv-accent);
   cursor: ew-resize;
 }
+/* A compaction boundary — --mv-warn because unlike the window/gap glyphs
+   above, this marks a real loss event, not a neutral navigation aid. */
+.shell-root .traj-rail-mark {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--mv-warn);
+  pointer-events: none;
+}
 
 /* One hue per row, so three stacked rows read as three kinds. */
 .shell-root .traj-tick-1 { background: var(--mv-cat-1); }

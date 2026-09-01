@@ -234,6 +234,7 @@ agentworth receipt session_8f12ac --format svg --output ./receipt.svg
 - `agentworth blame <FILE_PATH>`: Reverse-traces file modifications back to the exact agent prompt and session that authored them.
 - `agentworth doctor`: Validates local adapter source paths, SQLite schema integrity, and parser health.
 - `agentworth serve [--port 3000] [--open]`: Launches the local forensic API server and Web UI.
+- `agentworth mcp`: Starts a read-only MCP server over stdio (`sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`), so a coding agent can query this machine's session index mid-session. Register once with `claude mcp add agentworth --scope user -- agentworth mcp`.
 
 ---
 
