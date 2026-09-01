@@ -1,6 +1,6 @@
 {
   "name": "agentworth",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Discover, normalize, and understand AI-agent histories locally.",
   "type": "module",
   "main": "./lib/resolver.js",
