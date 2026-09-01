@@ -1722,6 +1722,27 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                 }
                 println!("   │");
             }
+            agentworth_schema::EventPayload::Compaction(c) => {
+                let tokens_str = match (c.pre_tokens, c.post_tokens) {
+                    (Some(pre), Some(post)) => format!(" {} -> {} tokens", pre, post),
+                    _ => String::new(),
+                };
+                println!(
+                    "{} {} 🗜️  {} trigger={}{}",
+                    style(&seq).dim(),
+                    style(&ts).dim(),
+                    style("COMPACTION:").bold().cyan(),
+                    style(&c.trigger).cyan().bold(),
+                    style(tokens_str).dim()
+                );
+                if let Some(dropped) = c.dropped_tokens {
+                    println!("   │ dropped: {} tokens", dropped);
+                }
+                if let Some(duration) = c.duration_ms {
+                    println!("   │ duration: {}ms", duration);
+                }
+                println!("   │");
+            }
             agentworth_schema::EventPayload::Custom { kind, data } => {
                 println!(
                     "{} {} 📦 {} {}",

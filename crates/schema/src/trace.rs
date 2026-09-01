@@ -21,6 +21,15 @@ pub struct TraceStats {
     pub per_model_token_usage: BTreeMap<String, TokenUsage>,
     pub tools_used: BTreeMap<String, usize>,
     pub duration_seconds: Option<f64>,
+    /// Number of times this session's context was compacted (summarized and replaced).
+    /// 0 for the common case of a session that was never compacted.
+    #[serde(default)]
+    pub compaction_count: usize,
+    /// Total tokens dropped across every compaction round in this session -- the sum of
+    /// each round's own `pre_tokens - post_tokens`, not the harness's raw cumulative
+    /// counter (see `CompactionEvent::dropped_tokens` for why that distinction matters).
+    #[serde(default)]
+    pub compaction_tokens_dropped: u64,
 }
 
 /// The canonical top-level representation of an AI agent session trace.
@@ -101,6 +110,10 @@ impl AgentWorthTrace {
                         }
                     }
                 }
+                EventPayload::Compaction(c) => {
+                    stats.compaction_count += 1;
+                    stats.compaction_tokens_dropped += c.dropped_tokens.unwrap_or(0);
+                }
                 _ => {}
             }
         }
@@ -124,6 +137,7 @@ impl AgentWorthTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::CompactionEvent;
     use chrono::Duration;
 
     #[test]
@@ -244,5 +258,49 @@ mod tests {
             .fold(TokenUsage::default(), |acc, u| acc + *u);
         assert_eq!(summed, trace.stats.token_usage);
         assert_eq!(trace.stats.token_usage.total(), 1270);
+    }
+
+    #[test]
+    fn test_trace_stats_compaction_count_and_dropped_tokens_sum_across_rounds() {
+        let start = Utc::now();
+        let prov = Provenance::new("/test/compacted.jsonl", "claude_code", 100, 12345, "fp789");
+        let mut trace = AgentWorthTrace::new("sess-compacted", "claude_code", prov, start);
+
+        // A session never compacted must read as 0, not absent/None -- 0 is the common
+        // and meaningful case, matching how `tool_calls_count` etc. already behave.
+        trace.recalculate_stats();
+        assert_eq!(trace.stats.compaction_count, 0);
+        assert_eq!(trace.stats.compaction_tokens_dropped, 0);
+
+        // Real numbers from an actual compacted Claude Code session (4 rounds). The
+        // harness's own `cumulativeDroppedTokens` counter reset between round 1 and
+        // round 2 in the real log this is drawn from, so summing each round's own
+        // pre-post delta (728522 + 832179 + 836526 + 929259 = 3326486) is the only
+        // reliable way to get the session's true total; naively trusting the last
+        // round's cumulative counter would silently undercount by round 1's contribution.
+        let rounds = [
+            (754_356u64, 25_834u64, 213_832u64),
+            (851_578, 19_399, 249_964),
+            (854_648, 18_122, 108_979),
+            (950_460, 21_201, 127_503),
+        ];
+        for (i, (pre, post, duration)) in rounds.iter().enumerate() {
+            trace.events.push(NormalizedEvent::new(
+                i as u64 + 1,
+                start + chrono::Duration::seconds(i as i64),
+                EventPayload::Compaction(CompactionEvent {
+                    trigger: "manual".to_string(),
+                    pre_tokens: Some(*pre),
+                    post_tokens: Some(*post),
+                    dropped_tokens: Some(pre - post),
+                    duration_ms: Some(*duration),
+                }),
+            ));
+        }
+
+        trace.recalculate_stats();
+        assert_eq!(trace.stats.compaction_count, 4);
+        assert_eq!(trace.stats.compaction_tokens_dropped, 3_326_486);
+        assert_eq!(trace.stats.total_events, 4);
     }
 }

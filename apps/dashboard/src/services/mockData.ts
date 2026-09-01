@@ -244,6 +244,8 @@ export const mockDetailedTraces: Record<string, AgentWorthTrace> = {
         bash: 2,
       },
       duration_seconds: 312,
+      compaction_count: 0,
+      compaction_tokens_dropped: 0,
     },
     score: {
       outcome_score: 0.95,

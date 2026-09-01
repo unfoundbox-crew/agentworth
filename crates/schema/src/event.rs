@@ -81,6 +81,32 @@ pub struct ModelSwitch {
     pub reason: Option<String>,
 }
 
+/// A context-compaction round: the harness summarized the conversation so far and
+/// replaced it with the summary, so most of the original content is no longer in the
+/// model's context. Claude Code writes this as a `compact_boundary` system event
+/// carrying `compactMetadata`; other harnesses may expose the same concept differently.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompactionEvent {
+    /// How compaction was triggered. Kept as a free-form string rather than a closed
+    /// enum: only `"manual"` has been observed in real Claude Code logs so far, and
+    /// there is no confirmed full set of values to enumerate.
+    pub trigger: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_tokens: Option<u64>,
+    /// Tokens dropped by this specific round, i.e. `pre_tokens - post_tokens`. Deliberately
+    /// derived rather than read from the harness's own running counter (Claude Code's
+    /// `compactMetadata.cumulativeDroppedTokens`) -- that counter was observed, against real
+    /// session logs, to reset mid-session (e.g. across a `/clear`), so reading only its final
+    /// value undercounts a session's true total. Summing this field across every compaction
+    /// in a session is always correct; summing the harness's raw cumulative field is not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dropped_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
 /// High-level event classification type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -96,6 +122,7 @@ pub enum EventType {
     OutcomeEvidence,
     Error,
     HumanIntervention,
+    Compaction,
     Custom,
 }
 
@@ -137,6 +164,7 @@ pub enum EventPayload {
         is_recovered: bool,
     },
     HumanIntervention(HumanIntervention),
+    Compaction(CompactionEvent),
     Custom {
         kind: String,
         data: serde_json::Value,
@@ -158,6 +186,7 @@ impl EventPayload {
             Self::OutcomeEvidence(_) => EventType::OutcomeEvidence,
             Self::Error { .. } => EventType::Error,
             Self::HumanIntervention(_) => EventType::HumanIntervention,
+            Self::Compaction(_) => EventType::Compaction,
             Self::Custom { .. } => EventType::Custom,
         }
     }
@@ -248,6 +277,33 @@ mod tests {
             );
         } else {
             panic!("expected ModelSwitch payload");
+        }
+    }
+
+    #[test]
+    fn test_compaction_event_serialization_and_event_type() {
+        let ce = CompactionEvent {
+            trigger: "manual".to_string(),
+            pre_tokens: Some(754_356),
+            post_tokens: Some(25_834),
+            dropped_tokens: Some(728_522),
+            duration_ms: Some(213_832),
+        };
+        let payload = EventPayload::Compaction(ce.clone());
+        assert_eq!(payload.event_type(), EventType::Compaction);
+
+        let event = NormalizedEvent::new(3, Utc::now(), payload);
+        let serialized = serde_json::to_string(&event).expect("serialize");
+        let deserialized: NormalizedEvent = serde_json::from_str(&serialized).expect("deserialize");
+
+        if let EventPayload::Compaction(deser_ce) = deserialized.payload {
+            assert_eq!(deser_ce.trigger, "manual");
+            assert_eq!(deser_ce.pre_tokens, Some(754_356));
+            assert_eq!(deser_ce.post_tokens, Some(25_834));
+            assert_eq!(deser_ce.dropped_tokens, Some(728_522));
+            assert_eq!(deser_ce.duration_ms, Some(213_832));
+        } else {
+            panic!("expected Compaction payload");
         }
     }
 }
