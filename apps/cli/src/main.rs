@@ -241,7 +241,6 @@ enum Commands {
         json: bool,
     },
 
-<<<<<<< HEAD
     /// Merge another local SQLite index database into this index
     Merge {
         /// Path to the source SQLite database file to merge from
