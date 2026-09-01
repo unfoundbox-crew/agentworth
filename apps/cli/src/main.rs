@@ -12,6 +12,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
+#[path = "commands/autopsy.rs"]
+mod autopsy;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "agentworth",
@@ -222,6 +225,17 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Surface recurring human correction and steering phrases across all sessions
+    Autopsy {
+        /// Minimum number of occurrences across sessions to report (default: 2)
+        #[arg(short, long, default_value_t = 2)]
+        min_occurrences: usize,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -319,6 +333,12 @@ fn main() -> Result<()> {
             });
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
+        }
+        Commands::Autopsy {
+            min_occurrences,
+            json,
+        } => {
+            autopsy::run_autopsy_command(min_occurrences, json, cli.db_path)?;
         }
     }
 
