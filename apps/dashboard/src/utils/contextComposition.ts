@@ -46,6 +46,10 @@ export interface Compaction {
   droppedCumulative: number;
   /** Tools discovered at that point. Not carried by the new event; 0 there. */
   toolCount: number;
+  /** The event this round was recorded on — lets a marker layer place it. */
+  eventId: string;
+  /** For ordering rounds chronologically regardless of input event order. */
+  sequence: number;
 }
 
 export interface ContextComposition {
@@ -155,6 +159,8 @@ export function analyzeComposition(events: NormalizedEvent[]): ContextCompositio
             toolCount: Array.isArray(meta.preCompactDiscoveredTools)
               ? (meta.preCompactDiscoveredTools as unknown[]).length
               : 0,
+            eventId: event.id,
+            sequence: event.sequence,
           });
         }
       }
@@ -185,6 +191,11 @@ export function analyzeComposition(events: NormalizedEvent[]): ContextCompositio
     .sort((a, b) => b.chars - a.chars);
 
   const overheadShare = totalChars > 0 ? 1 - chars.dialogue / totalChars : 0;
+
+  // Input order is trusted elsewhere in this file, but a compaction round
+  // list is read as a timeline (round 1, round 2, ...), so it gets an
+  // explicit sort rather than inheriting whatever order events arrived in.
+  compactions.sort((a, b) => a.sequence - b.sequence);
 
   const peakTokens = compactions.length
     ? compactions.reduce((max, c) => Math.max(max, c.preTokens), 0)
