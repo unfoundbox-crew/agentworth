@@ -15,6 +15,11 @@ use rusqlite::{params, Connection};
 use super::{bytes_to_f32_vec, cosine_similarity, f32_slice_to_bytes, VectorStore};
 
 /// SQLite-backed implementation of `VectorStore`.
+///
+/// `conn` recovers from lock poisoning rather than propagating it -- see the doc
+/// comment on `Storage::conn` in `crates/storage/src/lib.rs` for why. `from_shared_connection`
+/// means this can be the very same `Arc<Mutex<Connection>>` as a `Storage`, so the two
+/// types must agree on this policy or a panic in one would still wedge the other.
 pub struct SqliteVectorStore {
     conn: Arc<Mutex<Connection>>,
     db_path: Option<PathBuf>,
@@ -65,7 +70,7 @@ impl SqliteVectorStore {
 
 impl VectorStore for SqliteVectorStore {
     fn initialize(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         conn.execute_batch(
             r#"
@@ -130,7 +135,7 @@ impl VectorStore for SqliteVectorStore {
             return Ok(());
         }
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let tx = conn.transaction()?;
 
         {
@@ -185,7 +190,7 @@ impl VectorStore for SqliteVectorStore {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let mut sql = String::from(
             r#"
@@ -273,7 +278,7 @@ impl VectorStore for SqliteVectorStore {
     }
 
     fn delete_session(&self, session_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         conn.execute(
             "DELETE FROM trajectory_chunks WHERE session_id = ?1",
             params![session_id],
@@ -293,7 +298,7 @@ impl VectorStore for SqliteVectorStore {
     }
 
     fn stats(&self) -> Result<VectorStats> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let mut count_stmt = conn.prepare(
             r#"

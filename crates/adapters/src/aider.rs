@@ -861,21 +861,19 @@ fn parse_aider_json_record(
                 .with_raw_ref(&raw_ref),
             );
         }
-    } else if role == "assistant" || role == "agent" || role == "model" {
-        if !content_text.is_empty() {
-            *sequence += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *sequence,
-                    timestamp,
-                    EventPayload::AssistantMessage {
-                        content: content_text.clone(),
-                        thinking: None,
-                    },
-                )
-                .with_raw_ref(&raw_ref),
-            );
-        }
+    } else if (role == "assistant" || role == "agent" || role == "model") && !content_text.is_empty() {
+        *sequence += 1;
+        events.push(
+            NormalizedEvent::new(
+                *sequence,
+                timestamp,
+                EventPayload::AssistantMessage {
+                    content: content_text.clone(),
+                    thinking: None,
+                },
+            )
+            .with_raw_ref(&raw_ref),
+        );
     }
 
     // Diffs / File actions

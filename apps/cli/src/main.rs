@@ -1027,7 +1027,7 @@ fn print_stats_view(
             let model_display = if model.len() > 28 {
                 format!("{}...", &model[..25])
             } else {
-                model.to_string()
+                (*model).clone()
             };
             println!(
                 "│   • {:<28} {:>6} sessions         │",
@@ -1049,7 +1049,7 @@ fn print_stats_view(
             let tool_display = if tool.len() > 28 {
                 format!("{}...", &tool[..25])
             } else {
-                tool.to_string()
+                (*tool).clone()
             };
             println!(
                 "│   • {:<28} {:>6} calls            │",
@@ -1069,7 +1069,7 @@ fn print_stats_view(
             let repo_display = if repo.len() > 28 {
                 format!("{}...", &repo[..25])
             } else {
-                repo.to_string()
+                repo.clone()
             };
             println!(
                 "│   • {:<28} {:>6} sessions         │",
@@ -1866,7 +1866,7 @@ fn print_scan_summary(summary: &ScanSummary, db_path: Option<&std::path::Path>) 
             let model_display = if model.len() > 28 {
                 format!("{}...", &model[..25])
             } else {
-                model.to_string()
+                (*model).clone()
             };
             println!(
                 "│   • {:<28} {:>6} sessions         │",
@@ -1888,7 +1888,7 @@ fn print_scan_summary(summary: &ScanSummary, db_path: Option<&std::path::Path>) 
             let tool_display = if tool.len() > 28 {
                 format!("{}...", &tool[..25])
             } else {
-                tool.to_string()
+                (*tool).clone()
             };
             println!(
                 "│   • {:<28} {:>6} calls            │",

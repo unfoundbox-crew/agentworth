@@ -146,14 +146,14 @@ pub fn compute_archaeology_highlights(
     
     // Top 20 by tokens (for most_expensive_unsolved)
     let mut by_tokens = all_sessions.clone();
-    by_tokens.sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
+    by_tokens.sort_by_key(|s| std::cmp::Reverse(s.total_tokens));
     for s in by_tokens.iter().take(20) {
         candidate_ids.insert(s.session_id.clone());
     }
 
     // Top 20 by events (for recovery loops and model switches)
     let mut by_events = all_sessions.clone();
-    by_events.sort_by(|a, b| b.total_events.cmp(&a.total_events));
+    by_events.sort_by_key(|s| std::cmp::Reverse(s.total_events));
     for s in by_events.iter().take(20) {
         candidate_ids.insert(s.session_id.clone());
     }

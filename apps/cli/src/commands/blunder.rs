@@ -229,11 +229,7 @@ pub fn evaluate_trace_for_blunder(
 
                 if is_test_cmd(&lower) {
                     if let Some(code) = cmd.exit_code {
-                        if code != 0 {
-                            had_failed_test = true;
-                        } else {
-                            had_failed_test = false;
-                        }
+                        had_failed_test = code != 0;
                     }
                 }
 
@@ -287,21 +283,22 @@ pub fn evaluate_trace_for_blunder(
                     }
                 }
 
-                if is_fake_test_claim_str(&lower_content) && had_failed_test {
-                    if critical_rule_id.is_none() && high_rule_id.is_none() {
-                        high_rule_id = Some("FALSE_SUCCESS_CLAIM");
-                        title_override =
-                            Some("False Victory Claim Over Failing Test Suite".to_string());
-                    }
+                if is_fake_test_claim_str(&lower_content)
+                    && had_failed_test
+                    && critical_rule_id.is_none()
+                    && high_rule_id.is_none()
+                {
+                    high_rule_id = Some("FALSE_SUCCESS_CLAIM");
+                    title_override = Some("False Victory Claim Over Failing Test Suite".to_string());
                 }
             }
 
-            EventPayload::ToolCall(tool) => {
-                if fatal_command.is_none() && (tool.name.contains("bash") || tool.name.contains("exec") || tool.name.contains("delete")) {
-                    let args = tool.arguments.to_string();
-                    if args.len() > 10 {
-                        fatal_command = Some(format!("{}({})", tool.name, truncate_snippet(&args, 120)));
-                    }
+            EventPayload::ToolCall(tool)
+                if fatal_command.is_none() && (tool.name.contains("bash") || tool.name.contains("exec") || tool.name.contains("delete")) =>
+            {
+                let args = tool.arguments.to_string();
+                if args.len() > 10 {
+                    fatal_command = Some(format!("{}({})", tool.name, truncate_snippet(&args, 120)));
                 }
             }
 
@@ -335,23 +332,19 @@ pub fn evaluate_trace_for_blunder(
     let turns = trace.events.len();
 
     // Check high token / spend threshold
-    if spend_usd >= 1000.0 || tokens >= 10_000_000 {
-        if critical_rule_id.is_none() && high_rule_id.is_none() {
-            high_rule_id = Some("MASSIVE_TOKEN_BURN");
-            title_override = Some(format!(
-                "The ${:.0} Token Burn Cascade ({})",
-                spend_usd,
-                format_compact_tokens(tokens)
-            ));
-        }
+    if (spend_usd >= 1000.0 || tokens >= 10_000_000) && critical_rule_id.is_none() && high_rule_id.is_none() {
+        high_rule_id = Some("MASSIVE_TOKEN_BURN");
+        title_override = Some(format!(
+            "The ${:.0} Token Burn Cascade ({})",
+            spend_usd,
+            format_compact_tokens(tokens)
+        ));
     }
 
     // Check apology remorse marathon
-    if apology_count >= 3 {
-        if critical_rule_id.is_none() && high_rule_id.is_none() {
-            high_rule_id = Some("REMORSE_MARATHON");
-            title_override = Some(format!("The {}-Turn Remorse Marathon", apology_count));
-        }
+    if apology_count >= 3 && critical_rule_id.is_none() && high_rule_id.is_none() {
+        high_rule_id = Some("REMORSE_MARATHON");
+        title_override = Some(format!("The {}-Turn Remorse Marathon", apology_count));
     }
 
     // Determine rule_id and severity
@@ -766,11 +759,9 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     for paragraph in text.lines() {
         let mut current = String::new();
         for word in paragraph.split_whitespace() {
-            if current.len() + word.len() + 1 > max_width {
-                if !current.is_empty() {
-                    lines.push(current);
-                    current = String::new();
-                }
+            if current.len() + word.len() + 1 > max_width && !current.is_empty() {
+                lines.push(current);
+                current = String::new();
             }
             if !current.is_empty() {
                 current.push(' ');

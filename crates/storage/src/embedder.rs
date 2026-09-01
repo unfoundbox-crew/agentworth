@@ -4,10 +4,11 @@
 //! with a deterministic zero-network offline fallback engine.
 
 use anyhow::Result;
-use tracing::{info, warn};
 
 #[cfg(feature = "fastembed")]
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+#[cfg(feature = "fastembed")]
+use tracing::{info, warn};
 
 /// The default embedding dimension for BGE-Small and all-MiniLM models.
 pub const EMBEDDING_DIMENSION: usize = 384;

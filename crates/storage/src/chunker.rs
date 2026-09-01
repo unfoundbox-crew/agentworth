@@ -290,32 +290,30 @@ impl TrajectoryChunker {
                 action,
                 diff,
                 lines_changed,
-            } => {
-                if *action == FileActionType::Delete {
-                    let text = format!(
-                        "[Destructive File Deletion at Turn {}]\nPath: {}\nAction: delete\nLines: {:?}",
-                        event.sequence,
-                        path,
-                        lines_changed
-                    );
-                    let metadata = json!({
-                        "sequence": event.sequence,
-                        "event_index": idx,
-                        "tool": "file_action",
-                        "danger_signature": "file_delete",
-                        "path": path,
-                        "diff": diff,
-                    });
-                    return Some(TrajectoryChunk::new(
-                        &trace.session_id,
-                        &trace.adapter,
-                        ChunkKind::ToolInvocation,
-                        event.sequence as usize,
-                        event.timestamp.to_rfc3339(),
-                        truncate_text(&text, self.max_chunk_chars),
-                        metadata.to_string(),
-                    ));
-                }
+            } if *action == FileActionType::Delete => {
+                let text = format!(
+                    "[Destructive File Deletion at Turn {}]\nPath: {}\nAction: delete\nLines: {:?}",
+                    event.sequence,
+                    path,
+                    lines_changed
+                );
+                let metadata = json!({
+                    "sequence": event.sequence,
+                    "event_index": idx,
+                    "tool": "file_action",
+                    "danger_signature": "file_delete",
+                    "path": path,
+                    "diff": diff,
+                });
+                return Some(TrajectoryChunk::new(
+                    &trace.session_id,
+                    &trace.adapter,
+                    ChunkKind::ToolInvocation,
+                    event.sequence as usize,
+                    event.timestamp.to_rfc3339(),
+                    truncate_text(&text, self.max_chunk_chars),
+                    metadata.to_string(),
+                ));
             }
             _ => {}
         }

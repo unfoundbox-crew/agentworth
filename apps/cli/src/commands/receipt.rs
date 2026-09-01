@@ -275,32 +275,29 @@ pub fn extract_flight_data(trace: &AgentWorthTrace, score: &TraceScore) -> Fligh
     let mut best_apology_quote = None;
 
     for ev in &trace.events {
-        match &ev.payload {
-            EventPayload::AssistantMessage { content, thinking } => {
-                let lower_content = content.to_lowercase();
-                let lower_thinking = thinking
-                    .as_deref()
-                    .map(|t| t.to_lowercase())
-                    .unwrap_or_default();
+        if let EventPayload::AssistantMessage { content, thinking } = &ev.payload {
+            let lower_content = content.to_lowercase();
+            let lower_thinking = thinking
+                .as_deref()
+                .map(|t| t.to_lowercase())
+                .unwrap_or_default();
 
-                let mut is_apology = false;
-                for pat in APOLOGY_PATTERNS {
-                    if lower_content.contains(pat) || lower_thinking.contains(pat) {
-                        is_apology = true;
-                        if best_apology_quote.is_none() {
-                            best_apology_quote = extract_remorse_sentence(content);
-                        }
-                        break;
+            let mut is_apology = false;
+            for pat in APOLOGY_PATTERNS {
+                if lower_content.contains(pat) || lower_thinking.contains(pat) {
+                    is_apology = true;
+                    if best_apology_quote.is_none() {
+                        best_apology_quote = extract_remorse_sentence(content);
                     }
-                }
-
-                if is_apology {
-                    apology_count += 1;
-                    let est_tokens = (content.len() / 4) as u64;
-                    apology_tax_tokens += est_tokens.max(50);
+                    break;
                 }
             }
-            _ => {}
+
+            if is_apology {
+                apology_count += 1;
+                let est_tokens = (content.len() / 4) as u64;
+                apology_tax_tokens += est_tokens.max(50);
+            }
         }
     }
 
@@ -329,10 +326,8 @@ pub fn extract_flight_data(trace: &AgentWorthTrace, score: &TraceScore) -> Fligh
                     error_count += 1;
                 }
             }
-            EventPayload::ShellCommand(c) => {
-                if c.exit_code.is_some_and(|code| code != 0) {
-                    error_count += 1;
-                }
+            EventPayload::ShellCommand(c) if c.exit_code.is_some_and(|code| code != 0) => {
+                error_count += 1;
             }
             _ => {}
         }
@@ -1040,6 +1035,10 @@ pub fn run_receipt_command(
     let scorer = TraceScorer::default();
     let score = scorer.score(&trace);
 
+    // The named alternatives in the last arm below are redundant with `_` but kept as
+    // documentation of the recognized `--format` values; any unrecognized value
+    // intentionally falls back to the terminal receipt rather than erroring.
+    #[allow(clippy::wildcard_in_or_patterns)]
     let content = match format.to_lowercase().as_str() {
         "svg" => render_svg_receipt(&trace, &score),
         "json" => {

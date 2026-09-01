@@ -367,7 +367,7 @@ pub fn generate_threat_digest(
             .entry(highest.as_str().to_string())
             .or_insert(0) += 1;
 
-        findings.sort_by(|a, b| b.total.cmp(&a.total));
+        findings.sort_by_key(|f| std::cmp::Reverse(f.total));
         let findings_truncated = findings.len() > MAX_FINDINGS_PER_SESSION;
         findings.truncate(MAX_FINDINGS_PER_SESSION);
 

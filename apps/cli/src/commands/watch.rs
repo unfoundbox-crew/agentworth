@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use agentworth_adapter_sdk::ScanOptions;
 use agentworth_core::Scanner;
-use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent, ToolCall};
+use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent};
 use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
 use anyhow::Result;
 use console::style;
@@ -346,7 +346,7 @@ pub fn run_watch_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentworth_schema::{FileActionType, NormalizedEvent, Provenance};
+    use agentworth_schema::{FileActionType, NormalizedEvent, Provenance, ToolCall};
     use chrono::Utc;
 
     #[test]
