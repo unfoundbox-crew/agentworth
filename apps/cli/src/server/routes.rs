@@ -1,8 +1,10 @@
 //! Axum HTTP routes and handlers for the AgentWorth local API server.
 
 use std::collections::BTreeMap;
+use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions};
 use agentworth_adapters::{
@@ -22,14 +24,19 @@ use agentworth_storage::{
 use anyhow::Result;
 use axum::extract::{Path, Query, State};
 use axum::http::{Request, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{body::Body, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+use tokio_stream::{Stream, StreamExt};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use super::archaeology::{compute_archaeology_highlights, ArchaeologyHighlights};
+use super::live_tail::LiveTailEvent;
 use super::static_files::serve_static_or_spa;
 
 /// Shared application state across API handlers.
@@ -38,6 +45,9 @@ pub struct AppState {
     pub storage: Arc<Storage>,
     pub scanner: Arc<Scanner>,
     pub dist_dir: Option<PathBuf>,
+    /// Sender side of the live-tail filesystem-event broadcast. Each SSE connection calls
+    /// `.subscribe()` for its own receiver; cloning the sender itself is cheap.
+    pub live_tail: broadcast::Sender<LiveTailEvent>,
 }
 
 /// Query parameters for listing and filtering indexed traces.
@@ -155,6 +165,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/blame", get(get_blame_handler))
         .route("/matrix", get(get_matrix_handler))
         .route("/archaeology", get(get_archaeology_handler))
+        .route("/live-tail", get(get_live_tail_handler))
         .route("/scan", post(post_scan_handler))
         .route("/export/:id", post(post_export_handler));
 
@@ -819,6 +830,38 @@ async fn get_archaeology_handler(
     })?;
 
     Ok(Json(highlights))
+}
+
+/// GET /api/live-tail -> Server-Sent Events stream of live filesystem changes under
+/// watched adapter session directories. Each event carries a `change` name; a subscriber
+/// that falls too far behind the broadcast channel's buffer gets a `lagged` event instead
+/// of the stream silently dropping or terminating.
+async fn get_live_tail_handler(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let receiver = state.live_tail.subscribe();
+
+    let stream = BroadcastStream::new(receiver).map(|item| {
+        let event = match item {
+            Ok(live_event) => Event::default()
+                .event("change")
+                .json_data(&live_event)
+                .unwrap_or_else(|e| {
+                    tracing::warn!("live-tail: failed to serialize event: {}", e);
+                    Event::default().event("change").data("{}")
+                }),
+            Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                Event::default().event("lagged").data(skipped.to_string())
+            }
+        };
+        Ok(event)
+    });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
 }
 
 /// POST /api/scan -> triggers scanner background sync

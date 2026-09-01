@@ -2,7 +2,9 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentworth_cli::server::{create_router, AppState};
+use agentworth_cli::server::{
+    create_router, AppState, LiveTailChangeKind, LiveTailEvent, LIVE_TAIL_CHANNEL_CAPACITY,
+};
 use agentworth_core::Scanner;
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, Provenance, TokenUsage,
@@ -14,19 +16,36 @@ use chrono::{Duration, Utc};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tempfile::TempDir;
+use tokio::sync::broadcast;
 use tower::ServiceExt;
 
 /// Helper function to create an in-memory test AppState and router.
 fn setup_test_app(dist_dir: Option<PathBuf>) -> (axum::Router, Arc<Storage>, Arc<Scanner>) {
+    let (app, storage, scanner, _live_tail_tx) = setup_test_app_with_live_tail(dist_dir);
+    (app, storage, scanner)
+}
+
+/// Like `setup_test_app`, but also hands back the live-tail broadcast sender so a test can
+/// publish filesystem-change events and assert they reach a subscribed SSE client.
+fn setup_test_app_with_live_tail(
+    dist_dir: Option<PathBuf>,
+) -> (
+    axum::Router,
+    Arc<Storage>,
+    Arc<Scanner>,
+    broadcast::Sender<LiveTailEvent>,
+) {
     let storage = Arc::new(Storage::open_in_memory().expect("open in-memory storage"));
     let scanner = Arc::new(Scanner::new(storage.clone()));
+    let (live_tail_tx, _rx) = broadcast::channel(LIVE_TAIL_CHANNEL_CAPACITY);
     let state = AppState {
         storage: storage.clone(),
         scanner: scanner.clone(),
         dist_dir,
+        live_tail: live_tail_tx.clone(),
     };
     let app = create_router(state);
-    (app, storage, scanner)
+    (app, storage, scanner, live_tail_tx)
 }
 
 /// Helper to execute an HTTP request on an Axum router and return status + JSON Value.
@@ -725,5 +744,88 @@ async fn test_api_get_matrix_endpoint() {
     assert_eq!(claude["model_switches"], true);
     assert_eq!(claude["thinking_blocks"], true);
     assert_eq!(claude["error_recovery"], true);
+}
+
+#[tokio::test]
+async fn test_api_live_tail_sse_stream_delivers_broadcast_event() {
+    let (app, _, _, live_tail_tx) = setup_test_app_with_live_tail(None);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/live-tail")
+        .body(Body::empty())
+        .unwrap();
+
+    // The handler subscribes to the broadcast channel synchronously before it ever awaits,
+    // so by the time `oneshot` hands back this response the subscription already exists —
+    // sending now is safe, not a race against the handler's setup.
+    let response = app.oneshot(req).await.expect("execute live-tail request");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+
+    let sample_event = LiveTailEvent {
+        path: PathBuf::from("/Users/dev/.claude/projects/sess-live.jsonl"),
+        kind: LiveTailChangeKind::Modified,
+        adapter: Some("claude_code".to_string()),
+        timestamp: Utc::now(),
+    };
+    live_tail_tx
+        .send(sample_event)
+        .expect("broadcast live-tail event to subscriber");
+
+    let mut body = response.into_body();
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), body.frame())
+        .await
+        .expect("timed out waiting for an SSE frame")
+        .expect("stream ended before yielding a frame")
+        .expect("frame error");
+    let bytes = frame.into_data().expect("expected a data frame");
+    let text = String::from_utf8_lossy(&bytes);
+
+    assert!(text.contains("event: change"), "frame was: {}", text);
+    assert!(text.contains("sess-live.jsonl"), "frame was: {}", text);
+    assert!(text.contains("\"kind\":\"modified\""), "frame was: {}", text);
+    assert!(
+        text.contains("\"adapter\":\"claude_code\""),
+        "frame was: {}",
+        text
+    );
+}
+
+#[tokio::test]
+async fn test_api_live_tail_sse_reports_lag_without_closing_stream() {
+    let (app, _, _, live_tail_tx) = setup_test_app_with_live_tail(None);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/live-tail")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.expect("execute live-tail request");
+
+    // Flood past the channel capacity so the subscriber's next recv reports `Lagged`
+    // instead of quietly losing events.
+    for i in 0..(LIVE_TAIL_CHANNEL_CAPACITY + 10) {
+        let _ = live_tail_tx.send(LiveTailEvent {
+            path: PathBuf::from(format!("/Users/dev/.claude/projects/sess-{}.jsonl", i)),
+            kind: LiveTailChangeKind::Created,
+            adapter: Some("claude_code".to_string()),
+            timestamp: Utc::now(),
+        });
+    }
+
+    let mut body = response.into_body();
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), body.frame())
+        .await
+        .expect("timed out waiting for an SSE frame")
+        .expect("stream ended before yielding a frame")
+        .expect("frame error");
+    let bytes = frame.into_data().expect("expected a data frame");
+    let text = String::from_utf8_lossy(&bytes);
+
+    assert!(text.contains("event: lagged"), "frame was: {}", text);
 }
 
