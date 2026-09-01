@@ -369,9 +369,24 @@ const FALLBACK_HTML: &str = r#"<!DOCTYPE html>
 #[folder = "../../apps/dashboard/dist"]
 struct DashboardAssets;
 
+/// rust_embed::Metadata carries hashes and timestamps, not a mimetype, so the
+/// content type is derived from the extension. The dashboard build emits only
+/// these six; anything else falls back to octet-stream rather than guessing.
+fn content_type_for(path: &str) -> &'static str {
+    match path.rsplit('.').next() {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("ico") => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
 fn embedded_response(path: &str) -> Option<Response<Body>> {
     let asset = DashboardAssets::get(path)?;
-    let mime = asset.metadata.mimetype();
+    let mime = content_type_for(path);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
