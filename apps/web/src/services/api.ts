@@ -387,15 +387,37 @@ export async function fetchTraceDetail(
     const res = await fetch(`${BASE_URL}/traces/${encodeURIComponent(sessionId)}`);
     if (res.ok) {
       const data = await res.json();
-      if (data.trace) {
-        return {
-          ...data.trace,
-          score: data.score || data.trace.score,
-          outcomes: data.outcomes || data.trace.outcomes,
-          recoveries: data.recoveries || data.trace.recoveries,
-        };
+      const rawTrace = data.trace || data;
+      if (!rawTrace) {
+        return null;
       }
-      return data;
+
+      // The backend serializes TokenUsage with short field names
+      // (cache_read_tokens / cache_creation_tokens). fetchAggregateStats
+      // already normalizes these to the frontend's TokenUsage shape for
+      // /api/stats; this endpoint returns the same struct nested under
+      // trace.stats and needs the same normalization, or SessionInspector's
+      // cache_read_input_tokens/cache_creation_input_tokens reads are undefined.
+      const rawTokenUsage = rawTrace.stats?.token_usage || {};
+      const normalizedStats = {
+        ...rawTrace.stats,
+        token_usage: {
+          input_tokens: rawTokenUsage.input_tokens ?? 0,
+          output_tokens: rawTokenUsage.output_tokens ?? 0,
+          cache_read_input_tokens:
+            rawTokenUsage.cache_read_input_tokens ?? rawTokenUsage.cache_read_tokens ?? 0,
+          cache_creation_input_tokens:
+            rawTokenUsage.cache_creation_input_tokens ?? rawTokenUsage.cache_creation_tokens ?? 0,
+        },
+      };
+
+      return {
+        ...rawTrace,
+        stats: normalizedStats,
+        score: data.score || rawTrace.score,
+        outcomes: data.outcomes || rawTrace.outcomes,
+        recoveries: data.recoveries || rawTrace.recoveries,
+      };
     }
   } catch (_err) {
     // Trace not found

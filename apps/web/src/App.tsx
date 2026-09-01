@@ -10,6 +10,7 @@ import { TracesExplorer } from "./components/TracesExplorer";
 import { SessionInspector } from "./components/SessionInspector";
 import { ExportModal } from "./components/ExportModal";
 import { Footer } from "./components/Footer";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 import {
   AggregateStats,
@@ -124,33 +125,47 @@ export function App() {
       ) : (
         <main className="flex-1 space-y-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           {/* 1. Hero & Physical Receipt Section */}
-          <HeroReceipt stats={stats} onScanClick={handleTriggerScan} />
+          <ErrorBoundary label="Agent Receipt">
+            <HeroReceipt stats={stats} onScanClick={handleTriggerScan} />
+          </ErrorBoundary>
 
           {/* 2. Top Panel: The Verdict Board */}
-          <VerdictBoard
-            stats={stats}
-            selectedRung={(filters.outcome as OutcomeKind) || null}
-            onSelectRung={handleSelectRung}
-          />
+          <ErrorBoundary label="Verdict Board">
+            <VerdictBoard
+              stats={stats}
+              selectedRung={(filters.outcome as OutcomeKind) || null}
+              onSelectRung={handleSelectRung}
+            />
+          </ErrorBoundary>
 
           {/* 3. Archaeology Panel (if present in local index) */}
-          {stats.archaeology && <ArchaeologyPanel data={stats.archaeology} />}
+          {stats.archaeology && (
+            <ErrorBoundary label="Archaeology Panel">
+              <ArchaeologyPanel data={stats.archaeology} />
+            </ErrorBoundary>
+          )}
 
           {/* 4. Traces Explorer Table */}
-          <TracesExplorer
-            traces={traces}
-            totalTraces={totalTraces}
-            selectedSessionId={selectedSessionId || undefined}
-            onSelectSession={handleSelectSession}
-            onFilterChange={handleFilterChange}
-            isLoading={isLoadingTraces}
-          />
+          <ErrorBoundary label="Traces Explorer">
+            <TracesExplorer
+              traces={traces}
+              totalTraces={totalTraces}
+              selectedSessionId={selectedSessionId || undefined}
+              onSelectSession={handleSelectSession}
+              onFilterChange={handleFilterChange}
+              isLoading={isLoadingTraces}
+            />
+          </ErrorBoundary>
 
           {/* 5. The Cache Cliff Interactive Widget */}
-          <CacheCliffWidget />
+          <ErrorBoundary label="Cache Cliff Widget">
+            <CacheCliffWidget />
+          </ErrorBoundary>
 
           {/* 6. Grounded Coverage Matrix */}
-          <CoverageMatrix />
+          <ErrorBoundary label="Coverage Matrix">
+            <CoverageMatrix />
+          </ErrorBoundary>
 
           {/* 7. Local-first Architecture Footer */}
           <Footer />
@@ -159,19 +174,23 @@ export function App() {
 
       {/* Session Inspector Slideover */}
       {activeTrace && (
-        <SessionInspector
-          trace={activeTrace}
-          onClose={handleCloseInspector}
-          onOpenExport={() => setIsExportOpen(true)}
-        />
+        <ErrorBoundary label="Session Inspector">
+          <SessionInspector
+            trace={activeTrace}
+            onClose={handleCloseInspector}
+            onOpenExport={() => setIsExportOpen(true)}
+          />
+        </ErrorBoundary>
       )}
 
       {/* Safe Redaction & ATIF Export Modal */}
       {isExportOpen && activeTrace && (
-        <ExportModal
-          trace={activeTrace}
-          onClose={() => setIsExportOpen(false)}
-        />
+        <ErrorBoundary label="Export Modal">
+          <ExportModal
+            trace={activeTrace}
+            onClose={() => setIsExportOpen(false)}
+          />
+        </ErrorBoundary>
       )}
     </div>
   );
