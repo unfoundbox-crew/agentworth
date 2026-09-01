@@ -2,6 +2,8 @@
 
 pub mod sqlite_store;
 
+use std::collections::HashSet;
+
 use agentworth_schema::vector::{ChunkKind, TrajectoryChunk, VectorSearchResult, VectorStats};
 use anyhow::Result;
 
@@ -41,6 +43,13 @@ pub trait VectorStore: Send + Sync {
 
     /// Delete all vectors associated with a session (for rescans/updates).
     fn delete_session(&self, session_id: &str) -> Result<()>;
+
+    /// Session IDs that already have at least one embedded chunk stored.
+    ///
+    /// Lets a caller do incremental / resumable indexing: diff this against the full
+    /// session list and embed only what's missing, instead of a one-shot bootstrap
+    /// that never revisits sessions added (or left uncapped) after the first run.
+    fn indexed_session_ids(&self) -> Result<HashSet<String>>;
 
     /// Return total vector count and index statistics.
     fn stats(&self) -> Result<VectorStats>;

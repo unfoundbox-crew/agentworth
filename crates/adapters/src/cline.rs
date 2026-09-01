@@ -6,7 +6,7 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
     Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
@@ -253,6 +253,7 @@ impl AgentAdapter for ClineAdapter {
         let mut malformed_lines = 0;
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
+        let mut last_model: Option<String> = None;
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -298,7 +299,7 @@ impl AgentAdapter for ClineAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_cline_record(item, &mut sequence, timestamp, idx + 1);
+                        let evts = parse_cline_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -344,7 +345,7 @@ impl AgentAdapter for ClineAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_cline_record(&val, &mut sequence, timestamp, line_num);
+                let events = parse_cline_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -464,6 +465,7 @@ fn parse_cline_record(
     sequence: &mut u64,
     timestamp: DateTime<Utc>,
     line_num: usize,
+    last_model: &mut Option<String>,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -920,6 +922,25 @@ fn parse_cline_record(
         .unwrap_or("cline");
 
     if tokens_in > 0 || tokens_out > 0 || cache_reads > 0 || cache_writes > 0 || cost_usd.is_some() {
+        if last_model.as_deref() != Some(model) {
+            if let Some(prev) = last_model.take() {
+                *sequence += 1;
+                events.push(
+                    NormalizedEvent::new(
+                        *sequence,
+                        timestamp,
+                        EventPayload::ModelSwitch(ModelSwitch {
+                            from_model: Some(prev),
+                            to_model: model.to_string(),
+                            reason: None,
+                        }),
+                    )
+                    .with_raw_ref(&raw_ref),
+                );
+            }
+            *last_model = Some(model.to_string());
+        }
+
         *sequence += 1;
         events.push(
             NormalizedEvent::new(
@@ -1123,5 +1144,80 @@ mod tests {
 
         assert!(result.malformed_lines >= 1);
         assert_eq!(result.trace.stats.user_messages_count, 1);
+    }
+
+    #[test]
+    fn test_parse_cline_detects_model_switch_mid_task() {
+        // Cline lets a user swap the underlying model mid-task (e.g. dropping from a
+        // frontier model to a cheaper one to finish mechanical work). Each `say`
+        // record with usage carries its own `model`/`apiProvider`, which is exactly
+        // the per-event identity `ModelSwitch` detection needs.
+        let content = r#"[
+  {
+    "ts": 1716000000000,
+    "type": "say",
+    "say": "api_req_started",
+    "model": "claude-opus-5",
+    "tokensIn": 1500,
+    "tokensOut": 250,
+    "totalCost": 0.045
+  },
+  {
+    "ts": 1716000010000,
+    "type": "say",
+    "say": "api_req_started",
+    "model": "claude-haiku-5",
+    "tokensIn": 400,
+    "tokensOut": 90,
+    "totalCost": 0.002
+  }
+]"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        write!(temp_file, "{}", content).unwrap();
+
+        let adapter = ClineAdapter::new();
+        let source = SessionSource::from_path(temp_file.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).unwrap();
+
+        assert_eq!(result.malformed_lines, 0);
+        let trace = result.trace;
+
+        assert_eq!(
+            trace.stats.models_used,
+            vec!["claude-opus-5".to_string(), "claude-haiku-5".to_string()]
+        );
+
+        let switches: Vec<_> = trace
+            .events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::ModelSwitch(ms) => Some((ms.from_model.clone(), ms.to_model.clone())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            switches,
+            vec![(
+                Some("claude-opus-5".to_string()),
+                "claude-haiku-5".to_string()
+            )]
+        );
+
+        // No switch is recorded for the very first model used in the session.
+        let first_invocation_idx = trace
+            .events
+            .iter()
+            .position(|e| matches!(&e.payload, EventPayload::ModelInvocation { .. }))
+            .expect("expected at least one ModelInvocation");
+        assert!(matches!(
+            &trace.events[first_invocation_idx].payload,
+            EventPayload::ModelInvocation { model, .. } if model == "claude-opus-5"
+        ));
+        assert!(first_invocation_idx == 0 || !matches!(
+            &trace.events[first_invocation_idx - 1].payload,
+            EventPayload::ModelSwitch(_)
+        ));
     }
 }

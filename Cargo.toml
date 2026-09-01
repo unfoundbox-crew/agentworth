@@ -14,7 +14,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 authors = ["AgentWorth Contributors"]
 license = "Apache-2.0"
@@ -40,14 +40,36 @@ console = "0.15"
 indicatif = "0.17"
 directories = "5.0"
 regex = "1.10"
+toml = "0.8"
 
 # Workspace crates
 agentworth-schema = { path = "crates/schema" }
 agentworth-adapter-sdk = { path = "crates/adapter-sdk" }
 agentworth-adapters = { path = "crates/adapters" }
-agentworth-storage = { path = "crates/storage" }
-agentworth-core = { path = "crates/core" }
+agentworth-storage = { path = "crates/storage", default-features = false }
+agentworth-core = { path = "crates/core", default-features = false }
 agentworth-outcomes = { path = "crates/outcomes" }
 agentworth-scoring = { path = "crates/scoring" }
 agentworth-redaction = { path = "crates/redaction" }
 agentworth-export-atif = { path = "crates/export-atif" }
+
+[workspace.lints.clippy]
+# `clippy::all` is cargo clippy's own default anyway; made explicit so the policy is
+# pinned in the repo instead of living only in whatever flags someone happens to pass.
+all = { level = "warn", priority = -1 }
+
+# Cherry-picked from a full `cargo clippy -- -W clippy::pedantic` run (2026-09-01).
+# The group as a whole was too noisy to enable wholesale for this codebase (~1,400
+# warnings, dominated by clippy::float_cmp firing on exact-value assert_eq! in tests
+# and clippy::cast_possible_truncation on counts that can't realistically overflow) --
+# per clippy's own docs, pedantic expects cherry-picking, not a blanket enable. These
+# two were real, fixed the same day the backlog was cleared to zero, so turning them
+# on permanently costs nothing today:
+implicit_clone = "warn" # `x.to_string()` on an already-&String is a needless Display round-trip
+assigning_clones = "warn" # `x = y.clone()` can reuse x's existing allocation via clone_from
+
+# Two more pedantic lints were also real findings (uninlined_format_args: 13 sites;
+# case_sensitive_file_extension_comparisons: ~17 sites, all in crates/adapters) but
+# their existing backlogs were NOT cleared in this pass -- enabling them now would
+# warn immediately. See docs/DECISION-INBOX.md's 2026-09-01 quality-audit entry
+# before turning these on.

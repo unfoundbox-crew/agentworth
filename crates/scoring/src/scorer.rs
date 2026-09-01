@@ -7,8 +7,13 @@
 //! - Autonomous error recovery resilience
 //! - Cryptographic provenance integrity
 
+use std::collections::BTreeMap;
+
 use agentworth_outcomes::{OutcomeDetector, RecoveryDetector, RecoverySignal};
-use agentworth_schema::{AgentWorthTrace, EventPayload, OutcomeEvidence, OutcomeKind};
+use agentworth_schema::{
+    AgentWorthTrace, EventPayload, NormalizedEvent, OutcomeEvidence, OutcomeKind, TokenUsage,
+};
+use agentworth_storage::estimate_model_tokens_cost_usd;
 use serde::{Deserialize, Serialize};
 
 /// Configurable weights for composite score computation.
@@ -33,6 +38,27 @@ impl Default for ScoringWeights {
     }
 }
 
+/// Cost and outcome attribution for a single model within a (possibly multi-model) trace.
+///
+/// A session that starts on a cheap model and switches to a stronger one mid-task should
+/// not have its cost and verdict lumped onto one blended number — this breaks both out
+/// per model so a consumer can tell which model actually earned the outcome and which
+/// model actually incurred the spend.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelAttribution {
+    /// This model's own token usage within the session.
+    pub token_usage: TokenUsage,
+    /// Cost estimated using this model's own pricing rates (not the session's blended rate).
+    pub estimated_cost_usd: f64,
+    /// Fraction of the trace's `total_estimated_cost_usd` attributable to this model (0.0-1.0).
+    pub cost_share: f64,
+    /// Highest-ranked outcome evidence produced while this model was active, if any.
+    pub strongest_outcome: Option<OutcomeKind>,
+    /// Outcome score (same 0-1 hierarchy as the session-level `outcome_score`), computed only
+    /// from evidence produced while this model was the active one.
+    pub outcome_score: f64,
+}
+
 /// Explainable multidimensional score result for an agent trace.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TraceScore {
@@ -50,6 +76,16 @@ pub struct TraceScore {
     pub composite_score: f64,
     /// Human-readable explanations for each scoring dimension.
     pub explanations: Vec<String>,
+    /// Total estimated cost across the whole trace: each model's tokens priced at that
+    /// model's own rate, then summed. More accurate than pricing the blended token total
+    /// at a single rate whenever a session used more than one model.
+    #[serde(default)]
+    pub total_estimated_cost_usd: f64,
+    /// Per-model cost and outcome breakdown, keyed by model name. Keys match
+    /// `TraceStats.per_model_token_usage` exactly; empty when the trace recorded no
+    /// model invocations.
+    #[serde(default)]
+    pub per_model: BTreeMap<String, ModelAttribution>,
 }
 
 /// Scorer for computing transparent quality, verifiability, and resilience metrics.
@@ -130,6 +166,10 @@ impl TraceScorer {
 
         let composite_score = clamp01(composite_raw);
 
+        // 7. Per-model cost/outcome attribution (additive detail; does not feed back into
+        // the session-level scores above, which intentionally stay whole-session numbers).
+        let (per_model, total_estimated_cost_usd) = self.compute_per_model_attribution(trace);
+
         TraceScore {
             outcome_score,
             verifiability_score,
@@ -138,6 +178,8 @@ impl TraceScorer {
             provenance_score,
             composite_score,
             explanations,
+            total_estimated_cost_usd,
+            per_model,
         }
     }
 
@@ -178,6 +220,87 @@ impl TraceScorer {
         );
 
         (score, explanation)
+    }
+
+    /// Break cost and outcome attribution out per model, for sessions that invoke more
+    /// than one. Returns the per-model map plus the session total (sum of each model's
+    /// tokens priced at that model's own rate).
+    fn compute_per_model_attribution(
+        &self,
+        trace: &AgentWorthTrace,
+    ) -> (BTreeMap<String, ModelAttribution>, f64) {
+        if trace.stats.per_model_token_usage.is_empty() {
+            return (BTreeMap::new(), 0.0);
+        }
+
+        // Segment events by whichever model was active when each occurred — the same
+        // "current model" tracking the storage layer uses to attribute file_modifications
+        // rows to a model. Events before the first model signal can't be attributed to
+        // any model and are dropped.
+        let mut current_model: Option<String> = None;
+        let mut events_by_model: BTreeMap<String, Vec<NormalizedEvent>> = BTreeMap::new();
+        for event in &trace.events {
+            match &event.payload {
+                EventPayload::ModelInvocation { model, .. } => {
+                    current_model = Some(model.clone());
+                }
+                EventPayload::ModelSwitch(ms) => {
+                    current_model = Some(ms.to_model.clone());
+                }
+                _ => {}
+            }
+            if let Some(model) = &current_model {
+                events_by_model
+                    .entry(model.clone())
+                    .or_default()
+                    .push(event.clone());
+            }
+        }
+
+        let outcome_detector = OutcomeDetector::new();
+        let mut attributions = BTreeMap::new();
+        let mut total_cost = 0.0;
+
+        // Keyed off `per_model_token_usage`, not `events_by_model`: every model here has
+        // real tokens (and therefore real cost) to attribute. A model that only ever shows
+        // up as a `ModelSwitch` target with no recorded invocation contributes zero cost
+        // and is intentionally left out rather than reported with a fabricated $0 entry.
+        for (model, usage) in &trace.stats.per_model_token_usage {
+            let estimated_cost_usd = estimate_model_tokens_cost_usd(
+                Some(model),
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_tokens,
+                usage.cache_creation_tokens,
+            );
+            total_cost += estimated_cost_usd;
+
+            let model_events = events_by_model.get(model).cloned().unwrap_or_default();
+            let model_outcomes = outcome_detector.detect_from_events(&model_events);
+            let strongest_outcome = outcome_detector
+                .strongest_outcome(&model_outcomes)
+                .map(|o| o.kind);
+            let (outcome_score, _) = self.compute_outcome_score(&model_outcomes);
+
+            attributions.insert(
+                model.clone(),
+                ModelAttribution {
+                    token_usage: *usage,
+                    estimated_cost_usd,
+                    cost_share: 0.0,
+                    strongest_outcome,
+                    outcome_score,
+                },
+            );
+        }
+
+        if total_cost > 0.0 {
+            for attribution in attributions.values_mut() {
+                attribution.cost_share = clamp01(attribution.estimated_cost_usd / total_cost);
+            }
+        }
+
+        (attributions, total_cost)
     }
 
     fn compute_verifiability_score(

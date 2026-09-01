@@ -12,6 +12,29 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
+#[path = "commands/merge.rs"]
+mod merge;
+#[path = "commands/watch.rs"]
+mod watch;
+#[path = "commands/cache_doctor.rs"]
+mod cache_doctor;
+#[path = "commands/blind_spots.rs"]
+mod blind_spots;
+#[path = "commands/threat_digest.rs"]
+mod threat_digest;
+#[path = "commands/autopsy.rs"]
+mod autopsy;
+#[path = "commands/recall.rs"]
+mod recall;
+#[path = "commands/bisect.rs"]
+mod bisect;
+#[path = "commands/pr_blame.rs"]
+mod pr_blame;
+#[path = "commands/config.rs"]
+mod config;
+#[path = "commands/version_info.rs"]
+mod version_info;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "agentworth",
@@ -29,6 +52,13 @@ struct Cli {
         help = "Custom path for the local SQLite index database"
     )]
     db_path: Option<PathBuf>,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Force text output even if persisted config defaults to JSON (see `agentworth config`)"
+    )]
+    no_json: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -60,9 +90,9 @@ enum Commands {
 
     /// List indexed traces with optional filtering
     Traces {
-        /// Maximum number of traces to display
-        #[arg(short, long, default_value_t = 20)]
-        limit: usize,
+        /// Maximum number of traces to display (default 20, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
 
         /// Filter by adapter name (e.g. claude_code, codex, gemini, opencode)
         #[arg(short, long)]
@@ -107,8 +137,8 @@ enum Commands {
         #[arg(short, long)]
         redact: bool,
 
-        /// Export format: json (default) or atif
-        #[arg(short, long, default_value = "json", value_parser = ["json", "atif"])]
+        /// Export format: json (default), atif, receipt, or svg
+        #[arg(short, long, default_value = "json", value_parser = ["json", "atif", "receipt", "terminal", "ansi", "svg"])]
         format: String,
 
         /// Optional file path to write export output to (defaults to stdout)
@@ -116,14 +146,29 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Generate and render an authentic ANSI or SVG Flight Receipt for a trace session
+    Receipt {
+        /// The session ID to generate flight receipt for
+        session_id: String,
+
+        /// Output format: terminal (default), ansi, svg, receipt, or json
+        #[arg(short, long, default_value = "terminal", value_parser = ["terminal", "ansi", "svg", "receipt", "json"])]
+        format: String,
+
+        /// Optional file path to write receipt or SVG output to (defaults to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+
     /// Semantic vector search across indexed trajectory turns with ASCII thermal receipts
     Search {
         /// Search query (natural language or code snippet)
         query: String,
 
-        /// Maximum number of results to return
-        #[arg(short, long, default_value_t = 10)]
-        limit: usize,
+        /// Maximum number of results to return (default 10, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
 
         /// Minimum similarity score threshold (0.0 to 1.0)
         #[arg(long, default_value_t = 0.0)]
@@ -181,9 +226,9 @@ enum Commands {
 
     /// View deep usage, pacing, and token expenditure rollups
     Usage {
-        /// Rollup period: day, week, or month
-        #[arg(short, long, default_value = "day", value_parser = ["day", "week", "month"])]
-        period: String,
+        /// Rollup period: day, week, or month (default day, or persisted `config period`)
+        #[arg(short, long, value_parser = ["day", "week", "month"])]
+        period: Option<String>,
 
         /// Show 5-hour rolling pacing window (burn rate, active models, quota headroom)
         #[arg(long)]
@@ -193,9 +238,18 @@ enum Commands {
         #[arg(long, default_value_t = 5)]
         hours: i64,
 
-        /// Maximum number of rows to display
-        #[arg(short, long, default_value_t = 20)]
-        limit: usize,
+        /// Alert and highlight if window spend exceeds this threshold in USD
+        #[arg(long)]
+        alert_above: Option<f64>,
+
+        /// Maximum number of rows to display (default 20, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
+
+        /// Group the rollup by model instead of adapter (e.g. how many tokens
+        /// each of claude-opus-5 / claude-sonnet-5 / claude-fable-5 used)
+        #[arg(long)]
+        by_model: bool,
 
         /// Output usage data as JSON
         #[arg(long)]
@@ -218,6 +272,209 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Print version details: binary version, npm install detection, and a live
+    /// check for a newer release
+    Version {
+        /// Skip the live GitHub-releases update check (fully local, no network call)
+        #[arg(long)]
+        offline: bool,
+
+        /// Output as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Check for a newer AgentWorth release and show exactly how to get it
+    Update {
+        /// Skip the live GitHub-releases check and just show install-method guidance
+        #[arg(long)]
+        offline: bool,
+
+        /// Output as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Merge another local SQLite index database into this index
+    Merge {
+        /// Path to the source SQLite database file to merge from
+        source_db: PathBuf,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Watch active session transcripts and detect doom loops or file edit thrashing
+    Watch {
+        /// Polling interval in seconds (default: 3)
+        #[arg(short, long, default_value_t = 3)]
+        interval_secs: u64,
+
+        /// Run a single poll check and exit immediately
+        #[arg(long)]
+        poll_once: bool,
+
+        /// Output findings as formatted JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Custom path directories to monitor
+        #[arg(short, long)]
+        paths: Vec<PathBuf>,
+    },
+
+    /// Diagnose turn-by-turn prompt caching dynamics and identify cache drop root causes
+    #[command(name = "cache-doctor")]
+    CacheDoctor {
+        /// Target session ID to inspect
+        session_id: String,
+
+        /// Output findings as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List sessions whose completion claims were never independently corroborated by tests or CI
+    #[command(name = "blind-spots")]
+    BlindSpots {
+        /// Maximum number of sessions to list (default 20, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Rank indexed sessions by real secret/credential exposure risk, by category and severity
+    #[command(name = "threat-digest")]
+    ThreatDigest {
+        /// Maximum number of sessions to show in the report (default 20, or persisted `config
+        /// limit`) -- every indexed session is still scanned; this only trims the displayed list
+        #[arg(short, long)]
+        limit: Option<usize>,
+
+        /// Only include sessions whose worst finding is at least this severity
+        #[arg(long, default_value = "low", value_parser = ["low", "medium", "high", "critical"])]
+        min_severity: String,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Surface recurring human correction and steering phrases across all sessions
+    Autopsy {
+        /// Minimum number of occurrences across sessions to report (default: 2)
+        #[arg(short, long, default_value_t = 2)]
+        min_occurrences: usize,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Semantically recall past solutions joined with outcome validation and cost
+    Recall {
+        /// Search query to match against previous trajectories
+        query: String,
+
+        /// Maximum number of results to return (default 5, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
+
+        /// Minimum similarity score threshold (0.0 to 1.0)
+        #[arg(long, default_value_t = 0.0)]
+        min_score: f32,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Pinpoint the exact turning point where an agent session trajectory turned negative
+    Bisect {
+        /// Session ID to bisect
+        session_id: String,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Annotate changed PR files with AI agent authoring provenance and outcome validation
+    #[command(name = "pr-blame")]
+    PrBlame {
+        /// List of files to check (if omitted, infers from git diff)
+        files: Vec<String>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Bridge AI Code Blame with the Hall of Blunders: trace a recorded blunder forward
+    /// to the exact files it blame-attributes to, or a file's blame history backward to
+    /// any recorded blunders in the sessions blamed for it
+    #[command(name = "blunder-blame")]
+    BlunderBlame {
+        /// Blame -> blunder direction: file path or pattern. Checks every session AI
+        /// Code Blame attributes this file to for a recorded blunder
+        #[arg(long, conflicts_with = "session")]
+        file: Option<String>,
+
+        /// Blunder -> blame direction: one specific session ID. Resolves it to the
+        /// files AI Code Blame attributes to that session
+        #[arg(long, conflicts_with = "file")]
+        session: Option<String>,
+
+        /// In default mode (no --file or --session), number of top blunders to bridge
+        #[arg(short, long, default_value_t = 5)]
+        top: usize,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Get, set, or list persisted CLI defaults (~/.agentworth/config.toml)
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigAction {
+    /// List every persisted config key and its current value
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the persisted value for one config key
+    Get {
+        /// Config key: json, limit, or period
+        key: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Persist a default value for one config key
+    Set {
+        /// Config key: json, limit, or period
+        key: String,
+
+        /// Value to store (json: true/false, limit: a number, period: day/week/month)
+        value: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -234,18 +491,37 @@ fn main() -> Result<()> {
         .with_target(false)
         .init();
 
+    // Persisted user defaults (`~/.agentworth/config.toml`, see `agentworth config`). A
+    // corrupt config file should not brick every command, so fall back to built-in
+    // defaults with a warning rather than erroring out.
+    let persisted_config = config::load_config().unwrap_or_else(|e| {
+        eprintln!(
+            "warning: failed to load persisted config ({}), using built-in defaults",
+            e
+        );
+        Default::default()
+    });
+    let no_json = cli.no_json;
+    let resolve_json = |flag: bool| config::resolve_json(flag, no_json, persisted_config.json);
+
     match cli.command {
         Commands::Scan { paths, force, json } => {
-            run_scan_command(paths, force, json, cli.db_path)?;
+            run_scan_command(paths, force, resolve_json(json), cli.db_path)?;
         }
         Commands::Stats { json } => {
-            run_stats_command(json, cli.db_path)?;
+            run_stats_command(resolve_json(json), cli.db_path)?;
         }
         Commands::Doctor { json } => {
-            run_doctor_command(json, cli.db_path)?;
+            run_doctor_command(resolve_json(json), cli.db_path)?;
+        }
+        Commands::Version { offline, json } => {
+            version_info::run_version_command(resolve_json(json), offline)?;
+        }
+        Commands::Update { offline, json } => {
+            version_info::run_update_command(resolve_json(json), offline)?;
         }
         Commands::Matrix { json } => {
-            run_matrix_command(json, cli.db_path)?;
+            run_matrix_command(resolve_json(json), cli.db_path)?;
         }
         Commands::Traces {
             limit,
@@ -254,10 +530,11 @@ fn main() -> Result<()> {
             all_stubs,
             json,
         } => {
-            run_traces_command(limit, adapter, model, all_stubs, json, cli.db_path)?;
+            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+            run_traces_command(limit, adapter, model, all_stubs, resolve_json(json), cli.db_path)?;
         }
         Commands::Inspect { session_id, json } => {
-            run_inspect_command(&session_id, json, cli.db_path)?;
+            run_inspect_command(&session_id, resolve_json(json), cli.db_path)?;
         }
         Commands::Export {
             session_id,
@@ -267,6 +544,14 @@ fn main() -> Result<()> {
         } => {
             run_export_command(&session_id, redact, &format, output.as_deref(), cli.db_path)?;
         }
+        Commands::Receipt {
+            session_id,
+            format,
+            output,
+        } => {
+            agentworth_cli::run_receipt_command(&session_id, &format, output, cli.db_path)?;
+        }
+
         Commands::Search {
             query,
             limit,
@@ -274,25 +559,46 @@ fn main() -> Result<()> {
             kind,
             json,
         } => {
-            agentworth_cli::run_search_command(&query, limit, min_score, kind, json, cli.db_path)?;
+            let limit = config::resolve_limit(limit, persisted_config.limit, 10);
+            agentworth_cli::run_search_command(
+                &query,
+                limit,
+                min_score,
+                kind,
+                resolve_json(json),
+                cli.db_path,
+            )?;
         }
         Commands::Audit { safety, json } => {
-            agentworth_cli::run_audit_command(safety, json, cli.db_path)?;
+            agentworth_cli::run_audit_command(safety, resolve_json(json), cli.db_path)?;
         }
         Commands::Blunder { top, submit, json } => {
-            agentworth_cli::run_blunder_command(top, submit, json, cli.db_path)?;
+            agentworth_cli::run_blunder_command(top, submit, resolve_json(json), cli.db_path)?;
         }
         Commands::Usage {
             period,
             pacing,
             hours,
+            alert_above,
             limit,
+            by_model,
             json,
         } => {
-            run_usage_command(&period, pacing, hours, limit, json, cli.db_path)?;
+            let period = config::resolve_period(period, persisted_config.period.clone(), "day")?;
+            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+            run_usage_command(
+                &period,
+                pacing,
+                hours,
+                alert_above,
+                limit,
+                by_model,
+                resolve_json(json),
+                cli.db_path,
+            )?;
         }
         Commands::Blame { file_path, json } => {
-            run_blame_command(&file_path, json, cli.db_path)?;
+            run_blame_command(&file_path, resolve_json(json), cli.db_path)?;
         }
         Commands::Serve { port, open, dist } => {
             let storage = open_storage(cli.db_path)?;
@@ -307,6 +613,79 @@ fn main() -> Result<()> {
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
         }
+        Commands::Merge { source_db, json } => {
+            merge::run_merge_command(source_db, resolve_json(json), cli.db_path)?;
+        }
+        Commands::Watch {
+            interval_secs,
+            poll_once,
+            json,
+            paths,
+        } => {
+            watch::run_watch_command(interval_secs, poll_once, resolve_json(json), paths, cli.db_path)?;
+        }
+        Commands::CacheDoctor { session_id, json } => {
+            cache_doctor::run_cache_doctor_command(&session_id, resolve_json(json), cli.db_path)?;
+        }
+        Commands::BlindSpots { limit, json } => {
+            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+            blind_spots::run_blind_spots_command(limit, resolve_json(json), cli.db_path)?;
+        }
+        Commands::ThreatDigest {
+            limit,
+            min_severity,
+            json,
+        } => {
+            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+            threat_digest::run_threat_digest_command(
+                limit,
+                &min_severity,
+                resolve_json(json),
+                cli.db_path,
+            )?;
+        }
+        Commands::Autopsy {
+            min_occurrences,
+            json,
+        } => {
+            autopsy::run_autopsy_command(min_occurrences, resolve_json(json), cli.db_path)?;
+        }
+        Commands::Recall {
+            query,
+            limit,
+            min_score,
+            json,
+        } => {
+            let limit = config::resolve_limit(limit, persisted_config.limit, 5);
+            recall::run_recall_command(&query, limit, min_score, resolve_json(json), cli.db_path)?;
+        }
+        Commands::Bisect { session_id, json } => {
+            bisect::run_bisect_command(&session_id, resolve_json(json), cli.db_path)?;
+        }
+        Commands::PrBlame { files, json } => {
+            pr_blame::run_pr_blame_command(files, resolve_json(json), cli.db_path)?;
+        }
+        Commands::BlunderBlame {
+            file,
+            session,
+            top,
+            json,
+        } => {
+            agentworth_cli::run_blunder_blame_command(
+                file,
+                session,
+                top,
+                resolve_json(json),
+                cli.db_path,
+            )?;
+        }
+        Commands::Config { action } => match action {
+            ConfigAction::List { json } => config::run_config_list(resolve_json(json))?,
+            ConfigAction::Get { key, json } => config::run_config_get(&key, resolve_json(json))?,
+            ConfigAction::Set { key, value, json } => {
+                config::run_config_set(&key, &value, resolve_json(json))?
+            }
+        },
     }
 
     Ok(())
@@ -454,7 +833,10 @@ fn compute_verdict_breakdown(storage: &Arc<Storage>, total_sessions: usize) -> V
 
 fn run_stats_command(json: bool, db_path: Option<PathBuf>) -> Result<()> {
     let storage = open_storage(db_path)?;
-    let stats = storage.get_aggregate_stats()?;
+    // false: compute_verdict_breakdown below iterates list_sessions_filtered's stub-excluded
+    // default, so stats.total_sessions must exclude stubs too or real_verified_rate divides by
+    // an inflated, mismatched denominator (docs/DECISION-INBOX.md, stats/stub-count-mismatch).
+    let stats = storage.get_aggregate_stats(false)?;
     let top_repos = storage.get_top_repositories()?;
     let verdict = compute_verdict_breakdown(&storage, stats.total_sessions);
 
@@ -676,7 +1058,7 @@ fn print_stats_view(
             let model_display = if model.len() > 28 {
                 format!("{}...", &model[..25])
             } else {
-                model.to_string()
+                (*model).clone()
             };
             println!(
                 "│   • {:<28} {:>6} sessions         │",
@@ -698,7 +1080,7 @@ fn print_stats_view(
             let tool_display = if tool.len() > 28 {
                 format!("{}...", &tool[..25])
             } else {
-                tool.to_string()
+                (*tool).clone()
             };
             println!(
                 "│   • {:<28} {:>6} calls            │",
@@ -718,7 +1100,7 @@ fn print_stats_view(
             let repo_display = if repo.len() > 28 {
                 format!("{}...", &repo[..25])
             } else {
-                repo.to_string()
+                repo.clone()
             };
             println!(
                 "│   • {:<28} {:>6} sessions         │",
@@ -755,6 +1137,7 @@ fn run_traces_command(
         adapter,
         model,
         limit: None,
+        include_stubs: if all_stubs { Some(true) } else { None },
         order_by: Some(SessionOrderBy::StartedAtDesc),
         ..Default::default()
     };
@@ -793,9 +1176,27 @@ fn run_traces_command(
     }
 
     if json {
+        // When filtering by model, the session-wide `total_tokens` can be misleading
+        // for a multi-model session (it's every model's usage, not just the matched
+        // one) — so also surface the matched model's own contribution.
+        let model_needle = filter.model.as_deref().map(|m| m.to_lowercase());
+
         let json_rows: Vec<_> = rows
             .iter()
             .map(|(badge, score, kind, s)| {
+                let model_filter_tokens: Option<u64> = model_needle.as_deref().and_then(|needle| {
+                    match storage.get_session_model_usage(&s.session_id) {
+                        Ok(usages) if !usages.is_empty() => Some(
+                            usages
+                                .iter()
+                                .filter(|(m, _)| m.to_lowercase().contains(needle))
+                                .map(|(_, u)| u.total())
+                                .sum(),
+                        ),
+                        _ => None,
+                    }
+                });
+
                 json!({
                     "session_id": s.session_id,
                     "adapter": s.adapter,
@@ -807,8 +1208,12 @@ fn run_traces_command(
                     "tool_calls_count": s.tool_calls_count,
                     "models_used": s.models_used,
                     "verdict_badge": badge,
-                    "primary_outcome": kind.map(|k| format!("{:?}", k)),
+                    // Use the canonical snake_case encoding (see agentworth_outcomes::outcome_kind_name),
+                    // not `{:?}` Debug formatting -- Debug prints the raw PascalCase variant name, which
+                    // is exactly the encoding mismatch this codebase has already shipped as a bug once.
+                    "primary_outcome": kind.map(agentworth_outcomes::outcome_kind_name),
                     "score": score,
+                    "model_filter_tokens": model_filter_tokens,
                 })
             })
             .collect();
@@ -1343,10 +1748,21 @@ fn run_export_command(
         trace = agentworth_redaction::redact_trace(&trace);
     }
 
-    let output_content = match format {
+    let output_content = match format.to_lowercase().as_str() {
         "atif" => agentworth_export_atif::export_to_atif(&trace, true)?,
+        "svg" => {
+            let scorer = agentworth_scoring::TraceScorer::default();
+            let score = scorer.score(&trace);
+            agentworth_cli::render_svg_receipt(&trace, &score)
+        }
+        "receipt" | "terminal" | "ansi" => {
+            let scorer = agentworth_scoring::TraceScorer::default();
+            let score = scorer.score(&trace);
+            agentworth_cli::render_terminal_receipt(&trace, &score)
+        }
         _ => serde_json::to_string_pretty(&trace)?,
     };
+
 
     if let Some(out_path) = output {
         if let Some(parent) = out_path.parent() {
@@ -1481,7 +1897,7 @@ fn print_scan_summary(summary: &ScanSummary, db_path: Option<&std::path::Path>) 
             let model_display = if model.len() > 28 {
                 format!("{}...", &model[..25])
             } else {
-                model.to_string()
+                (*model).clone()
             };
             println!(
                 "│   • {:<28} {:>6} sessions         │",
@@ -1503,7 +1919,7 @@ fn print_scan_summary(summary: &ScanSummary, db_path: Option<&std::path::Path>) 
             let tool_display = if tool.len() > 28 {
                 format!("{}...", &tool[..25])
             } else {
-                tool.to_string()
+                (*tool).clone()
             };
             println!(
                 "│   • {:<28} {:>6} calls            │",
@@ -1536,7 +1952,10 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
 
     if let Ok(st) = &storage_res {
         storage_healthy = true;
-        if let Ok(stats) = st.get_aggregate_stats() {
+        // true: this is a raw index-health count ("total_indexed_sessions" under "storage"),
+        // matching `agentworth scan`'s own "Total Indexed... in SQLite index" promise -- not a
+        // "real activity" metric.
+        if let Ok(stats) = st.get_aggregate_stats(true) {
             total_indexed = stats.total_sessions;
         }
         let actual_path = PathBuf::from(&db_path_display);
@@ -1683,18 +2102,6 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
 // Command: Matrix
 // -----------------------------------------------------------------------------
 
-struct AdapterCoverageMeta {
-    adapter: &'static str,
-    source_root: &'static str,
-    prompts: bool,
-    tokens: bool,
-    tools: bool,
-    shell: bool,
-    diffs: bool,
-    thinking: bool,
-    outcomes: bool,
-}
-
 fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()> {
     let adapters: Vec<Box<dyn agentworth_adapter_sdk::AgentAdapter>> = vec![
         Box::new(agentworth_adapters::AiderAdapter::new()),
@@ -1719,52 +2126,69 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()
         Box::new(agentworth_adapters::ZhipuAdapter::new()),
     ];
 
-    let meta_list = vec![
-        AdapterCoverageMeta { adapter: "aider", source_root: "~/.aider* / chat history", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "claude_code", source_root: "~/.claude/projects/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "cline", source_root: "~/.config/Code/.../cline/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "codex", source_root: "~/.codex/sessions/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "cursor", source_root: "~/.cursor/ / Cursor/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "deepseek", source_root: "~/.deepseek/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "gemini", source_root: "~/.gemini/antigravity/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "goose", source_root: "~/.config/goose/sessions/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "grok", source_root: "~/.grok/ / ~/.xai/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "herdr", source_root: "~/.herdr/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "hermes", source_root: "~/.hermes/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "kimi", source_root: "~/.kimi/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "manus", source_root: "~/.manus/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "minimax", source_root: "~/.minimax/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "openclaw", source_root: "~/.openclaw/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "opencode", source_root: "~/.opencode/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "pi", source_root: "~/.pi/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "qwen", source_root: "~/.qwen/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "windsurf", source_root: "~/.codeium/windsurf/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "zhipu", source_root: "~/.zhipu/ / codegeex/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-    ];
+    let default_roots: std::collections::HashMap<&'static str, &'static str> = [
+        ("aider", "~/.aider* / chat history"),
+        ("claude_code", "~/.claude/projects/"),
+        ("cline", "~/.config/Code/.../cline/"),
+        ("codex", "~/.codex/sessions/"),
+        ("cursor", "~/.cursor/ / workspaceStorage"),
+        ("deepseek", "~/.deepseek/"),
+        ("gemini", "~/.gemini/ / antigravity"),
+        ("goose", "~/.config/goose/sessions/"),
+        ("grok", "~/.grok/ / ~/.xai/"),
+        ("herdr", "~/.herdr/"),
+        ("hermes", "~/.hermes/"),
+        ("kimi", "~/.kimi/"),
+        ("manus", "~/.manus/"),
+        ("minimax", "~/.minimax/"),
+        ("openclaw", "~/.openclaw/"),
+        ("opencode", "~/.opencode/"),
+        ("pi", "~/.pi/"),
+        ("qwen", "~/.qwen/"),
+        ("windsurf", "~/.codeium/windsurf/"),
+        ("zhipu", "~/.zhipu/ / codegeex/"),
+    ]
+    .into_iter()
+    .collect();
 
     let scan_opts = ScanOptions::default();
     let mut rows_data = Vec::new();
+    let mut total_supported = 0usize;
+    let mut total_possible = 0usize;
 
-    for (adapter, meta) in adapters.iter().zip(meta_list.iter()) {
+    for adapter in &adapters {
+        let name = adapter.name();
+        let caps = adapter.capabilities();
+        let (sup, poss) = caps.score();
+        total_supported += sup;
+        total_possible += poss;
+
         let is_detected = adapter.detect(&scan_opts).map(|d| d.is_present).unwrap_or(false);
-        rows_data.push((meta, is_detected));
+        let source_root = default_roots.get(name).copied().unwrap_or("~/.<agent>/");
+
+        rows_data.push((name, source_root, caps, is_detected));
     }
+
+    let real_coverage_rate = format!(
+        "{:.1}%",
+        (total_supported as f64 / total_possible as f64) * 100.0
+    );
 
     if json_output {
         let json_arr: Vec<_> = rows_data
             .iter()
-            .map(|(m, detected)| {
+            .map(|(name, source_root, caps, detected)| {
                 json!({
-                    "adapter": m.adapter,
-                    "source_root": m.source_root,
+                    "adapter": name,
+                    "source_root": source_root,
                     "extraction": {
-                        "prompts": m.prompts,
-                        "tokens": m.tokens,
-                        "tools": m.tools,
-                        "shell": m.shell,
-                        "diffs": m.diffs,
-                        "thinking": m.thinking,
-                        "outcomes": m.outcomes,
+                        "prompts": caps.prompts,
+                        "tokens": caps.tokens,
+                        "tools": caps.tools,
+                        "shell": caps.shell,
+                        "diffs": caps.diffs,
+                        "thinking": caps.thinking,
+                        "outcomes": caps.outcomes,
                     },
                     "is_detected": detected,
                     "status": if *detected { "detected" } else { "available" }
@@ -1774,7 +2198,7 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()
 
         let output = json!({
             "total_adapters": rows_data.len(),
-            "coverage_rate": "100%",
+            "coverage_rate": real_coverage_rate,
             "adapters": json_arr,
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -1812,32 +2236,38 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()
         style("├─────────────────┼────────────────────────────┼─────────┼────────┼───────┼───────┼───────┼───────┼──────────┼─────────────┤").bold()
     );
 
-    let check = style("✓").bold().green().to_string();
+    let fmt_cap = |supported: bool| -> String {
+        if supported {
+            style("✓").bold().green().to_string()
+        } else {
+            style("-").dim().to_string()
+        }
+    };
 
-    for (m, is_detected) in &rows_data {
+    for (name, source_root, caps, is_detected) in &rows_data {
         let status_str = if *is_detected {
             style("✓ Detected").bold().green()
         } else {
             style("○ Available").dim()
         };
 
-        let src_display = if m.source_root.len() > 26 {
-            format!("{}...", &m.source_root[..23])
+        let src_display = if source_root.len() > 26 {
+            format!("{}...", &source_root[..23])
         } else {
-            m.source_root.to_string()
+            source_root.to_string()
         };
 
         println!(
             "│ {:<15} │ {:<26} │ {:^7} │ {:^6} │ {:^5} │ {:^5} │ {:^5} │ {:^5} │ {:^8} │ {:<11} │",
-            style(m.adapter).bold(),
+            style(name).bold(),
             style(src_display).dim(),
-            check,
-            check,
-            check,
-            check,
-            check,
-            check,
-            check,
+            fmt_cap(caps.prompts),
+            fmt_cap(caps.tokens),
+            fmt_cap(caps.tools),
+            fmt_cap(caps.shell),
+            fmt_cap(caps.diffs),
+            fmt_cap(caps.thinking),
+            fmt_cap(caps.outcomes),
             status_str,
         );
     }
@@ -1847,9 +2277,9 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()
         style("└─────────────────┴────────────────────────────┴─────────┴────────┴───────┴───────┴───────┴───────┴──────────┴─────────────┘").bold()
     );
     println!(
-        "Showing {} of {} adapters with 100% extraction parity.",
+        "Showing {} production adapters. Grounded extraction coverage across feature dimensions: {}.",
         rows_data.len(),
-        rows_data.len()
+        style(&real_coverage_rate).bold().cyan()
     );
     println!();
 
@@ -1864,7 +2294,9 @@ fn run_usage_command(
     period: &str,
     pacing: bool,
     hours: i64,
+    alert_above: Option<f64>,
     limit: usize,
+    by_model: bool,
     json: bool,
     db_path: Option<PathBuf>,
 ) -> Result<()> {
@@ -1872,12 +2304,46 @@ fn run_usage_command(
 
     if pacing {
         let p = storage.get_pacing_window(hours)?;
+        let alert_triggered = alert_above
+            .map(|t| p.estimated_cost_usd >= t)
+            .unwrap_or(false);
+
         if json {
-            println!("{}", serde_json::to_string_pretty(&p)?);
+            let mut val = serde_json::to_value(&p)?;
+            if let Some(threshold) = alert_above {
+                val["alert_threshold_usd"] = serde_json::json!(threshold);
+                val["alert_triggered"] = serde_json::json!(alert_triggered);
+            }
+            println!("{}", serde_json::to_string_pretty(&val)?);
             return Ok(());
         }
 
         println!();
+        if let Some(threshold) = alert_above {
+            if alert_triggered {
+                println!(
+                    "{}",
+                    style(format!(
+                        "🚨 BURN ALARM TRIGGERED: Window spend (${:.2}) exceeds alert threshold (${:.2})!",
+                        p.estimated_cost_usd, threshold
+                    ))
+                    .bold()
+                    .red()
+                );
+            } else {
+                println!(
+                    "{}",
+                    style(format!(
+                        "🛡️  Burn Alarm Safe: Window spend (${:.2}) is below threshold (${:.2}).",
+                        p.estimated_cost_usd, threshold
+                    ))
+                    .bold()
+                    .green()
+                );
+            }
+            println!();
+        }
+
         println!(
             "{}",
             style("┌──────────────────────────────────────────────────────────┐").bold()
@@ -1962,6 +2428,97 @@ fn run_usage_command(
         return Ok(());
     }
 
+    if by_model {
+        let records = storage.get_model_usage(period, limit)?;
+
+        if json {
+            println!("{}", serde_json::to_string_pretty(&records)?);
+            return Ok(());
+        }
+
+        if records.is_empty() {
+            println!("No usage records found. Run `agentworth scan` (or `agwt scan`) to index local sessions.");
+            return Ok(());
+        }
+
+        let title = match period {
+            "week" => "📅 AgentWorth Weekly Usage Rollup (by model)",
+            "month" => "🗓️  AgentWorth Monthly Usage Rollup (by model)",
+            _ => "📊 AgentWorth Daily Usage Ledger (by model)",
+        };
+
+        println!();
+        println!("{}", style(format!("┌─ {} ───────────────────────────────────────────┐", title)).bold());
+        println!(
+            "{}",
+            style("├────────────┬─────────────┬───────────┬────────────┬────────────┬────────────┬───────────┤").bold()
+        );
+        println!(
+            "│ {:<10} │ {:<11} │ {:<9} │ {:<10} │ {:<10} │ {:<10} │ {:<9} │",
+            style("PERIOD").bold(),
+            style("MODEL").bold(),
+            style("SESSIONS").bold(),
+            style("INPUT").bold(),
+            style("OUTPUT").bold(),
+            style("CACHE READ").bold(),
+            style("EST. COST").bold()
+        );
+        println!(
+            "{}",
+            style("├────────────┼─────────────┼───────────┼────────────┼────────────┼────────────┼───────────┤").bold()
+        );
+
+        let mut total_sessions = 0;
+        let mut total_tokens = 0;
+        let mut total_cost = 0.0;
+
+        for r in &records {
+            total_sessions += r.session_count;
+            total_tokens += r.total_tokens;
+            total_cost += r.estimated_cost_usd;
+
+            let model_disp = if r.model.len() > 11 {
+                format!("{}...", &r.model[..8])
+            } else {
+                r.model.clone()
+            };
+            let input_disp = format_number(r.input_tokens);
+            let output_disp = format_number(r.output_tokens);
+            let cache_disp = format_number(r.cache_read_tokens);
+            let cost_disp = format!("${:.2}", r.estimated_cost_usd);
+
+            println!(
+                "│ {:<10} │ {:<11} │ {:>9} │ {:>10} │ {:>10} │ {:>10} │ {:>9} │",
+                style(&r.period).cyan(),
+                style(model_disp).green(),
+                r.session_count,
+                input_disp,
+                output_disp,
+                cache_disp,
+                style(cost_disp).magenta()
+            );
+        }
+
+        println!(
+            "{}",
+            style("├────────────┴─────────────┼───────────┼────────────┴────────────┼────────────┼───────────┤").bold()
+        );
+        println!(
+            "│ TOTAL (Displayed)        │ {:>9} │ {:<23} │ {:>10} │ {:>9} │",
+            style(total_sessions).bold(),
+            "",
+            style(format_number(total_tokens)).bold(),
+            style(format!("${:.2}", total_cost)).bold().magenta()
+        );
+        println!(
+            "{}",
+            style("└──────────────────────────┴───────────┴─────────────────────────┴────────────┴───────────┘").bold()
+        );
+        println!();
+
+        return Ok(());
+    }
+
     let records = match period {
         "week" => storage.get_weekly_usage(Some(limit))?,
         "month" => storage.get_monthly_usage(Some(limit))?,
@@ -1974,7 +2531,7 @@ fn run_usage_command(
     }
 
     if records.is_empty() {
-        println!("No usage records found. Run `agwt scan` to index local sessions.");
+        println!("No usage records found. Run `agentworth scan` (or `agwt scan`) to index local sessions.");
         return Ok(());
     }
 
@@ -2137,4 +2694,189 @@ fn run_blame_command(
     println!();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent, Provenance, TokenUsage};
+    use chrono::{Duration, Utc};
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_traces_all_stubs_filter_wiring() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+
+        // Session 1: A stub session (only 1 event: UserMessage)
+        let start = Utc::now();
+        let prov1 = Provenance::new("/test/stub.jsonl", "claude_code", 10, 100, "fp1");
+        let mut trace1 = AgentWorthTrace::new("sess-stub-1", "claude_code", prov1, start);
+        trace1.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage {
+                content: "help".to_string(),
+            },
+        ));
+        trace1.stats.total_events = 1;
+        storage.upsert_trace(&trace1).unwrap();
+
+        // Session 2: A multi-turn session (2 events)
+        let prov2 = Provenance::new("/test/full.jsonl", "claude_code", 20, 200, "fp2");
+        let mut trace2 = AgentWorthTrace::new("sess-full-2", "claude_code", prov2, start);
+        trace2.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage {
+                content: "write tests".to_string(),
+            },
+        ));
+        trace2.events.push(NormalizedEvent::new(
+            2,
+            start,
+            EventPayload::AssistantMessage {
+                content: "tests written".to_string(),
+                thinking: None,
+            },
+        ));
+        trace2.stats.total_events = 2;
+        trace2.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+        storage.upsert_trace(&trace2).unwrap();
+
+        // Without all_stubs (default): stubs excluded (total_events > 1)
+        let default_filter = SessionFilter {
+            include_stubs: None,
+            ..Default::default()
+        };
+        let default_results = storage.list_sessions_filtered(&default_filter).unwrap();
+        assert_eq!(default_results.len(), 1);
+        assert_eq!(default_results[0].session_id, "sess-full-2");
+
+        // With all_stubs: stubs included
+        let all_stubs_filter = SessionFilter {
+            include_stubs: Some(true),
+            ..Default::default()
+        };
+        let all_stubs_results = storage.list_sessions_filtered(&all_stubs_filter).unwrap();
+        assert_eq!(all_stubs_results.len(), 2);
+    }
+
+    #[test]
+    fn test_compute_verdict_breakdown_scans_beyond_default_limit() {
+        // Regression test: compute_verdict_breakdown asks list_sessions_filtered for every
+        // session via `limit: None`, then divides its bucket counts against the true total.
+        // list_sessions_filtered used to silently resolve `limit: None` to 50, so on any index
+        // bigger than that the buckets summed to 50 instead of the real count. This seeds more
+        // than 50 non-stub sessions and asserts the buckets cover all of them.
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+        let start = Utc::now();
+
+        const SESSION_COUNT: i64 = 60;
+        for i in 0..SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/test/verdict_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_verdict_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-verdict-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            // Non-stub: list_sessions_filtered's default excludes total_events <= 1 or
+            // total_tokens <= 0.
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).unwrap();
+        }
+
+        let storage = Arc::new(storage);
+        let total_sessions = storage.get_aggregate_stats(false).unwrap().total_sessions;
+        assert_eq!(total_sessions, SESSION_COUNT as usize);
+
+        let breakdown = compute_verdict_breakdown(&storage, total_sessions);
+        let scanned = breakdown.ci_or_deployment_verified
+            + breakdown.commit_observed
+            + breakdown.test_or_build_passed
+            + breakdown.artifact_changed
+            + breakdown.done_claimed
+            + breakdown.unverified;
+
+        assert_eq!(
+            scanned, SESSION_COUNT as usize,
+            "compute_verdict_breakdown must scan every session, not silently cap at 50"
+        );
+    }
+
+    #[test]
+    fn test_burn_alarm_threshold_triggering() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+
+        let now = Utc::now();
+        let prov = Provenance::new("/tmp/test.jsonl", "claude_code", 100, 1000, "fp1");
+        let mut trace = AgentWorthTrace::new("sess-pacing-1", "claude_code", prov, now - Duration::hours(1));
+
+        trace.stats.token_usage = TokenUsage {
+            input_tokens: 10_000_000,   // 10M input = $30.00
+            output_tokens: 2_000_000,  // 2M output = $30.00
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+        };
+
+        trace.events.push(NormalizedEvent::new(
+            1,
+            now - Duration::hours(1),
+            EventPayload::UserMessage {
+                content: "run simulation".to_string(),
+            },
+        ));
+
+        storage.upsert_trace(&trace).unwrap();
+
+        let pacing = storage.get_pacing_window(5).unwrap();
+        assert!(pacing.estimated_cost_usd >= 50.0);
+
+        // Alert threshold $100 -> NOT triggered
+        let alert_triggered_high = pacing.estimated_cost_usd >= 100.0;
+        assert!(!alert_triggered_high);
+
+        // Alert threshold $20 -> TRIGGERED
+        let alert_triggered_low = pacing.estimated_cost_usd >= 20.0;
+        assert!(alert_triggered_low);
+    }
+
+    #[test]
+    fn test_cli_binary_alias_parsing() {
+        use clap::Parser;
+
+        // Test parsing command using "agentworth" binary name
+        let parsed_agentworth = Cli::try_parse_from(["agentworth", "doctor", "--json"]).unwrap();
+        match parsed_agentworth.command {
+            Commands::Doctor { json } => assert!(json),
+            _ => panic!("Expected Doctor command"),
+        }
+
+        // Test parsing command using "agwt" binary alias
+        let parsed_agwt = Cli::try_parse_from(["agwt", "doctor", "--json"]).unwrap();
+        match parsed_agwt.command {
+            Commands::Doctor { json } => assert!(json),
+            _ => panic!("Expected Doctor command"),
+        }
+
+        // Test usage pacing with alert-above
+        let parsed_usage = Cli::try_parse_from(["agwt", "usage", "--pacing", "--alert-above", "50.0"]).unwrap();
+        match parsed_usage.command {
+            Commands::Usage { pacing, alert_above, .. } => {
+                assert!(pacing);
+                assert_eq!(alert_above, Some(50.0));
+            }
+            _ => panic!("Expected Usage command"),
+        }
+    }
 }

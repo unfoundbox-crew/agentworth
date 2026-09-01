@@ -82,10 +82,36 @@ pub fn compute_archaeology_highlights(
     storage: &Storage,
     scanner: &Scanner,
 ) -> Result<ArchaeologyHighlights> {
-    let stats = storage.get_aggregate_stats()?;
+    // `limit: None` = unlimited (SessionFilter::limit's doc comment, crates/storage/src/lib.rs).
+    // This was `Some(1000)` ordered oldest-first (StartedAtAsc) -- worse than a plain
+    // undercount: on any index over 1000 non-stub sessions it silently dropped every session
+    // past the 1000 oldest, so "archaeology" (most-expensive-unsolved, longest-recovery-loop,
+    // top model-switchers, and a full first-session-to-latest carbon-dating timeline) showed
+    // only ancient history and missed all recent activity. Same cap-presented-as-complete bug
+    // already fixed in compute_verdict_breakdown and get_stats_handler.
+    //
+    // Safe to remove for the same reasons as get_stats_handler: this pulls lightweight
+    // SessionSummary rows (no event payloads), get_aggregate_stats above already scans the
+    // same table unbounded, the response is fixed-shape highlights (not the session list), and
+    // both callers (dashboard, legacy static UI) fetch this once per page load or explicit
+    // rescan, never on a poll. It also doesn't touch the expensive part of this function:
+    // full-trace loading stays capped at the <=40 sessions picked as candidates below,
+    // regardless of how many summaries this scan returns.
+    //
+    // Order flipped to most-recent-first: nothing here actually depends on row order (monthly
+    // buckets key off a BTreeMap below, and the top-20-by-tokens/top-20-by-events candidate
+    // picks each do their own explicit sort), so once unbounded this only affects which session
+    // wins an exact-value tie. Kept as StartedAtDesc anyway -- if a cap ever comes back here,
+    // "missing old history" is a safer failure than "missing today's session," which is the bug
+    // this fix closes.
+    //
+    // false: matches this function's own `all_sessions` below (list_sessions_filtered's
+    // stub-excluded default) -- average_tokens_per_session divides stats.token_usage by
+    // stats.total_sessions, so both must describe the same population.
+    let stats = storage.get_aggregate_stats(false)?;
     let all_sessions = storage.list_sessions_filtered(&SessionFilter {
-        limit: Some(1000),
-        order_by: Some(SessionOrderBy::StartedAtAsc),
+        limit: None,
+        order_by: Some(SessionOrderBy::StartedAtDesc),
         ..Default::default()
     })?;
 
@@ -120,14 +146,14 @@ pub fn compute_archaeology_highlights(
     
     // Top 20 by tokens (for most_expensive_unsolved)
     let mut by_tokens = all_sessions.clone();
-    by_tokens.sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
+    by_tokens.sort_by_key(|s| std::cmp::Reverse(s.total_tokens));
     for s in by_tokens.iter().take(20) {
         candidate_ids.insert(s.session_id.clone());
     }
 
     // Top 20 by events (for recovery loops and model switches)
     let mut by_events = all_sessions.clone();
-    by_events.sort_by(|a, b| b.total_events.cmp(&a.total_events));
+    by_events.sort_by_key(|s| std::cmp::Reverse(s.total_events));
     for s in by_events.iter().take(20) {
         candidate_ids.insert(s.session_id.clone());
     }
@@ -354,4 +380,137 @@ pub fn compute_archaeology_highlights(
         most_frequent_model_switches,
         token_carbon_dating,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentworth_schema::{AgentWorthTrace, Provenance, TokenUsage};
+    use std::sync::Arc;
+    use tempfile::NamedTempFile;
+
+    /// Regression test for the old `Some(1000)` cap + oldest-first (`StartedAtAsc`) ordering on
+    /// compute_archaeology_highlights's `list_sessions_filtered` call. That combination was worse
+    /// than a plain undercount: on an index over 1000 non-stub sessions, oldest-first plus a
+    /// 1000-row cap means every session past the 1000 oldest is invisible to this function, so an
+    /// "archaeology"/highlights view whose entire point is scanning full history (a
+    /// first-session-to-latest carbon-dating timeline, most-expensive-unsolved, longest-recovery,
+    /// top model-switchers) instead showed only ancient history and silently missed all recent
+    /// activity.
+    ///
+    /// Seeds 1000 "old" sessions clustered in one month plus 50 "recent" sessions ~400 days
+    /// later in a different month -- deliberately more than the old 1000 cap, and deliberately
+    /// the *most recent* activity, exactly what oldest-first + the cap dropped. Uses a distinct
+    /// adapter and token total for each cohort so both `timeline` (keyed by month) and
+    /// `adapter_tokens` (keyed by adapter) independently confirm the recent cohort is fully
+    /// counted, not partially or not at all. Deep per-trace inspection (most_expensive_unsolved
+    /// etc.) is untouched by this test: `scanner.load_trace` fails for these synthetic sessions
+    /// (no real file on disk), so it's exercised only up to the `.ok()` no-op -- the assertions
+    /// below cover the shallow-pass fields that come straight from the previously-capped
+    /// `all_sessions` scan.
+    #[test]
+    fn test_archaeology_highlights_includes_sessions_beyond_old_1000_cap() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+
+        let old_base: DateTime<Utc> = "2020-01-15T00:00:00Z".parse().unwrap();
+        let recent_base: DateTime<Utc> = old_base + chrono::Duration::days(400);
+
+        const OLD_COUNT: i64 = 1000;
+        const RECENT_COUNT: i64 = 50;
+
+        for i in 0..OLD_COUNT {
+            let prov = Provenance::new(
+                format!("/test/arch_old_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_arch_old_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-arch-old-{}", i),
+                "claude_code",
+                prov,
+                old_base + chrono::Duration::seconds(i),
+            );
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).unwrap();
+        }
+
+        for i in 0..RECENT_COUNT {
+            let prov = Provenance::new(
+                format!("/test/arch_recent_{}.jsonl", i),
+                "codex_cli",
+                10,
+                100,
+                format!("fp_arch_recent_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-arch-recent-{}", i),
+                "codex_cli",
+                prov,
+                recent_base + chrono::Duration::seconds(i),
+            );
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(200, 50, 0, 0);
+            storage.upsert_trace(&trace).unwrap();
+        }
+
+        let old_month = old_base.format("%Y-%m").to_string();
+        let recent_month = recent_base.format("%Y-%m").to_string();
+        assert_ne!(
+            old_month, recent_month,
+            "test fixture bug: old/recent cohorts must land in different months"
+        );
+
+        let storage = Arc::new(storage);
+        let scanner = Scanner::new(storage.clone());
+
+        let highlights = compute_archaeology_highlights(&storage, &scanner)
+            .expect("compute_archaeology_highlights should succeed");
+
+        let timeline = &highlights.token_carbon_dating.timeline;
+
+        let old_era = timeline
+            .iter()
+            .find(|e| e.period == old_month)
+            .unwrap_or_else(|| panic!("old month bucket '{}' missing from timeline", old_month));
+        assert_eq!(
+            old_era.sessions_count, OLD_COUNT as usize,
+            "old month bucket should count all {} old sessions",
+            OLD_COUNT
+        );
+        assert_eq!(old_era.tokens, (OLD_COUNT as u64) * 120);
+
+        let recent_era = timeline.iter().find(|e| e.period == recent_month);
+        assert!(
+            recent_era.is_some(),
+            "recent month bucket '{}' is missing from the timeline -- \
+             compute_archaeology_highlights is still capping/misordering list_sessions_filtered \
+             and silently dropping the newest {} sessions",
+            recent_month,
+            RECENT_COUNT
+        );
+        let recent_era = recent_era.unwrap();
+        assert_eq!(
+            recent_era.sessions_count, RECENT_COUNT as usize,
+            "recent month bucket should count all {} recent sessions, not a partial/zero count",
+            RECENT_COUNT
+        );
+        assert_eq!(recent_era.tokens, (RECENT_COUNT as u64) * 250);
+
+        // adapter_tokens is populated from the same previously-capped scan; the recent cohort's
+        // distinct adapter name makes this an independent confirmation of the same fix.
+        let adapter_tokens = &highlights.token_carbon_dating.adapter_tokens;
+        assert_eq!(
+            adapter_tokens.get("claude_code").copied().unwrap_or(0),
+            (OLD_COUNT as u64) * 120
+        );
+        assert_eq!(
+            adapter_tokens.get("codex_cli").copied().unwrap_or(0),
+            (RECENT_COUNT as u64) * 250,
+            "codex_cli (the recent cohort's adapter) should have its tokens fully counted"
+        );
+    }
 }

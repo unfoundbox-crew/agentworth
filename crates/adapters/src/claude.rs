@@ -6,7 +6,7 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
     Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
@@ -50,6 +50,18 @@ impl AgentAdapter for ClaudeCodeAdapter {
         "claude_code"
     }
 
+    fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
+        agentworth_adapter_sdk::AdapterCapabilities {
+            prompts: true,
+            tokens: true,
+            tools: true,
+            shell: true,
+            diffs: true,
+            thinking: true,
+            outcomes: true,
+        }
+    }
+
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
         let mut discovered = Vec::new();
 
@@ -60,10 +72,33 @@ impl AgentAdapter for ClaudeCodeAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".claude") || custom.to_string_lossy().contains("claude"))
-            {
+            if !custom.exists() {
+                continue;
+            }
+            let s = custom.to_string_lossy().to_lowercase();
+            if custom.ends_with(".claude") || s.contains("claude") {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // custom_paths may point at a generic parent directory rather than
+                // the adapter-specific dir itself; look a few levels in before
+                // giving up, matching how `enumerate()` already recurses.
+                let mut found_nested = false;
+                for sub in &[custom.join(".claude"), custom.join(".config").join("claude")] {
+                    if sub.exists() {
+                        discovered.push(sub.clone());
+                        found_nested = true;
+                    }
+                }
+                if !found_nested {
+                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        let ps = path.to_string_lossy().to_lowercase();
+                        if ps.contains("claude") {
+                            discovered.push(path.to_path_buf());
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -150,6 +185,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
         let mut malformed_lines = 0;
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
+        let mut last_model: Option<String> = None;
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -198,7 +234,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1);
+                        let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -243,7 +279,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_claude_record(&val, &mut sequence, timestamp, line_num);
+                let events = parse_claude_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -369,6 +405,7 @@ fn parse_claude_record(
     seq: &mut u64,
     ts: DateTime<Utc>,
     line_num: usize,
+    last_model: &mut Option<String>,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -388,6 +425,25 @@ fn parse_claude_record(
                 .and_then(|v| v.as_str())
                 .unwrap_or("claude-unknown")
                 .to_string();
+
+            if last_model.as_deref() != Some(model.as_str()) {
+                if let Some(prev) = last_model.take() {
+                    *seq += 1;
+                    events.push(
+                        NormalizedEvent::new(
+                            *seq,
+                            ts,
+                            EventPayload::ModelSwitch(ModelSwitch {
+                                from_model: Some(prev),
+                                to_model: model.clone(),
+                                reason: None,
+                            }),
+                        )
+                        .with_raw_ref(&raw_ref),
+                    );
+                }
+                *last_model = Some(model.clone());
+            }
 
             *seq += 1;
             events.push(
@@ -838,6 +894,110 @@ mod tests {
         assert_eq!(trace.stats.tool_calls_count, 1);
         assert_eq!(trace.stats.tools_used.get("Bash"), Some(&1));
         assert!(trace.stats.duration_seconds.unwrap() >= 10.0);
+    }
+
+    #[test]
+    fn test_parse_multi_model_session_tracks_per_model_usage() {
+        let mut temp = NamedTempFile::new().unwrap();
+        // A session where the primary model delegates to a subagent running a
+        // different model, then hands back — the shape that made session-level
+        // token totals unusable for a per-model cost/usage breakdown.
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Delegate the search to a subagent"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-opus-5","usage":{"input_tokens":500,"output_tokens":120,"cache_read_input_tokens":200,"cache_creation_input_tokens":50},"content":[{"type":"text","text":"Delegating."}]}
+{"type":"assistant","timestamp":"2026-08-29T10:00:10Z","model":"claude-fable-5","usage":{"input_tokens":300,"output_tokens":80,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Subagent result."}]}
+{"type":"assistant","timestamp":"2026-08-29T10:00:15Z","model":"claude-opus-5","usage":{"input_tokens":100,"output_tokens":40,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Done."}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+        let trace = result.trace;
+
+        assert_eq!(
+            trace.stats.models_used,
+            vec!["claude-opus-5".to_string(), "claude-fable-5".to_string()]
+        );
+
+        // Opus ran twice (500+100 in, 120+40 out, plus its cache activity); Fable ran once.
+        let opus_usage = trace
+            .stats
+            .per_model_token_usage
+            .get("claude-opus-5")
+            .expect("opus usage present");
+        assert_eq!(opus_usage.input_tokens, 600);
+        assert_eq!(opus_usage.output_tokens, 160);
+        assert_eq!(opus_usage.cache_read_tokens, 200);
+        assert_eq!(opus_usage.cache_creation_tokens, 50);
+
+        let fable_usage = trace
+            .stats
+            .per_model_token_usage
+            .get("claude-fable-5")
+            .expect("fable usage present");
+        assert_eq!(fable_usage.input_tokens, 300);
+        assert_eq!(fable_usage.output_tokens, 80);
+        assert_eq!(fable_usage.cache_read_tokens, 0);
+        assert_eq!(fable_usage.cache_creation_tokens, 0);
+
+        // The pre-existing flat aggregate is untouched (backward compat).
+        assert_eq!(trace.stats.token_usage.input_tokens, 900);
+        assert_eq!(trace.stats.token_usage.output_tokens, 240);
+        assert_eq!(trace.stats.token_usage.cache_read_tokens, 200);
+        assert_eq!(trace.stats.token_usage.cache_creation_tokens, 50);
+        assert_eq!(
+            opus_usage.total() + fable_usage.total(),
+            trace.stats.token_usage.total()
+        );
+
+        // The delegation and hand-back must now be visible as explicit ModelSwitch
+        // events, not just inferable from comparing consecutive ModelInvocation events.
+        let switches: Vec<(Option<String>, String)> = trace
+            .events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::ModelSwitch(ms) => Some((ms.from_model.clone(), ms.to_model.clone())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            switches,
+            vec![
+                (Some("claude-opus-5".to_string()), "claude-fable-5".to_string()),
+                (Some("claude-fable-5".to_string()), "claude-opus-5".to_string()),
+            ]
+        );
+
+        // The first model invocation in the session is a starting point, not a "switch".
+        assert!(!trace
+            .events
+            .iter()
+            .any(|e| matches!(&e.payload, EventPayload::ModelSwitch(ms) if ms.from_model.is_none())));
+
+        // Each ModelSwitch event must be sequenced immediately before the
+        // ModelInvocation it announces, so replaying the trace in order shows the
+        // switch before the usage it explains.
+        let mut saw_switch_to_fable = false;
+        let mut saw_switch_to_opus_again = false;
+        for event in &trace.events {
+            match &event.payload {
+                EventPayload::ModelSwitch(ms) if ms.to_model == "claude-fable-5" => {
+                    saw_switch_to_fable = true;
+                }
+                EventPayload::ModelInvocation { model, .. } if model == "claude-fable-5" => {
+                    assert!(saw_switch_to_fable, "switch must precede the fable invocation");
+                }
+                EventPayload::ModelSwitch(ms)
+                    if ms.to_model == "claude-opus-5" && ms.from_model.as_deref() == Some("claude-fable-5") =>
+                {
+                    saw_switch_to_opus_again = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_switch_to_opus_again, "expected a switch back to opus");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
     Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
@@ -51,9 +51,31 @@ impl GeminiAdapter {
     }
 }
 
+/// Determines whether a transcript path belongs to Google Antigravity or Gemini CLI.
+pub fn detect_product_identity(path: &Path) -> &'static str {
+    let p = path.to_string_lossy().to_lowercase();
+    if p.contains("antigravity") || p.contains("/brain/") || p.contains(".antigravity") {
+        "antigravity"
+    } else {
+        "gemini"
+    }
+}
+
 impl AgentAdapter for GeminiAdapter {
     fn name(&self) -> &'static str {
-        "antigravity"
+        "gemini"
+    }
+
+    fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
+        agentworth_adapter_sdk::AdapterCapabilities {
+            prompts: true,
+            tokens: true,
+            tools: true,
+            shell: true,
+            diffs: true,
+            thinking: true,
+            outcomes: true,
+        }
     }
 
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
@@ -66,12 +88,38 @@ impl AgentAdapter for GeminiAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".gemini")
-                    || custom.to_string_lossy().contains("gemini")
-                    || custom.to_string_lossy().contains("antigravity"))
-            {
+            if !custom.exists() {
+                continue;
+            }
+            let s = custom.to_string_lossy().to_lowercase();
+            if custom.ends_with(".gemini") || s.contains("gemini") || s.contains("antigravity") {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // custom_paths may point at a generic parent directory rather than
+                // the adapter-specific dir itself; look a few levels in before
+                // giving up, matching how `enumerate()` already recurses.
+                let mut found_nested = false;
+                for sub in &[
+                    custom.join(".gemini"),
+                    custom.join(".antigravity"),
+                    custom.join(".config").join("gemini"),
+                    custom.join(".config").join("antigravity"),
+                ] {
+                    if sub.exists() {
+                        discovered.push(sub.clone());
+                        found_nested = true;
+                    }
+                }
+                if !found_nested {
+                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        let ps = path.to_string_lossy().to_lowercase();
+                        if ps.contains("gemini") || ps.contains("antigravity") {
+                            discovered.push(path.to_path_buf());
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -121,7 +169,8 @@ impl AgentAdapter for GeminiAdapter {
         for root in roots_to_scan {
             if root.is_file() {
                 if is_candidate_gemini_file(&root) {
-                    if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                    let adapter_name = detect_product_identity(&root);
+                    if let Ok(source) = SessionSource::from_path(&root, adapter_name) {
                         sources.push(source);
                     }
                 }
@@ -133,7 +182,8 @@ impl AgentAdapter for GeminiAdapter {
                 {
                     let path = entry.path();
                     if path.is_file() && is_candidate_gemini_file(path) {
-                        if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                        let adapter_name = detect_product_identity(path);
+                        if let Ok(source) = SessionSource::from_path(path, adapter_name) {
                             sources.push(source);
                         }
                     }
@@ -152,19 +202,21 @@ impl AgentAdapter for GeminiAdapter {
         let file = File::open(&source.path)?;
         let reader = BufReader::new(file);
 
+        let adapter_identity = detect_product_identity(&source.path);
         let session_id = derive_session_id(&source.path);
         let provenance = Provenance::new(
             source.path.to_string_lossy().to_string(),
-            self.name(),
+            adapter_identity,
             source.file_size_bytes,
             source.mtime_epoch_secs,
             &source.fingerprint,
         );
 
-        let mut trace = AgentWorthTrace::new(&session_id, self.name(), provenance, Utc::now());
+        let mut trace = AgentWorthTrace::new(&session_id, adapter_identity, provenance, Utc::now());
         let mut malformed_lines = 0;
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
+        let mut last_model: Option<String> = None;
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -202,7 +254,7 @@ impl AgentAdapter for GeminiAdapter {
                 latest_ts = Some(timestamp);
             }
 
-            let events = parse_gemini_record(&val, &mut sequence, timestamp, line_num);
+            let events = parse_gemini_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
             trace.events.extend(events);
         }
 
@@ -336,6 +388,7 @@ fn parse_gemini_record(
     seq: &mut u64,
     ts: DateTime<Utc>,
     line_num: usize,
+    last_model: &mut Option<String>,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -353,6 +406,25 @@ fn parse_gemini_record(
                 .and_then(|v| v.as_str())
                 .unwrap_or("gemini-2.5-pro")
                 .to_string();
+
+            if last_model.as_deref() != Some(model.as_str()) {
+                if let Some(prev) = last_model.take() {
+                    *seq += 1;
+                    events.push(
+                        NormalizedEvent::new(
+                            *seq,
+                            ts,
+                            EventPayload::ModelSwitch(ModelSwitch {
+                                from_model: Some(prev),
+                                to_model: model.clone(),
+                                reason: None,
+                            }),
+                        )
+                        .with_raw_ref(&raw_ref),
+                    );
+                }
+                *last_model = Some(model.clone());
+            }
 
             *seq += 1;
             events.push(
@@ -744,7 +816,10 @@ mod tests {
 
         assert_eq!(result.malformed_lines, 0);
         let trace = result.trace;
-        assert_eq!(trace.adapter, "antigravity");
+        // A bare tempfile path carries no antigravity signature (no `/brain/`, no
+        // `.antigravity`), so detect_product_identity() correctly resolves this to the
+        // "gemini" default rather than the old hardcoded "antigravity" name.
+        assert_eq!(trace.adapter, "gemini");
         assert_eq!(trace.stats.models_used, vec!["gemini-2.5-pro".to_string()]);
         assert_eq!(trace.stats.token_usage.input_tokens, 600);
         assert_eq!(trace.stats.token_usage.output_tokens, 180);
@@ -795,14 +870,22 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_and_enumerate_gemini() {
+    fn test_detect_and_enumerate_gemini_and_antigravity() {
         let temp = tempdir().unwrap();
+
+        // 1. Gemini CLI history
         let gemini_dir = temp.path().join(".gemini").join("history");
         std::fs::create_dir_all(&gemini_dir).unwrap();
+        let gemini_file = gemini_dir.join("history_001.jsonl");
+        let mut f1 = File::create(&gemini_file).unwrap();
+        writeln!(f1, "{{\"type\":\"USER_INPUT\",\"content\":\"gemini prompt\"}}").unwrap();
 
-        let session_file = gemini_dir.join("history_001.jsonl");
-        let mut f = File::create(&session_file).unwrap();
-        writeln!(f, "{{\"type\":\"USER_INPUT\",\"content\":\"test\"}}").unwrap();
+        // 2. Antigravity CLI brain trajectory
+        let agy_dir = temp.path().join(".gemini").join("antigravity-cli").join("brain").join("sess-1").join(".system_generated").join("logs");
+        std::fs::create_dir_all(&agy_dir).unwrap();
+        let agy_file = agy_dir.join("transcript.jsonl");
+        let mut f2 = File::create(&agy_file).unwrap();
+        writeln!(f2, "{{\"type\":\"USER_INPUT\",\"content\":\"agy prompt\"}}").unwrap();
 
         let adapter = GeminiAdapter::new();
         let options = ScanOptions {
@@ -814,8 +897,20 @@ mod tests {
         assert!(detection.is_present);
 
         let enumerated = adapter.enumerate(&options).unwrap();
-        assert_eq!(enumerated.len(), 1);
-        assert_eq!(enumerated[0].adapter_name, "antigravity");
+        assert_eq!(enumerated.len(), 2);
+
+        let gemini_src = enumerated.iter().find(|s| s.path == gemini_file).unwrap();
+        assert_eq!(gemini_src.adapter_name, "gemini");
+
+        let agy_src = enumerated.iter().find(|s| s.path == agy_file).unwrap();
+        assert_eq!(agy_src.adapter_name, "antigravity");
+
+        // Parsing verifies trace.adapter is correctly assigned
+        let gemini_parsed = adapter.parse(gemini_src).unwrap();
+        assert_eq!(gemini_parsed.trace.adapter, "gemini");
+
+        let agy_parsed = adapter.parse(agy_src).unwrap();
+        assert_eq!(agy_parsed.trace.adapter, "antigravity");
     }
 
     #[test]

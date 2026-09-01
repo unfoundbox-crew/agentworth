@@ -15,6 +15,7 @@ import {
   findPathBinary,
   resolveBinary,
   formatMissingBinaryMessage,
+  buildChildEnv,
   run,
 } from '../lib/resolver.js';
 
@@ -69,6 +70,28 @@ describe('npm-wrapper / launcher', () => {
       ]);
       assert.deepEqual(resolveArguments(['--version']), ['--version']);
       assert.deepEqual(resolveArguments(['-v', 'stats']), ['-v', 'stats']);
+    });
+  });
+
+  describe('launcher markers for the child process (agentworth version/update)', () => {
+    it('sets AGENTWORTH_LAUNCHER_ACTIVE and threads the npm version through', () => {
+      const childEnv = buildChildEnv({ FOO: 'bar' }, '0.1.9');
+      assert.equal(childEnv.AGENTWORTH_LAUNCHER_ACTIVE, '1');
+      assert.equal(childEnv.AGENTWORTH_NPM_VERSION, '0.1.9');
+      assert.equal(childEnv.FOO, 'bar');
+    });
+
+    it('does not mutate the base environment object it was given', () => {
+      const base = { FOO: 'bar' };
+      buildChildEnv(base, '0.1.9');
+      assert.deepEqual(base, { FOO: 'bar' });
+    });
+
+    it('overrides a pre-existing AGENTWORTH_LAUNCHER_ACTIVE from the base env', () => {
+      // Defense in depth: even if something upstream already set this (e.g. a nested
+      // launcher invocation), the real spawn must always mark itself active.
+      const childEnv = buildChildEnv({ AGENTWORTH_LAUNCHER_ACTIVE: '0' }, '0.1.9');
+      assert.equal(childEnv.AGENTWORTH_LAUNCHER_ACTIVE, '1');
     });
   });
 
@@ -149,7 +172,14 @@ describe('npm-wrapper / launcher', () => {
       const binDir = path.join(tempDir, 'custom-bin');
       fs.mkdirSync(binDir, { recursive: true });
       const pathBin = path.join(binDir, 'agentworth');
-      fs.writeFileSync(pathBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      // pathBinaryMatchesVersion (971ce93) now requires a PATH binary to report the
+      // launcher's own version via --version before it's trusted -- getPackageVersion falls
+      // back to '0.1.3' here since this isolated tempDir has no package.json of its own.
+      fs.writeFileSync(
+        pathBin,
+        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "agentworth 0.1.3"; fi\nexit 0\n',
+        { mode: 0o755 },
+      );
 
       const isolatedDir = path.join(tempDir, 'isolated-path');
       fs.mkdirSync(isolatedDir, { recursive: true });

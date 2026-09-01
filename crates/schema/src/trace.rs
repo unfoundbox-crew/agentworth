@@ -15,6 +15,10 @@ pub struct TraceStats {
     pub tool_calls_count: usize,
     pub token_usage: TokenUsage,
     pub models_used: Vec<String>,
+    /// Token usage broken out per model (sessions can invoke more than one, e.g.
+    /// via subagent delegation). Values sum to `token_usage`.
+    #[serde(default)]
+    pub per_model_token_usage: BTreeMap<String, TokenUsage>,
     pub tools_used: BTreeMap<String, usize>,
     pub duration_seconds: Option<f64>,
 }
@@ -58,6 +62,7 @@ impl AgentWorthTrace {
         let mut stats = TraceStats::default();
         let mut models = Vec::new();
         let mut tools = BTreeMap::new();
+        let mut per_model_usage: BTreeMap<String, TokenUsage> = BTreeMap::new();
         let mut latest_ts = self.started_at;
 
         for event in &self.events {
@@ -84,6 +89,7 @@ impl AgentWorthTrace {
                         models.push(model.clone());
                     }
                     stats.token_usage += *token_usage;
+                    *per_model_usage.entry(model.clone()).or_default() += *token_usage;
                 }
                 EventPayload::ModelSwitch(ms) => {
                     if !models.contains(&ms.to_model) {
@@ -110,6 +116,7 @@ impl AgentWorthTrace {
 
         stats.models_used = models;
         stats.tools_used = tools;
+        stats.per_model_token_usage = per_model_usage;
         self.stats = stats;
     }
 }
@@ -165,6 +172,77 @@ mod tests {
         );
         assert_eq!(trace.stats.tools_used.get("Bash"), Some(&1));
         assert_eq!(trace.stats.token_usage.total(), 165);
+        assert_eq!(
+            trace.stats.per_model_token_usage.get("claude-3-5-sonnet"),
+            Some(&TokenUsage::new(100, 50, 10, 5))
+        );
         assert!(trace.stats.duration_seconds.unwrap() >= 4.0);
+    }
+
+    #[test]
+    fn test_trace_stats_per_model_token_usage_with_multiple_models() {
+        let start = Utc::now();
+        let prov = Provenance::new("/test/multi.jsonl", "claude_code", 100, 12345, "fp456");
+        let mut trace = AgentWorthTrace::new("sess-multi", "claude_code", prov, start);
+
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start + Duration::seconds(1),
+            EventPayload::ModelInvocation {
+                model: "claude-sonnet-5".to_string(),
+                token_usage: TokenUsage::new(500, 100, 200, 50),
+                cost_usd: None,
+                latency_ms: None,
+            },
+        ));
+
+        trace.events.push(NormalizedEvent::new(
+            2,
+            start + Duration::seconds(2),
+            EventPayload::ModelInvocation {
+                model: "claude-fable-5".to_string(),
+                token_usage: TokenUsage::new(300, 60, 0, 0),
+                cost_usd: None,
+                latency_ms: None,
+            },
+        ));
+
+        // A second invocation of a model already seen must accumulate, not overwrite.
+        trace.events.push(NormalizedEvent::new(
+            3,
+            start + Duration::seconds(3),
+            EventPayload::ModelInvocation {
+                model: "claude-sonnet-5".to_string(),
+                token_usage: TokenUsage::new(50, 10, 0, 0),
+                cost_usd: None,
+                latency_ms: None,
+            },
+        ));
+
+        trace.recalculate_stats();
+
+        assert_eq!(
+            trace.stats.models_used,
+            vec!["claude-sonnet-5".to_string(), "claude-fable-5".to_string()]
+        );
+
+        assert_eq!(trace.stats.per_model_token_usage.len(), 2);
+        assert_eq!(
+            trace.stats.per_model_token_usage.get("claude-sonnet-5"),
+            Some(&TokenUsage::new(550, 110, 200, 50))
+        );
+        assert_eq!(
+            trace.stats.per_model_token_usage.get("claude-fable-5"),
+            Some(&TokenUsage::new(300, 60, 0, 0))
+        );
+
+        // The flat aggregate must still equal the sum across every model (backward compat).
+        let summed: TokenUsage = trace
+            .stats
+            .per_model_token_usage
+            .values()
+            .fold(TokenUsage::default(), |acc, u| acc + *u);
+        assert_eq!(summed, trace.stats.token_usage);
+        assert_eq!(trace.stats.token_usage.total(), 1270);
     }
 }

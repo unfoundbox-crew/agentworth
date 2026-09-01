@@ -72,6 +72,12 @@ impl Scanner {
         &self.storage
     }
 
+    /// Read-only access to the registered adapters, e.g. for callers that need each
+    /// adapter's on-disk detection/session roots without running a full scan.
+    pub fn adapters(&self) -> &[Box<dyn AgentAdapter>] {
+        &self.adapters
+    }
+
     /// Load full AgentWorthTrace for a given session ID by looking up its indexed source
     /// and lazily parsing the raw session file on disk.
     pub fn load_trace(&self, session_id: &str) -> Result<AgentWorthTrace> {
@@ -177,7 +183,7 @@ impl Scanner {
 
                     if let Err(e) = self.storage.upsert_session(
                         &parse_result.trace,
-                        primary_outcome_str,
+                        primary_outcome_str.as_deref(),
                         Some(composite_score),
                     ) {
                         error!("Failed storing trace for {:?}: {}", source.path, e);
@@ -193,7 +199,10 @@ impl Scanner {
             }
         }
 
-        let aggregate_stats = self.storage.get_aggregate_stats()?;
+        // `true`: this summary's own "Total Indexed" / "N total in index" labels (main.rs,
+        // static_files.rs) promise a raw count of everything in the SQLite index, stubs
+        // included -- not a "real activity" count. See get_aggregate_stats's doc comment.
+        let aggregate_stats = self.storage.get_aggregate_stats(true)?;
         let total_indexed_sessions = aggregate_stats.total_sessions;
 
         Ok(ScanSummary {
@@ -336,7 +345,10 @@ mod tests {
             .to_string();
 
         let session = storage.get_session_by_id(&session_id).unwrap().unwrap();
-        assert_eq!(session.primary_outcome.as_deref(), Some("CommitObserved"));
+        // Encoding fix (2026-09-01): primary_outcome now stores OutcomeKind's own serde
+        // snake_case form ("commit_observed"), not the old hand-rolled PascalCase
+        // ("CommitObserved") — this is an intentional correction, not a weakened assertion.
+        assert_eq!(session.primary_outcome.as_deref(), Some("commit_observed"));
         assert!(session.composite_score.is_some());
         assert!(session.composite_score.unwrap() > 0.0);
     }

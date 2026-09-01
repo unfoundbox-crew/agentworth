@@ -14,6 +14,7 @@ import { OverviewPane } from './OverviewPane';
 import { CoveragePane } from './CoveragePane';
 import { ArchaeologyPane } from './ArchaeologyPane';
 import { ExportsPane } from './ExportsPane';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import './shell.css';
 import './panes.css';
 // Loaded after panes.css so each can override the shared base.
@@ -161,40 +162,52 @@ export function ExplorerShell() {
           <>
             {!trajectoryFocused && (
               <div className="list-region">
-                <SessionList
-                  selectedId={sessionId}
-                  onSelect={(id: string) => navigate(`/s/${encodeURIComponent(id)}`)}
-                  registerNav={(nav: ShellNav) => {
-                    navRef.current = nav;
-                  }}
-                  liveTail={liveTail}
-                  reloadSignal={scanSignal}
-                />
+                <ErrorBoundary label="Session list">
+                  <SessionList
+                    selectedId={sessionId}
+                    onSelect={(id: string) => navigate(`/s/${encodeURIComponent(id)}`)}
+                    registerNav={(nav: ShellNav) => {
+                      navRef.current = nav;
+                    }}
+                    liveTail={liveTail}
+                    reloadSignal={scanSignal}
+                  />
+                </ErrorBoundary>
               </div>
             )}
 
             <div className="inspector-region" ref={inspectorRegionRef} tabIndex={-1}>
-              <InspectorPane
-              sessionId={sessionId}
-              liveTail={liveTail}
-              trajectoryFocused={trajectoryFocused}
-              onToggleTrajectoryFocus={() => setTrajectoryFocused((v) => !v)}
-            />
+              <ErrorBoundary label="Session inspector">
+                <InspectorPane
+                  sessionId={sessionId}
+                  liveTail={liveTail}
+                  trajectoryFocused={trajectoryFocused}
+                  onToggleTrajectoryFocus={() => setTrajectoryFocused((v) => !v)}
+                />
+              </ErrorBoundary>
             </div>
           </>
         ) : activeView === 'overview' ? (
-          <OverviewPane
-            onOpenSession={(id: string) => {
-              setActiveView('sessions');
-              navigate(`/s/${encodeURIComponent(id)}`);
-            }}
-          />
+          <ErrorBoundary label="Overview">
+            <OverviewPane
+              onOpenSession={(id: string) => {
+                setActiveView('sessions');
+                navigate(`/s/${encodeURIComponent(id)}`);
+              }}
+            />
+          </ErrorBoundary>
         ) : activeView === 'coverage' ? (
-          <CoveragePane />
+          <ErrorBoundary label="Coverage">
+            <CoveragePane />
+          </ErrorBoundary>
         ) : activeView === 'archaeology' ? (
-          <ArchaeologyPane />
+          <ErrorBoundary label="Archaeology">
+            <ArchaeologyPane />
+          </ErrorBoundary>
         ) : (
-          <ExportsPane sessionId={sessionId} />
+          <ErrorBoundary label="Exports">
+            <ExportsPane sessionId={sessionId} />
+          </ErrorBoundary>
         )}
       </div>
 
