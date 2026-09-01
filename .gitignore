@@ -20,3 +20,15 @@ dist/
 .worktrees/
 .vercel
 .fastembed_cache/
+
+# Internal — this repo is public.
+# Strategy, session handovers, decision records and working state are kept
+# outside it. Copies live in ~/code/unfoundbox/agentworth-internal/.
+# Note: anything already committed stays in git history; ignoring it here only
+# stops future commits.
+docs/MNC_Endgame_2026.pdf
+docs/HANDOFF.md
+docs/DECISIONS.md
+docs/OPEN-ITEMS.md
+docs/flashrocks.lol
+*.pdf

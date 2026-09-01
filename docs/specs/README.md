@@ -61,5 +61,6 @@ worth installing.
 ## What none of these change
 
 Local-only, forever. No accounts, no telemetry, no sync, no hosted dashboard —
-see `docs/DECISIONS.md`. A desktop app does not become the excuse. Neither does
+that decision is recorded internally and is not up for revisiting here. A
+desktop app does not become the excuse. Neither does
 a fleet view that happens to look like a monitoring product.
