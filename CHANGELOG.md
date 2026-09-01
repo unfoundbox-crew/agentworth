@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.12] - 2026-09-02
+
+### Fixed
+
+- **`npx agentworth` works on macOS again.** 0.1.11 passed `--force-local` to `tar` on every platform. That flag exists only in GNU tar; macOS ships BSD tar, which rejected it, so every fresh install on a Mac failed with "native binary not found". The flag was a Windows-only workaround and Windows is no longer supported, so it is gone (#51).
+
+---
+
 ## [0.1.11] - 2026-09-02
 
 ### Fixed
