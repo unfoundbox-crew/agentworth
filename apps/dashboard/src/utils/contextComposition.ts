@@ -136,6 +136,8 @@ export function analyzeComposition(events: NormalizedEvent[]): ContextCompositio
           postTokens: meta.post_tokens ?? 0,
           droppedCumulative: meta.dropped_tokens ?? 0,
           toolCount: 0,
+          eventId: event.id,
+          sequence: event.sequence,
         });
       }
     } else if (type === 'custom') {
