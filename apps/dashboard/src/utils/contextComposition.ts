@@ -5,10 +5,15 @@ import type { NormalizedEvent } from '../types';
  *
  * Measured in characters of recorded content, not tokens, and the distinction
  * is deliberate. `usage` reports token totals per request but never divides
- * them between the system prompt, the tool schemas and the conversation — that
- * breakdown is not written to the log by anyone, so it cannot be recovered.
- * Characters of transcript are what the file actually contains, so that is what
- * this counts. See docs/specs/context-composition.md.
+ * them between the system prompt, the tool schemas and the conversation, so
+ * this cannot attribute tokens to those directly.
+ *
+ * It does not follow that the overhead is unmeasurable — an earlier version of
+ * this comment said so and was wrong. `compactMetadata.preTokens` records the
+ * exact context size at every compaction, and tool names appear in three
+ * places, so the fixed block is derivable by subtraction given a real
+ * tokeniser. That is a separate piece of work; this function counts what the
+ * transcript actually contains. See docs/specs/context-composition.md.
  */
 export type Bucket = 'dialogue' | 'tools' | 'injected' | 'bookkeeping';
 

@@ -15,20 +15,20 @@ interface LandingPageProps {
 
 const INVARIANTS = [
   {
-    title: "Never upload user data",
-    body: "Scanning works completely offline. Raw histories remain on your disk untouched. Zero network telemetry.",
+    title: "No network calls",
+    body: "Scanning is offline. There is no server to send anything to.",
   },
   {
-    title: "No raw-log duplication",
-    body: "AgentWorth never copies multi-gigabyte transcripts into SQLite. It stores only derived indexes, scores, and fingerprints.",
+    title: "Your logs stay put",
+    body: "We read them and never copy them. The index holds scores and hashes, not transcripts.",
   },
   {
-    title: "Streaming JSONL parsing",
-    body: "Bounded-memory parsers handle 100+ GB logs without crashing. Rescans skip unchanged files in milliseconds via SHA-256.",
+    title: "Handles huge logs",
+    body: "Streaming parser, bounded memory. 100 GB will not blow it up. Rescans skip files that have not changed.",
   },
   {
-    title: "Deterministic verification",
-    body: "Never trusts self-claimed completion. Scores are backed by compiler exit codes, positive diffs, and git commits.",
+    title: "It doesn't take the agent's word",
+    body: "A score needs an exit code, a diff, or a commit behind it.",
   },
 ];
 
@@ -36,12 +36,12 @@ const COMMANDS = [
   {
     cmd: "$ agentworth stats",
     lines: [
-      ["Sessions", "9,713"],
-      ["Total tokens", "77.9B"],
-      ["Cache read", "97.2%"],
-      ["List equivalent", "$33,234"],
+      ["Sessions", "10,188"],
+      ["Agents found", "9"],
+      ["Cache read", "98.5%"],
+      ["Uploaded", "0 B"],
     ],
-    body: "Full token math across input, output, cache-read, and cache-creation.",
+    body: "Where the tokens went. Input, output, cache reads, cache writes.",
   },
   {
     cmd: "$ agentworth usage --pacing",
@@ -51,13 +51,13 @@ const COMMANDS = [
       ["Cache hit", "98.1%"],
       ["5h spend", "$4.18"],
     ],
-    body: "Real-time burn-rate pacing aligned with Anthropic's 5-hour rate limits.",
+    body: "How fast you are burning a 5-hour window, while it is still running.",
   },
   {
     cmd: "$ agentworth blame src/api.ts",
     lines: [
       ["L10-45", "Claude Opus"],
-      ["Session", "#89312 (Rung 5)"],
+      ["Session", "452c23fd (rung 4)"],
       ["Modified", "2026-08-31"],
       ["Diff", "+45 -12 lines"],
     ],
@@ -121,15 +121,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
         {/* Hero */}
         <section className="hero">
           <div className="shell prose-shell" style={{ maxWidth: 820, paddingInline: 0, marginInline: "auto" }}>
-            <span className="eyebrow">The verdict layer for AI coding agents</span>
+            <span className="eyebrow">Local only. Nothing uploaded.</span>
             <h1 className="thesis" style={{ maxWidth: "18ch" }}>
               Every agent says it&apos;s done. AgentWorth checks the git log.
             </h1>
             <p className="dek" style={{ maxWidth: "60ch" }}>
-              AgentWorth reads the session logs already on your disk &mdash; Claude Code,
-              Codex, Cursor, Antigravity and <em>20+ CLIs</em> &mdash; and grades every
-              session against evidence it can check: files changed, tests passed,
-              commits landed, CI green. Native Rust, local SQLite, zero telemetry.
+              Your coding agents already wrote down everything they did. It is sitting in
+              dot-directories you have never opened. AgentWorth reads those logs and checks
+              the claims against what actually happened &mdash; commits, test runs, CI.
+              It reads 21 agents, and it sends nothing anywhere.
             </p>
 
             <div className="hero-meta" style={{ marginBottom: 32 }}>
@@ -161,7 +161,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border font-mono">
                   <div className="flex items-center gap-3">
                     <span className="w-2 h-2 rounded-full bg-accent inline-block" aria-hidden="true" />
-                    <span className="font-semibold text-xs text-ink">Session audit #98893-claude</span>
+                    <span className="font-semibold text-xs text-ink">Example session</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted">
                       claude-opus-5
                     </span>
@@ -179,15 +179,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
                   </div>
                   <div>
                     <div className="text-[10px] text-faint uppercase">Composite score</div>
-                    <div className="font-semibold text-ink mt-0.5">94.2 / 100</div>
+                    <div className="font-semibold text-ink mt-0.5">94 / 100</div>
                   </div>
                   <div>
                     <div className="text-[10px] text-faint uppercase">Token volume</div>
-                    <div className="font-semibold text-ink mt-0.5">14.2M (97.4% cache)</div>
+                    <div className="font-semibold text-ink mt-0.5">14M (97% cache)</div>
                   </div>
                   <div>
                     <div className="text-[10px] text-faint uppercase">List equivalent</div>
-                    <div className="font-semibold text-ink mt-0.5">$6.12 USD</div>
+                    <div className="font-semibold text-ink mt-0.5">$6 USD</div>
                   </div>
                 </div>
 
@@ -211,7 +211,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
         {/* The ladder */}
         <section className="sec" id="ladder">
           <div className="shell">
-            <span className="eyebrow">01 &mdash; The verdict ladder</span>
+            <span className="eyebrow">How it grades</span>
             <h2 className="sec-title">Five rungs, from claim to CI-verified.</h2>
             <p className="lede">
               Every session lands on a rung backed by evidence AgentWorth can check on
@@ -224,7 +224,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
         {/* The cache cliff */}
         <section className="sec" id="cache-cliff">
           <div className="shell">
-            <span className="eyebrow">02 &mdash; The cache cliff</span>
+            <span className="eyebrow">Where the money goes</span>
             <h2 className="sec-title">Long sessions get expensive fast.</h2>
             <p className="lede">
               Cache writes are cheap. Cache misses, past a context-window cliff, are not.
@@ -237,7 +237,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
         {/* What you get today */}
         <section className="sec" id="features">
           <div className="shell">
-            <span className="eyebrow">03 &mdash; What you get today</span>
+            <span className="eyebrow">What works today</span>
             <h2 className="sec-title">Three real CLI commands. No fabricated data.</h2>
             <p className="lede">Shipped in the native Rust binary today.</p>
 
@@ -263,7 +263,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
         {/* Local means local */}
         <section className="sec" id="invariants">
           <div className="shell">
-            <span className="eyebrow">04 &mdash; AGENTS.md contract</span>
+            <span className="eyebrow">It never phones home</span>
             <h2 className="sec-title">Local means local. Always.</h2>
             <p className="lede">Four invariants AgentWorth&apos;s own contributor contract enforces.</p>
 

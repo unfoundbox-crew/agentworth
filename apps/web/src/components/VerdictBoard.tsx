@@ -180,7 +180,7 @@ export const VerdictBoard: React.FC<VerdictBoardProps> = ({
             Outcome volume distribution
           </span>
           <span className="text-xs font-mono text-faint">
-            {isMeasured ? `${totalSessions.toLocaleString()} sessions indexed` : "no verdict calculated yet"}
+            {isMeasured ? `${totalSessions.toLocaleString()} sessions indexed` : "nothing scanned yet"}
           </span>
         </div>
 
@@ -215,7 +215,7 @@ export const VerdictBoard: React.FC<VerdictBoardProps> = ({
         ) : (
           <div className="dist-bar items-center justify-center">
             <span className="text-[10px] font-mono text-faint px-3">
-              Run `agentworth scan` to calculate an outcome verdict
+              Run `agentworth scan` to grade your sessions
             </span>
           </div>
         )}
