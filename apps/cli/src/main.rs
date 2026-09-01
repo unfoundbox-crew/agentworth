@@ -20,6 +20,8 @@ mod watch;
 mod cache_doctor;
 #[path = "commands/blind_spots.rs"]
 mod blind_spots;
+#[path = "commands/autopsy.rs"]
+mod autopsy;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -288,6 +290,17 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Surface recurring human correction and steering phrases across all sessions
+    Autopsy {
+        /// Minimum number of occurrences across sessions to report (default: 2)
+        #[arg(short, long, default_value_t = 2)]
+        min_occurrences: usize,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -404,6 +417,12 @@ fn main() -> Result<()> {
         }
         Commands::BlindSpots { limit, json } => {
             blind_spots::run_blind_spots_command(limit, json, cli.db_path)?;
+        }
+        Commands::Autopsy {
+            min_occurrences,
+            json,
+        } => {
+            autopsy::run_autopsy_command(min_occurrences, json, cli.db_path)?;
         }
     }
 
