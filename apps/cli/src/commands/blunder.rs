@@ -1011,7 +1011,12 @@ mod tests {
         }
 
         let temp = tempfile::tempdir().expect("tempdir");
-        let old_blunder_path = temp.path().join("old_blunder.jsonl");
+        // Scanner::load_trace re-parses this file via the real ClaudeCodeAdapter, which
+        // derives its trace's session_id from the file's *stem* (derive_session_id in
+        // crates/adapters/src/claude.rs), not from whatever session_id was passed to
+        // upsert_trace below -- so the returned exhibit's session_id will be
+        // "old-critical-blunder" only because the filename matches. Keep them in sync.
+        let old_blunder_path = temp.path().join("old-critical-blunder.jsonl");
         std::fs::write(
             &old_blunder_path,
             concat!(
