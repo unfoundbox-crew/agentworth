@@ -12,6 +12,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
+#[path = "commands/cache_doctor.rs"]
+mod cache_doctor;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "agentworth",
@@ -222,6 +225,17 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Diagnose turn-by-turn prompt caching dynamics and identify cache drop root causes
+    #[command(name = "cache-doctor")]
+    CacheDoctor {
+        /// Target session ID to inspect
+        session_id: String,
+
+        /// Output findings as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -319,6 +333,9 @@ fn main() -> Result<()> {
             });
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
+        }
+        Commands::CacheDoctor { session_id, json } => {
+            cache_doctor::run_cache_doctor_command(&session_id, json, cli.db_path)?;
         }
     }
 
