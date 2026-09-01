@@ -76,6 +76,18 @@ impl AgentAdapter for CursorAdapter {
         "cursor"
     }
 
+    fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
+        agentworth_adapter_sdk::AdapterCapabilities {
+            prompts: true,
+            tokens: false,
+            tools: false,
+            shell: false,
+            diffs: true,
+            thinking: false,
+            outcomes: false,
+        }
+    }
+
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
         let mut discovered = Vec::new();
 

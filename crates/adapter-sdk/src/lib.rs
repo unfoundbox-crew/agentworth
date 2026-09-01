@@ -86,10 +86,59 @@ pub struct ParseResult {
     pub warnings: Vec<String>,
 }
 
+/// Grounded extraction capabilities supported by an adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AdapterCapabilities {
+    pub prompts: bool,
+    pub tokens: bool,
+    pub tools: bool,
+    pub shell: bool,
+    pub diffs: bool,
+    pub thinking: bool,
+    pub outcomes: bool,
+}
+
+impl AdapterCapabilities {
+    pub fn score(&self) -> (usize, usize) {
+        let total = 7;
+        let mut supported = 0;
+        if self.prompts {
+            supported += 1;
+        }
+        if self.tokens {
+            supported += 1;
+        }
+        if self.tools {
+            supported += 1;
+        }
+        if self.shell {
+            supported += 1;
+        }
+        if self.diffs {
+            supported += 1;
+        }
+        if self.thinking {
+            supported += 1;
+        }
+        if self.outcomes {
+            supported += 1;
+        }
+        (supported, total)
+    }
+}
+
 /// Trait implemented by each agent-specific adapter.
 pub trait AgentAdapter: Send + Sync {
     /// Human/machine-readable identifier of the adapter (e.g. "claude_code").
     fn name(&self) -> &'static str;
+
+    /// Return the extraction capability profile of this adapter.
+    fn capabilities(&self) -> AdapterCapabilities {
+        AdapterCapabilities {
+            prompts: true,
+            ..Default::default()
+        }
+    }
 
     /// Detect whether this agent's history directories exist on the local system.
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult>;
@@ -117,5 +166,30 @@ mod tests {
         assert_eq!(source.adapter_name, "test_adapter");
         assert!(source.file_size_bytes > 0);
         assert!(!source.fingerprint.is_empty());
+    }
+
+    #[test]
+    fn test_adapter_capabilities_score() {
+        let full = AdapterCapabilities {
+            prompts: true,
+            tokens: true,
+            tools: true,
+            shell: true,
+            diffs: true,
+            thinking: true,
+            outcomes: true,
+        };
+        assert_eq!(full.score(), (7, 7));
+
+        let partial = AdapterCapabilities {
+            prompts: true,
+            tokens: false,
+            tools: false,
+            shell: false,
+            diffs: true,
+            thinking: false,
+            outcomes: false,
+        };
+        assert_eq!(partial.score(), (2, 7));
     }
 }

@@ -1683,18 +1683,6 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
 // Command: Matrix
 // -----------------------------------------------------------------------------
 
-struct AdapterCoverageMeta {
-    adapter: &'static str,
-    source_root: &'static str,
-    prompts: bool,
-    tokens: bool,
-    tools: bool,
-    shell: bool,
-    diffs: bool,
-    thinking: bool,
-    outcomes: bool,
-}
-
 fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()> {
     let adapters: Vec<Box<dyn agentworth_adapter_sdk::AgentAdapter>> = vec![
         Box::new(agentworth_adapters::AiderAdapter::new()),
@@ -1719,52 +1707,69 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()
         Box::new(agentworth_adapters::ZhipuAdapter::new()),
     ];
 
-    let meta_list = vec![
-        AdapterCoverageMeta { adapter: "aider", source_root: "~/.aider* / chat history", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "claude_code", source_root: "~/.claude/projects/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "cline", source_root: "~/.config/Code/.../cline/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "codex", source_root: "~/.codex/sessions/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "cursor", source_root: "~/.cursor/ / Cursor/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "deepseek", source_root: "~/.deepseek/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "gemini", source_root: "~/.gemini/antigravity/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "goose", source_root: "~/.config/goose/sessions/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "grok", source_root: "~/.grok/ / ~/.xai/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "herdr", source_root: "~/.herdr/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "hermes", source_root: "~/.hermes/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "kimi", source_root: "~/.kimi/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "manus", source_root: "~/.manus/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "minimax", source_root: "~/.minimax/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "openclaw", source_root: "~/.openclaw/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "opencode", source_root: "~/.opencode/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "pi", source_root: "~/.pi/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "qwen", source_root: "~/.qwen/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "windsurf", source_root: "~/.codeium/windsurf/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-        AdapterCoverageMeta { adapter: "zhipu", source_root: "~/.zhipu/ / codegeex/", prompts: true, tokens: true, tools: true, shell: true, diffs: true, thinking: true, outcomes: true },
-    ];
+    let default_roots: std::collections::HashMap<&'static str, &'static str> = [
+        ("aider", "~/.aider* / chat history"),
+        ("claude_code", "~/.claude/projects/"),
+        ("cline", "~/.config/Code/.../cline/"),
+        ("codex", "~/.codex/sessions/"),
+        ("cursor", "~/.cursor/ / workspaceStorage"),
+        ("deepseek", "~/.deepseek/"),
+        ("gemini", "~/.gemini/ / antigravity"),
+        ("goose", "~/.config/goose/sessions/"),
+        ("grok", "~/.grok/ / ~/.xai/"),
+        ("herdr", "~/.herdr/"),
+        ("hermes", "~/.hermes/"),
+        ("kimi", "~/.kimi/"),
+        ("manus", "~/.manus/"),
+        ("minimax", "~/.minimax/"),
+        ("openclaw", "~/.openclaw/"),
+        ("opencode", "~/.opencode/"),
+        ("pi", "~/.pi/"),
+        ("qwen", "~/.qwen/"),
+        ("windsurf", "~/.codeium/windsurf/"),
+        ("zhipu", "~/.zhipu/ / codegeex/"),
+    ]
+    .into_iter()
+    .collect();
 
     let scan_opts = ScanOptions::default();
     let mut rows_data = Vec::new();
+    let mut total_supported = 0usize;
+    let mut total_possible = 0usize;
 
-    for (adapter, meta) in adapters.iter().zip(meta_list.iter()) {
+    for adapter in &adapters {
+        let name = adapter.name();
+        let caps = adapter.capabilities();
+        let (sup, poss) = caps.score();
+        total_supported += sup;
+        total_possible += poss;
+
         let is_detected = adapter.detect(&scan_opts).map(|d| d.is_present).unwrap_or(false);
-        rows_data.push((meta, is_detected));
+        let source_root = default_roots.get(name).copied().unwrap_or("~/.<agent>/");
+
+        rows_data.push((name, source_root, caps, is_detected));
     }
+
+    let real_coverage_rate = format!(
+        "{:.1}%",
+        (total_supported as f64 / total_possible as f64) * 100.0
+    );
 
     if json_output {
         let json_arr: Vec<_> = rows_data
             .iter()
-            .map(|(m, detected)| {
+            .map(|(name, source_root, caps, detected)| {
                 json!({
-                    "adapter": m.adapter,
-                    "source_root": m.source_root,
+                    "adapter": name,
+                    "source_root": source_root,
                     "extraction": {
-                        "prompts": m.prompts,
-                        "tokens": m.tokens,
-                        "tools": m.tools,
-                        "shell": m.shell,
-                        "diffs": m.diffs,
-                        "thinking": m.thinking,
-                        "outcomes": m.outcomes,
+                        "prompts": caps.prompts,
+                        "tokens": caps.tokens,
+                        "tools": caps.tools,
+                        "shell": caps.shell,
+                        "diffs": caps.diffs,
+                        "thinking": caps.thinking,
+                        "outcomes": caps.outcomes,
                     },
                     "is_detected": detected,
                     "status": if *detected { "detected" } else { "available" }
@@ -1774,7 +1779,7 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()
 
         let output = json!({
             "total_adapters": rows_data.len(),
-            "coverage_rate": "100%",
+            "coverage_rate": real_coverage_rate,
             "adapters": json_arr,
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -1812,32 +1817,38 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()
         style("├─────────────────┼────────────────────────────┼─────────┼────────┼───────┼───────┼───────┼───────┼──────────┼─────────────┤").bold()
     );
 
-    let check = style("✓").bold().green().to_string();
+    let fmt_cap = |supported: bool| -> String {
+        if supported {
+            style("✓").bold().green().to_string()
+        } else {
+            style("-").dim().to_string()
+        }
+    };
 
-    for (m, is_detected) in &rows_data {
+    for (name, source_root, caps, is_detected) in &rows_data {
         let status_str = if *is_detected {
             style("✓ Detected").bold().green()
         } else {
             style("○ Available").dim()
         };
 
-        let src_display = if m.source_root.len() > 26 {
-            format!("{}...", &m.source_root[..23])
+        let src_display = if source_root.len() > 26 {
+            format!("{}...", &source_root[..23])
         } else {
-            m.source_root.to_string()
+            source_root.to_string()
         };
 
         println!(
             "│ {:<15} │ {:<26} │ {:^7} │ {:^6} │ {:^5} │ {:^5} │ {:^5} │ {:^5} │ {:^8} │ {:<11} │",
-            style(m.adapter).bold(),
+            style(name).bold(),
             style(src_display).dim(),
-            check,
-            check,
-            check,
-            check,
-            check,
-            check,
-            check,
+            fmt_cap(caps.prompts),
+            fmt_cap(caps.tokens),
+            fmt_cap(caps.tools),
+            fmt_cap(caps.shell),
+            fmt_cap(caps.diffs),
+            fmt_cap(caps.thinking),
+            fmt_cap(caps.outcomes),
             status_str,
         );
     }
@@ -1847,9 +1858,9 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()
         style("└─────────────────┴────────────────────────────┴─────────┴────────┴───────┴───────┴───────┴───────┴──────────┴─────────────┘").bold()
     );
     println!(
-        "Showing {} of {} adapters with 100% extraction parity.",
+        "Showing {} production adapters. Grounded extraction coverage across feature dimensions: {}.",
         rows_data.len(),
-        rows_data.len()
+        style(&real_coverage_rate).bold().cyan()
     );
     println!();
 
