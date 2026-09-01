@@ -6,7 +6,7 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
     Provenance, ShellCommand, TokenUsage, ToolCall,
 };
 use anyhow::Result;
@@ -156,6 +156,7 @@ impl AgentAdapter for AiderAdapter {
         let mut malformed_lines = 0;
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
+        let mut last_model: Option<String> = None;
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -200,7 +201,7 @@ impl AgentAdapter for AiderAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_aider_json_record(item, &mut sequence, timestamp, idx + 1);
+                        let evts = parse_aider_json_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -243,7 +244,7 @@ impl AgentAdapter for AiderAdapter {
                                 latest_ts = Some(timestamp);
                             }
 
-                            let events = parse_aider_json_record(&val, &mut sequence, timestamp, line_num);
+                            let events = parse_aider_json_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                             jsonl_events.extend(events);
                         }
                         Err(e) => {
@@ -418,6 +419,7 @@ fn parse_aider_markdown(
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let mut active_model = "aider".to_string();
+    let mut last_invoked_model: Option<String> = None;
     let mut current_ts = Utc::now();
 
     let mut current_user_buf: Vec<String> = Vec::new();
@@ -663,6 +665,25 @@ fn parse_aider_markdown(
                 }
             }
 
+            if last_invoked_model.as_deref() != Some(active_model.as_str()) {
+                if let Some(prev) = last_invoked_model.take() {
+                    *sequence += 1;
+                    events.push(
+                        NormalizedEvent::new(
+                            *sequence,
+                            current_ts,
+                            EventPayload::ModelSwitch(ModelSwitch {
+                                from_model: Some(prev),
+                                to_model: active_model.clone(),
+                                reason: None,
+                            }),
+                        )
+                        .with_raw_ref(format!("line:{}", raw_line_num)),
+                    );
+                }
+                last_invoked_model = Some(active_model.clone());
+            }
+
             *sequence += 1;
             events.push(
                 NormalizedEvent::new(
@@ -802,6 +823,7 @@ fn parse_aider_json_record(
     sequence: &mut u64,
     timestamp: DateTime<Utc>,
     line_num: usize,
+    last_model: &mut Option<String>,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
 
@@ -1000,6 +1022,25 @@ fn parse_aider_json_record(
         let cost_usd = val.get("cost_usd").or_else(|| val.get("cost")).and_then(|c| c.as_f64());
 
         if input_tokens > 0 || output_tokens > 0 || cache_read > 0 || cache_creation > 0 {
+            if last_model.as_deref() != Some(model) {
+                if let Some(prev) = last_model.take() {
+                    *sequence += 1;
+                    events.push(
+                        NormalizedEvent::new(
+                            *sequence,
+                            timestamp,
+                            EventPayload::ModelSwitch(ModelSwitch {
+                                from_model: Some(prev),
+                                to_model: model.to_string(),
+                                reason: None,
+                            }),
+                        )
+                        .with_raw_ref(&raw_ref),
+                    );
+                }
+                *last_model = Some(model.to_string());
+            }
+
             *sequence += 1;
             events.push(
                 NormalizedEvent::new(
@@ -1176,5 +1217,90 @@ Tokens: 2.5k sent, 450 received. Cost: $0.03 message, $0.12 session.
         assert!(result.malformed_lines >= 1);
         assert_eq!(result.trace.stats.user_messages_count, 1);
         assert_eq!(result.trace.stats.assistant_messages_count, 1);
+    }
+
+    #[test]
+    fn test_parse_aider_markdown_detects_model_switch_mid_task() {
+        // Aider's markdown chat history announces the active model with its own
+        // "Model: " line whenever `/model` is used mid-chat (e.g. dropping from a
+        // frontier model to a cheaper one partway through a task). That line updates
+        // `active_model`; the very next "Tokens:" line is the first real invocation
+        // under the new model and is where the switch must be detected.
+        let md_content = r#"# aider chat started at 2024-05-18 14:20:00
+
+Model: claude-3-5-sonnet-20241022 with diff edit format
+Git repo: /Users/dev/myrepo
+
+#### Implement the user login handler
+
+I will write the login endpoint.
+
+Tokens: 2.0k sent, 400 received. Cost: $0.03 message, $0.03 session.
+
+#### Now just fix the remaining lint warnings
+
+Model: gpt-4o-mini with whole edit format
+
+Switching to a cheaper model for the mechanical cleanup.
+
+Tokens: 800 sent, 150 received. Cost: $0.01 message, $0.04 session.
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        write!(temp_file, "{}", md_content).unwrap();
+
+        let adapter = AiderAdapter::new();
+        let source = SessionSource::from_path(temp_file.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).unwrap();
+
+        assert_eq!(result.malformed_lines, 0);
+        let trace = result.trace;
+
+        assert_eq!(
+            trace.stats.models_used,
+            vec![
+                "claude-3-5-sonnet-20241022".to_string(),
+                "gpt-4o-mini".to_string()
+            ]
+        );
+
+        let switches: Vec<_> = trace
+            .events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::ModelSwitch(ms) => Some((ms.from_model.clone(), ms.to_model.clone())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            switches,
+            vec![(
+                Some("claude-3-5-sonnet-20241022".to_string()),
+                "gpt-4o-mini".to_string()
+            )]
+        );
+
+        // Two distinct models were actually invoked (via their own Tokens: lines),
+        // each attributed correctly — the switch doesn't merge or drop usage.
+        assert_eq!(trace.stats.per_model_token_usage.len(), 2);
+        assert_eq!(
+            trace
+                .stats
+                .per_model_token_usage
+                .get("claude-3-5-sonnet-20241022")
+                .unwrap()
+                .input_tokens,
+            2000
+        );
+        assert_eq!(
+            trace
+                .stats
+                .per_model_token_usage
+                .get("gpt-4o-mini")
+                .unwrap()
+                .input_tokens,
+            800
+        );
     }
 }
