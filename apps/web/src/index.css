@@ -82,20 +82,8 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
   color: var(--mv-ink);
   text-decoration: none;
-}
-.mark::before {
-  content: "";
-  width: 9px;
-  height: 9px;
-  border: 1.5px solid var(--mv-ink);
-  border-radius: 2px;
-  transform: rotate(45deg);
 }
 .nav-right {
   display: flex;
