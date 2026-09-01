@@ -1,0 +1,491 @@
+@import "@ui/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================================
+   Theme toggle — design.md "The toggle". Shared markup (packages/ui's
+   ThemeToggle) between apps/web and apps/dashboard, but the CSS lives with
+   each app the same way the other component classes below do — also used
+   here by ExportModal's format selector, which reuses the same recipe.
+   ========================================================================= */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 0.5px solid var(--mv-border);
+  border-radius: 8px;
+  background: var(--mv-surface);
+}
+.theme-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.theme-toggle button:hover {
+  color: var(--mv-ink);
+}
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--mv-surface-3);
+  color: var(--mv-ink);
+}
+
+/* =========================================================================
+   Dashboard patterns — data-view adaptations of design.md's document
+   patterns: a card/table/pill vocabulary for content that's scanned, not
+   read. Used across VerdictBoard, CacheCliffWidget, CoverageMatrix,
+   ArchaeologyPanel, TracesExplorer, SessionInspector and ExportModal.
+   ========================================================================= */
+.panel {
+  border: 0.5px solid var(--mv-border);
+  border-radius: 14px;
+  background: var(--mv-ground);
+  padding: clamp(18px, 3vw, 28px);
+}
+.panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 18px;
+  margin-bottom: 20px;
+  border-bottom: 0.5px solid var(--mv-border);
+}
+.panel-head .panel-kicker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.panel-head h2 {
+  font-size: clamp(1.25rem, 1.1rem + 0.6vw, 1.6rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--mv-ink);
+  margin: 2px 0 0;
+}
+.panel-head p {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--mv-muted);
+  max-width: 62ch;
+  margin: 6px 0 0;
+}
+
+/* Tag pill — a small mono bordered label, e.g. "21 ADAPTERS", "EVIDENCE LADDER" */
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mv-muted);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  background: var(--mv-surface);
+  white-space: nowrap;
+}
+
+/* Status pill — semantic verified/warn/unverified state. Solid border = a
+   checkable fact; dashed border = unverified or speculative. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.status-pill .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.status-pill.is-good {
+  color: var(--mv-success);
+  border-color: var(--mv-success-border);
+  background: var(--mv-success-soft);
+}
+.status-pill.is-good .dot { background: var(--mv-success); }
+.status-pill.is-warn {
+  color: var(--mv-warn);
+  border-color: var(--mv-warn-border);
+  background: var(--mv-warn-soft);
+}
+.status-pill.is-warn .dot { background: var(--mv-warn); }
+.status-pill.is-bad {
+  color: var(--mv-danger);
+  border-style: dashed;
+  border-color: var(--mv-danger-border);
+  background: var(--mv-danger-soft);
+}
+.status-pill.is-bad .dot { border: 1.5px dashed var(--mv-danger); background: transparent; }
+.status-pill.is-neutral {
+  color: var(--mv-muted);
+  border-color: var(--mv-border);
+  background: var(--mv-surface);
+}
+.status-pill.is-neutral .dot { background: var(--mv-faint); }
+
+/* Chip — a filter toggle. */
+.chip {
+  appearance: none;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--mv-muted);
+  background: var(--mv-ground);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.chip:hover { color: var(--mv-ink); border-color: var(--mv-faint); }
+.chip.is-active {
+  background: var(--mv-surface-3);
+  color: var(--mv-ink);
+  border-color: var(--mv-surface-3);
+  font-weight: 500;
+}
+
+/* Form fields — search input / select, shared recipe */
+.field {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--mv-ink);
+  background: var(--mv-ground);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+.field::placeholder { color: var(--mv-faint); }
+.field:focus { outline: none; border-color: var(--mv-accent-border); }
+select.field {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23a1a1aa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.5 8l4.5 4.5L14.5 8'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+  padding-right: 32px;
+}
+
+/* Table frame — hairline border, radius, its own horizontal scroll (hard
+   rule 4) so a wide table never breaks page layout. */
+.table-frame {
+  border: 0.5px solid var(--mv-border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.data-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+.data-table th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  background: var(--mv-surface);
+  padding: 10px 16px;
+  border-bottom: 0.5px solid var(--mv-border);
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 12px 16px;
+  color: var(--mv-text);
+  border-bottom: 0.5px solid var(--mv-border-soft);
+  vertical-align: top;
+}
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tbody tr {
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.data-table tbody tr:hover { background: var(--mv-surface); }
+.data-table tbody tr.is-selected { background: var(--mv-surface-2); }
+.data-table td.is-center { text-align: center; }
+.data-table td.is-right { text-align: right; }
+.data-table .num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Matrix table — a vertical rule between columns, for adapter-by-capability
+   grids where every cell needs to read as its own fact. */
+.matrix-table th,
+.matrix-table td {
+  border-right: 0.5px solid var(--mv-border-soft);
+}
+.matrix-table th:last-child,
+.matrix-table td:last-child {
+  border-right: none;
+}
+
+/* Quote block — a mono, muted callout for a verbatim line lifted from a
+   trace (a prompt, a shell error, a criterion). */
+.quote-block {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--mv-text);
+  background: var(--mv-surface);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.quote-block .quote-label {
+  display: block;
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  margin-bottom: 6px;
+}
+
+/* Key/value row — metadata ribbons, token economics, score explanations */
+.kv-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8125rem;
+  padding: 7px 0;
+  border-bottom: 0.5px solid var(--mv-border-soft);
+}
+.kv-row:last-child { border-bottom: none; }
+.kv-row .k { color: var(--mv-muted); }
+.kv-row .v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--mv-ink);
+  text-align: right;
+}
+
+/* Score bar — a labeled progress track used by the score breakdown panel */
+.score-bar { margin-bottom: 10px; }
+.score-bar:last-child { margin-bottom: 0; }
+.score-bar .row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--mv-muted);
+  margin-bottom: 4px;
+}
+.score-bar .row .v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--mv-ink);
+}
+.score-bar .track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--mv-surface-3);
+  overflow: hidden;
+}
+.score-bar .fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--mv-ink);
+}
+.score-bar.is-good .fill { background: var(--mv-success); }
+
+/* =========================================================================
+   The evidence ladder — VerdictBoard's centerpiece. Five rungs read as one
+   ordered confidence hierarchy: node size and fill shrink going down the
+   ladder, and the connecting spine switches from a solid line to a dashed
+   one exactly where the evidence stops being verifiable (rung 2 → rung 1).
+   ========================================================================= */
+.ladder {
+  display: flex;
+  flex-direction: column;
+  margin-top: 24px;
+}
+.ladder-rung {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0.5px solid transparent;
+  border-radius: 12px;
+  padding: 13px 12px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.ladder-rung:hover { background: var(--mv-surface); }
+.ladder-rung.is-active {
+  background: var(--mv-surface-2);
+  border-color: var(--mv-border);
+}
+.ladder-node {
+  justify-self: center;
+  border-radius: 50%;
+  flex: none;
+}
+.ladder-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ladder-rung[data-rung="5"] .ladder-node { width: 15px; height: 15px; background: var(--mv-success); box-shadow: 0 0 0 4px var(--mv-success-soft); }
+.ladder-rung[data-rung="4"] .ladder-node { width: 13px; height: 13px; background: var(--mv-success); box-shadow: 0 0 0 3px var(--mv-success-soft); }
+.ladder-rung[data-rung="3"] .ladder-node { width: 11px; height: 11px; background: var(--mv-success); opacity: 0.85; }
+.ladder-rung[data-rung="2"] .ladder-node { width: 10px; height: 10px; border: 1.5px solid var(--mv-success); background: var(--mv-success-soft); }
+.ladder-rung[data-rung="1"] .ladder-node { width: 9px; height: 9px; border: 1.5px dashed var(--mv-danger); background: transparent; }
+.ladder-body .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  margin-bottom: 3px;
+}
+.ladder-body .title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--mv-ink);
+  letter-spacing: -0.005em;
+}
+.ladder-body .desc {
+  font-size: 0.8125rem;
+  color: var(--mv-muted);
+  margin-top: 2px;
+  max-width: 56ch;
+}
+.ladder-stat {
+  text-align: right;
+  flex: none;
+}
+.ladder-stat .count {
+  display: block;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--mv-ink);
+  line-height: 1.1;
+}
+.ladder-stat .pct {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--mv-faint);
+  margin-top: 2px;
+}
+.ladder-connector {
+  width: 0;
+  height: 14px;
+  margin-left: 21px;
+  border-left: 2px solid var(--mv-success-border);
+}
+.ladder-connector.is-cliff {
+  border-left: 2px dashed var(--mv-danger-border);
+}
+
+@media (max-width: 760px) {
+  .ladder-rung {
+    grid-template-columns: 20px 1fr;
+    row-gap: 6px;
+  }
+  .ladder-stat {
+    grid-column: 2;
+    text-align: left;
+  }
+  .ladder-connector {
+    margin-left: 17px;
+  }
+}
+
+/* Distribution bar — the ladder's volume summary, one segment per rung,
+   ordered and shaded to match the ladder above it exactly. */
+.dist-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--mv-surface-3);
+  display: flex;
+  overflow: hidden;
+}
+.dist-bar .seg { height: 100%; }
+
+/* =========================================================================
+   Overlay motion — slideover (SessionInspector) and modal (ExportModal,
+   non-embedded use). Entrances get time and distance; exits are fast and
+   stay in place (design.md "Motion rules" / --motion-exit), so closing
+   never travels, it only fades.
+   ========================================================================= */
+.overlay-backdrop {
+  animation: overlay-backdrop-in var(--motion-base) var(--ease-out) forwards;
+}
+.overlay-backdrop.is-closing {
+  animation: overlay-backdrop-out var(--motion-exit) var(--ease-in-out) forwards;
+}
+@keyframes overlay-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes overlay-backdrop-out { to { opacity: 0; } }
+
+.slideover-panel {
+  opacity: 0;
+  transform: translateX(var(--mv-rise));
+  animation: slideover-in var(--motion-slower) var(--ease-out) forwards;
+}
+.slideover-panel.is-closing {
+  animation: overlay-fade-out var(--motion-exit) var(--ease-in-out) forwards;
+}
+@keyframes slideover-in { to { opacity: 1; transform: translateX(0); } }
+
+.modal-panel {
+  opacity: 0;
+  transform: translateY(var(--mv-rise)) scale(var(--motion-enter-scale));
+  animation: modal-in var(--motion-slow) var(--ease-out) forwards;
+}
+.modal-panel.is-closing {
+  animation: overlay-fade-out var(--motion-exit) var(--ease-in-out) forwards;
+}
+@keyframes modal-in { to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes overlay-fade-out { to { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay-backdrop,
+  .slideover-panel,
+  .modal-panel {
+    animation-duration: var(--motion-fast);
+  }
+}

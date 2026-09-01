@@ -2,11 +2,13 @@ import {
   AggregateStats,
   AgentWorthTrace,
   SessionSummary,
+  TokenUsage,
   UsageRollupResponse,
   PacingResponse,
   BlameResponse,
   CoverageMatrixResponse,
   AdapterCapability,
+  ScanSummary,
 } from '../types';
 
 const BASE_URL = '/api';
@@ -378,6 +380,21 @@ export async function fetchTraces(
 }
 
 /**
+ * The backend serializes TokenUsage with short field names
+ * (cache_read_tokens/cache_creation_tokens); the frontend reads the long
+ * names (cache_read_input_tokens/cache_creation_input_tokens) everywhere.
+ * Accepts either so a session-detail render never sees `undefined` here.
+ */
+function normalizeTokenUsage(raw: any): TokenUsage {
+  return {
+    input_tokens: raw?.input_tokens ?? 0,
+    output_tokens: raw?.output_tokens ?? 0,
+    cache_read_input_tokens: raw?.cache_read_tokens ?? raw?.cache_read_input_tokens ?? 0,
+    cache_creation_input_tokens: raw?.cache_creation_tokens ?? raw?.cache_creation_input_tokens ?? 0,
+  };
+}
+
+/**
  * Fetches trace detail from /api/traces/:id.
  */
 export async function fetchTraceDetail(
@@ -387,33 +404,16 @@ export async function fetchTraceDetail(
     const res = await fetch(`${BASE_URL}/traces/${encodeURIComponent(sessionId)}`);
     if (res.ok) {
       const data = await res.json();
-      const rawTrace = data.trace || data;
+      const rawTrace = data.trace ?? data;
       if (!rawTrace) {
         return null;
       }
-
-      // The backend serializes TokenUsage with short field names
-      // (cache_read_tokens / cache_creation_tokens). fetchAggregateStats
-      // already normalizes these to the frontend's TokenUsage shape for
-      // /api/stats; this endpoint returns the same struct nested under
-      // trace.stats and needs the same normalization, or SessionInspector's
-      // cache_read_input_tokens/cache_creation_input_tokens reads are undefined.
-      const rawTokenUsage = rawTrace.stats?.token_usage || {};
-      const normalizedStats = {
-        ...rawTrace.stats,
-        token_usage: {
-          input_tokens: rawTokenUsage.input_tokens ?? 0,
-          output_tokens: rawTokenUsage.output_tokens ?? 0,
-          cache_read_input_tokens:
-            rawTokenUsage.cache_read_input_tokens ?? rawTokenUsage.cache_read_tokens ?? 0,
-          cache_creation_input_tokens:
-            rawTokenUsage.cache_creation_input_tokens ?? rawTokenUsage.cache_creation_tokens ?? 0,
-        },
-      };
-
       return {
         ...rawTrace,
-        stats: normalizedStats,
+        stats: {
+          ...rawTrace.stats,
+          token_usage: normalizeTokenUsage(rawTrace.stats?.token_usage),
+        },
         score: data.score || rawTrace.score,
         outcomes: data.outcomes || rawTrace.outcomes,
         recoveries: data.recoveries || rawTrace.recoveries,
@@ -641,3 +641,18 @@ export function convertToAtif(trace: AgentWorthTrace): any {
   };
 }
 
+
+/** Re-reads the session logs on disk. The one mutation the dashboard owns —
+ *  everything else you do from the CLI. */
+export async function runScan(): Promise<ScanSummary> {
+  const res = await fetch('/api/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.error ?? `Scan failed (${res.status})`);
+  }
+  return res.json();
+}

@@ -12,7 +12,7 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 | Batch-1 (10 fixes) | Done, on integration branch | Real bugs found and fixed, not just merged |
 | Linux adapter detection | Done, on integration branch | 11 adapters fixed, pushed as `fix/linux-adapter-detection` |
 | Per-model token attribution | Done, on integration branch | |
-| Dashboard crash fix | Done, on integration branch | **Blocked from landing on main** — needs rebase onto PR #13 + #14 first, see Blocked below |
+| Dashboard crash fix | **Done, rebased onto `apps/dashboard`, merged into integration branch.** | The peer's "preserved verbatim" claim was checked and found false — see Dashboard rebase findings below |
 | Batch-2 (9 fixes) | **Done.** Verified, fixed, tested | 8 of 9 branches did not compile as originally committed (agy again). All fixed for real — see Batch-2 findings below |
 | SSE / live-tail endpoint | **Done, merged into integration branch.** | `GET /api/live-tail`, `notify`-based watcher + broadcast channel, no polling. 25/25 tests pass on lenovo (7 new). See SSE findings below |
 | Batch-2b (7 items dispatched, 4 deferred) | **Done — all 7 merged into integration branch.** | Final full-workspace build+test on the complete merge (batch-1 + batch-2 + SSE + all 7 batch-2b items together): 298 passed, 0 failed, 0 ignored. See table below |
@@ -90,18 +90,29 @@ A peer session (landing-page-ux-review) independently found a severe, verified b
 | Item | Branch | Status |
 | --- | --- | --- |
 | OutcomeKind PascalCase/snake_case fix (+ real DB migration, + check verdict_breakdown link) | `fix/outcome-kind-encoding-mismatch` | Building — highest priority, real production-data-affecting bug |
-| Cargo.lock version drift | `fix/punchlist-lockfile-and-verdict-rate` | Building |
-| Dashboard-crash-fix rebase onto `apps/dashboard` | `fix/dashboard-rebase-apps-dashboard` (based on `origin/main`, not the integration branch — different git ancestry, merges in separately once verified) | Building — PR #13 and #15 (superseding #14) are both merged, no longer blocked |
+| Cargo.lock version drift | `fix/punchlist-lockfile-and-verdict-rate` | **Done, merged.** Real current problem was different from the original symptom — see punch-list entry above |
+| Dashboard-crash-fix rebase onto `apps/dashboard` | `fix/dashboard-rebase-apps-dashboard` | **Done, merged.** See Dashboard rebase findings below |
 | Threat Digest | `feat/threat-digest` | Building — was gated on the secret detector, which is now merged |
 | Blunder-to-Blame Bridge | `feat/blunder-blame-bridge` | Building — was gated on blame + blunder detection both being stable, which they now are |
 
-**Personal Leaderboard and Hall of Blunders Share Pack**: still not dispatched — genuinely Saurabh's call on product fit (local-first/zero-telemetry vs. features implying other users or external sharing), asked directly rather than assumed either way.
+**Personal Leaderboard and Hall of Blunders Share Pack**: parked, not a same-day agentworth decision — Saurabh reframed this as a worldtrainer × agentworth × meme-network question that only makes sense once agentworth has real adoption. Matches `docs/DECISIONS.md`'s own existing call ("do not build toward worldtrainer inside AgentWorth — premature"), found independently by the unbuilt-features audit below.
 
-**Also running**: two read-only research agents auditing `agentworth` and `worldtrainer` for features scoped in docs/branches/PRs/worktrees that never got built, per Saurabh's direct request. Findings will land as a report, not code.
+## Dashboard rebase findings (2026-09-01)
+
+The peer's "preserved verbatim" claim (see the earlier cross-session message) was checked against a live repro, not assumed — and was **false on all counts**:
+
+| Claim | Actual |
+| --- | --- |
+| `SessionInspector.tsx` guards came along verbatim | False — Token Economics still called `.toLocaleString()` unguarded on the token fields. Reproduced the exact original crash live. |
+| `SessionInspector.tsx` is the live session-detail view | False — it's dead code, nothing imports it except a comment. The real view is `shell/InspectorPane.tsx`, written fresh in the restructure, with its own duplicate unguarded fetch. |
+| `fetchTraceDetail()` normalizes token field names | False — only `fetchAggregateStats()` did. Caused silent data loss (a real 3.8k-token session showing "3.0k" and exporting `cache_read_tokens: 0`), not a crash, since both callers already had `?? 0` guards downstream. |
+| An `ErrorBoundary` exists | False, confirmed by grep and by the live crash. |
+
+Fixed: `fetchTraceDetail()` now normalizes via a shared `normalizeTokenUsage()` helper; `InspectorPane` dropped its duplicate fetch in favor of the same function so the two can't drift apart again; `SessionInspector.tsx` got the same guards for when it's eventually wired back in; a new `ErrorBoundary` wraps every top-level panel in `ExplorerShell.tsx`. Verified against a real mock-backend + browser repro (crash and data-loss reproduced before the fix, confirmed gone after; a forced render error confirmed the fallback shows without taking down sibling panels) — not just a code read. `npm run build` (`tsc` strict + `vite build`) passes clean. Merged into the integration branch, bringing `origin/main`'s full PR #13/#15 restructure in for the first time — resolved by removing the now-superseded `apps/web/src/{App.tsx,components/SessionInspector.tsx}` and reconciling one real content conflict in `api.ts` (both sides had written similar-but-different normalization logic; kept the new, tested `normalizeTokenUsage()` version plus the original's explicit null-guard).
 
 ## No longer blocked
 
-- **PR #13 and #15 (superseding #14) both merged to `origin/main`.** Confirmed directly (`gh pr list`, `git log origin/main`): `App.tsx` is gone, `apps/dashboard/src/components/SessionInspector.tsx` exists, `apps/web`/`apps/dashboard`/`packages/ui` split is real. The dashboard-crash-fix rebase is now unblocked and dispatched (see Wave 2 table above) rather than assumed-still-blocked.
+- **PR #13 and #15 (superseding #14) both merged to `origin/main`, and now merged into the integration branch too** — this branch is no longer behind main's frontend.
 - **`apps/cli/src/main.rs:300`** now reads `let default_dist = PathBuf::from("apps/dashboard/dist");` — a one-line fix made by the other session to match the new build output path, not built/tested by them (no cargo, fan rule). Plain string literal, low risk — worth a real compile check next time this file is touched, not yet independently confirmed.
 
 ## Decisions made this session

@@ -1,0 +1,383 @@
+/* Explorer shell — frame, rail, top bar, command palette, toast.
+   Every rule is scoped under .shell-root so nothing leaks onto the
+   landing page, which shares this document. Session-list and inspector
+   internals live in panes.css (owned separately). */
+
+.shell-root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--mv-ground);
+  color: var(--mv-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.shell-root button,
+.shell-root input {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+.shell-root ::selection {
+  background: var(--mv-accent-soft);
+  color: var(--mv-ink);
+}
+
+/* ---------- top bar ---------- */
+.shell-root .topbar {
+  height: 44px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--mv-border);
+  background: var(--mv-ground);
+}
+
+.shell-root .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--mv-ink);
+  letter-spacing: -0.01em;
+}
+
+.shell-root .brand svg {
+  flex: 0 0 auto;
+}
+
+.shell-root .topbar-spacer {
+  flex: 1 1 auto;
+}
+
+.shell-root .kbd-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-muted);
+  border: 1px solid var(--mv-border);
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: var(--mv-surface);
+  line-height: 1;
+  transition: border-color 140ms ease-out, color 140ms ease-out;
+}
+
+.shell-root .kbd-chip:hover {
+  border-color: var(--mv-accent-border);
+  color: var(--mv-text);
+}
+
+.shell-root .livetail-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--mv-border);
+  background: var(--mv-surface);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mv-muted);
+  letter-spacing: 0.02em;
+  transition: border-color 140ms ease-out, color 140ms ease-out;
+}
+
+.shell-root .livetail-btn:hover {
+  color: var(--mv-text);
+}
+
+.shell-root .livetail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mv-faint);
+  flex: 0 0 auto;
+}
+
+.shell-root .livetail-btn[aria-pressed='true'] {
+  border-color: var(--mv-accent-border);
+  color: var(--mv-ink);
+}
+
+.shell-root .livetail-btn[aria-pressed='true'] .livetail-dot {
+  background: var(--mv-success);
+  animation: shell-pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes shell-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---------- body: rail + list + inspector ---------- */
+.shell-root .shell-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* rail */
+.shell-root .rail {
+  width: 52px;
+  flex: 0 0 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 0;
+  border-right: 1px solid var(--mv-border);
+  background: var(--mv-ground);
+}
+
+.shell-root .rail-btn {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mv-muted);
+  transition: background 140ms ease-out, color 140ms ease-out;
+}
+
+.shell-root .rail-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.shell-root .rail-btn:hover {
+  background: var(--mv-surface);
+  color: var(--mv-text);
+}
+
+.shell-root .rail-btn[aria-current='true'] {
+  background: var(--mv-accent-soft);
+  color: var(--mv-accent);
+  border-color: var(--mv-accent-border);
+}
+
+.shell-root .rail-btn[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  background: var(--mv-ink);
+  color: var(--mv-ground);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 5px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 40;
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+}
+
+.shell-root .rail-btn:hover::after,
+.shell-root .rail-btn:focus-visible::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.shell-root .rail-spacer {
+  flex: 1 1 auto;
+}
+
+/* list + inspector regions — sizing/scroll is the shell's job, contents
+   are panes.css's job */
+.shell-root .list-region {
+  /* Pass-through. SessionList's own root owns the column's width, border and
+     scrolling; a wrapper that also sized itself turned that flex-basis into a
+     height and collapsed the pane. */
+  display: contents;
+}
+
+.shell-root .inspector-region {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ---------- command palette ---------- */
+.shell-root .palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+  z-index: 100;
+}
+
+.shell-root .palette {
+  width: min(520px, 90vw);
+  /* Resting state must be fully opaque — the mock had a mid-fade
+     transparency artifact here. */
+  background: var(--mv-surface);
+  border: 1px solid var(--mv-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  animation: shell-palette-in 160ms ease-out;
+}
+
+@keyframes shell-palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.shell-root .palette-input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--mv-border);
+  padding: 13px 16px;
+  font-size: 13px;
+  background: transparent;
+  color: var(--mv-ink);
+}
+
+.shell-root .palette-input::placeholder {
+  color: var(--mv-faint);
+}
+
+.shell-root .palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.shell-root .palette-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--mv-text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: default;
+}
+
+.shell-root .palette-item.active {
+  background: var(--mv-accent-soft);
+  color: var(--mv-ink);
+}
+
+.shell-root .palette-item-hint {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+}
+
+.shell-root .palette-empty {
+  padding: 16px;
+  color: var(--mv-faint);
+  font-size: 12px;
+}
+
+/* ---------- toast ---------- */
+.shell-root .toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--mv-ink);
+  color: var(--mv-ground);
+  font-size: 12px;
+  padding: 9px 16px;
+  border-radius: 7px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
+  z-index: 200;
+}
+
+.shell-root .toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-root *,
+  .shell-root *::before,
+  .shell-root *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .shell-root .livetail-btn[aria-pressed='true'] .livetail-dot {
+    animation: none;
+  }
+  .shell-root .toast {
+    transform: translateX(-50%) translateY(0);
+  }
+  .shell-root .toast.show {
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* rescan — the dashboard's only mutation */
+.shell-root .rescan-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--mv-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease-out, border-color 140ms ease-out;
+}
+.shell-root .rescan-btn:hover:not(:disabled) {
+  color: var(--mv-ink);
+  border-color: var(--mv-faint);
+}
+.shell-root .rescan-btn:disabled {
+  cursor: default;
+  color: var(--mv-faint);
+}
+.shell-root .rescan-btn:focus-visible {
+  outline: 2px solid var(--mv-accent);
+  outline-offset: 2px;
+}
+.shell-root .rescan-btn .is-spinning {
+  animation: shell-spin 900ms linear infinite;
+  transform-origin: center;
+}
+@keyframes shell-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .rescan-btn .is-spinning { animation: none; opacity: 0.55; }
+}
