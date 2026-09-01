@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.11] - 2026-09-02
+
+### Fixed
+
+- **Windows dropped as a supported platform.** 0.1.10 shipped a Windows build for the first time, and it broke `npx agentworth` on real Windows machines within minutes: GNU tar parses a `C:\Users\...\agentworth.tar.gz` archive path as a remote `host:path` tar spec (the drive letter before the colon reads as a hostname), so extraction fails instead of just opening the local file. Rather than chase this again, Windows is no longer built or resolved — `agentworth` on Windows now fails with a clear "unsupported platform" message instead of a 404 or a tar crash. Building from source still works on any platform.
+- The npm launcher no longer lets a stale binary in a cargo target directory or `~/.cargo/bin` silently answer for every later version forever — the same version check already applied to `PATH` now applies to those sources too.
+
+---
+
 ## [0.1.10] - 2026-09-02
 
 ### Fixed
