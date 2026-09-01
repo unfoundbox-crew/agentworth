@@ -20,6 +20,7 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 | Cost-Aware Task Router | Deferred, not scoped | Different shape of feature — needs a live per-agent hook, not an index query. Needs its own design pass |
 | PR #11 (Skill + Receipts) | **Done, verified and merged.** | Was open/unclaimed since 2026-08-31, real bugs found and fixed (unrelated adapter bug + fabricated CLI docs) — see PR #11 findings below |
 | Final PR + version bump | Not yet | Saurabh's call — one PR, one version bump, only once everything this session touches is done |
+| Quality/perf/lint audit | **Done, on `chore/quality-audit-pass` (a separate worktree/branch, NOT merged into this integration branch).** | Real bug fixed (mutex-poisoning could wedge `agentworth serve` permanently), workspace-wide clippy cleanup, a small pinned lint policy, flamegraph feasibility checked. Not yet folded in — see full section below |
 
 ## Batch-2 findings (2026-09-01, verify-and-integrate pass)
 
@@ -177,3 +178,137 @@ Also fixed: 4 more SKILL.md sections with invented flags on real commands (`scan
 **Staleness check against the integration branch**: merge-base is `e1970a6`, this branch's direct parent — predates every fix that landed on `integrate/handoff-batch-1` today. Diffed every symbol `receipt.rs` actually calls (`OutcomeKind`, `EventPayload` variants, `TraceScore` fields, `Scanner`/`Storage`/`RecoveryDetector`/`estimate_tokens_cost_usd`) against the integration tip, read-only — no breaking renames found, `receipt.rs` only reads fields and matches enums with wildcard arms, so nothing added elsewhere broke it.
 
 Verified on lenovo: 177 passed, 0 failed, 0 ignored, `cargo build --workspace` clean. Commits `db06270` (original) → `4df56f1` (adapter fix) → `e29955a` (SKILL.md fixes) → `5f779e9` (docs), all folded into the integration branch.
+
+## Quality/perf/lint audit (2026-09-01) — separate worktree, not yet merged here
+
+Branch `chore/quality-audit-pass`, worktree `.worktrees/quality-audit`, branched from this file's own `integrate/handoff-batch-1` tip at the time (`cbf4556`). Scope: make the codebase top-notch on perf, quality, tests, and Rust idiom, per Saurabh's ask. Not pushed, no PR — the coordinating session decides what folds in.
+
+### Websearch grounding (all verified live, none from model memory)
+
+| Question | Current answer | Source |
+| --- | --- | --- |
+| Enable `clippy::pedantic` wholesale? | No — cherry-pick. Docs say expect false positives by design | [Clippy lints docs](https://doc.rust-lang.org/clippy/lints.html) |
+| 2026 CI baseline for a Rust workspace | fmt + clippy + `cargo nextest` + `cargo audit`/`cargo deny` (+ `cargo mutants` optional) | JetBrains blog, mutants.rs, nexte.st docs |
+| unwrap/expect in library code | Replace with `?` in `Result`-returning fns; `expect()` + a real reason for provable invariants | Multiple 2026 sources, consistent |
+| `cargo-flamegraph` Linux setup | `perf_event_paranoid` → `-1`; `[profile.release] debug = true` (or `CARGO_PROFILE_RELEASE_DEBUG=true`); lld/mold need `--no-rosegment` | [flamegraph-rs README](https://github.com/flamegraph-rs/flamegraph) (fetched directly) |
+| Mutex poisoning recovery pattern | `lock().unwrap_or_else(PoisonError::into_inner)` is the standard, documented recovery when the guarded data has no cross-call invariant a panic could break | Rust std docs, Rust forum |
+| `cargo-deny` current usage | `cargo install --locked cargo-deny && cargo deny init && cargo deny check` — checks advisories + licenses + bans + sources in one tool (superset of `cargo-audit`) | EmbarkStudios/cargo-deny |
+| GitHub Actions cost for a public repo | Free and unlimited on standard hosted runners (macOS included), reaffirmed Dec 2025 | GitHub Docs / community discussions |
+| Rust edition 2024 vs 2021 | 2024 is the new-project default; 2021 remains fully supported, migration is optional and mechanical (`cargo fix --edition`) | Multiple 2026 sources |
+
+### The one real bug: mutex poisoning could wedge `agentworth serve` forever
+
+`Storage` and `SqliteVectorStore` share one `Arc<Mutex<Connection>>`, locked with bare `.unwrap()` at 19 call sites across `crates/storage/src/lib.rs` and `crates/storage/src/vector/sqlite_store.rs`. `agentworth serve` runs a multi-threaded Axum server on this same shared `Storage` (`AppState { storage: Arc<Storage> }`, `tokio::runtime::Runtime::new()` — multi-thread by default). A panic inside any single request handler while the lock is held would poison the mutex permanently: every one of those 19 call sites then panics on every future call, turning one bad request into a permanent outage until someone restarts the process by hand.
+
+Fixed: every `.lock().unwrap()` → `.lock().unwrap_or_else(PoisonError::into_inner)`. Safe because a `rusqlite::Connection` has no in-process invariant a panic mid-query could leave broken — SQLite already committed or rolled back at the engine level. Documented on both structs. Commit `c46e46d`.
+
+### unwrap()/expect() audit in crates/* library code
+
+Grep found 342 `.unwrap()` + 60 `.expect()` in `crates/adapters` alone, and similar-looking counts elsewhere — but a script splitting each file at its `#[cfg(test)]` boundary (verified first: every file in this workspace uses the single-bottom-module convention, none interleave tests) showed **all of those are in test code**. Production-code-only unwrap/expect, workspace-wide:
+
+| File | Count | What it is | Verdict |
+| --- | --- | --- | --- |
+| `crates/storage/src/lib.rs` | 14 unwrap | `.conn.lock().unwrap()` | Real — fixed (see above) |
+| `crates/storage/src/vector/sqlite_store.rs` | 5 unwrap | Same mutex, shared connection | Real — fixed (see above) |
+| `crates/outcomes/src/recovery.rs` | 5 unwrap | `regex::Regex::new(STATIC_PATTERN).unwrap()` in `OnceLock::get_or_init` | Safe by construction (compile-time-constant pattern) — converted to `.expect("valid regex")` for consistency with `redaction/rules.rs`'s existing convention |
+| `crates/outcomes/src/verify.rs` | 1 unwrap | Same static-regex pattern | Same treatment |
+| `crates/redaction/src/rules.rs` | 16 expect | Same static-regex pattern, already `.expect("valid regex")` | Already correct, no change needed |
+
+No unwrap/expect on genuinely fallible paths (parsing untrusted session files, external I/O) survived to production code anywhere in `crates/*`. The 20 adapters — which do parse untrusted/arbitrary session log files from disk — already return `Result`/`Option` properly throughout; this was a pleasant surprise, not assumed going in.
+
+Also checked: **zero `unsafe` blocks anywhere in the workspace**, zero blanket `#[allow(dead_code)]`/`#[allow(unused)]` suppressions. Clean baseline.
+
+### Clippy triage
+
+**Baseline (`cargo clippy --workspace --all-targets`, default lints):** 46 raw warnings, ~20 unique source locations after collapsing lib/bin/test duplication. Fixed all of them except 3 deliberately left (see table). Commit `4f170f5`.
+
+**Pedantic (`-W clippy::pedantic`):** ~1,400 warnings across 1,438 unique locations. Confirmed this is exactly the noise clippy's own docs warn about, not a hidden pile of real bugs — the two highest-count categories were checked by hand and both turned out to be false-positive-shaped:
+- `clippy::float_cmp` (26 sites, concentrated in `scoring/context_rot.rs` and `storage/pricing.rs`) — every single instance is `assert_eq!` on a deterministic table lookup or hand-computed test value inside `#[test]` code, not a computed-value comparison. Correct as written; "fixing" it would make failures harder to read for zero benefit.
+- `clippy::case_sensitive_file_extension_comparisons` (~30 raw / ~20 unique, `crates/adapters/*`) — mixed: `aider.rs`/`cline.rs`/`windsurf.rs` compare against an already-lowercased variable (false positive, clippy can't see the prior `.to_lowercase()`), but 17 other adapters (`claude.rs` and near-identical siblings — `codex`, `cursor`, `deepseek`, `gemini`, `goose`, `grok`, `herdr`, `hermes`, `kimi`, `manus`, `minimax`, `openclaw`, `opencode`, `pi`, `qwen`, `zhipu`) compare a raw, non-lowercased filename. Real, but low real-world severity (it's a dotfile-exclusion edge case, and these files are always programmatically named lowercase in practice) and duplicated near-identically 17 times — better fixed together with a shared helper than as 17 separate one-off patches. Flagged, not fixed.
+
+Two pedantic findings were real, small, and fully fixed (verified zero remaining instances before pinning them at `warn` permanently — see the lints table below):
+- `clippy::implicit_clone` (5 sites, `apps/cli/src/main.rs`): `x.to_string()` on an already-`&String`/`&&String` goes through `Display` instead of a direct clone. Note for whoever touches this next: two of the three variable shapes here are `&&String` (from `Vec<(&String, &usize)>` destructured a second time in a `for` loop), so the fix is `(*x).clone()`, not `x.clone()` — the latter compiles but clones the wrong layer and returns `&String`. Caught by lenovo's compiler before it ever got committed.
+- `clippy::assigning_clones` (1 site, `crates/export-atif/src/serializer.rs`, inside a per-event loop over every event in a trace): `thinking = t.clone()` → `thinking.clone_from(t)`, reusing the prior iteration's allocation when possible.
+
+Full triage of what was fixed vs. deliberately left, and why:
+
+| Lint | Sites | Action | Reasoning |
+| --- | --- | --- | --- |
+| `collapsible_if` / `collapsible_match` / `single_match` | ~13 | Fixed | Checked per-site that the fallback arm is a no-op `_ => {}` before collapsing — a guard-collapse changes behavior if the fallback does something real |
+| `unnecessary_sort_by` | 5 | Fixed | `sort_by_key(Reverse(...))`; all sort keys are `Copy` primitives, both are stable sorts |
+| `double_ended_iterator_last`, `explicit_counter_loop`, `unnecessary_cast`, `needless_bool_assign`, `unused_imports` | 6 | Fixed | Mechanical, zero behavior change |
+| `wildcard_in_or_patterns` | 1 | Suppressed with `#[allow] `+ reason, not deleted | The named alternatives document the supported `--format` values; the fallback-to-terminal behavior is intentional, not a bug to silently "fix" into an error path |
+| `implicit_clone`, `assigning_clones` | 5 + 1 | Fixed, now pinned at `warn` | Real, small, fully cleared — see above |
+| `too_many_arguments` | 2 (`TrajectoryChunk::new` 9/7 args × 12 call sites; `run_usage_command` 8/7 args × 1 call site) | Flagged, not fixed | Real API-ergonomics smell, but the fix is a signature change (builder or params struct) — a design call, not a mechanical lint fix. `TrajectoryChunk::new` especially: 12 call sites is real blast radius |
+| `manual_checked_ops` | 1 (`pr_blame.rs`) | Left as-is | Already guarded against the exact div-by-zero it's warning about; `checked_div` wouldn't be more correct, just a different spelling |
+| `write_literal` | 2 (test fixtures in `cline.rs`/`windsurf.rs`) | Left as-is | Cosmetic; the fix means hand-escaping embedded JSON/braces in a raw string literal by hand — not worth the transcription risk in test fixture data for a style warning |
+| `uninlined_format_args` | 13 | Flagged, not fixed | Real, modern-idiom, zero-risk — just didn't get to it this pass. Good next-session pickup |
+
+**One self-caught bug during this pass**: collapsing a nested `if` in `blunder.rs` initially left a stray extra closing brace (an artifact of how much of the original block I included in the edit's old/new text). Caught by re-reading my own diff before syncing to lenovo, confirmed by lenovo's compiler when I intentionally checked the pre-fix state. Never reached a commit.
+
+**One flaky test, confirmed as a flake, not a regression**: a `cargo test --workspace` run showed `test_cli_blunder_command` failing (expected `LEAKED_SHELL_VARIABLE`, got the `APOLOGY_PANIC` fallback). Traced the exact code path by hand — the assertion only reachable if `critical_rule_id` ends up `None`, and nothing in this session's diff touches `is_leaked_katana_var` or its call site — then reproduced by re-running (a) that one test file alone, single-threaded: 12/12 passed; (b) the full workspace suite again: 345/345 passed. Concluded this was environmental (8+ agents on lenovo concurrently at the time), not caused by this branch. Recorded here in case anyone else sees the same test flake and wonders if it's new.
+
+### Workspace clippy lint policy (new)
+
+`[workspace.lints.clippy]` added to the root `Cargo.toml`, with `[lints] workspace = true` in all 10 member crates (required — `workspace.lints` is not auto-inherited per crate). Commit `42174b1`.
+
+```toml
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }   # already cargo clippy's own default; pinned explicitly
+implicit_clone = "warn"                    # backlog cleared this session
+assigning_clones = "warn"                  # backlog cleared this session
+```
+
+Not enabled yet (real findings, backlogs not cleared — enabling now would warn immediately): `uninlined_format_args` (13 sites), `case_sensitive_file_extension_comparisons` (~17 sites, all in `crates/adapters`). Not enabled at all: the rest of `clippy::pedantic` — too noisy for this codebase (see triage above).
+
+### Test coverage shape
+
+Checked every crate for `#[cfg(test)]`/`#[test]` presence, including integration tests under each crate's own `tests/` directory (a first pass missed these and wrongly flagged `export-atif`/`redaction` as zero-coverage — corrected before reporting). Verdict: **no genuine gap found.** Every crate has real coverage; `export-atif`'s 4 integration tests exercise its serializer/models directly, `redaction`'s 17 cover the full rule set including the high-entropy fallback, and `Scanner::run_scan` (the biggest single orchestration function) has 3 inline + 3 integration tests covering nested project dirs and all-adapter end-to-end scans. `apps/cli`'s three "no inline `#[cfg(test)]`" files (`search.rs`, `archaeology.rs`, `static_files.rs`) are all covered through the public API surface instead (CLI subcommand / HTTP endpoint integration tests), which is a legitimate choice for thin orchestration code, not a gap. Did not chase a coverage percentage — this is a plain statement that a real search for gaps came up empty, not an assumption.
+
+### Flamegraph feasibility on lenovo — checked, not run
+
+| Item | Finding |
+| --- | --- |
+| `perf` installed | Yes, 7.0.12 |
+| `perf_event_paranoid` | Currently `4`. Flamegraph needs `-1` (most permissive) via `sudo sysctl kernel.perf_event_paranoid=-1` or writing `-1` to the proc file |
+| Sudo available? | Saurabh's lenovo account has full `(ALL:ALL) ALL` sudo rights per `sudo -l` — but it requires a password. Confirmed directly: `sudo -n true` → "a password is required". This SSH automation is non-interactive and cannot supply one, so **I cannot set this myself.** Needs Saurabh interactively, or a one-time `NOPASSWD` sudoers rule for this specific sysctl if he wants future agents to do it |
+| Linker | Plain GNU ld 2.42 (via gcc/cc default). No `mold`/`lld` installed, none configured in `.cargo/config.toml` (doesn't exist) or the workspace `Cargo.toml`. The lld/mold `--no-rosegment` requirement does **not** currently apply — would only matter if someone later switches linkers |
+| Debug symbols for a useful flamegraph | No `[profile.release]` section exists (default `debug = false`). Recommend the zero-footprint option: set `CARGO_PROFILE_RELEASE_DEBUG=true` as an env var at profiling build time rather than permanently bloating the release binaries `release.yml` ships to users |
+| `cargo-flamegraph` itself | Not installed (`cargo flamegraph` → "no such command"). Needs one `cargo install flamegraph` before a profiling session — not done in this pass, given 8+ other agents were on the box |
+
+**Verdict: feasible, blocked only on the sudo step, which needs Saurabh directly.** Concrete profiling targets for that future session, in priority order:
+
+1. **`Scanner::run_scan`'s main loop** (`crates/core/src/lib.rs:150-200`) — enumeration is already parallelized (`std::thread::scope`), but parse→score→upsert runs serially per session. Found something concrete while reading it: `Storage::upsert_session` opens its own SQLite transaction **per call** (`crates/storage/src/lib.rs:440`), so a scan of N sessions is N separate transactions/commits under WAL, not one batched transaction. On a 10k+-session index (real scale per this doc's own history) that's a real N+1-shaped write pattern — but whether it's actually the bottleneck vs. parse/regex cost is exactly what profiling would tell you before investing in a fix (batching changes failure-partial-commit semantics, so it's not a free change).
+2. **Vector search** (`SqliteVectorStore::search_filtered`, `crates/storage/src/vector/sqlite_store.rs:175`) — confirmed brute-force: loads every matching row, computes cosine similarity in Rust for every one, `sort_by` + `truncate` the full result set (no SQL-side `LIMIT`, no ANN index). Fine at today's scale, first thing that degrades as `trajectory_chunks` grows.
+3. **`/api/stats`** (`get_aggregate_stats` + `get_top_repositories`, `crates/storage/src/lib.rs`) — 3 queries per request; the third (`SELECT models_used, tools_used FROM sessions`) does a full-table scan **plus** a `serde_json::from_str` per row in application code, the likely hot spot vs. the other two (single SQL aggregation, `GROUP BY`).
+
+### Not fixed, flagged for the coordinator/Saurabh to decide
+
+- **Adopt `cargo-nextest`?** Verified as the current 2026 standard for a suite this size, and matters more once `cargo-mutants` enters the picture (nextest integration is documented upstream). Not installed or wired up this pass — a CI/tooling decision, not a code fix.
+- **`cargo-deny`?** Recommended over `cargo-audit` alone (superset: advisories + licenses + bans + sources). `cargo install --locked cargo-deny && cargo deny init && cargo deny check` is the whole setup; first run will likely need the generated `deny.toml`'s license allowlist adjusted once for whatever this workspace's ~400 transitive deps actually use. Not run this pass (no cargo-anything installs attempted given box load).
+- **`cargo-mutants`?** Real value for a codebase this test-heavy, but mutation testing means recompiling and re-running the suite once per mutant — genuinely heavy, explicitly a "run when load is low" item like the flamegraph pass, not attempted.
+- **CI currently runs nothing on regular pushes** (`release.yml` only fires on `v*` tags; `deploy-pages.yml` is unrelated). Adding a `push`/`pull_request` workflow for fmt+clippy+test would, per the CLAUDE.md CI-budget rule, normally need cost justification — but this repo is **public** (`unfoundbox-crew/agentworth`), and standard GitHub-hosted runners are free and unlimited on public repos (verified live, reaffirmed Dec 2025), so the usual minutes objection doesn't apply here. Still a "needs Saurabh's yes," not something to add unilaterally.
+- **`TrajectoryChunk::new`'s 9-argument constructor** (12 call sites) and **`run_usage_command`'s 8-argument signature** (1 call site) — real API smells, fixing means a builder/params-struct refactor, flagged above in the clippy triage table.
+- **Duplicated word-wrap helpers**: `apps/cli/src/commands/audit.rs`'s `wrap_line`, `blunder.rs`'s `wrap_text`, and `search.rs`'s `clean_and_wrap_text` are three independently-named, near-byte-identical private functions. Noticed while fixing a `collapsible_if` in each. Worth consolidating into one shared helper next time any of the three gets touched.
+- **17 adapters' case-sensitive extension check** — see clippy triage above. Best fixed together with a shared helper in `agentworth-adapter-sdk`, not as 17 separate patches.
+- **Rust edition 2024**: this workspace is on 2021, which is fully current and supported. 2024 is the modern default for *new* projects; migrating an existing one is optional, mechanical (`cargo fix --edition`), and not something to do as a drive-by in a lint-audit pass.
+
+### Verified on lenovo (real output, not claimed)
+
+Isolated build dir `~/builds/agentworth-qaudit-b0ff874f/`, dedicated `CARGO_TARGET_DIR`, every build/test/clippy invocation wrapped in `flock /tmp/agentworth-lenovo-build.lock` after 7+ other agents' concurrent full-workspace builds turned the box into a stampede (load average briefly hit 46 on 4 cores) — flock serializes cargo access across the whole fleet so builds queue instead of thrashing.
+
+Final, clean, full-workspace run after every commit below:
+- `cargo build --workspace` → exit 0
+- `cargo test --workspace` → exit 0, **345 passed, 0 failed, 0 ignored** (0 doc-tests exist anywhere in the workspace — not a defect, just unused)
+- `cargo clippy --workspace --all-targets` → exit 0, only the 4 deliberately-left warnings remain (`too_many_arguments` × 2, `write_literal` × 2 in test fixtures)
+
+### Commits (branch `chore/quality-audit-pass`, not pushed)
+
+| Commit | What |
+| --- | --- |
+| `c46e46d` | fix(storage): recover from mutex poisoning instead of propagating it |
+| `2cae796` | fix(outcomes): expect with a reason on static regex compiles, not unwrap |
+| `4f170f5` | fix(lint): clear the default clippy::all warnings across the workspace |
+| `9a61973` | fix(cli): move the wildcard_in_or_patterns allow to the let, not the arm |
+| `bd0b757` | perf: fix two real clippy::pedantic findings (implicit_clone, assigning_clones) |
+| `42174b1` | chore: pin a workspace clippy lint policy |
