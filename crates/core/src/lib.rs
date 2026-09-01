@@ -262,6 +262,46 @@ mod tests {
         assert_eq!(summary2.total_indexed_sessions, 1);
     }
 
+    /// Regression test for the "blame returns nothing for Claude Code sessions" bug: a scanned
+    /// session containing a real Edit tool call must be findable by `find_sessions_for_blame`.
+    #[test]
+    fn test_scanner_end_to_end_blame_after_claude_code_edit() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        let mut temp = tempfile::Builder::new()
+            .suffix(".jsonl")
+            .tempfile()
+            .unwrap();
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Fix the bug in session.rs"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":60,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Fixing it now."},{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"crates/core/src/session.rs","old_string":"a","new_string":"b"}}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: true,
+        };
+
+        let summary = scanner.run_scan(&options, |_, _| {}).expect("scan run");
+        assert_eq!(summary.scanned_sessions, 1);
+
+        let matches = storage
+            .find_sessions_for_blame("session.rs")
+            .expect("blame query");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].file_path, "crates/core/src/session.rs");
+        assert_eq!(matches[0].action, "edit");
+        assert_eq!(matches[0].model.as_deref(), Some("claude-3-5-sonnet"));
+
+        let no_match = storage
+            .find_sessions_for_blame("totally_unrelated_file.rs")
+            .expect("blame query for absent file");
+        assert!(no_match.is_empty());
+    }
+
     #[test]
     fn test_scanner_outcome_detection_and_score_indexing() {
         let storage = Arc::new(Storage::open_in_memory().expect("open storage"));

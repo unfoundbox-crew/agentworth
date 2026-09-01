@@ -2101,7 +2101,15 @@ fn run_blame_command(
                 style(&m.adapter).green()
             );
             println!(
-                "│     Timestamp: {:<41} │",
+                "│     Touched:   {:<41} │",
+                format!(
+                    "{} ({})",
+                    m.modified_at.format("%Y-%m-%d %H:%M:%S UTC"),
+                    m.action
+                )
+            );
+            println!(
+                "│     Started:   {:<41} │",
                 m.started_at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
             );
             if !m.models_used.is_empty() {

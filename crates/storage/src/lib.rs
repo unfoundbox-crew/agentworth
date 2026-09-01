@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use agentworth_adapter_sdk::SessionSource;
-use agentworth_schema::{AgentWorthTrace, TokenUsage};
+use agentworth_schema::{AgentWorthTrace, EventPayload, FileActionType, TokenUsage};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use directories::BaseDirs;
@@ -130,6 +130,26 @@ pub struct BlameMatch {
     pub models_used: Vec<String>,
     pub total_tokens: u64,
     pub tool_calls_count: usize,
+    /// Path recorded on the specific matching file-modification event (not necessarily identical
+    /// to the search pattern, since matching is substring-based).
+    pub file_path: String,
+    /// "read" | "write" | "edit" | "delete", per `FileActionType`.
+    pub action: String,
+    /// Timestamp of this session's most recent modification to `file_path`.
+    pub modified_at: DateTime<Utc>,
+    /// Model active at the time of that modification, if the trace recorded one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// Label for a `FileActionType`, matching its `#[serde(rename_all = "snake_case")]` form.
+fn file_action_label(action: FileActionType) -> &'static str {
+    match action {
+        FileActionType::Read => "read",
+        FileActionType::Write => "write",
+        FileActionType::Edit => "edit",
+        FileActionType::Delete => "delete",
+    }
 }
 
 /// SQLite-backed storage index.
@@ -227,6 +247,16 @@ impl Storage {
                 composite_score REAL,
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS file_modifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                action TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                model TEXT,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
             "#,
         )?;
 
@@ -257,6 +287,8 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_sessions_primary_outcome ON sessions(primary_outcome);
             CREATE INDEX IF NOT EXISTS idx_sessions_composite_score ON sessions(composite_score);
             CREATE INDEX IF NOT EXISTS idx_sources_fingerprint ON sources(fingerprint);
+            CREATE INDEX IF NOT EXISTS idx_file_modifications_path ON file_modifications(file_path);
+            CREATE INDEX IF NOT EXISTS idx_file_modifications_session ON file_modifications(session_id);
 
             CREATE VIEW IF NOT EXISTS v_daily_usage AS
             SELECT
@@ -434,6 +466,42 @@ impl Storage {
                 composite_score,
             ],
         )?;
+
+        // 3. Replace this session's file-modification records. A full trace is re-parsed from
+        // disk on every scan (see Scanner::run_scan), so events are rewritten wholesale rather
+        // than diffed to avoid duplicate rows on rescan.
+        tx.execute(
+            "DELETE FROM file_modifications WHERE session_id = ?1",
+            params![trace.session_id],
+        )?;
+
+        {
+            let mut insert_stmt = tx.prepare(
+                r#"
+                INSERT INTO file_modifications (session_id, file_path, action, occurred_at, model)
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                "#,
+            )?;
+
+            let mut current_model: Option<String> = None;
+            for event in &trace.events {
+                match &event.payload {
+                    EventPayload::ModelInvocation { model, .. } => {
+                        current_model = Some(model.clone());
+                    }
+                    EventPayload::FileAction { path, action, .. } => {
+                        insert_stmt.execute(params![
+                            trace.session_id,
+                            path,
+                            file_action_label(*action),
+                            event.timestamp.to_rfc3339(),
+                            current_model.as_deref(),
+                        ])?;
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         tx.commit()?;
         Ok(())
@@ -890,16 +958,33 @@ impl Storage {
     }
 
     /// Search sessions that modified or touched a specific target file path for AI Code Blame.
+    ///
+    /// Matches against recorded `file_modifications` rows (populated from each trace's
+    /// `EventPayload::FileAction` events during scan), not session-level metadata — a session's
+    /// own transcript path or tool-name counters never contain the paths of files it edited.
+    /// Each matching session is represented once, by its most recent touch to a matching path.
     pub fn find_sessions_for_blame(&self, file_path_pattern: &str) -> Result<Vec<BlameMatch>> {
         let conn = self.conn.lock().unwrap();
         let pattern = format!("%{}%", file_path_pattern);
 
         let mut stmt = conn.prepare(
             r#"
-            SELECT session_id, adapter, source_path, started_at, models_used, total_tokens, tool_calls_count
-            FROM sessions
-            WHERE source_path LIKE ?1 OR metadata LIKE ?1 OR tools_used LIKE ?1
-            ORDER BY started_at DESC
+            SELECT session_id, adapter, source_path, started_at, models_used, total_tokens,
+                   tool_calls_count, file_path, action, occurred_at, model
+            FROM (
+                SELECT
+                    s.session_id, s.adapter, s.source_path, s.started_at, s.models_used,
+                    s.total_tokens, s.tool_calls_count,
+                    fm.file_path, fm.action, fm.occurred_at, fm.model,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY fm.session_id ORDER BY fm.occurred_at DESC
+                    ) AS rn
+                FROM file_modifications fm
+                JOIN sessions s ON s.session_id = fm.session_id
+                WHERE fm.file_path LIKE ?1
+            )
+            WHERE rn = 1
+            ORDER BY occurred_at DESC
             LIMIT 25
             "#,
         )?;
@@ -915,10 +1000,17 @@ impl Storage {
             let models_str: String = row.get(4)?;
             let total_tokens: i64 = row.get(5)?;
             let tool_calls_count: i64 = row.get(6)?;
+            let file_path: String = row.get(7)?;
+            let action: String = row.get(8)?;
+            let occurred_str: String = row.get(9)?;
+            let model: Option<String> = row.get(10)?;
 
             let started_at = DateTime::parse_from_rfc3339(&started_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
+            let modified_at = DateTime::parse_from_rfc3339(&occurred_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or(started_at);
 
             let models_used = serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default();
 
@@ -930,6 +1022,10 @@ impl Storage {
                 models_used,
                 total_tokens: total_tokens as u64,
                 tool_calls_count: tool_calls_count as usize,
+                file_path,
+                action,
+                modified_at,
+                model,
             });
         }
 
@@ -1343,18 +1439,45 @@ mod tests {
 
     #[test]
     fn test_find_sessions_for_blame() {
+        use agentworth_schema::NormalizedEvent;
+
         let storage = Storage::open_in_memory().expect("open storage");
 
+        // Deliberately does NOT mention "engine.rs" anywhere, so a match can only come from a
+        // real recorded FileAction event, not the old (buggy) source_path/metadata substring hack.
         let prov = Provenance::new(
-            "/Users/dev/code/motionvector/src/engine.rs.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-motionvector/sess-blame-1.jsonl",
             "claude_code",
             100,
             100,
             "fp_blame",
         );
-        let mut trace = AgentWorthTrace::new("sess_blame_1", "claude_code", prov, Utc::now());
+        let start = Utc::now() - Duration::minutes(5);
+        let mut trace = AgentWorthTrace::new("sess_blame_1", "claude_code", prov, start);
         trace.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
-        trace.stats.tools_used.insert("Edit".to_string(), 3);
+        trace.stats.tools_used.insert("Edit".to_string(), 1);
+
+        let edit_ts = start + Duration::minutes(1);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::ModelInvocation {
+                model: "claude-3-5-sonnet".to_string(),
+                token_usage: TokenUsage::new(100, 20, 0, 0),
+                cost_usd: None,
+                latency_ms: None,
+            },
+        ));
+        trace.events.push(NormalizedEvent::new(
+            2,
+            edit_ts,
+            EventPayload::FileAction {
+                path: "crates/engine/src/engine.rs".to_string(),
+                action: FileActionType::Edit,
+                diff: None,
+                lines_changed: None,
+            },
+        ));
         storage.upsert_trace(&trace).expect("upsert");
 
         let matches = storage
@@ -1363,6 +1486,22 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].session_id, "sess_blame_1");
         assert_eq!(matches[0].adapter, "claude_code");
+        assert_eq!(matches[0].file_path, "crates/engine/src/engine.rs");
+        assert_eq!(matches[0].action, "edit");
+        assert_eq!(matches[0].model.as_deref(), Some("claude-3-5-sonnet"));
+        assert_eq!(matches[0].modified_at.timestamp(), edit_ts.timestamp());
+
+        // Rescanning (upsert again) must replace, not duplicate, file_modifications rows.
+        storage.upsert_trace(&trace).expect("upsert again");
+        let matches_after_rescan = storage
+            .find_sessions_for_blame("engine.rs")
+            .expect("blame matches after rescan");
+        assert_eq!(matches_after_rescan.len(), 1);
+
+        let no_match = storage
+            .find_sessions_for_blame("no_such_file_anywhere.rs")
+            .expect("blame matches for absent file");
+        assert!(no_match.is_empty());
     }
 
     #[test]
