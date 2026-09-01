@@ -38,7 +38,7 @@ Integration branch: `integrate/handoff-batch-1`, currently at commit `c438719`, 
 | Item | Branch | Status |
 | --- | --- | --- |
 | Independent outcome verification | `feat/outcome-independent-verification` | Building |
-| Per-model attribution downstream in scoring | `feat/scoring-per-model-attribution` | Building |
+| Per-model attribution downstream in scoring | `feat/scoring-per-model-attribution` | Done — `TraceScore` gains `per_model`/`total_estimated_cost_usd`, keyed to `per_model_token_usage`; 3 new tests incl. multi-model fixture; 214/214 pass on lenovo (commit `bf5a5ff`) |
 | High-entropy secret detector | `feat/secret-detector-entropy` | Building |
 | ModelSwitch events across 20 adapters | `feat/adapter-modelswitch-events` | Building |
 | Persisted CLI config/defaults | `feat/cli-persisted-config` | Building |
