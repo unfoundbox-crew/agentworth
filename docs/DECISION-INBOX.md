@@ -2,7 +2,7 @@
 
 Owner of this doc: the backend/CLI session (Claude, socket name `code-76` in fleet messages). Update it in place as work lands — don't let decisions sit only in a chat transcript.
 
-Last updated: 2026-09-01, mid-session. Check git before trusting this if it's more than a day old. This copy on `integrate/handoff-batch-1` is canonical; other branches may carry a stale snapshot until they fold in.
+Last updated: 2026-09-01, mid-session (wave 1+2 real verification round). Check git before trusting this if it's more than a day old. This copy on `integrate/handoff-batch-1` is canonical; other branches may carry a stale snapshot until they fold in.
 
 ## Where things stand
 
@@ -16,7 +16,8 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 | Batch-2 (9 fixes) | **Done.** Verified, fixed, tested | 8 of 9 branches did not compile as originally committed (agy again). All fixed for real — see Batch-2 findings below |
 | SSE / live-tail endpoint | **Done, merged into integration branch.** | `GET /api/live-tail`, `notify`-based watcher + broadcast channel, no polling. 25/25 tests pass on lenovo (7 new). See SSE findings below |
 | Batch-2b (7 items dispatched, 4 deferred) | **Done — all 7 merged into integration branch.** | Final full-workspace build+test on the complete merge (batch-1 + batch-2 + SSE + all 7 batch-2b items together): 298 passed, 0 failed, 0 ignored. See table below |
-| `OutcomeKind` PascalCase/snake_case encoding fix | **Done, merged into integration branch.** | Real bug, confirmed against a peer session's live 10,188-session index. Root cause was one level deeper than reported — see findings below. 301 passed on lenovo |
+| `OutcomeKind` PascalCase/snake_case encoding fix | **Done, code + migration merged, and now verified against the real database.** | Root cause was one level deeper than reported. Fixture test passed earlier today (301 on lenovo); this round ran the actual migration against a real copy of `~/.agentworth/agentworth.db` (10,188 sessions) and confirmed every row flipped correctly — see "Wave 1+2 real verification" below |
+| Wave 2: `busy_timeout` pragma, `prompt_preview`, `source_mtime_epoch_secs` | **Done, build-verified, tested.** | Was WIP (`e4da6e6`) with a compile error (`row_to_session_summary` dropped 2 of its own fields) and zero test coverage; both fixed this round — see "Wave 1+2 real verification" below |
 | Cost-Aware Task Router | Deferred, not scoped | Different shape of feature — needs a live per-agent hook, not an index query. Needs its own design pass |
 | PR #11 (Skill + Receipts) | **Done, verified and merged.** | Was open/unclaimed since 2026-08-31, real bugs found and fixed (unrelated adapter bug + fabricated CLI docs) — see PR #11 findings below |
 | Model pricing wiring (6 report commands) | **Done, merged.** | Every dollar figure a user actually sees was priced as Claude 3.5 Sonnet regardless of the real model. Commit `0c27bbb`. See findings below |
@@ -107,6 +108,60 @@ That's the "bitten twice" bug class landing a fifth and sixth time in the same s
 Worked through the math on paper: `total_sessions` is an unfiltered `COUNT(*)`, and the loop's own session count is always `<=` that (same table, filtered down further, never up) — so `real_verified_tasks <= total_sessions` is a hard invariant of the current code, and a raw value like `1.09` most likely means "1.09%", not "109% — overcounted." That reading matches how this same codebase already treats this kind of field elsewhere: `calculate_cache_hit_ratio` (`crates/storage/src/lib.rs`) is also 0–100 scaled despite the `_ratio` name, and the CLI's own text view prints `verdict.real_verified_rate` straight into a `{:.1}%` format with no extra scaling — both confirm 0–100 is the intended scale here, so a small number isn't automatically an overflow.
 
 That said, this function does have a real, separate, worth-fixing bug: it calls `list_sessions_filtered(&SessionFilter { limit: None, ... })` intending "no limit," but `list_sessions_filtered` treats an absent limit as **50**, not unlimited (`filter.limit.unwrap_or(50)`). On any index bigger than 50 non-stub sessions, the entire verdict breakdown silently reflects only the 50 most-recently-started sessions while being divided against the true full count — on a 10,188-session index that's about 0.5% real coverage, dressed up as if it covers everything. This makes the rate read *low*, never *high*, so it can't explain a >1.0 report either way — but it's a real bug in the exact "verified outcome counting" area, so flagging it separately (spawned as its own task) rather than folding it into this fix.
+
+## Wave 1+2 real verification (2026-09-01, this round)
+
+Both pieces of work that had only ever been merged/committed but never build-tested or run
+against real data: the `OutcomeKind` fix + migration (`2dd3cb9`) and the three small storage
+fixes (`e4da6e6`). Neither had touched a compiler or a real database before this round.
+
+**`e4da6e6` didn't compile.** `row_to_session_summary` read `prompt_preview` and
+`source_mtime_epoch_secs` off the row into locals, then never put them in the
+`SessionSummary { ... }` struct literal — `E0063: missing fields`. Both SQL queries
+(`get_session_by_id`, `list_sessions_filtered`) already selected the right 13 columns in the
+right order; only the struct literal was incomplete. One-line-per-field fix, commit `2b2869b`.
+
+**None of the three small fixes had any test coverage.** Added three, same commit:
+- `test_busy_timeout_pragma_is_set` — opens a real connection, runs `PRAGMA busy_timeout`,
+  asserts it reads back as `5000`, not just that the SQL text contains the pragma.
+- `test_prompt_preview_extracted_from_first_user_message` — covers the real extraction rule
+  (first non-empty `UserMessage`, all-whitespace messages skipped in favor of the next real one,
+  >200-char truncation with a trailing `…`), and the no-`UserMessage`-at-all case staying `None`.
+- `test_source_mtime_epoch_secs_joined_from_sources_table` — confirms the `LEFT JOIN sources`
+  value round-trips through both `get_session_by_id` and `list_sessions_filtered`.
+
+**Verified on lenovo** (isolated dir `agentworth-outcomeverify-e4da6e6`, dedicated
+`CARGO_TARGET_DIR`, `flock`-serialized): `cargo build --workspace` exit 0; `cargo clippy
+--workspace --all-targets` exit 0 (only the already-documented, deliberately-left warnings —
+`too_many_arguments` ×2, `write_literal` ×2 in test fixtures, `static_files.rs`'s unused
+`Embed` import, `pr_blame.rs`'s `manual_checked_ops` — no new warnings); `cargo test --workspace
+--no-fail-fast` exit 0, **428 passed, 0 failed, 0 ignored**, including all 3 new tests.
+
+**The `OutcomeKind` migration, run for real against production-shaped data, not a fixture.**
+Copied the real `~/.agentworth/agentworth.db` (57,647,104 bytes, sha256 `30127263…35fec0`,
+10,188 sessions) to a lenovo scratch path — never pointed a build at the real file directly.
+Queried the copy raw before touching it, to confirm the fixture-based test wasn't hiding a
+real-data edge case the fixture didn't cover:
+
+| `primary_outcome` | Before (raw query) | After (`agentworth doctor --db-path`, then re-queried) |
+| --- | ---: | --- |
+| `NULL` | 8,675 | 8,675 (untouched, as designed) |
+| `TestOrBuildPassed` → `test_or_build_passed` | 803 | 803 |
+| `ArtifactChanged` → `artifact_changed` | 474 | 474 |
+| `CommitObserved` → `commit_observed` | 127 | 127 |
+| `CiOrDeploymentVerified` → `ci_or_deployment_verified` | 92 | 92 |
+| `DoneClaimed` → `done_claimed` | 17 | 17 |
+
+Every count preserved exactly, every non-null value now correctly snake_case. Ran `doctor`
+against the already-migrated copy a second time and re-queried — identical result, confirming
+idempotency against real data (the fixture test already covered this; this confirms it isn't a
+fixture-only property). Scratch DB copies (local and lenovo) deleted after verification — they
+were full copies of real session content, no reason to leave them lying around.
+
+This is the fix that turns the dashboard's outcome view on for real. Both commits are verified
+and sitting on `integrate/handoff-batch-1`; **nothing has shipped to origin/main yet** — that
+still needs Saurabh's explicit go-ahead (see "Final PR + version bump" above), asked for
+directly in chat this round, not inferred from this doc.
 
 ## New punch-list items (not yet actioned)
 
