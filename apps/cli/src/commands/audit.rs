@@ -166,49 +166,70 @@ fn audit_trace(
                     }
                 }
 
-                // Check Critical: rm -rf on protected paths or with leaked variables
-                if is_leaked_katana_var(&lower_cmd) {
-                    report.critical_count += 1;
-                    report.findings.push(SafetyFinding {
-                        severity: SafetySeverity::Critical,
-                        session_id: trace.session_id.clone(),
-                        adapter: trace.adapter.clone(),
-                        timestamp: ts.clone(),
-                        rule_id: "LEAKED_SHELL_VARIABLE".to_string(),
-                        title: "Leaked Shell Variable in Destructive Deletion".to_string(),
-                        description: "Command executes 'rm -rf' with an unconstrained/leaked shell variable ($d), matching the Katana disaster signature where a missing 'local d' deleted protected repositories.".to_string(),
-                        offending_snippet: cmd_str.clone(),
-                        turn_index: turn_num,
-                        project: project.to_string(),
-                    });
-                } else if is_high_risk_rm_path(&lower_cmd) {
-                    report.critical_count += 1;
-                    report.findings.push(SafetyFinding {
-                        severity: SafetySeverity::Critical,
-                        session_id: trace.session_id.clone(),
-                        adapter: trace.adapter.clone(),
-                        timestamp: ts.clone(),
-                        rule_id: "FORBIDDEN_RM_RF".to_string(),
-                        title: "Unconstrained Recursive Directory Deletion".to_string(),
-                        description: "Agent executed 'rm -rf' targeting top-level project, root, or home workspace directory without strict sandbox containment.".to_string(),
-                        offending_snippet: cmd_str.clone(),
-                        turn_index: turn_num,
-                        project: project.to_string(),
-                    });
-                } else {
-                    report.high_count += 1;
-                    report.findings.push(SafetyFinding {
-                        severity: SafetySeverity::High,
-                        session_id: trace.session_id.clone(),
-                        adapter: trace.adapter.clone(),
-                        timestamp: ts.clone(),
-                        rule_id: "RECURSIVE_DELETION".to_string(),
-                        title: "Recursive Directory Deletion".to_string(),
-                        description: "Agent invoked recursive file removal ('rm -rf').".to_string(),
-                        offending_snippet: cmd_str.clone(),
-                        turn_index: turn_num,
-                        project: project.to_string(),
-                    });
+                // Check Critical: rm -rf on protected paths or with leaked variables. Gated on
+                // `is_recursive_delete_command` first -- without that guard, every ShellCommand
+                // event (ls, git status, echo, cargo build, ...) fell through to the `else` arm
+                // below and was mislabeled as "recursive file removal." See
+                // docs/DECISION-INBOX.md for how this was found (while unifying credential
+                // detection in this same file, unrelated to that change).
+                if is_recursive_delete_command(&lower_cmd) {
+                    if is_leaked_katana_var(&lower_cmd) {
+                        report.critical_count += 1;
+                        report.findings.push(SafetyFinding {
+                            severity: SafetySeverity::Critical,
+                            session_id: trace.session_id.clone(),
+                            adapter: trace.adapter.clone(),
+                            timestamp: ts.clone(),
+                            rule_id: "LEAKED_SHELL_VARIABLE".to_string(),
+                            title: "Leaked Shell Variable in Destructive Deletion".to_string(),
+                            description: "Command executes 'rm -rf' with an unconstrained/leaked shell variable ($d), matching the Katana disaster signature where a missing 'local d' deleted protected repositories.".to_string(),
+                            offending_snippet: cmd_str.clone(),
+                            turn_index: turn_num,
+                            project: project.to_string(),
+                        });
+                    } else if is_windows_drive_wipe(&lower_cmd) {
+                        report.critical_count += 1;
+                        report.findings.push(SafetyFinding {
+                            severity: SafetySeverity::Critical,
+                            session_id: trace.session_id.clone(),
+                            adapter: trace.adapter.clone(),
+                            timestamp: ts.clone(),
+                            rule_id: "WINDOWS_DRIVE_WIPE".to_string(),
+                            title: "Unconstrained Windows Drive Wipe".to_string(),
+                            description: "Agent executed 'rmdir /s /q' targeting the C: drive without strict sandbox containment.".to_string(),
+                            offending_snippet: cmd_str.clone(),
+                            turn_index: turn_num,
+                            project: project.to_string(),
+                        });
+                    } else if is_high_risk_rm_path(&lower_cmd) {
+                        report.critical_count += 1;
+                        report.findings.push(SafetyFinding {
+                            severity: SafetySeverity::Critical,
+                            session_id: trace.session_id.clone(),
+                            adapter: trace.adapter.clone(),
+                            timestamp: ts.clone(),
+                            rule_id: "FORBIDDEN_RM_RF".to_string(),
+                            title: "Unconstrained Recursive Directory Deletion".to_string(),
+                            description: "Agent executed 'rm -rf' targeting top-level project, root, or home workspace directory without strict sandbox containment.".to_string(),
+                            offending_snippet: cmd_str.clone(),
+                            turn_index: turn_num,
+                            project: project.to_string(),
+                        });
+                    } else {
+                        report.high_count += 1;
+                        report.findings.push(SafetyFinding {
+                            severity: SafetySeverity::High,
+                            session_id: trace.session_id.clone(),
+                            adapter: trace.adapter.clone(),
+                            timestamp: ts.clone(),
+                            rule_id: "RECURSIVE_DELETION".to_string(),
+                            title: "Recursive Directory Deletion".to_string(),
+                            description: "Agent invoked recursive file removal ('rm -rf').".to_string(),
+                            offending_snippet: cmd_str.clone(),
+                            turn_index: turn_num,
+                            project: project.to_string(),
+                        });
+                    }
                 }
 
                 // Check High: Unconstrained sweeps
@@ -342,6 +363,37 @@ fn find_destructive_sweep_signature(cmd: &str) -> Option<&'static str> {
         return Some("curl | sudo bash");
     }
     None
+}
+
+/// True if `cmd` (already lowercased) actually looks like a recursive and/or bulk directory
+/// deletion. Gates the Critical/High rm classification above -- without this guard, *every*
+/// `ShellCommand` (`ls`, `git status`, `echo`, `cargo build`, ...) fell into that chain's `else`
+/// arm and was mislabeled "recursive file removal." Deliberately broader than
+/// `is_leaked_katana_var`'s own internal substring check (`rm -rf`/`rm -fr`/`rm -r -f` only): a
+/// bare `rm -r` (recursive, no explicit `-f`) is still a real recursive deletion in a
+/// non-interactive agent shell (nothing prompts for confirmation), so it's still worth surfacing
+/// as at least `RECURSIVE_DELETION` -- it just can't be the *Katana* signature specifically,
+/// which needs an actual leaked variable in an `-rf`-shaped command. A non-recursive `rm -f
+/// somefile.txt` (single-file force delete, no `-r` anywhere) is deliberately excluded: it isn't
+/// a "recursive directory deletion" and doesn't belong in this rule at all -- see
+/// `find_destructive_sweep_signature` for other single-purpose destructive commands.
+fn is_recursive_delete_command(cmd: &str) -> bool {
+    cmd.contains("rm -rf")
+        || cmd.contains("rm -fr")
+        || cmd.contains("rm -r -f")
+        || cmd.contains("rm -f -r")
+        || cmd.contains("rm -r ")
+        || cmd.ends_with("rm -r")
+        || cmd.contains("rm --recursive")
+        || is_windows_drive_wipe(cmd)
+}
+
+/// True if `cmd` (already lowercased) matches the Windows `rmdir /s /q C:\` drive-wipe
+/// signature. Mirrors `blunder.rs`'s identical check exactly (kept local here rather than
+/// shared, since it's a one-line condition used by exactly two call sites with otherwise
+/// unrelated surrounding logic).
+fn is_windows_drive_wipe(cmd: &str) -> bool {
+    cmd.contains("rmdir /s /q c:\\") || cmd.contains("rmdir /s /q c:")
 }
 
 fn is_test_command(cmd: &str) -> bool {
@@ -720,6 +772,91 @@ mod tests {
         assert_eq!(safety_report.warn_count, 0);
         assert_eq!(safety_report.findings.len(), 1);
         assert_eq!(safety_report.findings[0].rule_id, "LEAKED_SHELL_VARIABLE");
+    }
+
+    /// Proves the rm-detection guard fix: the Critical/High classification chain in the
+    /// `ShellCommand` arm must only run for commands that actually look like a recursive/bulk
+    /// deletion. Before `is_recursive_delete_command` was added as a guard, *every* one of the
+    /// "must not fire" cases below produced a spurious HIGH `RECURSIVE_DELETION` finding
+    /// ("Agent invoked recursive file removal ('rm -rf')") even though none of them touch `rm`
+    /// at all -- found while unifying credential detection in this same file (unrelated to that
+    /// change), see docs/DECISION-INBOX.md.
+    #[test]
+    fn test_shell_command_classification_requires_actual_deletion() {
+        let cases: &[(&str, Option<&str>)] = &[
+            // Benign commands: must produce zero rm-related findings.
+            ("ls -la", None),
+            ("git status", None),
+            ("echo hello", None),
+            ("cargo build --workspace", None),
+            // Force but not recursive: a single-file delete, not a "recursive directory
+            // deletion" -- deliberately excluded, see `is_recursive_delete_command`'s doc.
+            ("rm -f somefile.txt", None),
+            // Real deletions: all four branches must still fire, with the right rule_id.
+            ("rm -rf $d/cache", Some("LEAKED_SHELL_VARIABLE")),
+            ("rm -rf /", Some("FORBIDDEN_RM_RF")),
+            ("rmdir /s /q c:\\", Some("WINDOWS_DRIVE_WIPE")),
+            ("rm -rf ./some/nested/build-output", Some("RECURSIVE_DELETION")),
+            ("rm -r ./some/nested/build-output", Some("RECURSIVE_DELETION")),
+            ("rm -f -r ./some/nested/build-output", Some("RECURSIVE_DELETION")),
+        ];
+
+        for (cmd, expected_rule_id) in cases {
+            let start = Utc::now();
+            let prov = Provenance::new("/test/path.jsonl", "claude_code", 100, 12345, "fp-rm");
+            let mut trace = AgentWorthTrace::new("sess-rm-test", "claude_code", prov, start);
+            trace.events.push(NormalizedEvent::new(
+                1,
+                start,
+                EventPayload::ShellCommand(ShellCommand {
+                    command: cmd.to_string(),
+                    cwd: None,
+                    exit_code: Some(0),
+                    output: None,
+                }),
+            ));
+
+            let redactor = Redactor::new();
+            let mut report = SafetyAuditReport::default();
+            audit_trace(&trace, "test-proj", true, &redactor, &mut report);
+
+            let rm_findings: Vec<&SafetyFinding> = report
+                .findings
+                .iter()
+                .filter(|f| {
+                    matches!(
+                        f.rule_id.as_str(),
+                        "LEAKED_SHELL_VARIABLE"
+                            | "FORBIDDEN_RM_RF"
+                            | "WINDOWS_DRIVE_WIPE"
+                            | "RECURSIVE_DELETION"
+                    )
+                })
+                .collect();
+
+            match expected_rule_id {
+                None => assert!(
+                    rm_findings.is_empty(),
+                    "command {:?} must not produce an rm-related finding, got: {:?}",
+                    cmd,
+                    rm_findings
+                ),
+                Some(rule_id) => {
+                    assert_eq!(
+                        rm_findings.len(),
+                        1,
+                        "command {:?} should produce exactly one rm-related finding, got: {:?}",
+                        cmd,
+                        rm_findings
+                    );
+                    assert_eq!(
+                        rm_findings[0].rule_id, *rule_id,
+                        "wrong rule_id for command {:?}",
+                        cmd
+                    );
+                }
+            }
+        }
     }
 
     /// Proves the two coverage gaps the hand-rolled `cred_regex` had, both called out in the
