@@ -319,3 +319,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The spine's break at rung 2 -> 1 marks where evidence stops being externally
+   checkable. Dashed already says that. Danger red added an alarm the data does
+   not support — no OutcomeKind means failure, only "less evidence" — so the
+   break now reads as an absence rather than an error. */
+.shell-root .ol-spine-seg.ol-spine-cliff {
+  border-left-color: var(--mv-faint);
+}
