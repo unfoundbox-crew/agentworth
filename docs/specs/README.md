@@ -1,6 +1,6 @@
 # Specs, and the order to build them
 
-Three specs sit beside this file. They are independent of each other but not of
+Six specs sit beside this file. They are independent of each other but not of
 the backend, and two of them are worth less than they look until a bug lands
 first. This is the sequencing.
 
