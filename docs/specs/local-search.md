@@ -3,6 +3,10 @@
 > `agwt search` command. This spec was briefed as greenfield and is not.
 > Read the existing code before designing anything.
 >
+> The model download from Hugging Face is a dependency fetch, not telemetry —
+> it sends nothing about the user. Document it; do not treat it as a privacy
+> problem.
+>
 > The redaction engine has **15** rules, not 13: anthropic_api_key,
 > aws_access_key, bearer_token, credential_url, email_address, github_token,
 > google_api_key, jwt_token, linux_home_path, macos_home_path,
