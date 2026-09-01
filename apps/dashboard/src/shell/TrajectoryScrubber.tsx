@@ -164,6 +164,8 @@ export interface TrajectoryScrubberProps {
   onSelect: (id: string) => void;
   /** Reports the brushed sub-range as the event ids the stream should show, or null for all. */
   onBrushChange?: (ids: Set<string> | null) => void;
+  /** Event ids to mark on the overview rail — e.g. compaction boundaries. */
+  compactionEventIds?: string[];
 }
 
 /**
@@ -173,7 +175,13 @@ export interface TrajectoryScrubberProps {
  * are the same gesture: panning lives on the rail, brushing on the strip, so
  * neither needs a modifier key.
  */
-export function TrajectoryScrubber({ events, selectedId, onSelect, onBrushChange }: TrajectoryScrubberProps) {
+export function TrajectoryScrubber({
+  events,
+  selectedId,
+  onSelect,
+  onBrushChange,
+  compactionEventIds,
+}: TrajectoryScrubberProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);
@@ -245,6 +253,15 @@ export function TrajectoryScrubber({ events, selectedId, onSelect, onBrushChange
     for (let i = 0; i < points.length; i += step) out.push(points[i].position);
     return out;
   }, [points]);
+
+  // Positions, not a quantized sample like railPositions — a compaction is a
+  // specific event, and the rail is always the full session, so it never
+  // needs to move as the strip zooms.
+  const compactionMarks = useMemo(() => {
+    if (!compactionEventIds || compactionEventIds.length === 0) return [];
+    const ids = new Set(compactionEventIds);
+    return points.filter((p) => ids.has(p.event.id)).map((p) => p.position);
+  }, [points, compactionEventIds]);
 
   const brushedIds = useMemo(() => {
     if (!brush) return null;
@@ -504,6 +521,14 @@ export function TrajectoryScrubber({ events, selectedId, onSelect, onBrushChange
             />
           ))}
         <RailCanvas positions={railPositions} />
+        {compactionMarks.map((pos, i) => (
+          <span
+            key={i}
+            className="traj-rail-mark"
+            style={{ left: `${pos * 100}%` }}
+            title="Compaction"
+          />
+        ))}
         {!isFullRange && (
           <span
             className="traj-rail-window"
