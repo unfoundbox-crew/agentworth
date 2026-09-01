@@ -235,3 +235,28 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--mv-muted);
 }
+
+/* Monochrome charts. Categorical hues collapse to a zinc ramp for anyone who
+   finds coloured series noisy. The accent and the semantic state colours are
+   deliberately untouched — they mean something in either mode. */
+:root[data-palette='mono'] {
+  --mv-cat-1: #18181b;
+  --mv-cat-2: #3f3f46;
+  --mv-cat-3: #52525b;
+  --mv-cat-4: #71717a;
+  --mv-cat-5: #a1a1aa;
+  --mv-cat-6: #c4c4c9;
+  --mv-cat-7: #8a8a93;
+  --mv-cat-8: #d4d4d8;
+}
+:root[data-palette='mono'][data-theme='dark'],
+:root[data-palette='mono']:not([data-theme='light']) {
+  --mv-cat-1: #fafafa;
+  --mv-cat-2: #d4d4d8;
+  --mv-cat-3: #a1a1aa;
+  --mv-cat-4: #8a8a93;
+  --mv-cat-5: #71717a;
+  --mv-cat-6: #52525b;
+  --mv-cat-7: #909099;
+  --mv-cat-8: #3f3f46;
+}

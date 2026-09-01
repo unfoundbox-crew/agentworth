@@ -9,6 +9,7 @@ import { CommandPalette } from './CommandPalette';
 import { ThemeToggle } from '@ui/ThemeToggle';
 import { SessionList } from './SessionList';
 import { InspectorPane } from './InspectorPane';
+import { PaletteToggle } from './PaletteToggle';
 import { OverviewPane } from './OverviewPane';
 import { CoveragePane } from './CoveragePane';
 import { ArchaeologyPane } from './ArchaeologyPane';
@@ -146,6 +147,7 @@ export function ExplorerShell() {
           <span className="livetail-dot" aria-hidden="true" />
           Live Tail
         </button>
+        <PaletteToggle />
         <ThemeToggle />
         <button type="button" className="kbd-chip" onClick={openPalette} title="Open command palette">
           &#8984;K

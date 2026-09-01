@@ -381,3 +381,53 @@
 @media (prefers-reduced-motion: reduce) {
   .shell-root .rescan-btn .is-spinning { animation: none; opacity: 0.55; }
 }
+
+/* Icon-only topbar controls. Labels move into sr-only spans so the row reads
+   as a set of glyphs rather than a sentence, with the name still on hover and
+   still announced. */
+.shell-root .palette-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  border: 1px solid var(--mv-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mv-faint);
+  cursor: pointer;
+  transition: color 140ms ease-out, border-color 140ms ease-out;
+}
+.shell-root .palette-toggle:hover {
+  color: var(--mv-ink);
+  border-color: var(--mv-faint);
+}
+.shell-root .palette-toggle:focus-visible {
+  outline: 2px solid var(--mv-accent);
+  outline-offset: 2px;
+}
+.shell-root .palette-toggle[aria-pressed='true'] {
+  color: var(--mv-accent);
+  border-color: var(--mv-accent-border);
+  background: var(--mv-accent-soft);
+}
+
+.shell-root .theme-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  padding: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
