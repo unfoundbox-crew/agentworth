@@ -232,7 +232,8 @@ agentworth export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | `agentworth traces [OPTIONS]` | Tabular directory of indexed sessions (`--limit`, `--adapter`, `--model`, `--json`). |
 | `agentworth inspect <ID>` | Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs. |
 | `agentworth serve [OPTIONS]` | Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`). |
-| `agentworth export <ID>` | Exports a session in JSON or ATIF v1.0 format with optional privacy scrubbing (`--redact`). |
+| `agentworth export <ID>` | Exports a session as JSON, ATIF v1.0, or a Flight Receipt (`--format json\|atif\|receipt\|svg`), with optional privacy scrubbing (`--redact`). |
+| `agentworth receipt <ID>` | Renders a Flight Receipt for a session: an ANSI box for the terminal or a shareable 1200x630 SVG card (`--format terminal\|svg\|json`, `--output <PATH>`). |
 | `agentworth doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
 
 ---

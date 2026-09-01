@@ -20,7 +20,7 @@ Activate the `agentworth` skill whenever the user asks to:
 - 🥺 **Audit Grovel Fees & Apology Cascades**: Identify multi-turn panic loops where models waste tokens profusely apologizing instead of fixing code.
 - ⚖️ **Verify Outcomes vs. Claims**: Distinguish between real verified accomplishments (exit codes, test runs, git commits) and empty model claims (*"all tests pass"*).
 - 📦 **Export ATIF Traces**: Sanitize, redact, and export trajectory data into standardized Agent Trajectory Interchange Format (ATIF) for evals and fine-tuning.
-- 🏋️ **Benchmark Resilience (Agent Gym)**: Stress-test agent error recovery and measure resilience against synthetic faults and environmental turbulence.
+- 🧾 **Generate Flight Receipts**: Render an authentic ANSI terminal receipt or a shareable 1200x630 dark-mode SVG card for any indexed session, with Typed Provenance, composite score, token spend, and Apology Tax breakdowns.
 
 ---
 
@@ -130,16 +130,13 @@ agentworth scan [PATHS]... [OPTIONS]
 ```
 
 **Options:**
-- `[PATHS]...`: Optional specific file paths or directories to scan (e.g. `~/.claude/projects`).
-- `--format <table|json|receipt>`: Output format for the scan summary. Default: `receipt`.
-- `--adapter <claude|codex|gemini|opencode|all>`: Restrict scanning to specific agent adapters.
-- `--limit <N>`: Maximum number of session files to process in this run.
+- `[PATHS]...`: Optional specific file paths or directories to scan (e.g. `~/.claude/projects`). Defaults to every adapter's standard discovery paths when omitted.
 - `-f, --force`: Force re-indexing of unchanged files bypassing mtime/hash cache.
 - `--json`: Output raw structured JSON scan summary.
 
 **Example:**
 ```bash
-agentworth scan --adapter claude --format receipt
+agentworth scan ~/.claude/projects --force
 ```
 
 ---
@@ -152,29 +149,25 @@ agentworth blunder [OPTIONS]
 ```
 
 **Options:**
-- `--top <N>`: Number of top blunder exhibits to display (default: `5`).
-- `--model <name>`: Filter blunders produced by a specific model substring (e.g. `opus`, `sonnet`, `gpt-4o`).
-- `--min-damage <N>`: Filter exhibits by minimum estimated damage / spend in USD.
-- `--format <receipt|json>`: Output format (ASCII thermal receipt card or JSON).
+- `-t, --top <N>`: Number of top blunder exhibits to display (default: `5`).
 - `-s, --submit`: Anonymize, redact, and submit the top exhibit to the public Hall of Blunders (`stfuopus.lol`).
 - `--json`: Output full structured blunder exhibits as JSON.
 
 **Example:**
 ```bash
-agentworth blunder --top 3 --model opus --format receipt
+agentworth blunder --top 3 --json
 ```
 
 ---
 
 ### 3. `agentworth audit`
-Performs safety and threat vector auditing across indexed trajectories, catching dangerous commands, credential leaks, unconstrained sweeps, and false success claims.
+Performs safety and threat vector auditing across every indexed trajectory, catching dangerous commands, credential leaks, unconstrained sweeps, and false success claims.
 
 ```bash
-agentworth audit [SESSION_ID] [OPTIONS]
+agentworth audit [OPTIONS]
 ```
 
 **Options:**
-- `[SESSION_ID]`: Optional session ID to isolate audit to a single trace.
 - `--safety`: Focus exclusively on security threats (credential exposure, root file deletion, network exfiltration).
 - `--json`: Output findings as formatted JSON.
 
@@ -194,7 +187,7 @@ agentworth audit --safety
 ---
 
 ### 4. `agentworth export`
-Safely sanitizes, redacts, and exports session trajectories into JSON or ATIF format.
+Safely sanitizes, redacts, and exports session trajectories into JSON, ATIF, or Flight Receipt format.
 
 ```bash
 agentworth export <SESSION_ID> [OPTIONS]
@@ -203,8 +196,7 @@ agentworth export <SESSION_ID> [OPTIONS]
 **Options:**
 - `<SESSION_ID>`: The session identifier to export (required).
 - `-r, --redact`: Apply deterministic redaction masking secrets, API keys, tokens, emails, org names, and home paths.
-- `--format <json|atif>`: Export format standard. Default: `json`. Use `atif` for the official Agent Trajectory Interchange Format.
-- `--exchange`: Format export for open trajectory sharing and bounty evaluation.
+- `-f, --format <json|atif|receipt|svg>`: Export format standard. Default: `json`. Use `atif` for the official Agent Trajectory Interchange Format, `receipt` for the ANSI Flight Receipt (`terminal`/`ansi` are accepted aliases), or `svg` for the shareable 1200x630 dark-mode receipt card.
 - `-o, --output <PATH>`: Write export to a specific file instead of stdout.
 
 **Example:**
@@ -214,22 +206,21 @@ agentworth export session_8f12ac --format atif --redact --output ./trace.atif.js
 
 ---
 
-### 5. `agentworth gym`
-Resilience benchmarking and chaos engineering harness for AI coding agents. Injects simulated faults, permission boundaries, and ambiguous edge cases to measure agent recovery rates.
+### 5. `agentworth receipt`
+Renders a Flight Receipt for one session: an ANSI ASCII box for the terminal, or a standalone 1200x630 dark-mode SVG card for sharing. Surfaces Typed Provenance, the composite score and its five dimensions, token spend, the Apology Tax, and Autonomous Resilience in one canonical record.
 
 ```bash
-agentworth gym [OPTIONS]
+agentworth receipt <SESSION_ID> [OPTIONS]
 ```
 
 **Options:**
-- `--chaos-level <1-10>`: Turbulence intensity level (1 = minor test flakiness, 10 = wiped dependencies & revoked permissions).
-- `--adapter <name>`: Target agent adapter to benchmark.
-- `--scenario <name>`: Specific challenge scenario (`flaky-tests`, `missing-env`, `cyclic-deps`, `hallucinated-api`).
-- `--format <table|receipt|json>`: Benchmark scorecard format.
+- `<SESSION_ID>`: The session identifier to render (required).
+- `-f, --format <terminal|ansi|svg|receipt|json>`: Output format. Default: `terminal`. `terminal`, `ansi`, and `receipt` all render the same ANSI box; `svg` renders the shareable dark-mode card; `json` emits the structured receipt data instead of a rendered view.
+- `-o, --output <PATH>`: Write the receipt to a file instead of stdout.
 
 **Example:**
 ```bash
-agentworth gym --chaos-level 5 --scenario flaky-tests
+agentworth receipt session_8f12ac --format svg --output ./receipt.svg
 ```
 
 ---
@@ -242,7 +233,7 @@ agentworth gym --chaos-level 5 --scenario flaky-tests
 - `agentworth usage [--period <day|week|month>] [--pacing] [--hours N]`: Detailed token burn rate and 5-hour pacing analysis.
 - `agentworth blame <FILE_PATH>`: Reverse-traces file modifications back to the exact agent prompt and session that authored them.
 - `agentworth doctor`: Validates local adapter source paths, SQLite schema integrity, and parser health.
-- `agentworth serve [--port 3030] [--open]`: Launches the local forensic API server and React Web UI.
+- `agentworth serve [--port 3000] [--open]`: Launches the local forensic API server and Web UI.
 
 ---
 
