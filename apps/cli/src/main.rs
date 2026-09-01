@@ -24,6 +24,8 @@ mod blind_spots;
 mod autopsy;
 #[path = "commands/recall.rs"]
 mod recall;
+#[path = "commands/bisect.rs"]
+mod bisect;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -321,6 +323,16 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Pinpoint the exact turning point where an agent session trajectory turned negative
+    Bisect {
+        /// Session ID to bisect
+        session_id: String,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -451,6 +463,9 @@ fn main() -> Result<()> {
             json,
         } => {
             recall::run_recall_command(&query, limit, min_score, json, cli.db_path)?;
+        }
+        Commands::Bisect { session_id, json } => {
+            bisect::run_bisect_command(&session_id, json, cli.db_path)?;
         }
     }
 
