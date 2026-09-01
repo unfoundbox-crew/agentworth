@@ -171,6 +171,22 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Maps a stored `primary_outcome` value (the PascalCase `OutcomeKind` variant
+/// name produced by `agentworth_outcomes::outcome_kind_name`, or "Unresolved"
+/// for a session that hasn't been scored) to the snake_case key the web
+/// dashboard's `OutcomeDistribution` type expects. Anything unrecognized
+/// folds into "unresolved" rather than silently minting a new bucket.
+fn outcome_distribution_key(outcome: &str) -> &'static str {
+    match outcome {
+        "CiOrDeploymentVerified" => "ci_or_deployment_verified",
+        "CommitObserved" => "commit_observed",
+        "TestOrBuildPassed" => "test_or_build_passed",
+        "ArtifactChanged" => "artifact_changed",
+        "DoneClaimed" => "done_claimed",
+        _ => "unresolved",
+    }
+}
+
 /// GET /api/stats -> machine-wide experience stats JSON with outcome distributions and verification telemetry
 async fn get_stats_handler(
     State(state): State<AppState>,
@@ -212,23 +228,19 @@ async fn get_stats_handler(
     let all_sessions = all_sessions_res.unwrap_or_default();
 
     let mut outcome_dist: BTreeMap<String, usize> = BTreeMap::new();
-    let mut verified_count = 0usize;
     let mut total_score = 0.0f64;
     let mut scored_count = 0usize;
 
     for s in &all_sessions {
-        let outcome_str = s
-            .primary_outcome
-            .as_deref()
-            .unwrap_or("done_claimed");
-        *outcome_dist.entry(outcome_str.to_string()).or_insert(0) += 1;
-
-        if outcome_str == "test_or_build_passed"
-            || outcome_str == "commit_observed"
-            || outcome_str == "ci_or_deployment_verified"
-        {
-            verified_count += 1;
-        }
+        // `primary_outcome` is stored as the PascalCase OutcomeKind variant
+        // name (see crates/outcomes/src/outcome.rs), not the snake_case keys
+        // below. An unpopulated column used to fall back to the literal
+        // string "done_claimed", which fabricated a fake verified-outcome
+        // bucket for every un-scored session instead of reporting it as
+        // unresolved.
+        let outcome_str = s.primary_outcome.as_deref().unwrap_or("Unresolved");
+        let key = outcome_distribution_key(outcome_str);
+        *outcome_dist.entry(key.to_string()).or_insert(0) += 1;
 
         if let Some(score) = s.composite_score {
             total_score += score;
@@ -259,9 +271,8 @@ async fn get_stats_handler(
         "sessions_by_adapter": stats.sessions_by_adapter,
         "models_usage_count": stats.models_usage_count,
         "tools_usage_count": stats.tools_usage_count,
-        "verified_outcomes_count": verified_count,
+        "verified_outcomes_count": stats.verified_outcomes_count,
         "outcome_distribution": outcome_dist,
-        "outcomes_distribution": outcome_dist,
         "average_composite_score": average_composite_score,
         "top_repositories": top_repos.iter().map(|(path, count)| json!({
             "repository": path,

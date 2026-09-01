@@ -59,10 +59,10 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
   const outcomeInfo = getOutcomeBadgeInfo(primaryOutcome);
 
   const totalTokens =
-    trace.stats.token_usage.input_tokens +
-    trace.stats.token_usage.output_tokens +
-    trace.stats.token_usage.cache_read_input_tokens +
-    trace.stats.token_usage.cache_creation_input_tokens;
+    (trace.stats?.token_usage?.input_tokens ?? 0) +
+    (trace.stats?.token_usage?.output_tokens ?? 0) +
+    (trace.stats?.token_usage?.cache_read_input_tokens ?? 0) +
+    (trace.stats?.token_usage?.cache_creation_input_tokens ?? 0);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex justify-end">
@@ -112,7 +112,7 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
           </div>
           <div>
             <span className="text-zinc-500 block text-[9px] uppercase">Duration</span>
-            <span className="font-semibold text-black">{formatDuration(trace.stats.duration_seconds)}</span>
+            <span className="font-semibold text-black">{formatDuration(trace.stats?.duration_seconds)}</span>
           </div>
           <div>
             <span className="text-zinc-500 block text-[9px] uppercase">Total Tokens</span>
@@ -120,7 +120,7 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
           </div>
           <div>
             <span className="text-zinc-500 block text-[9px] uppercase">Models Used</span>
-            <span className="font-semibold text-black">{trace.stats.models_used.join(', ')}</span>
+            <span className="font-semibold text-black">{trace.stats?.models_used?.join(', ') || '—'}</span>
           </div>
           <div>
             <span className="text-zinc-500 block text-[9px] uppercase">Outcome Evidence</span>
@@ -451,19 +451,19 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
               <div className="space-y-1.5 text-[11px] text-zinc-700">
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Input Tokens:</span>
-                  <span className="font-bold text-black">{trace.stats.token_usage.input_tokens.toLocaleString()}</span>
+                  <span className="font-bold text-black">{(trace.stats?.token_usage?.input_tokens ?? 0).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Output Tokens:</span>
-                  <span className="font-bold text-black">{trace.stats.token_usage.output_tokens.toLocaleString()}</span>
+                  <span className="font-bold text-black">{(trace.stats?.token_usage?.output_tokens ?? 0).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Cache Read:</span>
-                  <span className="font-bold text-emerald-700">{trace.stats.token_usage.cache_read_input_tokens.toLocaleString()}</span>
+                  <span className="font-bold text-emerald-700">{(trace.stats?.token_usage?.cache_read_input_tokens ?? 0).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Cache Creation:</span>
-                  <span className="font-bold text-zinc-700">{trace.stats.token_usage.cache_creation_input_tokens.toLocaleString()}</span>
+                  <span className="font-bold text-zinc-700">{(trace.stats?.token_usage?.cache_creation_input_tokens ?? 0).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between pt-1 border-t border-zinc-200 font-bold text-black">
                   <span>Total Exhaust:</span>
