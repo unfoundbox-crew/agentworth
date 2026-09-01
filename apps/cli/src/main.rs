@@ -311,7 +311,8 @@ enum Commands {
     /// Rank indexed sessions by real secret/credential exposure risk, by category and severity
     #[command(name = "threat-digest")]
     ThreatDigest {
-        /// Maximum number of sessions to list (default 20, or persisted `config limit`)
+        /// Maximum number of sessions to show in the report (default 20, or persisted `config
+        /// limit`) -- every indexed session is still scanned; this only trims the displayed list
         #[arg(short, long)]
         limit: Option<usize>,
 

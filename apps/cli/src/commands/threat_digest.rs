@@ -211,6 +211,8 @@ pub struct SessionThreatEntry {
 /// Full Threat Digest report across the indexed corpus.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatDigestReport {
+    /// Every indexed session, full stop -- not capped, not limited by `--limit` (which only
+    /// truncates `top_sessions` below).
     pub sessions_scanned: usize,
     /// Source file no longer readable from disk (moved/deleted since indexing) -- skipped,
     /// not a hard failure, same tolerance `autopsy`/`blind-spots` already apply.
@@ -295,8 +297,33 @@ pub fn generate_threat_digest(
     limit: Option<usize>,
     min_severity: ThreatSeverity,
 ) -> Result<ThreatDigestReport> {
+    // `limit` (this function's parameter) is the *output* cap -- it only truncates
+    // `top_sessions` far below, after every count/total in the report is already final. The
+    // *scan* scope (which sessions get looked at in the first place) is a separate concern and
+    // must stay unbounded: `limit: None` here means genuinely unlimited (see
+    // `SessionFilter::limit`'s doc comment in crates/storage/src/lib.rs). This used to be
+    // `Some(10000)`, which silently dropped every session past the 10,000 most-recently-started
+    // ones (ordered by the default `started_at DESC`) from the scan -- not counted as
+    // unreadable, not clean, not exposed, just invisible -- while the report still presented
+    // itself as covering "all indexed sessions" per this file's own module doc. A real peer
+    // index already has 10,188 sessions, so this wasn't a theoretical edge case. Same
+    // "presented as complete but silently truncated" shape already fixed for
+    // `compute_verdict_breakdown`'s old default-50 cap and `get_stats_handler`'s own
+    // `Some(10000)`.
+    //
+    // This call site's cost profile is genuinely heavier than those two: each session here
+    // costs a full `Scanner::load_trace` file re-parse plus a redaction scan over every event,
+    // not a lightweight SQL aggregate. Removing the cap unconditionally anyway, rather than
+    // picking a bigger fixed number, because (a) any fixed cap just moves the same silent
+    // failure to a later corpus size, (b) this is an on-demand CLI report, not a
+    // polled/latency-sensitive endpoint, so a slower-but-honest scan has no sustained-load
+    // downside, and (c) a secret-scanning tool that quietly skips most of the corpus and
+    // reports a clean bill of health is a worse failure than one that's merely slow -- this
+    // file's own module doc already accepts a full per-session live scan as the cost of
+    // correctness for this feature; exempting most of a large corpus from that scan would
+    // undermine the reason the live-scan design was chosen at all.
     let all_sessions = storage.list_sessions_filtered(&SessionFilter {
-        limit: Some(10000),
+        limit: None,
         include_stubs: Some(true),
         ..Default::default()
     })?;
@@ -968,5 +995,101 @@ mod tests {
                 + report.sessions_below_min_severity
                 + report.sessions_with_exposure
         );
+    }
+
+    #[test]
+    fn test_generate_threat_digest_scans_beyond_old_10000_cap() {
+        // Regression test for the old `Some(10000)` scan-scope cap. `generate_threat_digest`
+        // used to hand `list_sessions_filtered` a hardcoded `Some(10000)`, ordered by the
+        // default `started_at DESC` -- so any session older than the 10,000th-most-recent was
+        // silently never scanned at all: not counted as unreadable, not clean, not exposed,
+        // just absent from the report entirely, while the digest still presented itself as
+        // covering every indexed session (a real peer index already has 10,188). This plants
+        // one real, on-disk session carrying a genuine-shaped leaked API key, dated far older
+        // than a fixture of 10,050 newer filler sessions -- guaranteeing it sorts dead last
+        // under `started_at DESC`, past where the old cap would have cut off. Before the fix
+        // this planted session would never appear anywhere in the report; after the fix it
+        // must be found and ranked as the sole Critical hit.
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+
+        let leaked_key = "sk-proj-oldestsession1234567890abcdef123456";
+        let mut temp = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let line1 = json!({
+            "type": "user",
+            "timestamp": "2020-01-01T00:00:00Z",
+            "content": format!("please use this key: {leaked_key}"),
+        });
+        let line2 = json!({
+            "type": "assistant",
+            "timestamp": "2020-01-01T00:00:05Z",
+            "model": "claude-3-5-sonnet",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+            },
+            "content": [{"type": "text", "text": "noted"}],
+        });
+        writeln!(temp, "{}", line1).unwrap();
+        writeln!(temp, "{}", line2).unwrap();
+
+        let seed_scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: true,
+        };
+        let summary = seed_scanner
+            .run_scan(&options, |_, _| {})
+            .expect("scan planted session");
+        assert_eq!(summary.scanned_sessions, 1);
+        let planted_id = session_id_of(&temp);
+
+        // Filler sessions: more than the old 10,000 cap, all dated after "now" so the planted
+        // session above is unambiguously the single oldest row in the table. Nonexistent
+        // backing files, so each cheaply resolves to "unreadable" during the scan instead of
+        // requiring 10,050 real fixtures on disk.
+        const FILLER_COUNT: i64 = 10_050;
+        let filler_start = Utc::now();
+        for i in 0..FILLER_COUNT {
+            let prov = Provenance::new(
+                format!("/nonexistent/threat_cap_{i}.jsonl"),
+                "claude_code",
+                10,
+                100,
+                format!("fp-threat-cap-{i}"),
+            );
+            let trace = AgentWorthTrace::new(
+                format!("sess-threat-cap-{i}"),
+                "claude_code",
+                prov,
+                filler_start + chrono::Duration::seconds(i),
+            );
+            storage.upsert_trace(&trace).expect("seed filler session");
+        }
+
+        let report =
+            generate_threat_digest(&storage, None, ThreatSeverity::Low).expect("digest");
+
+        // Core assertion: every filler plus the one planted session must be accounted for as
+        // scanned. On the old code, `sessions_scanned` would be capped at 10,000 and the
+        // planted (oldest) session would be silently excluded from that count entirely.
+        assert_eq!(report.sessions_scanned, FILLER_COUNT as usize + 1);
+        assert_eq!(report.sessions_unreadable, FILLER_COUNT as usize);
+
+        // The planted, oldest, secret-bearing session must actually be found and ranked --
+        // proving it was scanned, not merely counted.
+        assert_eq!(report.sessions_with_exposure, 1);
+        assert_eq!(report.top_sessions.len(), 1);
+        assert_eq!(report.top_sessions[0].session_id, planted_id);
+        assert_eq!(
+            report.top_sessions[0].highest_severity,
+            ThreatSeverity::Critical
+        );
+        assert_eq!(report.totals.api_keys_count, 1);
+
+        let dump = serde_json::to_string(&report).unwrap();
+        assert!(!dump.contains(leaked_key));
     }
 }
