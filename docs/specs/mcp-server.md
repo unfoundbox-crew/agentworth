@@ -1,7 +1,14 @@
 # MCP server
 
-Status: draft spec, not yet built. Written for someone implementing this in a
-fresh session with no memory of how this doc came to exist.
+Status: built. Implemented in `apps/cli/src/mcp/` (module, not a new crate) as
+the `agentworth mcp` / `agwt mcp` subcommand, on `rmcp` 3.2.0. Six read-only
+tools ship exactly as decided below: `sessions_find`, `session_get`,
+`blame_find`, `usage_summary`, `pacing_window`, `coverage_stats` (with
+`include_matrix` folded in, not a separate tool). See `README.md`'s "MCP
+Server" section for the registration command and `apps/cli/src/mcp/tests.rs`
+plus `apps/cli/tests/mcp_stdio_test.rs` for coverage. Originally written as a
+draft spec for someone implementing this in a fresh session with no memory of
+how this doc came to exist -- kept below as the design record.
 
 ## The problem
 
@@ -408,3 +415,28 @@ person.
   snake_case enum values at the tool layer (reject an invalid value with a
   clear error) or passed through raw the way `SessionFilter.outcome`
   already does?
+
+## Implementation notes (resolved during the build)
+
+- **The outcome-encoding fix has landed on main** (confirmed against
+  `crates/outcomes/src/outcome.rs` and `crates/storage/src/lib.rs`'s
+  `get_aggregate_stats` query, both snake_case). `sessions_find`'s `outcome`
+  parameter is passed through raw to `SessionFilter.outcome`, unvalidated —
+  same choice `SessionFilter` itself already makes, so the tool layer isn't
+  inventing a new contract. Revisit if a client turns out to routinely pass
+  a stale PascalCase value.
+- **`limit` out of range is rejected, not clamped.** Both `limit == 0` and
+  `limit > 200` return an `invalid_params` MCP error naming the valid range,
+  rather than silently clamping — clamping would repeat exactly the
+  "looks complete but isn't" shape this tool exists to avoid.
+- **`coverage_stats`'s `include_matrix` reuses `compute_adapter_matrix`
+  directly** (widened from private to `pub(crate)` in
+  `apps/cli/src/server/routes.rs`) rather than re-deriving the 20-adapter
+  capability table — one definition, shared by `/api/matrix` and this tool.
+- **Tracing goes to stderr for the `mcp` subcommand specifically.** The CLI's
+  existing global tracing setup defaults to stdout, which would corrupt the
+  stdio JSON-RPC stream for any log line emitted while a client is attached.
+  `apps/cli/src/main.rs` now branches on `Commands::Mcp` before initializing
+  the subscriber. This wasn't called out above; it's the kind of thing that
+  only surfaces once you actually try to run an MCP server on top of a CLI
+  that already logs.
