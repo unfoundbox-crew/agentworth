@@ -305,6 +305,35 @@ impl Storage {
             }
         }
 
+        // Data migration: `primary_outcome` used to be written in hand-rolled PascalCase
+        // (e.g. "CommitObserved") by a since-fixed bug in `outcome_kind_name` (see
+        // crates/outcomes/src/outcome.rs) that diverged from `OutcomeKind`'s own serde
+        // `#[serde(rename_all = "snake_case")]` encoding. Every row already on disk from
+        // before that fix still carries the old casing, so a read-side fix alone would leave
+        // the database itself permanently inconsistent with anything that queries it directly.
+        // This UPDATE corrects those rows in place. It is safe to run on every open: the WHERE
+        // clause only ever matches the five old PascalCase literals, so it is a no-op on a
+        // fresh database (no rows) and a no-op on an already-migrated one (no rows still carry
+        // the old casing) — safe to run twice, safe on any schema state above.
+        conn.execute(
+            r#"
+            UPDATE sessions
+            SET primary_outcome = CASE primary_outcome
+                WHEN 'DoneClaimed' THEN 'done_claimed'
+                WHEN 'ArtifactChanged' THEN 'artifact_changed'
+                WHEN 'TestOrBuildPassed' THEN 'test_or_build_passed'
+                WHEN 'CommitObserved' THEN 'commit_observed'
+                WHEN 'CiOrDeploymentVerified' THEN 'ci_or_deployment_verified'
+                ELSE primary_outcome
+            END
+            WHERE primary_outcome IN (
+                'DoneClaimed', 'ArtifactChanged', 'TestOrBuildPassed',
+                'CommitObserved', 'CiOrDeploymentVerified'
+            )
+            "#,
+            [],
+        )?;
+
         conn.execute_batch(
             r#"
             CREATE INDEX IF NOT EXISTS idx_sessions_adapter ON sessions(adapter);
@@ -585,7 +614,7 @@ impl Storage {
                 COALESCE(SUM(cache_creation_tokens), 0),
                 MIN(CASE WHEN started_at > '2020-01-01' THEN started_at ELSE NULL END),
                 MAX(started_at),
-                COALESCE(SUM(CASE WHEN primary_outcome IN ('CiOrDeploymentVerified', 'CommitObserved', 'TestOrBuildPassed') THEN 1 ELSE 0 END), 0)
+                COALESCE(SUM(CASE WHEN primary_outcome IN ('ci_or_deployment_verified', 'commit_observed', 'test_or_build_passed') THEN 1 ELSE 0 END), 0)
             FROM sessions
             "#,
         )?;
@@ -1756,24 +1785,24 @@ mod tests {
         trace.stats.token_usage = TokenUsage::new(1000, 200, 0, 0);
 
         storage
-            .upsert_session(&trace, Some("CommitObserved"), Some(0.88))
+            .upsert_session(&trace, Some("commit_observed"), Some(0.88))
             .expect("upsert session");
 
         let loaded = storage
             .get_session_by_id("sess_verdict_1")
             .expect("get session")
             .expect("found");
-        assert_eq!(loaded.primary_outcome.as_deref(), Some("CommitObserved"));
+        assert_eq!(loaded.primary_outcome.as_deref(), Some("commit_observed"));
         assert_eq!(loaded.composite_score, Some(0.88));
 
         let list = storage
             .list_sessions_filtered(&SessionFilter {
-                outcome: Some("CommitObserved".to_string()),
+                outcome: Some("commit_observed".to_string()),
                 ..Default::default()
             })
             .expect("list");
         assert_eq!(list.len(), 1);
-        assert_eq!(list[0].primary_outcome.as_deref(), Some("CommitObserved"));
+        assert_eq!(list[0].primary_outcome.as_deref(), Some("commit_observed"));
         assert_eq!(list[0].composite_score, Some(0.88));
     }
 
@@ -1782,11 +1811,11 @@ mod tests {
         let storage = Storage::open_in_memory().expect("open storage");
 
         let specs = [
-            ("s1", Some("CiOrDeploymentVerified"), 0.98, 1000u64),
-            ("s2", Some("CommitObserved"), 0.85, 2000u64),
-            ("s3", Some("TestOrBuildPassed"), 0.75, 3000u64),
-            ("s4", Some("ArtifactChanged"), 0.50, 4000u64),
-            ("s5", Some("DoneClaimed"), 0.20, 5000u64),
+            ("s1", Some("ci_or_deployment_verified"), 0.98, 1000u64),
+            ("s2", Some("commit_observed"), 0.85, 2000u64),
+            ("s3", Some("test_or_build_passed"), 0.75, 3000u64),
+            ("s4", Some("artifact_changed"), 0.50, 4000u64),
+            ("s5", Some("done_claimed"), 0.20, 5000u64),
             ("s6", None, 0.0, 6000u64),
         ];
 
@@ -1802,18 +1831,114 @@ mod tests {
 
         let stats = storage.get_aggregate_stats().expect("aggregate stats");
         assert_eq!(stats.total_sessions, 6);
-        // Verified count should only include: CiOrDeploymentVerified, CommitObserved, TestOrBuildPassed
+        // Verified count should only include: ci_or_deployment_verified, commit_observed, test_or_build_passed
         assert_eq!(stats.verified_outcomes_count, 3);
 
         let dist = storage.get_outcome_distribution().expect("distribution");
         assert_eq!(dist.len(), 6);
         let dist_map: BTreeMap<String, usize> = dist.into_iter().map(|(outcome, count, _, _)| (outcome, count)).collect();
-        assert_eq!(dist_map.get("CiOrDeploymentVerified"), Some(&1));
-        assert_eq!(dist_map.get("CommitObserved"), Some(&1));
-        assert_eq!(dist_map.get("TestOrBuildPassed"), Some(&1));
-        assert_eq!(dist_map.get("ArtifactChanged"), Some(&1));
-        assert_eq!(dist_map.get("DoneClaimed"), Some(&1));
+        assert_eq!(dist_map.get("ci_or_deployment_verified"), Some(&1));
+        assert_eq!(dist_map.get("commit_observed"), Some(&1));
+        assert_eq!(dist_map.get("test_or_build_passed"), Some(&1));
+        assert_eq!(dist_map.get("artifact_changed"), Some(&1));
+        assert_eq!(dist_map.get("done_claimed"), Some(&1));
         assert_eq!(dist_map.get("Unresolved"), Some(&1));
+    }
+
+    /// Real regression test for the PascalCase/snake_case `primary_outcome` encoding bug: builds
+    /// a file-backed fixture DB with rows written the way the old, buggy `outcome_kind_name`
+    /// wrote them (PascalCase, e.g. "CommitObserved"), then re-runs `initialize_schema` — exactly
+    /// what happens the next time a real `~/.agentworth/agentworth.db` is opened by the fixed
+    /// binary — and asserts every legacy row is corrected to the new snake_case encoding.
+    #[test]
+    fn test_migrates_legacy_pascalcase_primary_outcome_on_reopen() {
+        let tmp = tempfile::NamedTempFile::new().expect("create fixture db file");
+        let storage = Storage::open_path(tmp.path()).expect("open fixture db");
+
+        // Seed rows exactly as the old buggy writer would have: hand-inserted PascalCase,
+        // bypassing `outcome_kind_name` entirely so this test doesn't depend on it already
+        // being fixed. One row also simulates data that a *fixed* binary already wrote
+        // (snake_case) before an older row got migrated, and one row simulates a session that
+        // was never scored (NULL) — both must survive untouched.
+        let legacy_specs = [
+            ("legacy_ci", "CiOrDeploymentVerified"),
+            ("legacy_commit", "CommitObserved"),
+            ("legacy_test", "TestOrBuildPassed"),
+            ("legacy_artifact", "ArtifactChanged"),
+            ("legacy_done", "DoneClaimed"),
+        ];
+        for (id, outcome) in legacy_specs {
+            let prov = Provenance::new(format!("/path/{}.jsonl", id), "claude_code", 100, 100, format!("fp_{}", id));
+            let mut trace = AgentWorthTrace::new(id, "claude_code", prov, Utc::now());
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+            storage
+                .upsert_session(&trace, Some(outcome), Some(0.5))
+                .expect("seed legacy row");
+        }
+
+        let prov_new = Provenance::new("/path/already_fixed.jsonl", "claude_code", 100, 100, "fp_already_fixed");
+        let mut already_fixed = AgentWorthTrace::new("already_fixed", "claude_code", prov_new, Utc::now());
+        already_fixed.stats.total_events = 5;
+        already_fixed.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        storage
+            .upsert_session(&already_fixed, Some("commit_observed"), Some(0.9))
+            .expect("seed already-migrated row");
+
+        let prov_unscored = Provenance::new("/path/unscored.jsonl", "claude_code", 100, 100, "fp_unscored");
+        let mut unscored = AgentWorthTrace::new("unscored", "claude_code", prov_unscored, Utc::now());
+        unscored.stats.total_events = 5;
+        unscored.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        storage
+            .upsert_session(&unscored, None, None)
+            .expect("seed unscored row");
+
+        // Sanity check: the fixture really does carry the old, broken encoding before migration.
+        assert_eq!(
+            storage
+                .get_session_by_id("legacy_commit")
+                .unwrap()
+                .unwrap()
+                .primary_outcome
+                .as_deref(),
+            Some("CommitObserved"),
+            "fixture setup must reproduce the pre-fix PascalCase encoding"
+        );
+
+        // Simulate the next process opening this same on-disk database with the fixed binary.
+        storage
+            .initialize_schema()
+            .expect("re-run schema init / migration");
+
+        let expect_outcome = |id: &str, want: Option<&str>| {
+            let got = storage.get_session_by_id(id).unwrap().unwrap().primary_outcome;
+            assert_eq!(got.as_deref(), want, "unexpected primary_outcome for {id}");
+        };
+        expect_outcome("legacy_ci", Some("ci_or_deployment_verified"));
+        expect_outcome("legacy_commit", Some("commit_observed"));
+        expect_outcome("legacy_test", Some("test_or_build_passed"));
+        expect_outcome("legacy_artifact", Some("artifact_changed"));
+        expect_outcome("legacy_done", Some("done_claimed"));
+        // Already-correct and never-scored rows must pass through untouched.
+        expect_outcome("already_fixed", Some("commit_observed"));
+        expect_outcome("unscored", None);
+
+        // Aggregate queries must now see the corrected values too.
+        let stats = storage.get_aggregate_stats().expect("aggregate stats");
+        assert_eq!(stats.total_sessions, 7);
+        // real-verified tiers: legacy_ci, legacy_commit, legacy_test, already_fixed = 4
+        assert_eq!(stats.verified_outcomes_count, 4);
+
+        // Idempotency: running the migration again (a second reopen) must not change anything
+        // further — the WHERE clause can no longer match any row.
+        storage
+            .initialize_schema()
+            .expect("re-run schema init a second time");
+        expect_outcome("legacy_commit", Some("commit_observed"));
+        expect_outcome("already_fixed", Some("commit_observed"));
+        expect_outcome("unscored", None);
+        let stats_after_second_run = storage.get_aggregate_stats().expect("aggregate stats");
+        assert_eq!(stats_after_second_run.verified_outcomes_count, 4);
     }
 
     #[test]

@@ -14,14 +14,26 @@ pub struct OutcomeDetector;
 /// Alias for OutcomeDetector highlighting the hierarchical detection capabilities.
 pub type OutcomeHierarchyDetector = OutcomeDetector;
 
-/// Return the canonical string name for an OutcomeKind.
-pub fn outcome_kind_name(kind: OutcomeKind) -> &'static str {
-    match kind {
-        OutcomeKind::CiOrDeploymentVerified => "CiOrDeploymentVerified",
-        OutcomeKind::CommitObserved => "CommitObserved",
-        OutcomeKind::TestOrBuildPassed => "TestOrBuildPassed",
-        OutcomeKind::ArtifactChanged => "ArtifactChanged",
-        OutcomeKind::DoneClaimed => "DoneClaimed",
+/// Canonical string encoding for an `OutcomeKind`, used for the `sessions.primary_outcome`
+/// storage column and anywhere else the kind needs to travel as plain text.
+///
+/// This defers to `OutcomeKind`'s own `#[serde(rename_all = "snake_case")]` derive (via
+/// `serde_json`) instead of hand-listing the strings a second time. A hand-listed second
+/// table used to live here, hardcoded to PascalCase (`"CommitObserved"`, etc.) — silently
+/// diverging from the schema's declared snake_case encoding and corrupting every session's
+/// stored `primary_outcome` (confirmed against a real 10,188-session index: the aggregate
+/// verified-outcome count and the outcome distribution both compared the stored value against
+/// snake_case literals that could never match PascalCase, and the frontend's snake_case-typed
+/// `OutcomeKind` couldn't read the PascalCase values back either). Deriving through serde means
+/// this can't drift out of sync with the schema the same way again — if `OutcomeKind` gains a
+/// variant or its `rename_all` ever changes, this follows automatically instead of needing a
+/// matching hand-edit here.
+pub fn outcome_kind_name(kind: OutcomeKind) -> String {
+    match serde_json::to_value(kind) {
+        Ok(serde_json::Value::String(s)) => s,
+        // OutcomeKind is a unit-only enum with a plain-string serde representation, so this
+        // branch is unreachable in practice; fall back to Debug rather than panic.
+        _ => format!("{:?}", kind),
     }
 }
 
@@ -445,4 +457,53 @@ fn has_test_failure_markers(output: &str) -> bool {
         || (lower.contains("failures:") && !lower.contains("failures: 0"))
         || lower.contains("fail:")
         || (output.contains("FAIL ") && (output.contains(".test.") || output.contains(".spec.")))
+}
+
+#[cfg(test)]
+mod outcome_kind_name_tests {
+    use super::*;
+
+    /// Locks in the exact snake_case literals `outcome_kind_name` must produce. If this ever
+    /// fails after an innocent-looking edit to `OutcomeKind`, that edit changed the wire/storage
+    /// encoding for every session — treat it as a breaking schema change, not a typo fix.
+    #[test]
+    fn produces_expected_snake_case_literals() {
+        assert_eq!(outcome_kind_name(OutcomeKind::DoneClaimed), "done_claimed");
+        assert_eq!(
+            outcome_kind_name(OutcomeKind::ArtifactChanged),
+            "artifact_changed"
+        );
+        assert_eq!(
+            outcome_kind_name(OutcomeKind::TestOrBuildPassed),
+            "test_or_build_passed"
+        );
+        assert_eq!(
+            outcome_kind_name(OutcomeKind::CommitObserved),
+            "commit_observed"
+        );
+        assert_eq!(
+            outcome_kind_name(OutcomeKind::CiOrDeploymentVerified),
+            "ci_or_deployment_verified"
+        );
+    }
+
+    /// Proves the function is genuinely derived from `OutcomeKind`'s own serde encoding rather
+    /// than a second hand-maintained table that merely happens to match today — the exact
+    /// failure mode this fix exists to close off for good.
+    #[test]
+    fn matches_serdes_own_encoding_for_every_variant() {
+        for kind in [
+            OutcomeKind::DoneClaimed,
+            OutcomeKind::ArtifactChanged,
+            OutcomeKind::TestOrBuildPassed,
+            OutcomeKind::CommitObserved,
+            OutcomeKind::CiOrDeploymentVerified,
+        ] {
+            let via_serde = match serde_json::to_value(kind).expect("serialize OutcomeKind") {
+                serde_json::Value::String(s) => s,
+                other => panic!("expected OutcomeKind to serialize to a string, got {other:?}"),
+            };
+            assert_eq!(outcome_kind_name(kind), via_serde);
+        }
+    }
 }

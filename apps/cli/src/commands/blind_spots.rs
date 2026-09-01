@@ -16,10 +16,13 @@ use serde::{Deserialize, Serialize};
 /// `OutcomeDetector` itself assigns when it first classifies these outcome kinds
 /// (see `crates/outcomes/src/outcome.rs`). The index only stores the winning label,
 /// not the original per-event confidence, so blind-spot reporting re-derives it here.
+///
+/// Matches the snake_case form `outcome_kind_name` writes (e.g. "done_claimed"), not the old
+/// PascalCase encoding — see the fix in crates/outcomes/src/outcome.rs.
 fn confidence_for_outcome(outcome: &str) -> f64 {
     match outcome {
-        "DoneClaimed" => 0.35,
-        "ArtifactChanged" => 0.60,
+        "done_claimed" => 0.35,
+        "artifact_changed" => 0.60,
         _ => 0.50,
     }
 }
@@ -67,10 +70,10 @@ pub fn generate_blind_spots_report(
     let mut total_unverified_spend_usd = 0.0f64;
 
     for s in all_sessions {
-        let outcome = s.primary_outcome.as_deref().unwrap_or("DoneClaimed");
+        let outcome = s.primary_outcome.as_deref().unwrap_or("done_claimed");
         // Blind spots: only self-claimed done or unverified file action -- the two rungs
         // below TestOrBuildPassed on the outcome hierarchy (see agentworth_schema::OutcomeKind).
-        if outcome == "DoneClaimed" || outcome == "ArtifactChanged" {
+        if outcome == "done_claimed" || outcome == "artifact_changed" {
             // The indexed SessionSummary only carries an aggregate total_tokens; the
             // input/output/cache breakdown estimate_tokens_cost_usd needs lives on the full
             // trace, so load it lazily just for the sessions that actually match.
@@ -197,7 +200,9 @@ mod tests {
         let detector = OutcomeHierarchyDetector::new();
         let outcomes = detector.detect_outcomes(trace);
         let strongest = highest_outcome(&outcomes).map(|o| outcome_kind_name(o.kind));
-        storage.upsert_session(trace, strongest, None).unwrap();
+        storage
+            .upsert_session(trace, strongest.as_deref(), None)
+            .unwrap();
     }
 
     #[test]

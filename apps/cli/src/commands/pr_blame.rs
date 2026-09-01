@@ -17,13 +17,16 @@ use serde::{Deserialize, Serialize};
 /// Confidence weight for a `primary_outcome` label, matching the constants
 /// `OutcomeDetector` assigns when it first classifies these outcome kinds
 /// (see `crates/outcomes/src/outcome.rs`).
+///
+/// Matches the snake_case form `outcome_kind_name` writes (e.g. "done_claimed"), not the old
+/// PascalCase encoding — see the fix in crates/outcomes/src/outcome.rs.
 fn confidence_for_outcome(outcome: &str) -> f64 {
     match outcome {
-        "DoneClaimed" => 0.35,
-        "ArtifactChanged" => 0.60,
-        "TestOrBuildPassed" => 0.85,
-        "CommitObserved" => 0.88,
-        "CiOrDeploymentVerified" => 0.95,
+        "done_claimed" => 0.35,
+        "artifact_changed" => 0.60,
+        "test_or_build_passed" => 0.85,
+        "commit_observed" => 0.88,
+        "ci_or_deployment_verified" => 0.95,
         _ => 0.50,
     }
 }
@@ -64,7 +67,7 @@ pub fn annotate_pr_files(
             let session_opt = storage.get_session_by_id(&first.session_id)?;
 
             let (outcome, conf, spend) = if let Some(s) = session_opt {
-                let outcome = s.primary_outcome.unwrap_or_else(|| "DoneClaimed".to_string());
+                let outcome = s.primary_outcome.unwrap_or_else(|| "done_claimed".to_string());
                 let conf = confidence_for_outcome(&outcome);
                 // BlameMatch/SessionSummary only carry an aggregate total_tokens; the
                 // input/output/cache breakdown estimate_tokens_cost_usd needs lives on the
