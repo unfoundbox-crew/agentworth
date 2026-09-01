@@ -15,7 +15,7 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 | Dashboard crash fix | Done, on integration branch | **Blocked from landing on main** — needs rebase onto PR #13 + #14 first, see Blocked below |
 | Batch-2 (9 fixes) | **Done.** Verified, fixed, tested | 8 of 9 branches did not compile as originally committed (agy again). All fixed for real — see Batch-2 findings below |
 | SSE / live-tail endpoint | **Done, merged into integration branch.** | `GET /api/live-tail`, `notify`-based watcher + broadcast channel, no polling. 25/25 tests pass on lenovo (7 new). See SSE findings below |
-| Batch-2b (7 items dispatched, 4 deferred) | **Done — all 7 merged into integration branch.** | Full workspace build+test re-verified after the 6-way merge (before the 7th landed) — clean. See table below |
+| Batch-2b (7 items dispatched, 4 deferred) | **Done — all 7 merged into integration branch.** | Final full-workspace build+test on the complete merge (batch-1 + batch-2 + SSE + all 7 batch-2b items together): 298 passed, 0 failed, 0 ignored. See table below |
 | Cost-Aware Task Router | Deferred, not scoped | Different shape of feature — needs a live per-agent hook, not an index query. Needs its own design pass |
 | Final PR + version bump | Not yet | Saurabh's call — one PR, one version bump, only once everything this session touches is done |
 
