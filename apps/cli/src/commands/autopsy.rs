@@ -6,10 +6,11 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use agentworth_core::Scanner;
 use agentworth_schema::EventPayload;
-use agentworth_storage::Storage;
+use agentworth_storage::{estimate_tokens_cost_usd, SessionFilter, Storage};
 use anyhow::Result;
 use console::style;
 use serde::{Deserialize, Serialize};
@@ -71,38 +72,45 @@ pub fn is_correction_intent(normalized: &str) -> bool {
 
 /// Perform autopsy analysis across all indexed sessions.
 pub fn perform_prompt_autopsy(
-    storage: &Storage,
+    storage: &Arc<Storage>,
     min_occurrences: usize,
 ) -> Result<AutopsyReport> {
-    let scanner = Scanner::default();
-    let sources = storage.list_sources()?;
+    let scanner = Scanner::new(storage.clone());
+    let sessions = storage.list_sessions_filtered(&SessionFilter {
+        limit: Some(10000),
+        include_stubs: Some(true),
+        ..Default::default()
+    })?;
 
     let mut phrase_map: HashMap<String, (String, Vec<String>, u64, f64)> = HashMap::new();
     let mut total_user_msgs = 0usize;
 
-    for src in &sources {
-        let session_src = agentworth_adapter_sdk::SessionSource::from_path(
-            &src.path,
-            &src.adapter_name,
+    for summary in &sessions {
+        let trace = match scanner.load_trace(&summary.session_id) {
+            Ok(t) => t,
+            // Source file no longer on disk, or unreadable -- skip, don't fail the whole report.
+            Err(_) => continue,
+        };
+        let session_spend = estimate_tokens_cost_usd(
+            trace.stats.token_usage.input_tokens,
+            trace.stats.token_usage.output_tokens,
+            trace.stats.token_usage.cache_read_tokens,
+            trace.stats.token_usage.cache_creation_tokens,
         );
-        if let Ok(s) = session_src {
-            if let Ok(parsed) = scanner.parse_session(&s) {
-                let trace = &parsed.trace;
-                for event in &trace.events {
-                    if let EventPayload::UserMessage { content } = &event.payload {
-                        total_user_msgs += 1;
-                        let norm = normalize_prompt_phrase(content);
-                        if is_correction_intent(&norm) && norm.len() >= 5 {
-                            let entry = phrase_map
-                                .entry(norm.clone())
-                                .or_insert_with(|| (content.clone(), Vec::new(), 0, 0.0));
-                            if !entry.1.contains(&trace.session_id) {
-                                entry.1.push(trace.session_id.clone());
-                            }
-                            entry.2 += trace.stats.token_usage.total();
-                            entry.3 += trace.stats.token_usage.estimated_cost_usd();
-                        }
+
+        for event in &trace.events {
+            if let EventPayload::UserMessage { content } = &event.payload {
+                total_user_msgs += 1;
+                let norm = normalize_prompt_phrase(content);
+                if is_correction_intent(&norm) && norm.len() >= 5 {
+                    let entry = phrase_map
+                        .entry(norm.clone())
+                        .or_insert_with(|| (content.clone(), Vec::new(), 0, 0.0));
+                    if !entry.1.contains(&trace.session_id) {
+                        entry.1.push(trace.session_id.clone());
                     }
+                    entry.2 += trace.stats.token_usage.total();
+                    entry.3 += session_spend;
                 }
             }
         }
@@ -142,10 +150,10 @@ pub fn run_autopsy_command(
     json: bool,
     db_path: Option<PathBuf>,
 ) -> Result<()> {
-    let storage = match db_path {
+    let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
         None => Storage::open_default()?,
-    };
+    });
 
     let report = perform_prompt_autopsy(&storage, min_occurrences)?;
 
