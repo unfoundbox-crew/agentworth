@@ -1,4 +1,27 @@
-# Dropped commitments
+# Loose ends
+
+The command is `agentworth loose-ends`.
+
+    agentworth loose-ends --model opus-5 --since yesterday
+
+    3 loose ends from yesterday · opus-5
+
+      · retry `claude config` — flag was wrong, never re-run    [a3f2 · 16:04]
+      · verify playgrounds 03 and 04 over HTTP                  [a3f2 · 11:20]
+      · delete deploy-pages.yml — builds to an address nobody   [b81c · 19:47]
+        reads
+
+    -> copy as prompt          -> or: agentworth loose-ends --mcp
+
+The name matters more than it looks. "Misses" and "dropped commitments" both
+read as blame, and roughly half of what this finds will be things the user
+cancelled rather than things the agent forgot. "Loose ends" is what a person
+actually says for work that was started and not closed, and it carries no
+accusation — which keeps the output usable rather than defensive.
+
+`--since` rather than `--time`: standard for CLIs and it reads as a sentence.
+Model names are stored in full, so `--model opus-5`, not `opus5`.
+
 
 Status: proposed. Measured, not imagined — the numbers below come from one real
 session in this index.
