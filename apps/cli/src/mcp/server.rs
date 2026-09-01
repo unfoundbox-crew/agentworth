@@ -1,0 +1,372 @@
+//! `agentworth mcp`: the read-only MCP tool surface over stdio, sharing the same `Storage` and
+//! `Scanner` wiring `apps/cli/src/server/routes.rs` builds for the HTTP API (see `AppState`
+//! there). Nothing here writes to the index or to original session logs -- every tool is a
+//! read-only wrapper around a `Storage`/`Scanner` call the HTTP surface already exposes.
+//!
+//! Redaction policy (`docs/specs/mcp-server.md`, "What it must not expose"): redacted is the
+//! default for every tool that can carry event, file, or path content; raw is an explicit
+//! per-call opt-in (`session_get`'s `include_raw`), never a server-wide switch.
+
+use std::sync::Arc;
+
+use agentworth_core::Scanner;
+use agentworth_outcomes::{OutcomeDetector, RecoveryDetector};
+use agentworth_redaction::{repository_identity_rule, Redactor};
+use agentworth_schema::extract_repository_or_workspace;
+use agentworth_scoring::TraceScorer;
+use agentworth_storage::{SessionFilter, Storage};
+use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{
+    CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+};
+use rmcp::transport::stdio;
+use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt};
+use serde_json::json;
+
+use super::params::{
+    parse_rfc3339_opt, BlameFindParams, CoverageStatsParams, PacingWindowParams,
+    SessionGetParams, SessionsFindParams, UsagePeriodParam, UsageSummaryParams,
+};
+
+/// Hard ceiling on `sessions_find`'s `limit`, so a remote model is forced to state how much
+/// it's asking for instead of getting a silently truncated "complete-looking" answer -- the
+/// exact trap `/api/traces`'s default-50 behavior already shipped once (`AGENTS.md`, "Things
+/// you cannot learn from the code," item 3).
+const SESSIONS_FIND_LIMIT_CEILING: usize = 200;
+
+/// How much further than `limit` to over-fetch when `repo` is set, since `repo` isn't a stored
+/// column and has to be post-filtered client-side after a bounded fetch (see
+/// `docs/specs/mcp-server.md`'s `sessions_find` "repo is not a stored column" note).
+const REPO_OVERFETCH_MULTIPLIER: usize = 4;
+
+/// The `agentworth mcp` tool server. Cheap to construct -- `Scanner::new` only builds the
+/// adapter list, it does no I/O -- so a fresh instance per `run_mcp_server` call is fine.
+#[derive(Clone)]
+pub struct AgentWorthMcpServer {
+    storage: Arc<Storage>,
+    scanner: Arc<Scanner>,
+    // Read only by the dispatch code `#[tool_handler]` generates on the `ServerHandler` impl
+    // below, which rustc's dead_code analysis doesn't trace through -- the upstream rmcp
+    // examples hit the same false positive (see `counter.rs`'s file-level `#![allow(dead_code)]`
+    // in the official SDK repo). Scoped to just this field rather than the whole module.
+    #[allow(dead_code)]
+    tool_router: ToolRouter<Self>,
+}
+
+impl AgentWorthMcpServer {
+    pub fn new(storage: Arc<Storage>) -> Self {
+        let scanner = Arc::new(Scanner::new(storage.clone()));
+        Self {
+            storage,
+            scanner,
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Redacts a bare path string using the same repository-identity-augmented rule set
+    /// `Redactor::redact_trace` applies to `trace.provenance.source_path` -- built directly via
+    /// `repository_identity_rule` (rather than `Redactor::for_trace`, which needs a whole
+    /// `AgentWorthTrace`) since `sessions_find`/`blame_find` only ever see bare path strings
+    /// spanning many different sessions, not a single trace.
+    fn redact_path(path: &str) -> String {
+        let mut redactor = Redactor::new();
+        let identity = extract_repository_or_workspace(path);
+        if let Some(rule) = repository_identity_rule(&identity) {
+            redactor.add_rule(rule);
+        }
+        redactor.redact_text(path)
+    }
+
+    fn json_result<T: serde::Serialize>(value: &T) -> Result<CallToolResult, McpError> {
+        let text = serde_json::to_string_pretty(value).map_err(|e| {
+            McpError::internal_error(format!("failed to serialize tool result: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+    }
+
+    fn join_error(e: tokio::task::JoinError) -> McpError {
+        McpError::internal_error(format!("tool task panicked or was cancelled: {e}"), None)
+    }
+}
+
+#[tool_router]
+impl AgentWorthMcpServer {
+    #[tool(
+        description = "Find sessions by adapter, model, outcome, search text, date range, token \
+                        floor, or derived repo/workspace name. `limit` is required with a hard \
+                        ceiling of 200 -- there is no silent default, so state how many results \
+                        you want. Returns summaries only (no event content); `source_path` is \
+                        redacted."
+    )]
+    pub(crate) async fn sessions_find(
+        &self,
+        Parameters(params): Parameters<SessionsFindParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if params.limit == 0 || params.limit > SESSIONS_FIND_LIMIT_CEILING {
+            return Err(McpError::invalid_params(
+                format!(
+                    "limit must be between 1 and {SESSIONS_FIND_LIMIT_CEILING} (got {})",
+                    params.limit
+                ),
+                None,
+            ));
+        }
+
+        let start_date = parse_rfc3339_opt(params.start_date.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let end_date = parse_rfc3339_opt(params.end_date.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+
+        let repo = params.repo.clone();
+        let fetch_limit = if repo.is_some() {
+            params
+                .limit
+                .saturating_mul(REPO_OVERFETCH_MULTIPLIER)
+                .min(SESSIONS_FIND_LIMIT_CEILING * REPO_OVERFETCH_MULTIPLIER)
+        } else {
+            params.limit
+        };
+
+        let filter = SessionFilter {
+            adapter: params.adapter.clone(),
+            model: params.model.clone(),
+            search: params.search.clone(),
+            start_date,
+            end_date,
+            min_tokens: params.min_tokens,
+            limit: Some(fetch_limit),
+            offset: params.offset,
+            order_by: Some(params.order_by.map(Into::into).unwrap_or_default()),
+            include_stubs: params.include_stubs,
+            outcome: params.outcome.clone(),
+        };
+
+        let storage = self.storage.clone();
+        let sessions = tokio::task::spawn_blocking(move || storage.list_sessions_filtered(&filter))
+            .await
+            .map_err(Self::join_error)?
+            .map_err(|e| McpError::internal_error(format!("sessions_find query failed: {e}"), None))?;
+
+        let fetched_len = sessions.len();
+        let mut truncated = repo.is_some() && fetched_len >= fetch_limit;
+
+        let mut filtered: Vec<_> = match &repo {
+            Some(r) => sessions
+                .into_iter()
+                .filter(|s| extract_repository_or_workspace(&s.source_path) == *r)
+                .collect(),
+            None => sessions,
+        };
+
+        if filtered.len() > params.limit {
+            filtered.truncate(params.limit);
+            truncated = true;
+        }
+
+        for s in &mut filtered {
+            s.source_path = Self::redact_path(&s.source_path);
+        }
+
+        Self::json_result(&json!({
+            "sessions": filtered,
+            "truncated": truncated,
+        }))
+    }
+
+    #[tool(
+        description = "Get full detail for one session by ID: the trace, its 5-component \
+                        TraceScore, outcome evidence, and recovery signals -- the same shape \
+                        /api/traces/:id returns. Redacted by default (trace events, outcome \
+                        summaries, and recovery summaries all pass through the redaction \
+                        engine); pass include_raw=true for the unredacted trace."
+    )]
+    pub(crate) async fn session_get(
+        &self,
+        Parameters(params): Parameters<SessionGetParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let scanner = self.scanner.clone();
+        let session_id_for_task = params.session_id.clone();
+        let trace = tokio::task::spawn_blocking(move || scanner.load_trace(&session_id_for_task))
+            .await
+            .map_err(Self::join_error)?
+            .map_err(|e| {
+                McpError::resource_not_found(
+                    format!("session '{}' not found: {e}", params.session_id),
+                    None,
+                )
+            })?;
+
+        let scorer = TraceScorer::default();
+        let score = scorer.score(&trace);
+        let outcomes = OutcomeDetector::new().detect_outcomes(&trace);
+        let recoveries = RecoveryDetector::new().detect_recoveries(&trace);
+
+        let (trace, outcomes, recoveries) = if params.include_raw {
+            (trace, outcomes, recoveries)
+        } else {
+            // Same (for_trace-augmented) redactor instance for all three, so the trace's own
+            // repository/workspace identity gets masked consistently across trace, outcomes,
+            // and recoveries rather than only on the trace object. See
+            // docs/specs/mcp-server.md's session_get redaction note and
+            // Redactor::for_trace's own doc comment.
+            let redactor = Redactor::new().for_trace(&trace);
+            (
+                redactor.redact_trace(&trace),
+                redactor.redact_outcome_evidence(&outcomes),
+                redactor.redact_recovery_signal(&recoveries),
+            )
+        };
+
+        Self::json_result(&json!({
+            "trace": trace,
+            "score": score,
+            "outcomes": outcomes,
+            "recoveries": recoveries,
+        }))
+    }
+
+    #[tool(
+        description = "Find sessions whose recorded file modifications match a substring of \
+                        file_path -- AI Code Blame, the same query /api/blame makes. Returned \
+                        paths are redacted."
+    )]
+    pub(crate) async fn blame_find(
+        &self,
+        Parameters(params): Parameters<BlameFindParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let pattern = params.file_path.clone();
+        let mut matches = tokio::task::spawn_blocking(move || storage.find_sessions_for_blame(&pattern))
+            .await
+            .map_err(Self::join_error)?
+            .map_err(|e| McpError::internal_error(format!("blame_find query failed: {e}"), None))?;
+
+        for m in &mut matches {
+            m.source_path = Self::redact_path(&m.source_path);
+            m.file_path = Self::redact_path(&m.file_path);
+        }
+
+        Self::json_result(&matches)
+    }
+
+    #[tool(
+        description = "Daily, weekly, or monthly usage rollups: session counts, token \
+                        breakdown, estimated cost, and cache hit ratio, grouped by adapter -- \
+                        the same rollups /api/usage returns for one period at a time."
+    )]
+    pub(crate) async fn usage_summary(
+        &self,
+        Parameters(params): Parameters<UsageSummaryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let period = params.period;
+        let limit = params.limit;
+        let rows = tokio::task::spawn_blocking(move || match period {
+            UsagePeriodParam::Day => storage.get_daily_usage(limit),
+            UsagePeriodParam::Week => storage.get_weekly_usage(limit),
+            UsagePeriodParam::Month => storage.get_monthly_usage(limit),
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("usage_summary query failed: {e}"), None))?;
+
+        Self::json_result(&rows)
+    }
+
+    #[tool(
+        description = "Rolling burn-rate window (default 5 hours): tokens/hour, active \
+                        adapters and models, estimated cost, and cache hit ratio -- the same \
+                        window /api/pacing computes. Answers \"what am I burning right now\"."
+    )]
+    pub(crate) async fn pacing_window(
+        &self,
+        Parameters(params): Parameters<PacingWindowParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let hours = params.hours.unwrap_or(5);
+        let pacing = tokio::task::spawn_blocking(move || storage.get_pacing_window(hours))
+            .await
+            .map_err(Self::join_error)?
+            .map_err(|e| McpError::internal_error(format!("pacing_window query failed: {e}"), None))?;
+
+        Self::json_result(&pacing)
+    }
+
+    #[tool(
+        description = "Machine-wide aggregate stats: total sessions/events, token usage, \
+                        sessions by adapter, model/tool usage counts, and verified-outcome \
+                        count -- the same population /api/stats reports. Pass \
+                        include_matrix=true to also get the per-adapter detection/capability \
+                        matrix (/api/matrix's equivalent), answering \"what does this machine \
+                        even have\" without opening the dashboard."
+    )]
+    pub(crate) async fn coverage_stats(
+        &self,
+        Parameters(params): Parameters<CoverageStatsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let include_matrix = params.include_matrix;
+        let (stats_res, matrix) = tokio::task::spawn_blocking(move || {
+            let stats = storage.get_aggregate_stats(false);
+            let matrix = if include_matrix {
+                Some(crate::server::routes::compute_adapter_matrix(&storage))
+            } else {
+                None
+            };
+            (stats, matrix)
+        })
+        .await
+        .map_err(Self::join_error)?;
+
+        let stats = stats_res
+            .map_err(|e| McpError::internal_error(format!("coverage_stats query failed: {e}"), None))?;
+
+        let mut value = serde_json::to_value(&stats).map_err(|e| {
+            McpError::internal_error(format!("failed to serialize coverage_stats: {e}"), None)
+        })?;
+        if let Some(matrix) = matrix {
+            if let serde_json::Value::Object(ref mut map) = value {
+                let matrix_value = serde_json::to_value(&matrix).map_err(|e| {
+                    McpError::internal_error(format!("failed to serialize matrix: {e}"), None)
+                })?;
+                map.insert("matrix".to_string(), matrix_value);
+            }
+        }
+
+        let text = serde_json::to_string_pretty(&value).map_err(|e| {
+            McpError::internal_error(format!("failed to serialize coverage_stats: {e}"), None)
+        })?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+    }
+}
+
+#[tool_handler]
+impl ServerHandler for AgentWorthMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::from_build_env())
+            .with_protocol_version(ProtocolVersion::V_2024_11_05)
+            .with_instructions(
+                "Read-only local index of AI-agent session histories on this machine. Tools: \
+                 sessions_find, session_get, blame_find, usage_summary, pacing_window, \
+                 coverage_stats. Redacted output is the default everywhere event or file \
+                 content is returned; session_get's include_raw is the only opt-in to raw \
+                 content, and it is per-call, never global. Run `agentworth scan` first if the \
+                 index looks stale -- this server never scans on its own."
+                    .to_string(),
+            )
+    }
+}
+
+/// Runs the `agentworth mcp` stdio server until the parent process closes the pipe -- the same
+/// lifecycle every other stdio MCP server has. Logging must go to stderr, never stdout: stdout
+/// is the JSON-RPC wire, and even one stray line on it would corrupt the protocol stream for
+/// whatever client spawned this process. `main()` is responsible for pointing the global
+/// tracing subscriber at stderr before calling this for the `mcp` subcommand specifically.
+pub async fn run_mcp_server(storage: Arc<Storage>) -> anyhow::Result<()> {
+    let server = AgentWorthMcpServer::new(storage);
+    let service = server.serve(stdio()).await?;
+    service.waiting().await?;
+    Ok(())
+}
