@@ -12,6 +12,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
+#[path = "commands/merge.rs"]
+mod merge;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "agentworth",
@@ -227,6 +230,16 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Merge another local SQLite index database into this index
+    Merge {
+        /// Path to the source SQLite database file to merge from
+        source_db: PathBuf,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -326,6 +339,9 @@ fn main() -> Result<()> {
             });
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
+        }
+        Commands::Merge { source_db, json } => {
+            merge::run_merge_command(source_db, json, cli.db_path)?;
         }
     }
 
