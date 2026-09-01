@@ -45,8 +45,8 @@ regex = "1.10"
 agentworth-schema = { path = "crates/schema" }
 agentworth-adapter-sdk = { path = "crates/adapter-sdk" }
 agentworth-adapters = { path = "crates/adapters" }
-agentworth-storage = { path = "crates/storage" }
-agentworth-core = { path = "crates/core" }
+agentworth-storage = { path = "crates/storage", default-features = false }
+agentworth-core = { path = "crates/core", default-features = false }
 agentworth-outcomes = { path = "crates/outcomes" }
 agentworth-scoring = { path = "crates/scoring" }
 agentworth-redaction = { path = "crates/redaction" }
