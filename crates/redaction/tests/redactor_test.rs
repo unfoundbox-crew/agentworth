@@ -599,3 +599,175 @@ fn test_custom_rule_addition() {
     assert_eq!(report.custom_count, 1);
     assert_eq!(report.total(), 1);
 }
+
+// Regression coverage for docs/specs/mcp-server.md's "What it must not expose" gap: none of
+// the named rules cover repository/project names, and neither `outcomes` nor `recoveries` were
+// redacted anywhere at all.
+
+#[test]
+fn test_repository_identity_rule_builder_skips_sentinel_values() {
+    use agentworth_redaction::repository_identity_rule;
+
+    assert!(repository_identity_rule("").is_none());
+    assert!(repository_identity_rule("unknown").is_none());
+    assert!(repository_identity_rule("plugins/cache").is_none());
+}
+
+#[test]
+fn test_repository_identity_rule_builder_matches_real_identity() {
+    use agentworth_redaction::repository_identity_rule;
+
+    let rule = repository_identity_rule("unfoundbox/agentworth").expect("real identity");
+    let redacted = rule.pattern.replace_all(
+        "the unfoundbox/agentworth repo has a bug",
+        rule.replacement.as_str(),
+    );
+    assert_eq!(redacted, "the [REDACTED_REPOSITORY] repo has a bug");
+}
+
+#[test]
+fn test_redact_trace_masks_repository_identity() {
+    let redactor = Redactor::new();
+    let start = Utc::now();
+    let prov = Provenance::new(
+        "/Users/saurabh/code/unfoundbox/agentworth/session.jsonl",
+        "claude_code",
+        100,
+        12345,
+        "fp_repo",
+    );
+    let mut trace = AgentWorthTrace::new("sess-repo", "claude_code", prov, start);
+    trace.events.push(NormalizedEvent::new(
+        1,
+        start,
+        EventPayload::UserMessage {
+            content: "clone unfoundbox/agentworth and run the tests".to_string(),
+        },
+    ));
+
+    let redacted_trace = redactor.redact_trace(&trace);
+    assert_eq!(
+        redacted_trace.provenance.source_path,
+        "~/code/[REDACTED_REPOSITORY]/session.jsonl"
+    );
+    if let EventPayload::UserMessage { content } = &redacted_trace.events[0].payload {
+        assert!(!content.contains("unfoundbox/agentworth"));
+        assert!(content.contains("[REDACTED_REPOSITORY]"));
+    } else {
+        panic!("expected UserMessage");
+    }
+}
+
+#[test]
+fn test_redact_trace_home_path_only_case_is_unaffected_by_repository_rule() {
+    // Same fixture shape as test_redact_trace_and_preview above (a path that resolves to
+    // "unknown" via extract_repository_or_workspace's fallback) -- confirms the new rule is a
+    // true no-op here, not just "doesn't crash".
+    let redactor = Redactor::new();
+    let start = Utc::now();
+    let prov = Provenance::new(
+        "/Users/saurabh/logs/trace.jsonl",
+        "claude_code",
+        100,
+        12345,
+        "fp123",
+    );
+    let trace = AgentWorthTrace::new("sess-1", "claude_code", prov, start);
+    let redacted_trace = redactor.redact_trace(&trace);
+    assert_eq!(redacted_trace.provenance.source_path, "~/logs/trace.jsonl");
+}
+
+#[test]
+fn test_redact_outcome_evidence_scrubs_summary() {
+    let redactor = Redactor::new();
+    let evidence = vec![OutcomeEvidence {
+        kind: OutcomeKind::CommitObserved,
+        summary: "committed with key sk-1234567890abcdef1234567890 in the message".to_string(),
+        confidence: 0.9,
+    }];
+
+    let redacted = redactor.redact_outcome_evidence(&evidence);
+    assert_eq!(redacted.len(), 1);
+    assert_eq!(redacted[0].kind, OutcomeKind::CommitObserved);
+    assert_eq!(redacted[0].confidence, 0.9);
+    assert!(!redacted[0].summary.contains("sk-1234567890abcdef1234567890"));
+    assert!(redacted[0].summary.contains("[REDACTED_API_KEY]"));
+}
+
+#[test]
+fn test_redact_recovery_signal_scrubs_summaries_and_files() {
+    use agentworth_outcomes::RecoverySignal;
+
+    let redactor = Redactor::new();
+    let signals = vec![RecoverySignal {
+        failure_sequence: 3,
+        failure_summary: "build failed reading /Users/saurabh/app.js".to_string(),
+        recovery_sequence: 7,
+        recovery_summary: "fixed after checking DATABASE_URL=postgres://u:p@host/db"
+            .to_string(),
+        steps_to_recover: 4,
+        duration_seconds: Some(12.5),
+        corrective_actions_count: 2,
+        correlated_files: vec!["/Users/saurabh/app.js".to_string()],
+    }];
+
+    let redacted = redactor.redact_recovery_signal(&signals);
+    assert_eq!(redacted.len(), 1);
+    assert!(!redacted[0].failure_summary.contains("/Users/saurabh"));
+    assert!(redacted[0].failure_summary.contains("~/app.js"));
+    assert!(!redacted[0].recovery_summary.contains("postgres://u:p@host/db"));
+    assert_eq!(redacted[0].correlated_files, vec!["~/app.js".to_string()]);
+    // Non-text fields pass through unchanged.
+    assert_eq!(redacted[0].failure_sequence, 3);
+    assert_eq!(redacted[0].steps_to_recover, 4);
+    assert_eq!(redacted[0].duration_seconds, Some(12.5));
+}
+
+#[test]
+fn test_for_trace_composes_repository_redaction_across_trace_outcomes_and_recoveries() {
+    use agentworth_outcomes::RecoverySignal;
+
+    let start = Utc::now();
+    let prov = Provenance::new(
+        "/Users/saurabh/code/unfoundbox/agentworth/session.jsonl",
+        "claude_code",
+        100,
+        12345,
+        "fp_repo2",
+    );
+    let trace = AgentWorthTrace::new("sess-repo2", "claude_code", prov, start);
+
+    // The base Redactor has no idea about this trace's identity until for_trace augments it.
+    let base = Redactor::new();
+    let unaugmented = base.redact_outcome_evidence(&[OutcomeEvidence {
+        kind: OutcomeKind::CommitObserved,
+        summary: "fixed a bug in unfoundbox/agentworth".to_string(),
+        confidence: 0.8,
+    }]);
+    assert!(unaugmented[0].summary.contains("unfoundbox/agentworth"));
+
+    // The same redactor, augmented for this trace, catches it on outcomes AND recoveries --
+    // not just on the trace object redact_trace already covers.
+    let augmented = base.for_trace(&trace);
+    let redacted_outcomes = augmented.redact_outcome_evidence(&[OutcomeEvidence {
+        kind: OutcomeKind::CommitObserved,
+        summary: "fixed a bug in unfoundbox/agentworth".to_string(),
+        confidence: 0.8,
+    }]);
+    assert!(!redacted_outcomes[0].summary.contains("unfoundbox/agentworth"));
+    assert!(redacted_outcomes[0].summary.contains("[REDACTED_REPOSITORY]"));
+
+    let redacted_recoveries = augmented.redact_recovery_signal(&[RecoverySignal {
+        failure_sequence: 1,
+        failure_summary: "unfoundbox/agentworth failed to build".to_string(),
+        recovery_sequence: 2,
+        recovery_summary: "ok now".to_string(),
+        steps_to_recover: 1,
+        duration_seconds: None,
+        corrective_actions_count: 1,
+        correlated_files: vec![],
+    }]);
+    assert!(!redacted_recoveries[0]
+        .failure_summary
+        .contains("unfoundbox/agentworth"));
+}

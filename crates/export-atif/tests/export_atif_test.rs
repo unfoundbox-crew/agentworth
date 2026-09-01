@@ -198,9 +198,13 @@ fn test_export_redacted_atif() {
     assert!(!json_str.contains("saurabh@example.com"));
 
     let val: serde_json::Value = serde_json::from_str(&json_str).expect("valid JSON");
+    // "projects/app" is this trace's own repository/workspace identity (derived from
+    // source_path by extract_repository_or_workspace) -- Redactor::redact_trace now masks it
+    // via the repository-identity rule, on top of stripping the home-dir username, so it no
+    // longer survives "redacted" export either here or in event content below.
     assert_eq!(
         val["environment"]["source_path"],
-        "~/projects/app/trace.jsonl"
+        "~/[REDACTED_REPOSITORY]/trace.jsonl"
     );
     assert_eq!(val["metadata"]["user_email"], "[REDACTED_EMAIL]");
     assert!(val["steps"][0]["content"]
@@ -210,7 +214,7 @@ fn test_export_redacted_atif() {
     assert!(val["steps"][0]["content"]
         .as_str()
         .unwrap()
-        .contains("~/projects/app/server.ts"));
+        .contains("~/[REDACTED_REPOSITORY]/server.ts"));
 }
 
 #[test]

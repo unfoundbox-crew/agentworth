@@ -85,6 +85,33 @@ impl RedactionRule {
     }
 }
 
+/// Builds a rule that masks literal occurrences of a session's own repository/workspace
+/// identity (e.g. "unfoundbox/agentworth", from [`agentworth_schema::extract_repository_or_workspace`]).
+/// A project name isn't shaped like a secret, so none of the rules in [`default_rules`] catch
+/// it -- but AGENTS.md's redaction policy says exports must never leak repository or project
+/// names, and this is the one identifier that's the same every time a given session gets
+/// redacted, so it's worth masking on top of the generic rules rather than folding it into them.
+///
+/// Returns `None` for the "unknown"/"plugins/cache" sentinel values `extract_repository_or_workspace`
+/// returns when it can't derive real identity -- those aren't project names to protect, and a
+/// literal-match rule on "unknown" would over-redact any session whose content happens to
+/// contain that common word.
+pub fn repository_identity_rule(repo_or_workspace: &str) -> Option<RedactionRule> {
+    if repo_or_workspace.is_empty()
+        || repo_or_workspace == "unknown"
+        || repo_or_workspace == "plugins/cache"
+    {
+        return None;
+    }
+    let pattern = Regex::new(&format!(r"(?i){}", regex::escape(repo_or_workspace))).ok()?;
+    Some(RedactionRule::new(
+        "repository_or_workspace_identity",
+        RedactionCategory::Custom,
+        pattern,
+        "[REDACTED_REPOSITORY]",
+    ))
+}
+
 /// Builds the default suite of redaction rules covering API keys, env vars, paths, emails, etc.
 pub fn default_rules() -> Vec<RedactionRule> {
     vec![
