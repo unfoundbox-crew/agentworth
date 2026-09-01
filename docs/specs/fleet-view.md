@@ -273,3 +273,85 @@ existing rules didn't anticipate.
   changed across several polls in a row?
 - What should the "+N more" overflow chip actually do once there's budget to
   build a real recency filter into `SessionList`?
+
+---
+
+## Addendum: what the owner actually opens this for
+
+Added 2026-09-01, after the spec above was written. This reframes the homepage
+and it comes from the real problem rather than from a competitor's layout.
+
+The daily question is not "what happened yesterday". It is three things, in
+this order:
+
+1. **What is running right now**, across every harness.
+2. **What is it costing**, minimal by default and expandable into detail.
+3. **What credits are left where**, so the next run can be routed to the
+   provider that still has room.
+
+Today that is done by hand, every day, by reading handoff files. That is the
+thing to remove.
+
+### Why this changes the ordering above
+
+The spec above argues the fleet strip should stay small and sit inside
+Overview, so the indexed history is not demoted for the three sessions running
+now. That argument holds for a forensics tool. It does not hold if the first
+question a user has is operational.
+
+Both can be true: the fleet strip is small *and* first. Running sessions, then
+spend, then credits — each collapsed to one line, each expanding into the
+detail that already exists. The 2,903 indexed sessions stay one keystroke away
+and remain the bulk of the product.
+
+### The part that is genuinely new: credits
+
+Nothing in this repo knows a provider balance. It cannot be derived from
+session logs, because it does not live there — it lives behind each provider's
+API.
+
+**This is a decision, not a feature.** AgentWorth has never made an outbound
+network call. Every guarantee it makes rests on that. Reading your own balance
+with your own key is not the same as uploading your traces, and it stays under
+your control — but it is still the first request this tool would ever send off
+the machine, and that deserves an explicit answer rather than an assumption.
+
+If the answer is yes, the shape that keeps the guarantee intact:
+
+- Off by default. The tool works exactly as it does now until someone enables it.
+- Keys read from the environment or from an existing credential store. Never
+  stored by AgentWorth, never written to the index.
+- Balance only. No usage reporting, no telemetry, nothing that describes what
+  you ran.
+- The provider list is explicit and visible, so it is obvious what is being
+  called and what is not.
+- It fails quietly. A provider that cannot be reached shows as unknown, not as
+  an error that blocks the page.
+
+If the answer is no, the honest fallback is much weaker but still real: show
+spend per provider from the local index and let the human hold the budget. That
+does not solve the routing problem, and the spec should say so rather than
+pretend otherwise.
+
+### Worth taking from Modal, adapted
+
+Four ideas survive translation. The rest either already exist here or assume a
+cloud product.
+
+| Idea | Why it fits | Note |
+| :--- | :--- | :--- |
+| A sparkline per session row | Spot a stuck loop or a recovery spiral without opening the trace | Must be CSS or a tiny canvas, not an SVG per row — the list is virtualized across thousands |
+| Context window growth against the model limit | Shows a session approaching its ceiling before it gets there | Token usage per event already exists |
+| Cost ramp marking where caching engaged or failed | The cache cliff as a moment in time rather than a static widget | This is the strongest of the four |
+| Spend over time by model family | Answers where the money went | Needs the daily rollup that `/api/usage` already returns |
+
+Not taken: coloured emoji event markers, which break the no-emoji rule and
+would spend colour on categories that form already distinguishes; and a fixed
+"90% cache discount" figure, which is asserted rather than measured.
+
+### Open, and needs a human
+
+- Does AgentWorth make outbound calls to read provider balances? Yes or no.
+  Everything else in this addendum follows from that one answer.
+- If yes, which providers first. Routing only helps if it covers the ones
+  actually in rotation.
