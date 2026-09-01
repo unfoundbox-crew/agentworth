@@ -310,11 +310,16 @@ Nothing in this repo knows a provider balance. It cannot be derived from
 session logs, because it does not live there — it lives behind each provider's
 API.
 
-**This is a decision, not a feature.** AgentWorth has never made an outbound
-network call. Every guarantee it makes rests on that. Reading your own balance
-with your own key is not the same as uploading your traces, and it stays under
-your control — but it is still the first request this tool would ever send off
-the machine, and that deserves an explicit answer rather than an assumption.
+**Decided 2026-09-01: AgentWorth reads these itself.** It would be odd to parse
+a harness's logs and then outsource its quota to another tool. Scope is the
+harnesses this project already adapts — Claude Code, Codex, Cursor, Antigravity,
+OpenCode — not every provider in existence.
+
+This is not the first outbound call. `agwt search` already downloads an
+embedding model and `agwt blunder --submit` posts opt-in. Reading your own
+balance with your own credential sends nothing about you; it is a fetch, like
+the model download. Local-only is about your traces, and they still never
+leave.
 
 If the answer is yes, the shape that keeps the guarantee intact:
 

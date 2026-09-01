@@ -102,7 +102,7 @@ model weights from the Hugging Face Hub (or a GCS mirror) on first use and
 caches them locally afterward — confirmed against the `anush008/fastembed-rs`
 README and an open `qdrant/fastembed` issue describing that download path.
 This means **the first time anyone runs `agwt search`, this binary makes an
-outbound network call, with no prompt and no consent screen.** The
+outbound network call, and it is silent.** The
 `CHANGELOG.md` entry for `agwt search` ("backed by a FastEmbed ONNX
 embedding engine that runs fully offline") is only true *after* that first
 download succeeds, or on a machine where it fails and the deterministic
@@ -110,10 +110,9 @@ fallback silently takes over instead.
 
 This is not a hypothetical tension with `AGENTS.md`'s "Scanning must work
 offline" and "Never upload user data without explicit user action." It's a
-shipped contradiction of the framing this project uses about itself
-everywhere else — `fleet-view.md`'s addendum and `desktop-app.md`'s open
-questions both independently assert "AgentWorth has never made an outbound
-network call," and as of this snapshot that's no longer true for two
+gap between what the landing page promises and what the binary does
+everywhere else. Several documents written on 2026-09-01 asserted "AgentWorth
+has never made an outbound network call". That was never true, for two
 separate reasons: this one, and `agwt blunder --submit`
 (`apps/cli/src/commands/blunder.rs`), which POSTs a redacted incident
 report to `stfuopus.lol` when a user passes `--submit`. The `blunder` case
@@ -139,7 +138,7 @@ default is closer to keyword matching, embeddings buy even less over
 
 | Option | What it costs |
 | --- | --- |
-| Explicit runtime consent gate — first `agwt search` call prints "this downloads a ~133MB model from Hugging Face, proceed?" and defaults to the hash fallback until approved | No binary-size cost; preserves "explicit user action"; adds one interaction the first time |
+| Announce it — first `agwt search` prints "downloading a ~133MB embedding model from Hugging Face" and proceeds | No binary-size cost, no extra interaction, and an air-gapped run fails with an explanation instead of silently |
 | Bundle the ONNX model in release artifacts | `model.onnx` fp32 is ~133MB (verified against the `BAAI/bge-small-en-v1.5` Hugging Face repo file listing); an int8 quantized version is ~32MB. Real cost to a project that currently ships a single small native binary per platform |
 | Drop `fastembed` from `default` features; ship the hash fallback by default, ONNX as an explicit opt-in build or runtime flag | No network call ever without a human explicitly requesting the better model; permanently weaker default search quality unless someone opts in |
 
