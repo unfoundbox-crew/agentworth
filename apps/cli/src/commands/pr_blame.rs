@@ -96,7 +96,7 @@ pub fn annotate_pr_files(
                 primary_outcome: outcome,
                 outcome_confidence: conf,
                 spend_usd: spend,
-                total_tokens: Some(first.total_tokens as u64),
+                total_tokens: Some(first.total_tokens),
             });
         } else {
             annotations.push(FileAiProvenance {

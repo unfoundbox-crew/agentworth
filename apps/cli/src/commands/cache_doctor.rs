@@ -115,11 +115,9 @@ pub fn diagnose_cache_efficiency(trace: &AgentWorthTrace) -> CacheDoctorDiagnosi
 
                 turn_metrics.push(metric);
             }
-            EventPayload::ToolCall(tool) => {
-                if known_tools.insert(tool.name.clone()) {
-                    if let Some(last) = turn_metrics.last_mut() {
-                        last.tool_introduced = Some(tool.name.clone());
-                    }
+            EventPayload::ToolCall(tool) if known_tools.insert(tool.name.clone()) => {
+                if let Some(last) = turn_metrics.last_mut() {
+                    last.tool_introduced = Some(tool.name.clone());
                 }
             }
             _ => {}

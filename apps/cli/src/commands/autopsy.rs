@@ -134,7 +134,7 @@ pub fn perform_prompt_autopsy(
         }
     }
 
-    clusters.sort_by(|a, b| b.occurrences.cmp(&a.occurrences));
+    clusters.sort_by_key(|c| std::cmp::Reverse(c.occurrences));
 
     Ok(AutopsyReport {
         total_user_messages_analyzed: total_user_msgs,

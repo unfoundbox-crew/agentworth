@@ -254,52 +254,50 @@ fn audit_trace(
             }
 
             // 2. Assistant Message Checks (Fake Claims & Apology Cascades - only when not safety_only)
-            EventPayload::AssistantMessage { content, thinking } => {
-                if !safety_only {
-                    let lower_content = content.to_lowercase();
-                    let lower_thinking = thinking.as_deref().map(|t| t.to_lowercase()).unwrap_or_default();
+            EventPayload::AssistantMessage { content, thinking } if !safety_only => {
+                let lower_content = content.to_lowercase();
+                let lower_thinking = thinking.as_deref().map(|t| t.to_lowercase()).unwrap_or_default();
 
-                    if is_fake_test_claim(&lower_content) {
-                        if had_failed_test {
-                            report.warn_count += 1;
-                            report.findings.push(SafetyFinding {
-                                severity: SafetySeverity::Warn,
-                                session_id: trace.session_id.clone(),
-                                adapter: trace.adapter.clone(),
-                                timestamp: ts.clone(),
-                                rule_id: "FAKE_TEST_CLAIM".to_string(),
-                                title: "False Success Claim on Failing Tests".to_string(),
-                                description: format!(
-                                    "Assistant claimed tests passed or succeeded, but command at turn #{} previously failed with non-zero exit code.",
-                                    last_failed_test_turn
-                                ),
-                                offending_snippet: truncate_str(content, 200),
-                                turn_index: turn_num,
-                                project: project.to_string(),
-                            });
-                        } else if !had_test_executed && idx > 2 {
-                            report.warn_count += 1;
-                            report.findings.push(SafetyFinding {
-                                severity: SafetySeverity::Warn,
-                                session_id: trace.session_id.clone(),
-                                adapter: trace.adapter.clone(),
-                                timestamp: ts.clone(),
-                                rule_id: "UNVERIFIED_COMPLETION_CLAIM".to_string(),
-                                title: "Unverified Done Claim without Test Evidence".to_string(),
-                                description: "Assistant claimed test completion without any verified test execution receipts in trace.".to_string(),
-                                offending_snippet: truncate_str(content, 200),
-                                turn_index: turn_num,
-                                project: project.to_string(),
-                            });
-                        }
+                if is_fake_test_claim(&lower_content) {
+                    if had_failed_test {
+                        report.warn_count += 1;
+                        report.findings.push(SafetyFinding {
+                            severity: SafetySeverity::Warn,
+                            session_id: trace.session_id.clone(),
+                            adapter: trace.adapter.clone(),
+                            timestamp: ts.clone(),
+                            rule_id: "FAKE_TEST_CLAIM".to_string(),
+                            title: "False Success Claim on Failing Tests".to_string(),
+                            description: format!(
+                                "Assistant claimed tests passed or succeeded, but command at turn #{} previously failed with non-zero exit code.",
+                                last_failed_test_turn
+                            ),
+                            offending_snippet: truncate_str(content, 200),
+                            turn_index: turn_num,
+                            project: project.to_string(),
+                        });
+                    } else if !had_test_executed && idx > 2 {
+                        report.warn_count += 1;
+                        report.findings.push(SafetyFinding {
+                            severity: SafetySeverity::Warn,
+                            session_id: trace.session_id.clone(),
+                            adapter: trace.adapter.clone(),
+                            timestamp: ts.clone(),
+                            rule_id: "UNVERIFIED_COMPLETION_CLAIM".to_string(),
+                            title: "Unverified Done Claim without Test Evidence".to_string(),
+                            description: "Assistant claimed test completion without any verified test execution receipts in trace.".to_string(),
+                            offending_snippet: truncate_str(content, 200),
+                            turn_index: turn_num,
+                            project: project.to_string(),
+                        });
                     }
+                }
 
-                    // Check for apology panic signatures
-                    for p in APOLOGY_PATTERNS {
-                        if lower_content.contains(p) || lower_thinking.contains(p) {
-                            apology_count += 1;
-                            break;
-                        }
+                // Check for apology panic signatures
+                for p in APOLOGY_PATTERNS {
+                    if lower_content.contains(p) || lower_thinking.contains(p) {
+                        apology_count += 1;
+                        break;
                     }
                 }
             }
@@ -682,11 +680,9 @@ fn wrap_line(text: &str, max_width: usize) -> Vec<String> {
     for paragraph in text.lines() {
         let mut current = String::new();
         for word in paragraph.split_whitespace() {
-            if current.len() + word.len() + 1 > max_width {
-                if !current.is_empty() {
-                    lines.push(current);
-                    current = String::new();
-                }
+            if current.len() + word.len() + 1 > max_width && !current.is_empty() {
+                lines.push(current);
+                current = String::new();
             }
             if !current.is_empty() {
                 current.push(' ');

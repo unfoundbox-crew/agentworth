@@ -317,11 +317,9 @@ fn clean_and_wrap_text(text: &str, max_width: usize) -> Vec<String> {
 
         let mut current = String::new();
         for word in trimmed.split_whitespace() {
-            if current.len() + word.len() + 1 > max_width {
-                if !current.is_empty() {
-                    lines.push(current);
-                    current = String::new();
-                }
+            if current.len() + word.len() + 1 > max_width && !current.is_empty() {
+                lines.push(current);
+                current = String::new();
             }
             if !current.is_empty() {
                 current.push(' ');
@@ -341,13 +339,11 @@ fn clean_and_wrap_text(text: &str, max_width: usize) -> Vec<String> {
 fn format_number(n: u64) -> String {
     let s = n.to_string();
     let mut result = String::new();
-    let mut count = 0;
-    for c in s.chars().rev() {
+    for (count, c) in s.chars().rev().enumerate() {
         if count > 0 && count % 3 == 0 {
             result.push(',');
         }
         result.push(c);
-        count += 1;
     }
     result.chars().rev().collect()
 }
