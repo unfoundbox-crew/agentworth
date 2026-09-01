@@ -20,6 +20,8 @@ mod watch;
 mod cache_doctor;
 #[path = "commands/blind_spots.rs"]
 mod blind_spots;
+#[path = "commands/threat_digest.rs"]
+mod threat_digest;
 #[path = "commands/autopsy.rs"]
 mod autopsy;
 #[path = "commands/recall.rs"]
@@ -306,6 +308,22 @@ enum Commands {
         json: bool,
     },
 
+    /// Rank indexed sessions by real secret/credential exposure risk, by category and severity
+    #[command(name = "threat-digest")]
+    ThreatDigest {
+        /// Maximum number of sessions to list (default 20, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
+
+        /// Only include sessions whose worst finding is at least this severity
+        #[arg(long, default_value = "low", value_parser = ["low", "medium", "high", "critical"])]
+        min_severity: String,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Surface recurring human correction and steering phrases across all sessions
     Autopsy {
         /// Minimum number of occurrences across sessions to report (default: 2)
@@ -533,6 +551,19 @@ fn main() -> Result<()> {
         Commands::BlindSpots { limit, json } => {
             let limit = config::resolve_limit(limit, persisted_config.limit, 20);
             blind_spots::run_blind_spots_command(limit, resolve_json(json), cli.db_path)?;
+        }
+        Commands::ThreatDigest {
+            limit,
+            min_severity,
+            json,
+        } => {
+            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+            threat_digest::run_threat_digest_command(
+                limit,
+                &min_severity,
+                resolve_json(json),
+                cli.db_path,
+            )?;
         }
         Commands::Autopsy {
             min_occurrences,
