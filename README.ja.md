@@ -34,7 +34,6 @@ AgentWorthは、ローカルのドットファイルに蓄積されたAIエー�
 | インストール方法 | コマンド | 説明 |
 | :--- | :--- | :--- |
 | **単体インストールスクリプト** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | ネイティブバイナリを直接 `~/.local/bin` にインストールします。 |
-| **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | 公式Homebrew Tap経由でインストールします。 |
 | **Cargo (Rustネイティブ)** | `cargo install agentworth-cli` | `agentworth` および `agwt` を `~/.cargo/bin` にビルドしてインストールします。 |
 | **NPX (インストール不要)** | `npx agentworth stats` | インストールなしで即座に実行できます。 |
 

@@ -34,7 +34,6 @@ AgentWorth 是一款采用本地优先架构的 Rust 原生工具，专门用于
 | 安装方式 | 执行命令 | 说明 |
 | :--- | :--- | :--- |
 | **一键安装脚本** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | 直接将预编译原生二进制文件安装至 `~/.local/bin`。 |
-| **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | 通过官方 Homebrew tap 仓库安装。 |
 | **Cargo (Rust 原生)** | `cargo install agentworth-cli` | 编译并安装 `agentworth` 与 `agwt` 至 `~/.cargo/bin`。 |
 | **NPX (免安装即用)** | `npx agentworth stats` | 无需手动安装即可快速执行。 |
 
