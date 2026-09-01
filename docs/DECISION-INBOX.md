@@ -40,10 +40,20 @@ Integration branch: `integrate/handoff-batch-1`, currently at commit `c438719`, 
 | Independent outcome verification | `feat/outcome-independent-verification` | Building |
 | Per-model attribution downstream in scoring | `feat/scoring-per-model-attribution` | Building |
 | High-entropy secret detector | `feat/secret-detector-entropy` | Building |
-| ModelSwitch events across 20 adapters | `feat/adapter-modelswitch-events` | Building |
+| ModelSwitch events across 20 adapters | `feat/adapter-modelswitch-events` | **Done.** All 20 adapters wired, verified on lenovo — see findings below |
 | Persisted CLI config/defaults | `feat/cli-persisted-config` | Building |
 | Recovery-loop human-vs-agent distinction | `feat/recovery-loop-human-vs-agent` | Building |
 | Context-Rot Marker | `feat/context-rot-marker` | Building |
+
+### ModelSwitch findings (2026-09-01)
+
+**The dispatch brief was wrong about one thing: `ModelSwitch` already existed.** `agentworth_schema::EventPayload::ModelSwitch` was added back in the original `feat(schema,claude): canonical trace model` commit — full struct (`from_model`/`to_model`/`reason`), wired into `TraceStats::recalculate_stats`, `export-atif`'s serializer, `redaction`'s redactor, and the CLI's trace pretty-printer (🔀 line). No adapter ever constructed one, so the type was fully plumbed downstream but silent upstream. Nothing needed adding to schema or adapter-sdk — the whole job was in the 20 adapters.
+
+**All 20 adapters got real detection — no gaps.** Every adapter already extracts a per-event `model` string to build its existing `ModelInvocation` event; that's the same field a switch check needs. Tracked the last-invoked model the same way `seq`/`sequence` is already threaded, and emit `ModelSwitch` immediately before a `ModelInvocation` whose model differs from the last one (no switch on the first model seen — nothing to switch from). 18 of 20 adapters fit one shared pattern; `aider` and `opencode` each have two independent event-construction paths (aider: structured JSON vs. its own markdown chat-history format; opencode: JSONL records vs. the native SQLite `opencode.db` schema) and needed the same logic wired twice.
+
+**Real tests, not just the mechanical wiring.** Extended `claude.rs`'s existing multi-model test plus three new tests (`cline.rs`, `aider.rs`'s markdown path, `opencode.rs`'s SQLite path) with real fixture data asserting the actual `ModelSwitch` events — one per structurally distinct code shape touched, not one per adapter.
+
+**Verified for real on lenovo**, isolated build dir + dedicated `CARGO_TARGET_DIR` (shared-target-dir staleness bug from earlier today, per punch list): `cargo build --workspace` — exit 0, only 2 pre-existing unused-import warnings (unrelated to this change). `cargo test --workspace` — exit 0, 207 passed across the whole workspace (0 failed, 0 ignored), 90 of those in `agentworth-adapters` alone. Added 3 new test functions (`cline`, `aider` markdown path, `opencode` SQLite path) plus extended `claude.rs`'s existing multi-model test with ModelSwitch assertions — didn't check the adapters crate's exact pre-change test count, so "90" is the verified post-change total, not a verified delta. Commit `eccbe09` on `feat/adapter-modelswitch-events`, not pushed.
 
 **Deferred, not dispatched today:**
 - **Threat Digest** — depends on the secret detector above actually landing first. Next wave.
