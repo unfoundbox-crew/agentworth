@@ -3,8 +3,12 @@
 //! Provides transparent, inspectable scoring of AI agent trace sessions across
 //! outcome hierarchy, verifiability, complexity, error recovery, and provenance.
 
+mod context_rot;
 mod scorer;
 
+pub use context_rot::{
+    detect_context_rot, ContextRotDetector, ContextRotSegment, ContextRotSignal, SegmentLabel,
+};
 pub use scorer::{ModelAttribution, ScoringWeights, TraceScore, TraceScorer};
 
 #[cfg(test)]
