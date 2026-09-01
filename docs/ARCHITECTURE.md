@@ -35,7 +35,9 @@ Verified with `cargo metadata --no-deps` (9 Rust crates + 1 binary crate, matchi
 | `crates/redaction` | `Redactor`: regex-based PII/secret scrubbing, applied to a *copy* of a trace before export (see §6, §8). |
 | `crates/export-atif` | Converts `AgentWorthTrace` into the ATIF (Agent Trajectory Interchange Format) JSON shape for `agentworth export --format atif`. |
 | `apps/cli` | The `agentworth` / `agwt` binary (`apps/cli/Cargo.toml`, `[[bin]]` ×2, same `src/main.rs`). 13 subcommands (`scan`, `stats`, `traces`, `matrix`, `inspect`, `export`, `search`, `audit`, `blunder`, `serve`, `usage`, `blame`, `doctor`) plus an embedded Axum REST API (`apps/cli/src/server/routes.rs`: `/stats`, `/traces`, `/traces/:id`, `/usage`, `/pacing`, `/blame`, `/matrix`, `/archaeology`, `/scan`, `/export/:id`) that backs `agentworth serve`. |
-| `apps/web` | React + Vite + Tailwind dashboard ("thermal receipt" aesthetic) that talks to the Axum API above. **Not** a Cargo workspace member — it's a separate npm project (`apps/web/package.json`). I read its structure and `package.json`, not its full component logic; treat its exact feature set as inferred from file/route names, not independently verified. |
+| `apps/web` | Marketing site only. React + Vite + Tailwind, deploys to agentworth.dev via the Vercel CLI. Makes **no** API calls — anything fetching `/api/*` here ships a request that 404s in production. |
+| `apps/dashboard` | The local app the CLI serves. Keyboard-first three-pane explorer, compiled **into** the binary with `rust-embed`, so `npm run build` here must run before `cargo` or the binary ships a stub instead of a UI. |
+| `packages/ui` | Shared between the two: the `--mv-*` design tokens, `ThemeToggle`, `useTheme`, and icons ported from the SpacePilot design system. |
 | `packages/agentworth` | The npm launcher package. See §7. |
 
 Note: `AGENTS.md`'s own "Repository shape" section still says `packages/npm-wrapper/`; the real directory is `packages/agentworth/`. Minor, but a reader following AGENTS.md literally will look in the wrong place.
@@ -71,7 +73,7 @@ Each adapter implements `AgentAdapter::name()` (the canonical machine identifier
 
 All 20 read JSONL (or JSONL-like line-delimited logs) except `opencode`, which reads a SQLite database file directly.
 
-**Contradiction not limited to the old spec:** the marketing site in this same repo (`apps/web/index.html`, `apps/web/public/llms.txt`, `apps/web/public/llms-full.txt`) also advertises "11 native adapters" by name. All three files are stale against the same `crates/adapters/src/` the rest of this doc is written from.
+**Contradiction not limited to the old spec:** the marketing site (`apps/web/index.html`, `apps/web/public/llms.txt`, `apps/web/public/llms-full.txt`) also advertised "11 native adapters" by name. The FAQ JSON-LD was corrected to 20 in 0.1.6; the `llms*.txt` files may still be stale and are worth checking. All three files are stale against the same `crates/adapters/src/` the rest of this doc is written from.
 
 ## 5. Data model
 
