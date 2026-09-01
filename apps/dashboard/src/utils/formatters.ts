@@ -1,4 +1,19 @@
-export function formatTokens(num: number): string {
+/**
+ * Token counts, defensively.
+ *
+ * These formatters are fed straight from API responses, and this repo's API
+ * has drifted from its TypeScript types repeatedly — field renames, fields
+ * moving under a parent object, fields disappearing between releases. An
+ * undefined reaching `num.toLocaleString()` throws, and because these render
+ * inside the inspector it takes the whole pane down behind an error boundary
+ * rather than showing one blank number. Observed against the 0.1.11 binary,
+ * whose `/api/stats` moved `first_session_at` under `date_range`.
+ *
+ * A missing number renders as an em dash, which is the honest thing to show
+ * for a value the server did not send.
+ */
+export function formatTokens(num: number | null | undefined): string {
+  if (num === null || num === undefined || Number.isNaN(num)) return '—';
   if (num >= 1_000_000_000) {
     return `${(num / 1_000_000_000).toFixed(2)}B`;
   }
@@ -186,7 +201,8 @@ function getModelBlendedRatePerMillion(model: string): number {
   return 3.0; // blended default: ~$3.00 / 1M tokens
 }
 
-export function formatUSD(amount: number): string {
+export function formatUSD(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined || Number.isNaN(amount)) return '—';
   if (amount >= 1_000_000) {
     return `$${(amount / 1_000_000).toFixed(2)}M`;
   }

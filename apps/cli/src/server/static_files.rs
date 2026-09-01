@@ -7,7 +7,7 @@ use axum::http::{header, HeaderValue, Request, Response, StatusCode};
 use axum::response::IntoResponse;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
-use rust_embed::{Embed, RustEmbed};
+use rust_embed::RustEmbed;
 
 const FALLBACK_HTML: &str = r#"<!DOCTYPE html>
 <html lang="en">

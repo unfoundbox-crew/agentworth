@@ -62,7 +62,6 @@ npx -y agentworth scan
 | **Agent Skill** | `npx skills add unfoundbox-crew/agentworth -g` | Installs global Agent Skill for AI coding agents. |
 | **NPX (Zero Install)** | `npx -y agentworth scan` | Instant runner that executes the native binary on demand. |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs pre-built native binary to `~/.local/bin`. |
-| **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | Installs via official Homebrew tap. |
 | **Cargo (Native)** | `cargo install agentworth-cli` | Compiles native binaries (`agentworth` & `agwt`) into `~/.cargo/bin`. |
 
 ---
@@ -261,6 +260,21 @@ agentworth export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | `agentworth export <ID>` | Exports a session as JSON, ATIF v1.0, or a Flight Receipt (`--format json\|atif\|receipt\|svg`), with optional privacy scrubbing (`--redact`). |
 | `agentworth receipt <ID>` | Renders a Flight Receipt for a session: an ANSI box for the terminal or a shareable 1200x630 SVG card (`--format terminal\|svg\|json`, `--output <PATH>`). |
 | `agentworth doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
+| `agentworth mcp` | Starts the read-only MCP server over stdio, so a coding agent can query this machine's session index mid-session (see below). |
+
+---
+
+## MCP Server
+
+`agentworth mcp` exposes the local session index to any MCP client (Claude Code, Codex, Cursor) as a stdio server, so a session can ask "what was I doing in this repo yesterday" or "which sessions touched `api.ts`" directly, without a human opening the dashboard first. Register it once:
+
+```bash
+claude mcp add agentworth --scope user -- agentworth mcp
+```
+
+`--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
+
+Six read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`. Redacted output is the default everywhere event or file content is returned; `session_get`'s `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`.
 
 ---
 

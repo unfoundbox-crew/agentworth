@@ -224,6 +224,11 @@ enum Commands {
         dist: Option<PathBuf>,
     },
 
+    /// Start the read-only MCP server over stdio, for a coding agent to query this machine's
+    /// session index mid-session (see docs/specs/mcp-server.md). Register it once with
+    /// `claude mcp add agentworth --scope user -- agentworth mcp`.
+    Mcp,
+
     /// View deep usage, pacing, and token expenditure rollups
     Usage {
         /// Rollup period: day, week, or month (default day, or persisted `config period`)
@@ -486,10 +491,22 @@ fn main() -> Result<()> {
     } else {
         EnvFilter::new("warn")
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .init();
+    // `agentworth mcp` speaks JSON-RPC over stdout -- any stray tracing line there would
+    // corrupt the protocol stream for whatever client spawned this process (the same reason
+    // every rmcp stdio example logs to stderr). Every other subcommand keeps the existing
+    // stdout default.
+    if matches!(cli.command, Commands::Mcp) {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .init();
+    }
 
     // Persisted user defaults (`~/.agentworth/config.toml`, see `agentworth config`). A
     // corrupt config file should not brick every command, so fall back to built-in
@@ -605,6 +622,11 @@ fn main() -> Result<()> {
             let dist_path = agentworth_cli::server::resolve_dist_dir(dist)?;
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
+        }
+        Commands::Mcp => {
+            let storage = open_storage(cli.db_path)?;
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(agentworth_cli::run_mcp_server(storage))?;
         }
         Commands::Merge { source_db, json } => {
             merge::run_merge_command(source_db, resolve_json(json), cli.db_path)?;

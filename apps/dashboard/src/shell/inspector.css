@@ -703,3 +703,99 @@
   color: var(--mv-text);
   font-weight: 550;
 }
+
+/* ---------------- compaction ----------------
+   Same card shape as .ctx-comp — this sits right next to it and reads as
+   one family. --mv-warn appears here on purpose: unlike context composition,
+   a compaction round is a real loss event, not a neutral category. */
+.shell-root .cmp-comp {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 9px;
+  background: var(--mv-surface);
+}
+.shell-root .cmp-never {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--mv-faint);
+}
+.shell-root .cmp-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.shell-root .cmp-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+.shell-root .cmp-rounds {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--mv-warn);
+  font-variant-numeric: tabular-nums;
+}
+
+.shell-root .cmp-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.shell-root .cmp-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 1fr 76px;
+  gap: 8px;
+}
+.shell-root .cmp-row:not(:last-child) {
+  border-bottom: 1px solid var(--mv-border-soft);
+}
+.shell-root .cmp-row-head {
+  background: var(--mv-surface-2);
+}
+.shell-root .cmp-row-head .cmp-cell {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+.shell-root .cmp-cell {
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: var(--mv-text);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .cmp-cell-num {
+  text-align: right;
+  font-family: var(--font-mono);
+}
+.shell-root .cmp-cell-round {
+  color: var(--mv-muted);
+}
+
+.shell-root .cmp-cumulative {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--mv-muted);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .cmp-cumulative-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  margin-right: 7px;
+}
+.shell-root .cmp-cumulative strong {
+  color: var(--mv-text);
+  font-weight: 550;
+}

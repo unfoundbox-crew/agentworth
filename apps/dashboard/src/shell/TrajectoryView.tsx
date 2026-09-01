@@ -15,6 +15,8 @@ export interface TrajectoryViewProps {
   focused?: boolean;
   onToggleFocus?: () => void;
   events: NormalizedEvent[] | null | undefined;
+  /** Event ids marking a compaction boundary — drawn as ticks on the scrubber's rail. */
+  compactionEventIds?: string[];
 }
 
 /** The full event stream for a session: a bucketed shape strip, then one
@@ -22,7 +24,7 @@ export interface TrajectoryViewProps {
  * events), then the selected event's detail. This is deliberately the full
  * stream, not filtered to evidence-producing events — that filter needs a
  * backend outcome-mapping change landing separately. */
-export function TrajectoryView({ events, focused = false, onToggleFocus }: TrajectoryViewProps) {
+export function TrajectoryView({ events, focused = false, onToggleFocus, compactionEventIds }: TrajectoryViewProps) {
   const sorted = useMemo(() => {
     const list = events ?? [];
     return [...list].sort((a, b) => a.sequence - b.sequence);
@@ -98,6 +100,7 @@ export function TrajectoryView({ events, focused = false, onToggleFocus }: Traje
         selectedId={selectedId}
         onSelect={selectEvent}
         onBrushChange={setBrushedIds}
+        compactionEventIds={compactionEventIds}
       />
 
       {sorted.length === 0 ? (

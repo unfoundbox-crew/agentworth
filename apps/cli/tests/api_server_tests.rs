@@ -549,19 +549,29 @@ async fn test_api_post_export_json_and_atif_and_redact() {
 
 #[tokio::test]
 async fn test_api_static_file_serving_and_spa_fallback() {
-    // 1. Default embedded fallback
+    // 1. Default embedded fallback: rust_embed pulls apps/dashboard/dist at
+    // compile time (see AGENTS.md item 5), so this proves the real built
+    // React shell is inside the binary — not the hand-written FALLBACK_HTML
+    // stub, which has neither a <title>AgentWorth</title> nor a hashed
+    // /assets/ bundle. Checking for "AGENTWORTH" / "Your agents left
+    // receipts" text would pass even against the stub, and would also fail
+    // against the real dashboard since that copy is rendered client-side by
+    // React, not present in the served HTML shell.
     let (app, _, _) = setup_test_app(None);
 
     // Root GET /
     let (status, html) = request_raw(app.clone(), "GET", "/").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("AGENTWORTH"));
-    assert!(html.contains("Your agents left receipts"));
+    assert!(html.contains("<title>AgentWorth</title>"));
+    assert!(
+        html.contains("/assets/"),
+        "expected a hashed Vite bundle reference, got: {html}"
+    );
 
     // SPA client-side route GET /traces/sess_123
     let (status, html) = request_raw(app, "GET", "/traces/sess_123").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("AGENTWORTH"));
+    assert!(html.contains("<title>AgentWorth</title>"));
 
     // 2. Custom dist_dir serving
     let temp_dist = TempDir::new().unwrap();
