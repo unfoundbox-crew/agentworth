@@ -61,13 +61,43 @@ impl AgentAdapter for PiAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".pi")
-                    || custom.ends_with("pi")
-                    || custom.to_string_lossy().contains("/.pi/")
-                    || custom.to_string_lossy().contains("/pi/"))
+            if !custom.exists() {
+                continue;
+            }
+            let s = custom.to_string_lossy();
+            if custom.ends_with(".pi")
+                || custom.ends_with("pi")
+                || s.contains("/.pi/")
+                || s.contains("/pi/")
             {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // custom_paths may point at a generic parent directory rather than
+                // the adapter-specific dir itself; look a few levels in before
+                // giving up, matching how `enumerate()` already recurses.
+                // "pi" is short enough to false-positive on an unrelated substring
+                // (e.g. a random tempdir suffix), so match whole path components
+                // instead of a bare `contains("pi")`.
+                let mut found_nested = false;
+                for sub in &[custom.join(".pi"), custom.join(".config").join("pi")] {
+                    if sub.exists() {
+                        discovered.push(sub.clone());
+                        found_nested = true;
+                    }
+                }
+                if !found_nested {
+                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        let is_pi_component = path.components().any(|c| {
+                            let cs = c.as_os_str().to_string_lossy();
+                            cs == "pi" || cs == ".pi"
+                        });
+                        if is_pi_component {
+                            discovered.push(path.to_path_buf());
+                            break;
+                        }
+                    }
+                }
             }
         }
 

@@ -60,10 +60,33 @@ impl AgentAdapter for ClaudeCodeAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".claude") || custom.to_string_lossy().contains("claude"))
-            {
+            if !custom.exists() {
+                continue;
+            }
+            let s = custom.to_string_lossy().to_lowercase();
+            if custom.ends_with(".claude") || s.contains("claude") {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // custom_paths may point at a generic parent directory rather than
+                // the adapter-specific dir itself; look a few levels in before
+                // giving up, matching how `enumerate()` already recurses.
+                let mut found_nested = false;
+                for sub in &[custom.join(".claude"), custom.join(".config").join("claude")] {
+                    if sub.exists() {
+                        discovered.push(sub.clone());
+                        found_nested = true;
+                    }
+                }
+                if !found_nested {
+                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        let ps = path.to_string_lossy().to_lowercase();
+                        if ps.contains("claude") {
+                            discovered.push(path.to_path_buf());
+                            break;
+                        }
+                    }
+                }
             }
         }
 
