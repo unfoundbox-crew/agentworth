@@ -7,11 +7,14 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
+use agentworth_adapter_sdk::ScanOptions;
 use agentworth_core::Scanner;
 use agentworth_schema::{AgentWorthTrace, EventPayload, ToolCall};
+use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
 use anyhow::Result;
 use console::style;
 use serde::{Deserialize, Serialize};
@@ -104,9 +107,14 @@ pub fn run_watch_command(
     poll_once: bool,
     json: bool,
     custom_paths: Vec<PathBuf>,
+    db_path: Option<PathBuf>,
 ) -> Result<()> {
-    let scanner = Scanner::default();
-    let opts = agentworth_adapter_sdk::ScanOptions {
+    let storage = Arc::new(match db_path {
+        Some(p) => Storage::open_path(&p)?,
+        None => Storage::open_default()?,
+    });
+    let scanner = Scanner::new(storage.clone());
+    let scan_opts = ScanOptions {
         custom_paths,
         force: false,
     };
@@ -126,17 +134,24 @@ pub fn run_watch_command(
     }
 
     loop {
-        let enumerated = scanner.enumerate_sources(&opts)?;
-        // Sort newest first
-        let mut sorted = enumerated;
-        sorted.sort_by(|a, b| b.mtime_epoch_secs.cmp(&a.mtime_epoch_secs));
+        // Refresh the index so a still-growing transcript (changed mtime/fingerprint) gets
+        // re-parsed on this poll -- this is what lets Watch see activity from the current turn,
+        // not just whatever was indexed by the last `agentworth scan`.
+        let _ = scanner.run_scan(&scan_opts, |_, _| {});
+
+        let recent_sessions = storage.list_sessions_filtered(&SessionFilter {
+            limit: Some(5),
+            order_by: Some(SessionOrderBy::StartedAtDesc),
+            include_stubs: Some(true),
+            ..Default::default()
+        })?;
 
         let mut total_alerts = Vec::new();
 
-        // Check top 5 newest active sessions
-        for source in sorted.iter().take(5) {
-            if let Ok(parsed) = scanner.parse_session(source) {
-                let alerts = evaluate_trace_for_loops(&parsed.trace, 3, 4);
+        // Check the 5 most recently active sessions
+        for summary in &recent_sessions {
+            if let Ok(trace) = scanner.load_trace(&summary.session_id) {
+                let alerts = evaluate_trace_for_loops(&trace, 3, 4);
                 total_alerts.extend(alerts);
             }
         }

@@ -455,7 +455,7 @@ fn main() -> Result<()> {
             json,
             paths,
         } => {
-            watch::run_watch_command(interval_secs, poll_once, json, paths)?;
+            watch::run_watch_command(interval_secs, poll_once, json, paths, cli.db_path)?;
         }
         Commands::CacheDoctor { session_id, json } => {
             cache_doctor::run_cache_doctor_command(&session_id, json, cli.db_path)?;
@@ -2214,7 +2214,7 @@ fn run_usage_command(
         }
 
         if records.is_empty() {
-            println!("No usage records found. Run `agwt scan` to index local sessions.");
+            println!("No usage records found. Run `agentworth scan` (or `agwt scan`) to index local sessions.");
             return Ok(());
         }
 
