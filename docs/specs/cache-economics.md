@@ -177,3 +177,57 @@ on hover.
 - Time gaps get equal billing with model switches as a cliff cause.
 - TTL is inferred from the user's data and never asserted from documentation.
 - Warmth uses a category colour, not a state colour. A cold session is normal.
+
+## Measured, 2026-09-01 — two things in this spec were wrong
+
+Built and checked against 34 real sessions on the owner's machine: **32,901
+model-invocation pairs** and **619 cold starts**. Three findings, two of which
+correct the text above.
+
+### The cliff is at 60 minutes, and it is sharp
+
+The spec says not to hardcode a TTL and to let the boundary emerge from the
+user's own data. It does, cleanly:
+
+| Gap before the call | n | Median warmth | Cold (<50% warm) |
+| :--- | ---: | ---: | ---: |
+| under 20m | 32,735 | 99.7% | 1–8% |
+| 20–30m | 52 | 99.4% | 23% |
+| 30–50m | 32 | 98.5% | ~32% |
+| 50–60m | 8 | 99.5% | **0%** |
+| 60–70m | 8 | **6.4%** | **100%** |
+| 70m+ | 66 | ~7% | ~99% |
+
+Nothing is cold at 50–60 minutes and everything is cold at 60–70. Crossing it
+costs a median of roughly **400k tokens** re-created.
+
+### "A time gap is the more common cause" — it is not
+
+The spec says `CacheCliffWidget` blames model switches and that a time gap is
+the more common cause. Across 619 real cold starts:
+
+| Cause | Share |
+| :--- | ---: |
+| No idle gap and no model change | **83%** |
+| Idle gap ≥ 30m | 13% |
+| Model switch | 3% |
+| First call of the session | 2% |
+
+Both named causes together explain under a fifth. The majority have no visible
+cause in the trace at all — worth investigating (parallel subagents writing one
+file, and compaction resets, are both plausible), but not worth guessing at in
+the UI. So an unexplained cold start now says exactly that, rather than blaming
+whichever small gap preceded it.
+
+### `CacheCliffWidget` does not detect anything
+
+It is a **simulation**: a slider (`switchTurn`, default 28) driving
+`calculateTurnCost` over a hypothetical 40-turn session. It reads no session
+data and finds no cliffs. "Same detection, one more attribution" was not
+available, because there was no detection — real detection had to be built.
+
+### What shipped
+
+The inspector line, from real per-session data. Not shipped: warmth on the
+overview, which needs an index-wide aggregate no endpoint exposes — and a zero
+there would be a false measurement rather than an absence.
