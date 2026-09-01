@@ -159,6 +159,8 @@ Fixed: `fetchTraceDetail()` now normalizes via a shared `normalizeTokenUsage()` 
 ## Decisions made this session
 
 - **One PR, one version bump, at the end.** Everything accumulates on `integrate/handoff-batch-1`. No incremental pushes, no Cargo.toml bump, until Saurabh says the session's work is done.
+- **Bugs and small items don't wait for a check-in.** Saurabh, verbatim: "bugs and small items shouldn't wait for me." Once a real bug is confirmed, fix and merge it directly — keep reporting outcomes, don't gate the action on approval. Judgment-call-sized things (product fit, scope/ownership boundaries, anything irreversible) still get asked.
+- **This session hands off once the current queue is empty.** Saurabh's call: this session's job was the backlog that existed when it started; once everything in flight lands, a fresh session picks up anything new rather than this one continuing indefinitely.
 - **Never trust agy/Flash batch self-reports.** Independent rebuild and retest is mandatory before folding anything in, no matter how polished the handoff doc looks. Confirmed a second, stronger time on batch-2: 8 of 9 branches didn't even compile despite a detailed handoff doc.
 - **SSE endpoint built fresh, not sharing code with `watch`.** Loop Sentinel's `agentworth watch` (merged) is poll-based, not a real filesystem watcher — no existing `notify`-based primitive to reuse, and not refactoring `watch.rs` to manufacture one.
 - **`models_usage_count` / `tools_usage_count` zero-seeding downgraded to low priority.** Open-ended maps the frontend only iterates — a missing key is invisible, not a crash, unlike the fixed-shape `outcome_distribution` bug. Still worth fixing, just not a fire.
