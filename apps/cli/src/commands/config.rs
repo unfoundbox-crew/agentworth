@@ -22,7 +22,7 @@ pub struct CliConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json: Option<bool>,
     /// Default for the `--limit` flag shared by `traces`, `search`, `usage`,
-    /// `blind-spots`, and `recall`.
+    /// `blind-spots`, `threat-digest`, and `recall`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
     /// Default lookback window (`day` | `week` | `month`) for `usage --period`.
