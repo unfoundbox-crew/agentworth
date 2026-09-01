@@ -566,3 +566,14 @@
     transition: none;
   }
 }
+
+/* Canvas rows: three nodes instead of 1,430 flex children. See StripCanvas. */
+.shell-root .traj-canvas,
+.shell-root .traj-rail-canvas {
+  display: block;
+}
+.shell-root .traj-rail-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

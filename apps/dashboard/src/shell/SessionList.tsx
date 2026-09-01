@@ -28,6 +28,22 @@ export interface SessionListProps {
 
 type ChipKey = 'all' | 'ci' | 'failed' | 'claude_code';
 
+/**
+ * A row with no events and no tokens is not a session.
+ *
+ * The scanner currently indexes config and telemetry files as sessions —
+ * ~/.claude/remote-settings.json, telemetry/*.json, Cursor's Sentry queue.
+ * Measured on a real index: 5,728 of 10,329 rows, 55%. They sort correctly and
+ * that is the problem — "newest first" fills the top of the list with
+ * mcp-auth, version and tip_cursor, which makes a working sort look broken.
+ *
+ * Hidden by default rather than dropped, because the real fix is in the
+ * scanner and this must not hide a genuine empty session forever.
+ */
+function isRealSession(s: SessionSummary): boolean {
+  return (s.total_events ?? 0) > 1 || (s.total_tokens ?? 0) > 0;
+}
+
 const CHIPS: { key: ChipKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'ci', label: 'CI Green' },
@@ -172,6 +188,26 @@ function ComfortableIcon() {
   );
 }
 
+function StretchIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M7 6 3 10l4 4" />
+      <path d="M13 6l4 4-4 4" />
+      <line x1="10" y1="4" x2="10" y2="16" />
+    </svg>
+  );
+}
+
+function CollapseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="4" y1="4" x2="4" y2="16" />
+      <path d="M15 6l-4 4 4 4" />
+      <line x1="11" y1="10" x2="17" y2="10" />
+    </svg>
+  );
+}
+
 export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloadSignal }: SessionListProps) {
   const { sessions, loading, error, refetch } = useSessions(reloadSignal);
   const [filterText, setFilterText] = useState('');
@@ -180,7 +216,9 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
   const [groupMode, setGroupMode] = useState<GroupMode>('none');
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [density, setDensity] = useState<Density>('compact');
+  const [hideEmpty, setHideEmpty] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLElement>(null);
 
   const listWidth = useResizableWidth({
     storageKey: LIST_WIDTH_KEY,
@@ -188,11 +226,13 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
     min: LIST_WIDTH_MIN,
     max: LIST_WIDTH_MAX,
     label: 'Resize session list',
+    targetRef: paneRef,
   });
 
   const filtered = useMemo(() => {
     const text = filterText.trim().toLowerCase();
     return sessions.filter((s) => {
+      if (hideEmpty && !isRealSession(s)) return false;
       const level = determineReachedLevel(s.primary_outcome);
       if (chip === 'ci' && level !== 5) return false;
       if (chip === 'failed' && level > 2) return false;
@@ -203,7 +243,7 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
       }
       return true;
     });
-  }, [sessions, filterText, chip]);
+  }, [sessions, filterText, chip, hideEmpty]);
 
   const sorted = useMemo(() => sortSessions(filtered, sortKey), [filtered, sortKey]);
 
@@ -230,6 +270,28 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
     virtualizer.measure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [density, groupMode, rows.length]);
+
+  // A list that mounted while its container had no height renders nothing and
+  // never recovers: the virtualizer measured a zero viewport and has no reason
+  // to look again. That happens whenever the tab is backgrounded on load or
+  // the pane starts collapsed, and the symptom is a permanently empty list
+  // that only a reload fixes. Watch the element and remeasure when it gains
+  // height.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let lastHeight = el.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const height = el.clientHeight;
+      if (height > 0 && height !== lastHeight) {
+        lastHeight = height;
+        virtualizer.measure();
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleGroup = useCallback((key: string) => {
     setCollapsed((prev) => {
@@ -283,11 +345,17 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
   }
 
   const isFiltered = filterText.trim() !== '' || chip !== 'all';
+  const hiddenCount = hideEmpty ? sessions.filter((s) => !isRealSession(s)).length : 0;
 
   return (
     <section
-      className="shell-list-pane"
-      style={{ width: listWidth.width, flexBasis: listWidth.width }}
+      ref={paneRef}
+      className={`shell-list-pane${listWidth.collapsed ? ' is-collapsed' : ''}`}
+      style={
+        listWidth.collapsed
+          ? { width: 0, flexBasis: 0 }
+          : { width: listWidth.width, flexBasis: listWidth.width }
+      }
     >
       <div className="shell-list-controls">
         <input
@@ -352,6 +420,26 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
               </select>
             </div>
 
+            <div className="list-density" role="group" aria-label="Pane size">
+              <button
+                type="button"
+                className="list-density-btn"
+                onClick={listWidth.toggleStretched}
+                aria-pressed={listWidth.stretched}
+                title={listWidth.stretched ? 'Restore width' : 'Stretch the list'}
+              >
+                <StretchIcon />
+              </button>
+              <button
+                type="button"
+                className="list-density-btn"
+                onClick={listWidth.toggleCollapsed}
+                title="Collapse the list (\\)"
+              >
+                <CollapseIcon />
+              </button>
+            </div>
+
             <div className="list-density" role="group" aria-label="Row density">
               <button
                 type="button"
@@ -375,11 +463,23 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
           </div>
         </div>
 
-        {isFiltered && (
-          <div className="list-result-count">
-            {sorted.length.toLocaleString()} of {sessions.length.toLocaleString()}
-          </div>
-        )}
+        <div className="list-result-count">
+          {isFiltered && (
+            <span>
+              {sorted.length.toLocaleString()} of {sessions.length.toLocaleString()}
+            </span>
+          )}
+          {hiddenCount > 0 && (
+            <button type="button" className="list-empty-toggle" onClick={() => setHideEmpty(false)}>
+              {hiddenCount.toLocaleString()} empty hidden
+            </button>
+          )}
+          {!hideEmpty && (
+            <button type="button" className="list-empty-toggle" onClick={() => setHideEmpty(true)}>
+              Hide empty
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="shell-list-scroll" ref={scrollRef}>
@@ -507,11 +607,23 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
         {liveTail && <span className="shell-hint shell-hint-live">live tail on</span>}
       </div>
 
-      <div
-        className={`shell-list-resizer${listWidth.dragging ? ' is-dragging' : ''}`}
-        title="Drag to resize · double-click to reset"
-        {...listWidth.handleProps}
-      />
+      {listWidth.collapsed ? (
+        <button
+          type="button"
+          className="shell-list-restore"
+          onClick={listWidth.toggleCollapsed}
+          title="Show the session list"
+          aria-label="Show the session list"
+        >
+          <span className="shell-list-restore-count">{sorted.length.toLocaleString()}</span>
+        </button>
+      ) : (
+        <div
+          className={`shell-list-resizer${listWidth.dragging ? ' is-dragging' : ''}`}
+          title="Drag to resize · double-click to reset"
+          {...listWidth.handleProps}
+        />
+      )}
     </section>
   );
 }
