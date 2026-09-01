@@ -10,6 +10,7 @@ import { ScoreBreakdown } from './ScoreBreakdown';
 import { TokenEconomics } from './TokenEconomics';
 import { CacheWarmth } from './CacheWarmth';
 import { LooseEnds } from './LooseEnds';
+import { ContextComposition } from './ContextComposition';
 import { ProvenanceBlock } from './ProvenanceBlock';
 
 export interface InspectorPaneProps {
@@ -172,6 +173,8 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
               <CacheWarmth events={trace.events} />
             </div>
           )}
+
+          {trace?.events && <ContextComposition events={trace.events} />}
 
           {trace?.events && (
             <LooseEnds events={trace.events} sessionId={trace.session_id} />
