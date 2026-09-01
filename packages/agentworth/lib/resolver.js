@@ -186,6 +186,27 @@ export function downloadFile(url, destPath, redirects = 5) {
   });
 }
 
+
+/**
+ * True when the binary at `binPath` reports `expected`. Used to stop a stale
+ * install on PATH from answering for an explicitly requested version.
+ * Any failure to ask — missing binary, wrong arch, timeout — counts as "no",
+ * so we fall through to the download rather than trusting an unknown.
+ */
+function pathBinaryMatchesVersion(binPath, expected) {
+  if (!expected) return true;
+  try {
+    const out = execFileSync(binPath, ['--version'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out.includes(expected);
+  } catch (_) {
+    return false;
+  }
+}
+
 /**
  * Downloads and extracts the precompiled native binary from GitHub Releases into the user's local cache.
  *
@@ -370,12 +391,18 @@ export function resolveBinary(options = {}) {
     };
   }
 
-  // 3. System PATH (highest user priority for installed binaries)
+  // 3. System PATH — but only when it agrees with the version we are.
   // Skipped when already inside a launcher: the only thing PATH could offer is us.
+  //
+  // `npx agentworth@0.1.6` used to run whatever agentworth happened to be on
+  // PATH, silently, so pinning a version did nothing for anyone with a local
+  // install. A stale 0.1.2 in ~/.cargo/bin answered for 0.1.6 with no warning.
+  // A PATH binary now has to report the version this launcher ships before it
+  // gets to serve; otherwise we fall through and fetch the matching release.
   const currentBin = path.resolve(baseDir, '..', 'bin', 'agentworth.js');
   if (env.PATH !== undefined && !env.AGENTWORTH_LAUNCHER_ACTIVE) {
     const pathBin = findPathBinary(binName, env.PATH, currentBin);
-    if (pathBin) {
+    if (pathBin && pathBinaryMatchesVersion(pathBin, getPackageVersion(baseDir))) {
       return {
         found: true,
         path: pathBin,
