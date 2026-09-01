@@ -2,7 +2,7 @@
 
 Owner of this doc: the backend/CLI session (Claude, socket name `code-76` in fleet messages). Update it in place as work lands — don't let decisions sit only in a chat transcript.
 
-Last updated: 2026-09-01, mid-session (wave 1+2 real verification round). Check git before trusting this if it's more than a day old. This copy on `integrate/handoff-batch-1` is canonical; other branches may carry a stale snapshot until they fold in.
+Last updated: 2026-09-01, mid-session (wave 3 round: MCP server spec redaction blocker). Check git before trusting this if it's more than a day old. This copy on `integrate/handoff-batch-1` is canonical; other branches may carry a stale snapshot until they fold in.
 
 ## Where things stand
 
@@ -22,6 +22,8 @@ Last updated: 2026-09-01, mid-session (wave 1+2 real verification round). Check 
 | PR #11 (Skill + Receipts) | **Done, verified and merged.** | Was open/unclaimed since 2026-08-31, real bugs found and fixed (unrelated adapter bug + fabricated CLI docs) — see PR #11 findings below |
 | Model pricing wiring (6 report commands) | **Done, merged.** | Every dollar figure a user actually sees was priced as Claude 3.5 Sonnet regardless of the real model. Commit `0c27bbb`. See findings below |
 | `agentworth version` / `agentworth update` commands | **Done, merged.** | Direct user request (Saurabh hit the missing `update` subcommand in real use). Commit `6b4ede7`. See findings below |
+| `docs/specs/` synced from `origin/main` | **Done.** | 8 new specs pulled in (archie, cache-economics, compaction, dropped-commitments, local-search, market-autofix, mcp-server, questions) plus the build-order `README.md`; not a full branch merge, `apps/dashboard` untouched. Commit `a98fb3a` |
+| Wave 3: MCP server redaction blocker (repository-name gap + outcomes/recoveries redaction) | **Done, build-verified, tested.** | `docs/specs/mcp-server.md` already existed on `origin/main` — flagged both of these as undecided "Open questions"; both fixed, not caveated. See "Wave 3 redaction findings" below. The 6-tool MCP server itself is NOT built — that's separate, larger, still-open work |
 | Final PR + version bump | Not yet | Saurabh's call — one PR, one version bump, only once everything this session touches is done |
 | Quality/perf/lint audit | **Done, on `chore/quality-audit-pass` (a separate worktree/branch, NOT merged into this integration branch).** | Real bug fixed (mutex-poisoning could wedge `agentworth serve` permanently), workspace-wide clippy cleanup, a small pinned lint policy, flamegraph feasibility checked. Not yet folded in — see full section below |
 
@@ -163,8 +165,97 @@ and sitting on `integrate/handoff-batch-1`; **nothing has shipped to origin/main
 still needs Saurabh's explicit go-ahead (see "Final PR + version bump" above), asked for
 directly in chat this round, not inferred from this doc.
 
+## Wave 3 redaction findings (2026-09-01)
+
+`docs/specs/mcp-server.md` already existed on `origin/main` (this session almost wrote a
+duplicate before checking — `git show origin/main:docs/specs/mcp-server.md` first, next time
+too). Pulled the whole `docs/specs/` directory in via `git checkout origin/main -- docs/specs/`
+(commit `a98fb3a`) rather than a full branch merge, so `apps/dashboard`'s changes on `main`
+don't entangle with this branch. Read `docs/specs/README.md` — it has the real build order
+across all specs and confirms the OutcomeKind fix (done above) unblocks judging the rest.
+
+The spec's "Open questions" flagged two things as undecided, both now resolved and fixed:
+
+1. **Repository/project-name redaction gap.** Confirmed real by reading the rules directly:
+   the only path-touching rule strips a home directory's *username* (`/Users/saurabh` → `~`),
+   leaving the rest of the path — including the repo name — intact. `AGENTS.md` says exports
+   must never leak repository names; they were leaking. Fixed:
+   `agentworth_schema::extract_repository_or_workspace` (moved from `agentworth-storage`,
+   still re-exported there for the 4 existing callers, so `agentworth-redaction` can reach it
+   without taking on storage's SQLite dependency) plus a new
+   `repository_identity_rule(repo_or_workspace: &str) -> Option<RedactionRule>` in
+   `crates/redaction/src/rules.rs` (returns `None` for the "unknown"/"plugins/cache" sentinel
+   values, so it can't over-redact a session with no real derivable identity). `Redactor::redact_trace`
+   now builds a per-trace augmented redactor internally (`with_repository_identity_rule`), so
+   `export --redact` gets this protection automatically — no separate wiring needed there, it's
+   the existing call path.
+2. **`outcomes`/`recoveries` never redacted anywhere.** Also confirmed real:
+   `Redactor::redact_trace` only ever walked `trace.events`/`provenance`/`metadata` — free text
+   on `OutcomeEvidence.summary` and `RecoverySignal.failure_summary`/`recovery_summary`/
+   `correlated_files` (derived from event content, can carry the same secrets) passed through
+   untouched. Fixed: `Redactor::redact_outcome_evidence(&[OutcomeEvidence])` and
+   `Redactor::redact_recovery_signal(&[RecoverySignal])`, both in `crates/redaction/src/redactor.rs`.
+   New `Redactor::for_trace(&trace) -> Self` returns a redactor pre-augmented with that trace's
+   own repository-identity rule, so a caller building `session_get`'s response later can use one
+   instance (`Redactor::new().for_trace(&trace)`) for the trace, its outcomes, and its
+   recoveries, and get consistent repository-name protection across all three, not just the
+   trace object.
+
+**A real regression this exposed, caught by the test suite, not shipped**: an existing
+`crates/export-atif/tests/export_atif_test.rs::test_export_redacted_atif` asserted a redacted
+`source_path` of `"~/projects/app/trace.jsonl"` — which was only correct because the repository-
+name gap above meant "projects/app" (this fixture's own derived identity) leaked through
+unredacted. With the gap fixed, the correct value is `"~/[REDACTED_REPOSITORY]/trace.jsonl"`;
+updated the assertion (and a matching one on event content mentioning the same path) to expect
+the new, more complete redaction rather than the old, incomplete one. Checked every other
+redaction-adjacent test in the workspace (`apps/cli/tests/cli_integration_tests.rs`'s
+`--redact` test uses `contains()`/`.not()` checks, not exact-match — unaffected) before
+concluding this was the only one.
+
+**What did NOT happen this round, on purpose**: the actual 6-tool MCP server
+(`sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`,
+`coverage_stats`), the `rmcp` dependency, `apps/cli/src/mcp/`, or the `agentworth mcp` CLI
+subcommand — all real, substantial, separate work the spec describes in full. This round only
+closed the redaction blocker the spec flagged as needing a decision before `session_get` could
+ship as safe. Also not touched: `docs/specs/local-search.md`'s own "the redaction engine has 15
+rules, not 13" note is now off by one again (16, after this addition) — cosmetic, out of that
+spec's own separate wave, flagging rather than editing an unrelated wave's doc.
+
+**Verified on lenovo** (same build dir as wave 1+2, `agentworth-outcomeverify-e4da6e6`,
+flock-serialized): first full run caught the `export_atif_test` regression above (`cargo test
+--workspace --no-fail-fast` — 1 target failed, everything else green). After fixing the test
+assertion: `cargo build --workspace` exit 0; `cargo clippy --workspace --all-targets` exit 0
+(only the same pre-existing, already-documented warnings — no new ones); `cargo test --workspace
+--no-fail-fast` exit 0, **438 passed, 0 failed, 0 ignored**, including all 7 new redaction tests
+(`test_repository_identity_rule_builder_skips_sentinel_values`,
+`test_repository_identity_rule_builder_matches_real_identity`,
+`test_redact_trace_masks_repository_identity`,
+`test_redact_trace_home_path_only_case_is_unaffected_by_repository_rule`,
+`test_redact_outcome_evidence_scrubs_summary`, `test_redact_recovery_signal_scrubs_summaries_and_files`,
+`test_for_trace_composes_repository_redaction_across_trace_outcomes_and_recoveries`).
+
 ## New punch-list items (not yet actioned)
 
+- **Scanner indexes non-session files as sessions.** Reported by the frontend peer session,
+  independently verified: 5,665 of 10,188 rows in the real index have `total_events <= 1 AND
+  total_tokens = 0` (claude_code 3,303, hermes 936, cursor 644, antigravity 376, codex 283,
+  grok 49, pi 46, gemini 23, opencode 5). Real examples confirmed on disk: `~/.claude/policy-limits.json`,
+  `~/.claude/remote-settings.json`, multiple `~/.claude/telemetry/1p_failed_events.*.json` files
+  — config/telemetry artifacts, not agent sessions, matched by adapter file-discovery logic
+  that's too permissive. Not fixed this round (scanner/adapter work, out of wave 3's scope).
+  Candidate next step: tighten whichever adapters' `.detect()`/file-matching accepts these, or
+  filter at scan time before they become rows at all.
+- **The non-worktree main checkout has a stale `agentworth serve` running.**
+  `/Users/saurabh/code/unfoundbox/agentworth` (not this worktree) is on `main` at `fd4d364` —
+  predates every fix in this doc — and has a live server (native binary + npm-launcher-wrapped
+  node process, both on port 3252) serving from it. Same checkout already flagged earlier today
+  for peer leftovers (modified `SessionInspector.tsx`/`api.ts`/`Cargo.toml`, untracked
+  `HANDOFF*.md`). Not killed this round — didn't want to interrupt something without knowing
+  who's using it. Flagging for whoever next touches that checkout.
+- **`/api/traces/:id` has no redaction and returned 64MB for one real session** (29,642 events,
+  full payload inline, uncompressed). The redaction gap is fixed above (in the engine, ready to
+  wire in); the size/pagination problem is separate and still open, noted as deliberately out
+  of `docs/specs/mcp-server.md`'s v1 scope.
 - **Dashboard Archaeology pane is dead-wired.** `ArchaeologyPane.tsx` reads `stats.archaeology` off `/api/stats`'s response, but `get_stats_handler` never sets that key — `compute_archaeology_highlights` is only wired to the separate `/api/archaeology` route. The pane always shows its empty state; only the legacy static HTML page's own fetch actually gets real data. Found while fixing that function's session cap (unrelated bug, not touched there).
 - **`verdict_breakdown.real_verified_rate` / 50-session limit — done** (commit `409f9ff` on `fix/verdict-breakdown-session-limit`). `list_sessions_filtered` now treats `limit: None` as unlimited (skips the `LIMIT` clause; uses SQLite's `LIMIT -1` when an offset is given with no limit) instead of silently defaulting to 50. Audited every other `list_sessions_filtered`/`SessionFilter` call site in `apps/cli` and `crates/storage`'s own tests — all already pass an explicit `Some(n)`, so none needed changes; one other spot (`run_traces_command` in `main.rs`) also asked for `limit: None` and gets fixed for free by the same change. New regression test seeds 60 non-stub sessions and asserts `compute_verdict_breakdown`'s buckets sum to the true total, not 50. Verified on lenovo: `cargo build --workspace` exit 0; `cargo test --workspace` exit 0, 303 passed, 0 failed (up from 301 baseline, +2 from the one new test compiled into both the `agentworth` and `agwt` binary targets).
 - `models_usage_count` / `tools_usage_count` zero-seeding (low priority, see Decisions below).

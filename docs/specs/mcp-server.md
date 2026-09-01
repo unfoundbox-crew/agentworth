@@ -168,22 +168,17 @@ Wraps `Scanner::load_trace(&id)` plus `TraceScorer::score()`,
 `recoveries` is `Vec<RecoverySignal>` (`failure_sequence`, `failure_summary`,
 `recovery_sequence`, `recovery_summary`, `steps_to_recover`).
 
-**New work, not currently true of any existing code path:** neither
-`/api/traces/:id` nor anything else redacts `outcomes` or `recoveries`.
-`Redactor::redact_trace` (`crates/redaction/src/redactor.rs`) only walks
-`trace.events`, `trace.provenance.source_path`, and `trace.metadata` — it
-never touches `OutcomeEvidence.summary` or `RecoverySignal.failure_summary`
-/ `recovery_summary`, which are free text derived from event content and
-can carry the same secrets an event can. The only place redaction is wired
-up at all today is `POST /api/export/:id`, and only for the `trace` object.
-This tool has to add what doesn't exist yet: after computing `score`,
-`outcomes`, and `recoveries` from the **raw** trace (detection accuracy
-shouldn't depend on redacted text), run every `OutcomeEvidence.summary` and
-`RecoverySignal.failure_summary` / `recovery_summary` through
-`Redactor::new().redact_text()` before returning, exactly as
-`trace.events` already do via `redact_trace`. This is a small addition
-(the primitive already exists, `redact_text` is public), not a new
-subsystem — but it does not exist today and someone has to write it.
+**Done, ahead of tool implementation** (backend session, 2026-09-01):
+`Redactor::redact_outcome_evidence(&[OutcomeEvidence]) -> Vec<OutcomeEvidence>`
+and `Redactor::redact_recovery_signal(&[RecoverySignal]) -> Vec<RecoverySignal>`
+now exist in `crates/redaction/src/redactor.rs`, redacting `summary` /
+`failure_summary` / `recovery_summary` / `correlated_files` the same way
+`redact_trace` already redacts `trace.events`. When `session_get` gets
+built: compute `score`/`outcomes`/`recoveries` from the raw trace first
+(detection accuracy shouldn't depend on redacted text), then run
+`outcomes`/`recoveries` through these two functions on the *same* redactor
+instance used for the trace — see the repository-identity note right below,
+which is exactly why "same instance" matters now.
 
 ### `blame_find`
 
@@ -290,22 +285,29 @@ content. Raw is opt-in, per call, never global.**
   `include_raw: true` returns the unredacted trace. There is no
   server-side global setting that flips the default; every call chooses.
 
-**A real gap this exposes, worth stating plainly rather than papering
-over:** the redaction engine's 13 rules (verified by reading
-`crates/redaction/src/rules.rs` directly — not the 15 the product brief for
-this doc assumed) cover API keys, JWTs, env vars, credential URLs, emails,
-private IPs, PEM keys, and home-directory usernames. **They do not cover
-repository names or project directory names.** `AGENTS.md`'s own privacy
-section lists "repository names" alongside secrets and absolute paths as
-things default export must avoid leaking — but the only rule touching paths
-strips the *username* segment of a home directory (`/Users/saurabh` → `~`),
-leaving the rest of the path, including the repo name, intact. So today,
-even "redacted," `session_get` will hand a remote model the real repository
-name via `source_path` and `trace.provenance.source_path`. That's a real
-product gap, not a hypothetical — fixing it is redaction-engine work, out
-of scope for this doc, but it should be fixed before `include_raw: false`
-is trusted as actually safe to hand to a remote model by default. Flagged
-under Open questions.
+**Fixed, not just flagged** (backend session, 2026-09-01): the named-rule
+gap above was real — the redaction engine's rules cover API keys, JWTs, env
+vars, credential URLs, emails, private IPs, PEM keys, and home-directory
+usernames, but nothing matched a repository or project name, so even
+"redacted" output leaked it via `source_path`. `crates/redaction/src/rules.rs`
+now has `repository_identity_rule(repo_or_workspace: &str) -> Option<RedactionRule>`,
+which builds a literal-match rule for one session's own identity (derived
+via `agentworth_schema::extract_repository_or_workspace`, moved there from
+`agentworth-storage` — still re-exported from storage so existing callers
+don't change — specifically so `agentworth-redaction` could reach it
+without taking on storage's SQLite dependency). `Redactor::for_trace(&trace) -> Self`
+returns a redactor augmented with this trace's own identity rule;
+`redact_trace` calls it internally now, so every existing caller (`export
+--redact`, and this tool once built) gets repository-name protection for
+free. `session_get`'s `include_raw: false` path should build its redactor
+via `Redactor::new().for_trace(&trace)`, then use that same instance for
+`redact_trace`, `redact_outcome_evidence`, and `redact_recovery_signal` —
+that's what makes the repository-identity rule apply to all three instead
+of just the trace object. Real tests in
+`crates/redaction/tests/redactor_test.rs` cover the rule builder, the
+end-to-end trace case, and the composition across trace/outcomes/recoveries
+via one `for_trace`-augmented instance. Verified on lenovo — see this
+repo's `docs/DECISION-INBOX.md` for the real build/test output.
 
 **Nothing here changes what's on disk.** Every tool reads through
 `Storage`/`Scanner` the same way the HTTP routes already do. No tool writes
@@ -384,17 +386,16 @@ person.
 
 ## Open questions
 
-- Should `outcomes`/`recoveries` redaction land as a shared
-  `agentworth-redaction` function (`Redactor::redact_outcome_evidence`,
-  `Redactor::redact_recovery_signal`) usable by both this MCP tool and a
-  future `/api/traces/:id?redact=true` route, rather than one-off logic
-  inside the MCP handler? Feels like the right shape but isn't decided
-  here.
-- The repository-name gap in the redaction engine (no rule strips project/
-  repo names from paths) — is this fixed in `crates/redaction` before
-  `mcp-server.md` ships, or does `session_get`'s redacted mode ship with a
-  documented caveat that repo names still leak? These are different launch
-  postures and a human should pick one.
+- Both redaction questions that used to be here — whether `outcomes`/
+  `recoveries` redaction should be a shared `agentworth-redaction` function,
+  and whether the repository-name gap gets fixed before this ships or
+  documented as a caveat — are resolved. See the "New work"/"A real gap"
+  notes above: both landed as real `agentworth-redaction` functions
+  (`redact_outcome_evidence`, `redact_recovery_signal`, `for_trace`), not a
+  documented caveat. `/api/traces/:id?redact=true` (mentioned as a possible
+  second consumer) doesn't exist yet — whoever adds it should reuse these
+  same functions rather than one-off logic, but that route itself is still
+  unbuilt and out of scope here.
 - Is a `scan_trigger` tool ever wanted, gated behind an explicit
   confirmation round-trip the way the redaction opt-in is, rather than
   omitted entirely? Left out of v1 above, but "never" wasn't argued for —
