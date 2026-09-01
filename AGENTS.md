@@ -334,7 +334,37 @@ visible from reading the source.
    cargo or the binary ships a stub — which is what every release before 0.1.6
    did. `ci.yml` greps the built binary to prove the UI is actually inside it.
 
-6. **Test the dashboard without touching Rust.**
+7. **agentworth.dev is on Vercel, deployed by CLI. It is not GitHub Pages.**
+   `deploy-pages.yml` is green and nobody reads what it publishes — the domain
+   is served by Vercel behind Cloudflare. Both `unfoundbox` and
+   `unfoundbox-crew` are personal GitHub accounts, not orgs, and Vercel's Git
+   integration cannot import a personal-account repo you are only a
+   collaborator on. That restriction never bit because deployment goes through
+   the CLI, which ignores it. The project is already linked; `.vercel/` is
+   gitignored.
+
+   To ship the marketing site:
+
+   ```
+   cd apps/web
+   npm run build                      # verify tokens are present first
+   vercel build --prod --yes
+   vercel deploy --prebuilt --prod --yes
+   ```
+
+   Build LOCALLY, not on Vercel. `apps/web/src/index.css` imports
+   `@ui/tokens.css` from `../../packages/ui`, which is outside the deploy root,
+   so a remote build silently produces a bundle with no design tokens and no
+   Geist. That is exactly how the site served a pre-design-system build for a
+   full day while three deploys reported success. Always check
+   `grep -c '\-\-mv-' dist/assets/*.css` before deploying.
+
+8. **Do not build in the shared checkout at `~/code/unfoundbox/agentworth`.**
+   It carries other sessions' uncommitted work, so `git pull` there fails
+   silently and you end up building a commit from hours ago. Use your own
+   worktree and `git checkout --detach origin/main`.
+
+9. **Test the dashboard without touching Rust.**
    `agentworth serve --port 3250 --dist apps/dashboard/dist` serves any local
    build against the real index, which on the owner's machine holds ~10k real
    sessions. Far faster than rebuilding the CLI, and real data has caught every

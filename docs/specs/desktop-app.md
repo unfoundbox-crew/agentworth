@@ -103,7 +103,7 @@ What it can realistically hold: an icon reflecting idle / scanning / error state
 
 ## Explicitly out of scope
 
-- **Accounts, telemetry, auto-update phoning home, or cloud sync.** None of this changes because the product now has an installer. `docs/DECISIONS.md` already states local-only is a privacy line, not a scaling decision — a `.dmg` is a distribution format, it does not reopen that decision.
+- **Accounts, telemetry, auto-update phoning home, or cloud sync.** None of this changes because the product now has an installer. Local-only is a privacy line rather than a scaling decision — a `.dmg` is a distribution format, and it does not reopen that.
 - Tauri ships an official updater plugin that checks a remote URL for new versions. That is a network call, and AgentWorth has never made one. If auto-update is wanted later, it needs its own explicit decision — it does not ship by default just because Tauri makes it easy.
 - A signed Windows/Linux desktop build, unless real demand shows up — see sequencing below.
 
