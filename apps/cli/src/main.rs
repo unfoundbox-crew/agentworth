@@ -14,6 +14,8 @@ use tracing_subscriber::EnvFilter;
 
 #[path = "commands/merge.rs"]
 mod merge;
+#[path = "commands/watch.rs"]
+mod watch;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -240,6 +242,25 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Watch active session transcripts and detect doom loops or file edit thrashing
+    Watch {
+        /// Polling interval in seconds (default: 3)
+        #[arg(short, long, default_value_t = 3)]
+        interval_secs: u64,
+
+        /// Run a single poll check and exit immediately
+        #[arg(long)]
+        poll_once: bool,
+
+        /// Output findings as formatted JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Custom path directories to monitor
+        #[arg(short, long)]
+        paths: Vec<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -342,6 +363,14 @@ fn main() -> Result<()> {
         }
         Commands::Merge { source_db, json } => {
             merge::run_merge_command(source_db, json, cli.db_path)?;
+        }
+        Commands::Watch {
+            interval_secs,
+            poll_once,
+            json,
+            paths,
+        } => {
+            watch::run_watch_command(interval_secs, poll_once, json, paths)?;
         }
     }
 
