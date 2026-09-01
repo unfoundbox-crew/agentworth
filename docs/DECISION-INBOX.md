@@ -43,7 +43,7 @@ Integration branch: `integrate/handoff-batch-1`, currently at commit `c438719`, 
 | ModelSwitch events across 20 adapters | `feat/adapter-modelswitch-events` | Building |
 | Persisted CLI config/defaults | `feat/cli-persisted-config` | Building |
 | Recovery-loop human-vs-agent distinction | `feat/recovery-loop-human-vs-agent` | Building |
-| Context-Rot Marker | `feat/context-rot-marker` | Building |
+| Context-Rot Marker | `feat/context-rot-marker` | **Done.** New `ContextRotDetector` in `crates/scoring/src/context_rot.rs` (new file, plus a 4-line lib.rs export — did not touch `scorer.rs` to avoid colliding with `feat/scoring-per-model-attribution` in the same crate). Compares a session's Early/Middle/Late thirds (by cumulative token growth, falling back to event-count thirds) against *itself*, not an absolute threshold. 9 new tests, 220/220 workspace tests passing on lenovo (up from 211). **Confidence: weak-to-moderate, by design.** The mechanism (self-comparison, require the end to be the worst point, require 2+ independent signals to agree) is reasoned and tested against constructed fixtures; the exact thresholds/weights are anchored on those fixtures, not on any real labeled session data, because none exists yet. Half the score also inherits `OutcomeDetector`'s keyword-matching noise (same class of issue as the batch-2 casing bug). Treat `rot_score` as "look at this session before that one," never as a calibrated probability — full reasoning and limitations are in the module doc comment. |
 
 **Deferred, not dispatched today:**
 - **Threat Digest** — depends on the secret detector above actually landing first. Next wave.
