@@ -436,19 +436,31 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
               <div>
                 <div className="kv-row">
                   <span className="k">Input tokens</span>
-                  <span className="v">{trace.stats.token_usage.input_tokens.toLocaleString()}</span>
+                  <span className="v">{(trace.stats?.token_usage?.input_tokens ?? 0).toLocaleString()}</span>
                 </div>
                 <div className="kv-row">
                   <span className="k">Output tokens</span>
-                  <span className="v">{trace.stats.token_usage.output_tokens.toLocaleString()}</span>
+                  <span className="v">{(trace.stats?.token_usage?.output_tokens ?? 0).toLocaleString()}</span>
                 </div>
                 <div className="kv-row">
                   <span className="k">Cache read</span>
-                  <span className="v text-success">{trace.stats.token_usage.cache_read_input_tokens.toLocaleString()}</span>
+                  <span className="v text-success">
+                    {(
+                      trace.stats?.token_usage?.cache_read_input_tokens ??
+                      (trace.stats?.token_usage as any)?.cache_read_tokens ??
+                      0
+                    ).toLocaleString()}
+                  </span>
                 </div>
                 <div className="kv-row">
                   <span className="k">Cache creation</span>
-                  <span className="v">{trace.stats.token_usage.cache_creation_input_tokens.toLocaleString()}</span>
+                  <span className="v">
+                    {(
+                      trace.stats?.token_usage?.cache_creation_input_tokens ??
+                      (trace.stats?.token_usage as any)?.cache_creation_tokens ??
+                      0
+                    ).toLocaleString()}
+                  </span>
                 </div>
                 <div className="kv-row" style={{ borderTop: '1px solid var(--mv-border)', paddingTop: 8, marginTop: 2 }}>
                   <span className="k font-semibold text-ink">Total exhaust</span>

@@ -319,6 +319,29 @@
   padding: 8px 0 20px;
 }
 
+/* ---------------- error boundary fallback ---------------- */
+.shell-root .dashboard-error-boundary {
+  margin: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--mv-danger-border);
+  background: var(--mv-danger-soft);
+  border-radius: 8px;
+}
+.shell-root .dashboard-error-boundary-title {
+  margin: 0 0 4px;
+  color: var(--mv-danger);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+.shell-root .dashboard-error-boundary-detail {
+  margin: 0 0 10px;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-word;
+}
+
 .shell-root .shell-insp-header {
   display: flex;
   align-items: baseline;

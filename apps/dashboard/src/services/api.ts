@@ -2,6 +2,7 @@ import {
   AggregateStats,
   AgentWorthTrace,
   SessionSummary,
+  TokenUsage,
   UsageRollupResponse,
   PacingResponse,
   BlameResponse,
@@ -379,6 +380,21 @@ export async function fetchTraces(
 }
 
 /**
+ * The backend serializes TokenUsage with short field names
+ * (cache_read_tokens/cache_creation_tokens); the frontend reads the long
+ * names (cache_read_input_tokens/cache_creation_input_tokens) everywhere.
+ * Accepts either so a session-detail render never sees `undefined` here.
+ */
+function normalizeTokenUsage(raw: any): TokenUsage {
+  return {
+    input_tokens: raw?.input_tokens ?? 0,
+    output_tokens: raw?.output_tokens ?? 0,
+    cache_read_input_tokens: raw?.cache_read_tokens ?? raw?.cache_read_input_tokens ?? 0,
+    cache_creation_input_tokens: raw?.cache_creation_tokens ?? raw?.cache_creation_input_tokens ?? 0,
+  };
+}
+
+/**
  * Fetches trace detail from /api/traces/:id.
  */
 export async function fetchTraceDetail(
@@ -388,15 +404,17 @@ export async function fetchTraceDetail(
     const res = await fetch(`${BASE_URL}/traces/${encodeURIComponent(sessionId)}`);
     if (res.ok) {
       const data = await res.json();
-      if (data.trace) {
-        return {
-          ...data.trace,
-          score: data.score || data.trace.score,
-          outcomes: data.outcomes || data.trace.outcomes,
-          recoveries: data.recoveries || data.trace.recoveries,
-        };
-      }
-      return data;
+      const rawTrace = data.trace ?? data;
+      return {
+        ...rawTrace,
+        stats: {
+          ...rawTrace.stats,
+          token_usage: normalizeTokenUsage(rawTrace.stats?.token_usage),
+        },
+        score: data.score || rawTrace.score,
+        outcomes: data.outcomes || rawTrace.outcomes,
+        recoveries: data.recoveries || rawTrace.recoveries,
+      };
     }
   } catch (_err) {
     // Trace not found
