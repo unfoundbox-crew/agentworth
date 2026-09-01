@@ -73,12 +73,14 @@ fn test_cli_scan_and_stats_commands() {
     stats_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("Total Sessions:"))
-        .stdout(predicate::str::contains("Verdict Breakdown:"))
-        .stdout(predicate::str::contains("Test or Build Passed (Rung 3)"))
-        .stdout(predicate::str::contains("Real Verified Tasks:"))
+        .stdout(predicate::str::contains("agentworth stats"))
+        .stdout(predicate::str::contains("EVIDENCE LADDER"))
+        .stdout(predicate::str::contains("the evidence line"))
+        .stdout(predicate::str::contains("tests passed"))
+        .stdout(predicate::str::contains("VERIFIED"))
         .stdout(predicate::str::contains("claude_code"))
-        .stdout(predicate::str::contains("claude-3-5-sonnet-20241022"))
+        // Models lose the vendor prefix and the release date; the family stays.
+        .stdout(predicate::str::contains("3-5-sonnet"))
         .stdout(predicate::str::contains("FileEdit"))
         .stdout(predicate::str::contains("Bash"));
 
@@ -171,10 +173,10 @@ fn test_cli_traces_list_and_filters() {
     traces_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("VERDICT"))
+        // The bracketed badge became a five-cell meter; the ladder is spatial now.
+        .stdout(predicate::str::contains("EVIDENCE"))
         .stdout(predicate::str::contains("SCORE"))
-        .stdout(predicate::str::contains("[TEST_PASSED]"))
-        .stdout(predicate::str::contains("SESSION ID"))
+        .stdout(predicate::str::contains("SESSION"))
         .stdout(predicate::str::contains(&session_id))
         .stdout(predicate::str::contains("claude_code"));
 
