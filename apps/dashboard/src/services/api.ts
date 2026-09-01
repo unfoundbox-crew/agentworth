@@ -386,11 +386,15 @@ export async function fetchTraces(
  * Accepts either so a session-detail render never sees `undefined` here.
  */
 function normalizeTokenUsage(raw: any): TokenUsage {
+  const cacheRead = raw?.cache_read_tokens ?? raw?.cache_read_input_tokens ?? 0;
+  const cacheCreation = raw?.cache_creation_tokens ?? raw?.cache_creation_input_tokens ?? 0;
   return {
     input_tokens: raw?.input_tokens ?? 0,
     output_tokens: raw?.output_tokens ?? 0,
-    cache_read_input_tokens: raw?.cache_read_tokens ?? raw?.cache_read_input_tokens ?? 0,
-    cache_creation_input_tokens: raw?.cache_creation_tokens ?? raw?.cache_creation_input_tokens ?? 0,
+    cache_read_tokens: cacheRead,
+    cache_creation_tokens: cacheCreation,
+    cache_read_input_tokens: cacheRead,
+    cache_creation_input_tokens: cacheCreation,
   };
 }
 
