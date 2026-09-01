@@ -19,7 +19,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "agwt"
-path = "src/main.rs"
+path = "src/bin/agwt.rs"
 
 [dependencies]
 agentworth-schema.workspace = true

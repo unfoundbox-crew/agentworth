@@ -77,11 +77,19 @@ export function getCacheDir(version, homeDir) {
 /**
  * Returns the expected native binary name for the target platform.
  *
+ * `invokedAs` selects between the two native binaries the release tarball ships
+ * (`agentworth` and its `agwt` alias, see apps/cli/Cargo.toml's two [[bin]] targets) --
+ * anything other than exactly 'agwt' resolves to the `agentworth` binary, so an
+ * unrecognized or missing invocation name still gets the primary binary rather than
+ * silently 404ing on a name nobody built.
+ *
  * @param {string} [platform=process.platform]
+ * @param {string} [invokedAs] - basename the launcher was invoked as ('agentworth' or 'agwt')
  * @returns {string}
  */
-export function getBinaryName(platform = process.platform) {
-  return platform === 'win32' ? 'agentworth.exe' : 'agentworth';
+export function getBinaryName(platform = process.platform, invokedAs) {
+  const base = invokedAs === 'agwt' ? 'agwt' : 'agentworth';
+  return platform === 'win32' ? `${base}.exe` : base;
 }
 
 /**
@@ -222,6 +230,7 @@ function pathBinaryMatchesVersion(binPath, expected) {
  * @param {string} [options.version]
  * @param {string} [options.homeDir]
  * @param {boolean} [options.silent=false]
+ * @param {string} [options.invokedAs] - 'agentworth' or 'agwt'; picks which extracted binary is returned
  * @returns {Promise<string>} Path to extracted binary
  */
 export async function downloadAndExtractBinary(options = {}) {
@@ -229,7 +238,7 @@ export async function downloadAndExtractBinary(options = {}) {
   const arch = options.arch || process.arch;
   const version = options.version || getPackageVersion();
   const targetTriple = getTargetTriple(platform, arch);
-  const binName = getBinaryName(platform);
+  const binName = getBinaryName(platform, options.invokedAs);
 
   if (!targetTriple) {
     throw new Error(`Unsupported platform/architecture: ${platform}-${arch}`);
@@ -369,6 +378,7 @@ export function findPathBinary(binName = getBinaryName(), pathEnv = process.env.
  * @param {NodeJS.ProcessEnv} [options.env=process.env]
  * @param {string} [options.baseDir=__dirname]
  * @param {string} [options.homeDir]
+ * @param {string} [options.invokedAs] - 'agentworth' or 'agwt'; selects which native binary to look for
  * @returns {{ found: boolean, path?: string, source?: string, error?: string }}
  */
 export function resolveBinary(options = {}) {
@@ -378,7 +388,7 @@ export function resolveBinary(options = {}) {
   const env = options.env || process.env;
   const baseDir = options.baseDir || __dirname;
   const homeDir = options.homeDir || (env.HOME ? env.HOME : os.homedir());
-  const binName = getBinaryName(platform);
+  const binName = getBinaryName(platform, options.invokedAs);
   const platformKey = getPlatformKey(platform, arch);
 
   // 1. Explicit environment variable override
@@ -547,6 +557,7 @@ export function buildChildEnv(baseEnv, npmVersion) {
  *
  * @param {string[]} [argv=process.argv.slice(2)]
  * @param {Object} [options={}]
+ * @param {string} [options.invokedAs] - 'agentworth' or 'agwt'; which native binary to resolve
  * @returns {number} Exit code
  */
 export function run(argv = process.argv.slice(2), options = {}) {
@@ -562,7 +573,8 @@ export function run(argv = process.argv.slice(2), options = {}) {
         await downloadAndExtractBinary({
           platform: ${JSON.stringify(options.platform || process.platform)},
           arch: ${JSON.stringify(options.arch || process.arch)},
-          homeDir: ${JSON.stringify(options.homeDir || (options.env && options.env.HOME) || '')}
+          homeDir: ${JSON.stringify(options.homeDir || (options.env && options.env.HOME) || '')},
+          invokedAs: ${JSON.stringify(options.invokedAs || '')}
         });
       `;
       const dlResult = spawnSync(process.execPath, ['--input-type=module', '-e', syncDownloadScript], {
