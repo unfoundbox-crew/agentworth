@@ -48,7 +48,7 @@ While verifying, the branch's own isolated test run showed the `agentworth`/`agw
 | High-entropy secret detector | `feat/secret-detector-entropy` | Building |
 | ModelSwitch events across 20 adapters | `feat/adapter-modelswitch-events` | Building |
 | Persisted CLI config/defaults | `feat/cli-persisted-config` | Building |
-| Recovery-loop human-vs-agent distinction | `feat/recovery-loop-human-vs-agent` | Building |
+| Recovery-loop human-vs-agent distinction | `feat/recovery-loop-human-vs-agent` | Done. Built clean + `cargo test --workspace` green on lenovo (0 failed, 221 passed, incl. 7 new/extended `watch::` tests). Heuristic: race from the alert forward — whichever comes first, a `UserMessage` event or the loop's own pattern breaking on the agent's side. Confidence: moderate, not high — it's correlation, not causation (an unrelated user message ahead of the break still reads as "rescued"), it has no time/distance bound, and it silently misses a human interrupt that never lands as a `UserMessage` (e.g. a raw Ctrl+C an adapter doesn't parse). Full reasoning and limitations are in the doc comment on `classify_resolution` in `apps/cli/src/commands/watch.rs`. |
 | Context-Rot Marker | `feat/context-rot-marker` | Building |
 
 **Deferred, not dispatched today:**
