@@ -81,6 +81,7 @@ While verifying, the branch's own isolated test run showed the `agentworth`/`agw
 
 - `models_usage_count` / `tools_usage_count` zero-seeding (low priority, see Decisions below).
 - Leftover dirty state in 9 local worktrees + `lane3-bundle` on lenovo — Saurabh's call.
+- **`Cargo.lock` staleness — done** (commit `b27645d`). The original symptom (`agentworth-*` locked at `0.1.3` vs workspace `0.1.5`) turned out to already be fixed by `bf5a5ff` — not present by the time this ran. Investigation found the real, current problem instead: `notify`/`tokio-stream` (from `feat/sse-live-tail`) and `toml` (from `feat/cli-persisted-config`) were added to Cargo.toml files but never made it into Cargo.lock through the sequential merges, so `cargo build --workspace --locked` failed outright. Fixed with a plain `cargo build --workspace` (no `--locked`, no `cargo update`) on lenovo — added only the missing subtrees; the only change to an existing entry was one benign cfg(windows)-only edge. Verified: `cargo build --workspace --locked` exits 0, `cargo test --workspace --locked` — 298 passed, 0 failed, matching baseline exactly.
 
 ## Wave 2 — dispatched after batch-2b landed (2026-09-01)
 
