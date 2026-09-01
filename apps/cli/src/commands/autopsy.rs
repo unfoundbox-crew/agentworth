@@ -76,8 +76,18 @@ pub fn perform_prompt_autopsy(
     min_occurrences: usize,
 ) -> Result<AutopsyReport> {
     let scanner = Scanner::new(storage.clone());
+    // `limit: None` means genuinely unlimited (see SessionFilter::limit's doc comment in
+    // crates/storage/src/lib.rs). This used to be `Some(10000)`, which silently dropped
+    // sessions past the cap even though this module's own doc comment claims to cover "all
+    // indexed sessions" -- the same bug shape already fixed for compute_verdict_breakdown and
+    // get_stats_handler. This loop is heavier than those two: it calls scanner.load_trace per
+    // session (a disk read plus a full adapter parse), not just a summary-row scan. Still safe
+    // to leave unbounded: `autopsy` is a CLI command a person runs on demand, not an HTTP
+    // response someone is blocked on, and compute_verdict_breakdown already runs this same
+    // unbounded per-session trace-load pattern on every `agentworth stats` call, which is
+    // invoked far more often than autopsy will be.
     let sessions = storage.list_sessions_filtered(&SessionFilter {
-        limit: Some(10000),
+        limit: None,
         include_stubs: Some(true),
         ..Default::default()
     })?;
@@ -218,6 +228,13 @@ pub fn run_autopsy_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentworth_adapter_sdk::ScanOptions;
+    use agentworth_adapters::ClaudeCodeAdapter;
+    use agentworth_schema::{AgentWorthTrace, Provenance, TokenUsage};
+    use chrono::{Duration, Utc};
+    use serde_json::json;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_prompt_normalization_and_intent() {
@@ -226,5 +243,88 @@ mod tests {
         assert!(norm.contains("no that is wrong"));
         assert!(norm.contains("don t touch that file"));
         assert!(is_correction_intent(&norm));
+    }
+
+    /// Regression test for the old `Some(10000)` cap on perform_prompt_autopsy's
+    /// list_sessions_filtered call -- same bug shape as the already-fixed
+    /// compute_verdict_breakdown and get_stats_handler cases. Seeds one real, on-disk,
+    /// adapter-parsed session carrying a correction phrase, dated far older than 10,050 cheap
+    /// filler sessions. Under the old cap (most-recent-10,000, since the default order is
+    /// started_at DESC), the real session would rank 10,051th and be silently dropped even
+    /// though this module's own doc comment claims to cover "all indexed sessions." The fixture
+    /// size is deliberately chosen to exceed the old cap: anything smaller would pass on both
+    /// the old and new code and wouldn't exercise the fix.
+    #[test]
+    fn test_perform_prompt_autopsy_scans_beyond_old_10000_cap() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Arc::new(Storage::open_path(tmp.path()).unwrap());
+
+        // The one real, parseable session: oldest of the bunch, carrying a correction phrase.
+        // Going through the real ClaudeCodeAdapter parse path (via run_scan), not a hand-built
+        // AgentWorthTrace, so the test also proves scanner.load_trace succeeds on it later.
+        let mut old_session = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let line1 = json!({
+            "type": "user",
+            "timestamp": "2000-01-01T00:00:00Z",
+            "content": "no, please revert that change",
+        });
+        let line2 = json!({
+            "type": "assistant",
+            "timestamp": "2000-01-01T00:00:05Z",
+            "content": [{"type": "text", "text": "Reverted."}],
+        });
+        writeln!(old_session, "{}", line1).unwrap();
+        writeln!(old_session, "{}", line2).unwrap();
+
+        let scan_only_claude =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+        let scan_summary = scan_only_claude
+            .run_scan(
+                &ScanOptions {
+                    custom_paths: vec![old_session.path().to_path_buf()],
+                    force: true,
+                },
+                |_, _| {},
+            )
+            .expect("scan the real session");
+        assert_eq!(scan_summary.scanned_sessions, 1);
+
+        // Filler sessions: cheap SQL-only rows with no backing file on disk, all newer than the
+        // real session above, so they outrank it under started_at DESC and push it past the old
+        // Some(10000) cap. scanner.load_trace fails fast on these (missing file) and
+        // perform_prompt_autopsy skips them via `continue`, so they contribute nothing to the
+        // report either way -- they exist purely to inflate the total past the old cap.
+        let start = Utc::now();
+        const FILLER_SESSION_COUNT: i64 = 10_050;
+        for i in 0..FILLER_SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/test/autopsy_cap_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_autopsy_cap_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-autopsy-cap-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).unwrap();
+        }
+
+        let report = perform_prompt_autopsy(&storage, 1).expect("autopsy should succeed");
+
+        assert_eq!(
+            report.total_user_messages_analyzed, 1,
+            "the one real session's user message must be scanned even with 10,050 newer \
+             sessions in the index -- the old Some(10000) cap would have pushed it out of the \
+             most-recent-10,000 window entirely"
+        );
+        assert_eq!(report.clusters.len(), 1, "the correction phrase must form a cluster");
+        assert_eq!(report.clusters[0].occurrences, 1);
+        assert!(report.clusters[0].normalized_phrase.contains("revert"));
     }
 }
