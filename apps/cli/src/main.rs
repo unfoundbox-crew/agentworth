@@ -12,6 +12,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
+#[path = "commands/watch.rs"]
+mod watch;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "agentworth",
@@ -222,6 +225,25 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Watch active session transcripts and detect doom loops or file edit thrashing
+    Watch {
+        /// Polling interval in seconds (default: 3)
+        #[arg(short, long, default_value_t = 3)]
+        interval_secs: u64,
+
+        /// Run a single poll check and exit immediately
+        #[arg(long)]
+        poll_once: bool,
+
+        /// Output findings as formatted JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Custom path directories to monitor
+        #[arg(short, long)]
+        paths: Vec<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -319,6 +341,14 @@ fn main() -> Result<()> {
             });
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
+        }
+        Commands::Watch {
+            interval_secs,
+            poll_once,
+            json,
+            paths,
+        } => {
+            watch::run_watch_command(interval_secs, poll_once, json, paths)?;
         }
     }
 
