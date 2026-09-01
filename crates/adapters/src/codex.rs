@@ -48,6 +48,18 @@ impl AgentAdapter for CodexAdapter {
         "codex"
     }
 
+    fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
+        agentworth_adapter_sdk::AdapterCapabilities {
+            prompts: true,
+            tokens: true,
+            tools: true,
+            shell: true,
+            diffs: true,
+            thinking: false,
+            outcomes: true,
+        }
+    }
+
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
         let mut discovered = Vec::new();
 

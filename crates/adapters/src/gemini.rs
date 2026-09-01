@@ -66,6 +66,18 @@ impl AgentAdapter for GeminiAdapter {
         "gemini"
     }
 
+    fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
+        agentworth_adapter_sdk::AdapterCapabilities {
+            prompts: true,
+            tokens: true,
+            tools: true,
+            shell: true,
+            diffs: true,
+            thinking: true,
+            outcomes: true,
+        }
+    }
+
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
         let mut discovered = Vec::new();
 
