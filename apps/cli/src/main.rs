@@ -28,6 +28,8 @@ mod recall;
 mod bisect;
 #[path = "commands/pr_blame.rs"]
 mod pr_blame;
+#[path = "commands/config.rs"]
+mod config;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -46,6 +48,13 @@ struct Cli {
         help = "Custom path for the local SQLite index database"
     )]
     db_path: Option<PathBuf>,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Force text output even if persisted config defaults to JSON (see `agentworth config`)"
+    )]
+    no_json: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -77,9 +86,9 @@ enum Commands {
 
     /// List indexed traces with optional filtering
     Traces {
-        /// Maximum number of traces to display
-        #[arg(short, long, default_value_t = 20)]
-        limit: usize,
+        /// Maximum number of traces to display (default 20, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
 
         /// Filter by adapter name (e.g. claude_code, codex, gemini, opencode)
         #[arg(short, long)]
@@ -138,9 +147,9 @@ enum Commands {
         /// Search query (natural language or code snippet)
         query: String,
 
-        /// Maximum number of results to return
-        #[arg(short, long, default_value_t = 10)]
-        limit: usize,
+        /// Maximum number of results to return (default 10, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
 
         /// Minimum similarity score threshold (0.0 to 1.0)
         #[arg(long, default_value_t = 0.0)]
@@ -198,9 +207,9 @@ enum Commands {
 
     /// View deep usage, pacing, and token expenditure rollups
     Usage {
-        /// Rollup period: day, week, or month
-        #[arg(short, long, default_value = "day", value_parser = ["day", "week", "month"])]
-        period: String,
+        /// Rollup period: day, week, or month (default day, or persisted `config period`)
+        #[arg(short, long, value_parser = ["day", "week", "month"])]
+        period: Option<String>,
 
         /// Show 5-hour rolling pacing window (burn rate, active models, quota headroom)
         #[arg(long)]
@@ -214,9 +223,9 @@ enum Commands {
         #[arg(long)]
         alert_above: Option<f64>,
 
-        /// Maximum number of rows to display
-        #[arg(short, long, default_value_t = 20)]
-        limit: usize,
+        /// Maximum number of rows to display (default 20, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
 
         /// Group the rollup by model instead of adapter (e.g. how many tokens
         /// each of claude-opus-5 / claude-sonnet-5 / claude-fable-5 used)
@@ -288,9 +297,9 @@ enum Commands {
     /// List sessions whose completion claims were never independently corroborated by tests or CI
     #[command(name = "blind-spots")]
     BlindSpots {
-        /// Maximum number of sessions to list (default: 20)
-        #[arg(short, long, default_value_t = 20)]
-        limit: usize,
+        /// Maximum number of sessions to list (default 20, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
 
         /// Output results as JSON
         #[arg(long)]
@@ -313,9 +322,9 @@ enum Commands {
         /// Search query to match against previous trajectories
         query: String,
 
-        /// Maximum number of results to return (default: 5)
-        #[arg(short, long, default_value_t = 5)]
-        limit: usize,
+        /// Maximum number of results to return (default 5, or persisted `config limit`)
+        #[arg(short, long)]
+        limit: Option<usize>,
 
         /// Minimum similarity score threshold (0.0 to 1.0)
         #[arg(long, default_value_t = 0.0)]
@@ -346,6 +355,43 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Get, set, or list persisted CLI defaults (~/.agentworth/config.toml)
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigAction {
+    /// List every persisted config key and its current value
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the persisted value for one config key
+    Get {
+        /// Config key: json, limit, or period
+        key: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Persist a default value for one config key
+    Set {
+        /// Config key: json, limit, or period
+        key: String,
+
+        /// Value to store (json: true/false, limit: a number, period: day/week/month)
+        value: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -362,18 +408,31 @@ fn main() -> Result<()> {
         .with_target(false)
         .init();
 
+    // Persisted user defaults (`~/.agentworth/config.toml`, see `agentworth config`). A
+    // corrupt config file should not brick every command, so fall back to built-in
+    // defaults with a warning rather than erroring out.
+    let persisted_config = config::load_config().unwrap_or_else(|e| {
+        eprintln!(
+            "warning: failed to load persisted config ({}), using built-in defaults",
+            e
+        );
+        Default::default()
+    });
+    let no_json = cli.no_json;
+    let resolve_json = |flag: bool| config::resolve_json(flag, no_json, persisted_config.json);
+
     match cli.command {
         Commands::Scan { paths, force, json } => {
-            run_scan_command(paths, force, json, cli.db_path)?;
+            run_scan_command(paths, force, resolve_json(json), cli.db_path)?;
         }
         Commands::Stats { json } => {
-            run_stats_command(json, cli.db_path)?;
+            run_stats_command(resolve_json(json), cli.db_path)?;
         }
         Commands::Doctor { json } => {
-            run_doctor_command(json, cli.db_path)?;
+            run_doctor_command(resolve_json(json), cli.db_path)?;
         }
         Commands::Matrix { json } => {
-            run_matrix_command(json, cli.db_path)?;
+            run_matrix_command(resolve_json(json), cli.db_path)?;
         }
         Commands::Traces {
             limit,
@@ -382,10 +441,11 @@ fn main() -> Result<()> {
             all_stubs,
             json,
         } => {
-            run_traces_command(limit, adapter, model, all_stubs, json, cli.db_path)?;
+            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+            run_traces_command(limit, adapter, model, all_stubs, resolve_json(json), cli.db_path)?;
         }
         Commands::Inspect { session_id, json } => {
-            run_inspect_command(&session_id, json, cli.db_path)?;
+            run_inspect_command(&session_id, resolve_json(json), cli.db_path)?;
         }
         Commands::Export {
             session_id,
@@ -402,13 +462,21 @@ fn main() -> Result<()> {
             kind,
             json,
         } => {
-            agentworth_cli::run_search_command(&query, limit, min_score, kind, json, cli.db_path)?;
+            let limit = config::resolve_limit(limit, persisted_config.limit, 10);
+            agentworth_cli::run_search_command(
+                &query,
+                limit,
+                min_score,
+                kind,
+                resolve_json(json),
+                cli.db_path,
+            )?;
         }
         Commands::Audit { safety, json } => {
-            agentworth_cli::run_audit_command(safety, json, cli.db_path)?;
+            agentworth_cli::run_audit_command(safety, resolve_json(json), cli.db_path)?;
         }
         Commands::Blunder { top, submit, json } => {
-            agentworth_cli::run_blunder_command(top, submit, json, cli.db_path)?;
+            agentworth_cli::run_blunder_command(top, submit, resolve_json(json), cli.db_path)?;
         }
         Commands::Usage {
             period,
@@ -419,6 +487,8 @@ fn main() -> Result<()> {
             by_model,
             json,
         } => {
+            let period = config::resolve_period(period, persisted_config.period.clone(), "day")?;
+            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
             run_usage_command(
                 &period,
                 pacing,
@@ -426,12 +496,12 @@ fn main() -> Result<()> {
                 alert_above,
                 limit,
                 by_model,
-                json,
+                resolve_json(json),
                 cli.db_path,
             )?;
         }
         Commands::Blame { file_path, json } => {
-            run_blame_command(&file_path, json, cli.db_path)?;
+            run_blame_command(&file_path, resolve_json(json), cli.db_path)?;
         }
         Commands::Serve { port, open, dist } => {
             let storage = open_storage(cli.db_path)?;
@@ -447,7 +517,7 @@ fn main() -> Result<()> {
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
         }
         Commands::Merge { source_db, json } => {
-            merge::run_merge_command(source_db, json, cli.db_path)?;
+            merge::run_merge_command(source_db, resolve_json(json), cli.db_path)?;
         }
         Commands::Watch {
             interval_secs,
@@ -455,19 +525,20 @@ fn main() -> Result<()> {
             json,
             paths,
         } => {
-            watch::run_watch_command(interval_secs, poll_once, json, paths, cli.db_path)?;
+            watch::run_watch_command(interval_secs, poll_once, resolve_json(json), paths, cli.db_path)?;
         }
         Commands::CacheDoctor { session_id, json } => {
-            cache_doctor::run_cache_doctor_command(&session_id, json, cli.db_path)?;
+            cache_doctor::run_cache_doctor_command(&session_id, resolve_json(json), cli.db_path)?;
         }
         Commands::BlindSpots { limit, json } => {
-            blind_spots::run_blind_spots_command(limit, json, cli.db_path)?;
+            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+            blind_spots::run_blind_spots_command(limit, resolve_json(json), cli.db_path)?;
         }
         Commands::Autopsy {
             min_occurrences,
             json,
         } => {
-            autopsy::run_autopsy_command(min_occurrences, json, cli.db_path)?;
+            autopsy::run_autopsy_command(min_occurrences, resolve_json(json), cli.db_path)?;
         }
         Commands::Recall {
             query,
@@ -475,14 +546,22 @@ fn main() -> Result<()> {
             min_score,
             json,
         } => {
-            recall::run_recall_command(&query, limit, min_score, json, cli.db_path)?;
+            let limit = config::resolve_limit(limit, persisted_config.limit, 5);
+            recall::run_recall_command(&query, limit, min_score, resolve_json(json), cli.db_path)?;
         }
         Commands::Bisect { session_id, json } => {
-            bisect::run_bisect_command(&session_id, json, cli.db_path)?;
+            bisect::run_bisect_command(&session_id, resolve_json(json), cli.db_path)?;
         }
         Commands::PrBlame { files, json } => {
-            pr_blame::run_pr_blame_command(files, json, cli.db_path)?;
+            pr_blame::run_pr_blame_command(files, resolve_json(json), cli.db_path)?;
         }
+        Commands::Config { action } => match action {
+            ConfigAction::List { json } => config::run_config_list(resolve_json(json))?,
+            ConfigAction::Get { key, json } => config::run_config_get(&key, resolve_json(json))?,
+            ConfigAction::Set { key, value, json } => {
+                config::run_config_set(&key, &value, resolve_json(json))?
+            }
+        },
     }
 
     Ok(())
