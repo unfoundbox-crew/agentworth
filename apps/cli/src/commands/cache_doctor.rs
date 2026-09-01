@@ -45,7 +45,7 @@ pub struct CacheDoctorDiagnosis {
 
 /// Diagnose prompt caching behavior across a trace.
 pub fn diagnose_cache_efficiency(trace: &AgentWorthTrace) -> CacheDoctorDiagnosis {
-    let mut turn_metrics = Vec::new();
+    let mut turn_metrics: Vec<TurnCacheMetric> = Vec::new();
     let mut drop_findings = Vec::new();
 
     let mut current_model: Option<String> = None;
