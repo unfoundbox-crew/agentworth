@@ -1,0 +1,62 @@
+name: CI
+
+# The repo had no Rust CI until now — only deploy-pages and the tag-triggered
+# release. Nothing compiled the workspace on a pull request, which is how the
+# binary shipped for months without the dashboard it was supposed to serve.
+#
+# ubuntu-latest only, per the free-tier budget rule. macOS hosted runners bill
+# at 10x and are not worth it for a compile check.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'apps/dashboard/package-lock.json'
+
+      # Order matters: the dashboard is compiled into the binary via rust-embed,
+      # so it has to exist before cargo runs. This mirrors release.yml exactly —
+      # if the order is wrong here, it is wrong there too.
+      - name: Build dashboard
+        working-directory: apps/dashboard
+        run: npm ci && npm run build
+
+      - name: Build marketing site
+        working-directory: apps/web
+        run: npm ci && npm run build
+
+      - name: Assert the dashboard will be embedded
+        run: |
+          test -f apps/dashboard/dist/index.html \
+            || { echo "::error::apps/dashboard/dist/index.html missing — the binary would ship without a UI"; exit 1; }
+
+      - name: Build workspace
+        run: cargo build --workspace --bin agentworth
+
+      # Proves the dashboard is actually inside the binary rather than merely
+      # built next to it. This is the check whose absence let the bug ship.
+      - name: Assert the dashboard is inside the binary
+        run: |
+          BIN=target/debug/agentworth
+          grep -q "AgentWorth" "$BIN" \
+            || { echo "::error::no dashboard markup found in the binary"; exit 1; }
+          echo "binary size: $(du -h "$BIN" | cut -f1)"
