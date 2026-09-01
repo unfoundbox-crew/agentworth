@@ -8,6 +8,7 @@ import { OverviewPane } from './OverviewPane';
 import { ScoreBreakdown } from './ScoreBreakdown';
 import { TokenEconomics } from './TokenEconomics';
 import { CacheWarmth } from './CacheWarmth';
+import { LooseEnds } from './LooseEnds';
 import { ProvenanceBlock } from './ProvenanceBlock';
 
 export interface InspectorPaneProps {
@@ -178,6 +179,10 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
               <TokenEconomics tokenUsage={trace.stats.token_usage} />
               <CacheWarmth events={trace.events} />
             </div>
+          )}
+
+          {trace?.events && (
+            <LooseEnds events={trace.events} sessionId={trace.session_id} />
           )}
 
           {trace?.recoveries && trace.recoveries.length > 0 && (
