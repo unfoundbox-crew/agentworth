@@ -173,6 +173,14 @@ fn file_action_label(action: FileActionType) -> &'static str {
 }
 
 /// SQLite-backed storage index.
+///
+/// `conn` recovers from lock poisoning (see the `unwrap_or_else` on every `.lock()`
+/// below) instead of propagating it. This connection is shared across every request
+/// handler in `agentworth serve`'s multi-threaded Axum server, so a panic inside one
+/// handler must not wedge the lock and take down every other endpoint until restart.
+/// A `rusqlite::Connection` has no in-process invariant a panic mid-query could leave
+/// broken -- SQLite itself already committed or rolled back at the engine level -- so
+/// reusing it after a poison is safe.
 pub struct Storage {
     conn: Arc<Mutex<Connection>>,
     db_path: Option<PathBuf>,
@@ -226,7 +234,7 @@ impl Storage {
 
     /// Run migrations / schema initialization.
     pub fn initialize_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         conn.execute_batch(
             r#"
@@ -409,7 +417,7 @@ impl Storage {
 
     /// Checks if a file source has already been indexed with the exact same fingerprint, size, and mtime.
     pub fn should_scan_source(&self, source: &SessionSource) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn
             .prepare("SELECT file_size, mtime, fingerprint FROM sources WHERE source_path = ?1")?;
 
@@ -437,7 +445,7 @@ impl Storage {
         primary_outcome: Option<&str>,
         composite_score: Option<f64>,
     ) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let tx = conn.transaction()?;
 
         let scanned_at = Utc::now().to_rfc3339();
@@ -601,7 +609,7 @@ impl Storage {
 
     /// Retrieve summary statistics across the whole indexed database.
     pub fn get_aggregate_stats(&self) -> Result<AggregateStats> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let mut stats = AggregateStats::default();
 
@@ -690,7 +698,7 @@ impl Storage {
 
     /// Group indexed sessions by their primary outcome with session counts, token volume, and estimated cost.
     pub fn get_outcome_distribution(&self) -> Result<Vec<(String, usize, u64, f64)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn.prepare(
             r#"
             SELECT
@@ -739,7 +747,7 @@ impl Storage {
 
     /// Retrieve a single session summary by its unique session ID.
     pub fn get_session_by_id(&self, session_id: &str) -> Result<Option<SessionSummary>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn.prepare(
             r#"
             SELECT session_id, adapter, source_path, started_at, duration_seconds,
@@ -760,7 +768,7 @@ impl Storage {
 
     /// Retrieve the per-model token usage breakdown for a single session.
     pub fn get_session_model_usage(&self, session_id: &str) -> Result<Vec<(String, TokenUsage)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn.prepare(
             r#"
             SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
@@ -801,7 +809,7 @@ impl Storage {
 
     /// Query sessions with rich filtering, ordering, and pagination.
     pub fn list_sessions_filtered(&self, filter: &SessionFilter) -> Result<Vec<SessionSummary>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let mut sql = String::from(
             r#"
@@ -903,7 +911,7 @@ impl Storage {
 
     /// Extract and rank top repository / workspace paths from indexed sessions.
     pub fn get_top_repositories(&self) -> Result<Vec<(String, usize)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn.prepare("SELECT source_path FROM sessions")?;
         let mut rows = stmt.query([])?;
 
@@ -936,7 +944,7 @@ impl Storage {
     }
 
     fn query_usage_view(&self, view_name: &str, limit: usize) -> Result<Vec<UsagePeriodSummary>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let sql = format!(
             "SELECT period, adapter, session_count, total_events, input_tokens, output_tokens, \
              cache_read_tokens, cache_creation_tokens, total_tokens, total_duration_seconds \
@@ -991,7 +999,7 @@ impl Storage {
     /// same periods as `get_daily_usage`/`get_weekly_usage`/`get_monthly_usage`,
     /// grouped by model instead of adapter.
     pub fn get_model_usage(&self, period: &str, limit: usize) -> Result<Vec<ModelUsagePeriodSummary>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let period_expr = match period {
             "week" => "strftime('%Y-W%W', s.started_at)",
@@ -1063,7 +1071,7 @@ impl Storage {
 
     /// Calculate rolling pacing summary for the last N hours.
     pub fn get_pacing_window(&self, hours: i64) -> Result<PacingSummary> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         // Get max date in DB as anchor if current real-time clock has no recent sessions
         let mut max_stmt = conn.prepare("SELECT MAX(started_at) FROM sessions")?;
@@ -1165,7 +1173,7 @@ impl Storage {
     /// own transcript path or tool-name counters never contain the paths of files it edited.
     /// Each matching session is represented once, by its most recent touch to a matching path.
     pub fn find_sessions_for_blame(&self, file_path_pattern: &str) -> Result<Vec<BlameMatch>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let pattern = format!("%{}%", file_path_pattern);
 
         let mut stmt = conn.prepare(
@@ -1207,7 +1215,7 @@ impl Storage {
     /// from "here's a blunder session" to "here's exactly which files AI Code Blame
     /// attributes to it." An unknown `session_id` returns an empty list, not an error.
     pub fn find_files_for_session(&self, session_id: &str) -> Result<Vec<BlameMatch>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let mut stmt = conn.prepare(
             r#"
