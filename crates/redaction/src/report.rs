@@ -13,6 +13,7 @@ pub enum RedactionCategory {
     JwtToken,
     IpAddress,
     PrivateKey,
+    HighEntropySecret,
     Custom,
 }
 
@@ -27,6 +28,7 @@ impl std::fmt::Display for RedactionCategory {
             Self::JwtToken => write!(f, "JWT Token"),
             Self::IpAddress => write!(f, "Private IP Address"),
             Self::PrivateKey => write!(f, "Private Key"),
+            Self::HighEntropySecret => write!(f, "High-Entropy Secret"),
             Self::Custom => write!(f, "Custom Rule"),
         }
     }
@@ -44,6 +46,8 @@ pub struct RedactionReport {
     pub jwt_tokens_count: usize,
     pub ip_addresses_count: usize,
     pub private_keys_count: usize,
+    #[serde(default)]
+    pub high_entropy_secrets_count: usize,
     pub custom_count: usize,
     #[serde(default)]
     pub breakdown_by_category: BTreeMap<String, usize>,
@@ -79,6 +83,7 @@ impl RedactionReport {
             RedactionCategory::JwtToken => self.jwt_tokens_count += count,
             RedactionCategory::IpAddress => self.ip_addresses_count += count,
             RedactionCategory::PrivateKey => self.private_keys_count += count,
+            RedactionCategory::HighEntropySecret => self.high_entropy_secrets_count += count,
             RedactionCategory::Custom => self.custom_count += count,
         }
         *self
@@ -98,6 +103,7 @@ impl RedactionReport {
         self.jwt_tokens_count += other.jwt_tokens_count;
         self.ip_addresses_count += other.ip_addresses_count;
         self.private_keys_count += other.private_keys_count;
+        self.high_entropy_secrets_count += other.high_entropy_secrets_count;
         self.custom_count += other.custom_count;
 
         for (k, v) in &other.breakdown_by_category {

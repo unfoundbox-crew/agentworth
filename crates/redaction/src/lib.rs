@@ -1,9 +1,11 @@
 //! Privacy and redaction engine for scrubbing API keys, credentials, PII, and sensitive paths.
 
+mod entropy;
 mod redactor;
 mod report;
 mod rules;
 
+pub use entropy::EntropyConfig;
 pub use redactor::Redactor;
 pub use report::{RedactionCategory, RedactionReport};
 pub use rules::{default_rules, RedactionRule};

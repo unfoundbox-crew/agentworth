@@ -1,14 +1,22 @@
+use crate::entropy::{self, EntropyConfig};
 use crate::report::{RedactionCategory, RedactionReport};
-use regex::Regex;
+use regex::{Captures, Regex};
 use std::borrow::Cow;
 
 /// Single redaction rule defining a regular expression and replacement template.
+///
+/// Most rules match unconditionally: any regex hit is a redaction. The high-entropy
+/// detector is the exception — its regex only finds coarse *candidates* (long
+/// alphanumeric-ish runs), and `entropy_filter`, when set, decides which of those
+/// candidates actually look like random secrets rather than routine hex/identifier
+/// text. See [`RedactionRule::with_entropy_filter`].
 #[derive(Debug, Clone)]
 pub struct RedactionRule {
     pub name: String,
     pub category: RedactionCategory,
     pub pattern: Regex,
     pub replacement: String,
+    entropy_filter: Option<EntropyConfig>,
 }
 
 impl RedactionRule {
@@ -23,7 +31,17 @@ impl RedactionRule {
             category,
             pattern,
             replacement: replacement.into(),
+            entropy_filter: None,
         }
+    }
+
+    /// Turns this rule into a high-entropy detector: `pattern` still finds coarse
+    /// candidate substrings, but each match is only treated as a redaction when it
+    /// also passes the Shannon-entropy "plausible random secret" shape check
+    /// described in [`crate::entropy`].
+    pub fn with_entropy_filter(mut self, config: EntropyConfig) -> Self {
+        self.entropy_filter = Some(config);
+        self
     }
 
     /// Apply this rule to the given text, optionally recording counts to the report.
@@ -32,14 +50,37 @@ impl RedactionRule {
         text: &'a str,
         report: &mut Option<&mut RedactionReport>,
     ) -> Cow<'a, str> {
-        let count = self.pattern.find_iter(text).count();
-        if count > 0 {
-            if let Some(r) = report {
-                r.add(self.category, count);
+        match self.entropy_filter {
+            Some(config) => {
+                let mut matched = 0usize;
+                let replacement = self.replacement.as_str();
+                let result = self.pattern.replace_all(text, |caps: &Captures<'_>| {
+                    let candidate = &caps[0];
+                    if entropy::is_probable_secret(candidate, &config) {
+                        matched += 1;
+                        replacement.to_string()
+                    } else {
+                        candidate.to_string()
+                    }
+                });
+                if matched > 0 {
+                    if let Some(r) = report {
+                        r.add(self.category, matched);
+                    }
+                }
+                result
             }
-            self.pattern.replace_all(text, self.replacement.as_str())
-        } else {
-            Cow::Borrowed(text)
+            None => {
+                let count = self.pattern.find_iter(text).count();
+                if count > 0 {
+                    if let Some(r) = report {
+                        r.add(self.category, count);
+                    }
+                    self.pattern.replace_all(text, self.replacement.as_str())
+                } else {
+                    Cow::Borrowed(text)
+                }
+            }
         }
     }
 }
@@ -155,5 +196,17 @@ pub fn default_rules() -> Vec<RedactionRule> {
                 .expect("valid regex"),
             "[REDACTED_IP]",
         ),
+        // 14. High-Entropy Secrets — fallback net for anything the named patterns
+        // above miss. Runs last, deliberately: by the time text reaches this rule,
+        // every known-format secret has already been redacted, so this only ever
+        // scores what survived. See `crate::entropy` for the false-positive
+        // avoidance (git SHAs, UUIDs, content hashes must not be flagged here).
+        RedactionRule::new(
+            "high_entropy_secret",
+            RedactionCategory::HighEntropySecret,
+            Regex::new(entropy::CANDIDATE_PATTERN).expect("valid regex"),
+            "[REDACTED_HIGH_ENTROPY_SECRET]",
+        )
+        .with_entropy_filter(EntropyConfig::default()),
     ]
 }
