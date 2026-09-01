@@ -12,6 +12,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
+#[path = "commands/bisect.rs"]
+mod bisect;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "agentworth",
@@ -222,6 +225,16 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Pinpoint the exact turning point where an agent session trajectory turned negative
+    Bisect {
+        /// Session ID to bisect
+        session_id: String,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -319,6 +332,9 @@ fn main() -> Result<()> {
             });
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
+        }
+        Commands::Bisect { session_id, json } => {
+            bisect::run_bisect_command(&session_id, json, cli.db_path)?;
         }
     }
 
