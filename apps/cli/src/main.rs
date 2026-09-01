@@ -2152,7 +2152,7 @@ fn run_usage_command(
     }
 
     if records.is_empty() {
-        println!("No usage records found. Run `agwt scan` to index local sessions.");
+        println!("No usage records found. Run `agentworth scan` (or `agwt scan`) to index local sessions.");
         return Ok(());
     }
 
@@ -2419,5 +2419,34 @@ mod tests {
         // Alert threshold $20 -> TRIGGERED
         let alert_triggered_low = pacing.estimated_cost_usd >= 20.0;
         assert!(alert_triggered_low);
+    }
+
+    #[test]
+    fn test_cli_binary_alias_parsing() {
+        use clap::Parser;
+
+        // Test parsing command using "agentworth" binary name
+        let parsed_agentworth = Cli::try_parse_from(["agentworth", "doctor", "--json"]).unwrap();
+        match parsed_agentworth.command {
+            Commands::Doctor { json } => assert!(json),
+            _ => panic!("Expected Doctor command"),
+        }
+
+        // Test parsing command using "agwt" binary alias
+        let parsed_agwt = Cli::try_parse_from(["agwt", "doctor", "--json"]).unwrap();
+        match parsed_agwt.command {
+            Commands::Doctor { json } => assert!(json),
+            _ => panic!("Expected Doctor command"),
+        }
+
+        // Test usage pacing with alert-above
+        let parsed_usage = Cli::try_parse_from(["agwt", "usage", "--pacing", "--alert-above", "50.0"]).unwrap();
+        match parsed_usage.command {
+            Commands::Usage { pacing, alert_above, .. } => {
+                assert!(pacing);
+                assert_eq!(alert_above, Some(50.0));
+            }
+            _ => panic!("Expected Usage command"),
+        }
     }
 }
