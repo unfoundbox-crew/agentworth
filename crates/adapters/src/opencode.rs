@@ -6,7 +6,7 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
     Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
@@ -233,6 +233,7 @@ impl AgentAdapter for OpenCodeAdapter {
         let mut malformed_lines = 0;
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
+        let mut last_model: Option<String> = None;
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -281,7 +282,7 @@ impl AgentAdapter for OpenCodeAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_opencode_record(item, &mut sequence, timestamp, idx + 1);
+                        let evts = parse_opencode_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -326,7 +327,7 @@ impl AgentAdapter for OpenCodeAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num);
+                let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -366,6 +367,7 @@ fn parse_opencode_sqlite_session(
     let mut malformed_lines = 0;
     let mut warnings = Vec::new();
     let mut sequence = 0u64;
+    let mut last_model: Option<String> = None;
 
     let mut earliest_ts: Option<DateTime<Utc>> = None;
     let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -442,6 +444,22 @@ fn parse_opencode_sqlite_session(
             };
 
             if let Some(model) = model_id {
+                if last_model.as_deref() != Some(model) {
+                    if let Some(prev) = last_model.take() {
+                        sequence += 1;
+                        trace.events.push(NormalizedEvent::new(
+                            sequence,
+                            timestamp,
+                            EventPayload::ModelSwitch(ModelSwitch {
+                                from_model: Some(prev),
+                                to_model: model.to_string(),
+                                reason: None,
+                            }),
+                        ));
+                    }
+                    last_model = Some(model.to_string());
+                }
+
                 sequence += 1;
                 trace.events.push(NormalizedEvent::new(
                     sequence,
@@ -751,6 +769,7 @@ fn parse_opencode_record(
     seq: &mut u64,
     ts: DateTime<Utc>,
     line_num: usize,
+    last_model: &mut Option<String>,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -771,6 +790,25 @@ fn parse_opencode_record(
                 .and_then(|v| v.as_str())
                 .unwrap_or("opencode-model")
                 .to_string();
+
+            if last_model.as_deref() != Some(model.as_str()) {
+                if let Some(prev) = last_model.take() {
+                    *seq += 1;
+                    events.push(
+                        NormalizedEvent::new(
+                            *seq,
+                            ts,
+                            EventPayload::ModelSwitch(ModelSwitch {
+                                from_model: Some(prev),
+                                to_model: model.clone(),
+                                reason: None,
+                            }),
+                        )
+                        .with_raw_ref(&raw_ref),
+                    );
+                }
+                *last_model = Some(model.clone());
+            }
 
             *seq += 1;
             events.push(
@@ -1244,5 +1282,108 @@ mod tests {
 
         assert_eq!(result.trace.stats.user_messages_count, 1);
         assert_eq!(result.trace.stats.assistant_messages_count, 1);
+    }
+
+    #[test]
+    fn test_parse_opencode_sqlite_session_detects_model_switch() {
+        // OpenCode's native storage is a SQLite db (opencode.db), not JSONL — a
+        // structurally distinct path (`parse_opencode_sqlite_session`) that builds
+        // events straight from `message`/`part` rows rather than through
+        // `parse_opencode_record`. Each message row carries its own `modelID`,
+        // which is the per-event identity ModelSwitch detection needs here too.
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("opencode.db");
+        let conn = Connection::open(&db_path).unwrap();
+
+        conn.execute_batch(
+            "CREATE TABLE session (id TEXT, time_created INTEGER, time_updated INTEGER);
+             CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+             CREATE TABLE part (id TEXT, message_id TEXT, data TEXT);",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO session (id, time_created, time_updated) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["sess-1", 1_716_000_000i64, 1_716_000_020i64],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "msg-1",
+                "sess-1",
+                1_716_000_000i64,
+                r#"{"role":"assistant","modelID":"claude-3-5-sonnet","tokens":{"input":500,"output":120,"cache":{"read":0,"write":0}},"cost":0.01}"#,
+            ],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "msg-2",
+                "sess-1",
+                1_716_000_010i64,
+                r#"{"role":"assistant","modelID":"claude-haiku-4","tokens":{"input":200,"output":60,"cache":{"read":0,"write":0}},"cost":0.002}"#,
+            ],
+        )
+        .unwrap();
+
+        drop(conn);
+
+        let virtual_path = PathBuf::from(format!("{}#{}", db_path.display(), "sess-1"));
+        let source = SessionSource {
+            path: virtual_path,
+            adapter_name: "opencode".to_string(),
+            file_size_bytes: 4096,
+            mtime_epoch_secs: 1_716_000_020,
+            fingerprint: "test-fingerprint".to_string(),
+        };
+
+        let adapter = OpenCodeAdapter::new();
+        let result = adapter.parse(&source).expect("sqlite parse failed");
+        let trace = result.trace;
+
+        assert_eq!(
+            trace.stats.models_used,
+            vec!["claude-3-5-sonnet".to_string(), "claude-haiku-4".to_string()]
+        );
+
+        let switches: Vec<_> = trace
+            .events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::ModelSwitch(ms) => Some((ms.from_model.clone(), ms.to_model.clone())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            switches,
+            vec![(
+                Some("claude-3-5-sonnet".to_string()),
+                "claude-haiku-4".to_string()
+            )]
+        );
+
+        assert_eq!(
+            trace
+                .stats
+                .per_model_token_usage
+                .get("claude-3-5-sonnet")
+                .unwrap()
+                .input_tokens,
+            500
+        );
+        assert_eq!(
+            trace
+                .stats
+                .per_model_token_usage
+                .get("claude-haiku-4")
+                .unwrap()
+                .input_tokens,
+            200
+        );
     }
 }
