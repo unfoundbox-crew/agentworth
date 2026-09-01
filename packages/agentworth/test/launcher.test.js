@@ -21,6 +21,19 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// getPackageVersion() falls back to '0.1.3' when baseDir has no ../package.json to read,
+// which is always true for these throwaway temp dirs -- so a mock binary answering with
+// this exact version is indistinguishable from "the real deal" to pathBinaryMatchesVersion.
+const FALLBACK_VERSION = '0.1.3';
+
+function writeMockBinary(filePath, version = FALLBACK_VERSION) {
+  fs.writeFileSync(
+    filePath,
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "agentworth ${version}"; fi\nexit 0\n`,
+    { mode: 0o755 },
+  );
+}
+
 describe('npm-wrapper / launcher', () => {
   describe('platform & binary naming', () => {
     it('detects OS and architecture platform keys correctly', () => {
@@ -106,7 +119,7 @@ describe('npm-wrapper / launcher', () => {
       const targetDebug = path.join(workspaceDir, 'target', 'debug');
       fs.mkdirSync(targetDebug, { recursive: true });
       const targetBin = path.join(targetDebug, 'agentworth');
-      fs.writeFileSync(targetBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      writeMockBinary(targetBin);
 
       const subDir = path.join(workspaceDir, 'nested', 'subproject');
       fs.mkdirSync(subDir, { recursive: true });
@@ -123,12 +136,32 @@ describe('npm-wrapper / launcher', () => {
       assert.ok(res.source.startsWith('cargo-target'));
     });
 
+    it('rejects a cargo-target binary whose version does not match', () => {
+      const workspaceDir = path.join(tempDir, 'workspace-stale');
+      const targetRelease = path.join(workspaceDir, 'target', 'release');
+      fs.mkdirSync(targetRelease, { recursive: true });
+      const staleBin = path.join(targetRelease, 'agentworth');
+      writeMockBinary(staleBin, '0.1.1');
+
+      const res = resolveBinary({
+        cwd: workspaceDir,
+        env: { PATH: '' },
+        baseDir: workspaceDir,
+        homeDir: workspaceDir,
+      });
+
+      // A stale build from a much earlier version must not silently shadow the launcher's
+      // own release forever -- this is the exact bug (a target/release/agentworth left over
+      // from an early build kept answering for every later version on the real machine).
+      assert.notEqual(res.path, staleBin);
+    });
+
     it('resolves from CARGO_TARGET_DIR environment variable', () => {
       const customTargetDir = path.join(tempDir, 'custom-target');
       const releaseDir = path.join(customTargetDir, 'release');
       fs.mkdirSync(releaseDir, { recursive: true });
       const customBin = path.join(releaseDir, 'agentworth');
-      fs.writeFileSync(customBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      writeMockBinary(customBin);
 
       const isolatedDir = path.join(tempDir, 'isolated');
       fs.mkdirSync(isolatedDir, { recursive: true });
@@ -149,7 +182,7 @@ describe('npm-wrapper / launcher', () => {
       const binDir = path.join(tempDir, 'custom-bin');
       fs.mkdirSync(binDir, { recursive: true });
       const pathBin = path.join(binDir, 'agentworth');
-      fs.writeFileSync(pathBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      writeMockBinary(pathBin);
 
       const isolatedDir = path.join(tempDir, 'isolated-path');
       fs.mkdirSync(isolatedDir, { recursive: true });

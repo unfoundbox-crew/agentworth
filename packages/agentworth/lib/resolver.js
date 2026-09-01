@@ -411,9 +411,17 @@ export function resolveBinary(options = {}) {
     }
   }
 
+  // 4-7 all found a real, executable candidate but said nothing about whether it's the
+  // version this launcher is meant to run -- so a debug build from six releases ago,
+  // sitting in some worktree's target/ directory upward of wherever the user happened to
+  // invoke `agentworth` from, would silently win over the correctly-versioned release cache
+  // (8) forever. Same failure mode already fixed for PATH (3) above, same fix here: a
+  // candidate only counts if it reports the version this launcher ships.
+  const expectedVersion = getPackageVersion(baseDir);
+
   // 4. Local Cargo target from working directory
   const cwdCargoBin = findCargoTargetBinary(cwd, binName);
-  if (cwdCargoBin) {
+  if (cwdCargoBin && pathBinaryMatchesVersion(cwdCargoBin, expectedVersion)) {
     return {
       found: true,
       path: cwdCargoBin,
@@ -423,7 +431,7 @@ export function resolveBinary(options = {}) {
 
   // 5. Local Cargo target from package directory hierarchy
   const pkgCargoBin = findCargoTargetBinary(baseDir, binName);
-  if (pkgCargoBin) {
+  if (pkgCargoBin && pathBinaryMatchesVersion(pkgCargoBin, expectedVersion)) {
     return {
       found: true,
       path: pkgCargoBin,
@@ -434,7 +442,7 @@ export function resolveBinary(options = {}) {
   // 6. CARGO_TARGET_DIR environment variable if specified
   if (env.CARGO_TARGET_DIR) {
     const targetDirRelease = path.join(env.CARGO_TARGET_DIR, 'release', binName);
-    if (isExecutable(targetDirRelease)) {
+    if (isExecutable(targetDirRelease) && pathBinaryMatchesVersion(targetDirRelease, expectedVersion)) {
       return {
         found: true,
         path: targetDirRelease,
@@ -442,7 +450,7 @@ export function resolveBinary(options = {}) {
       };
     }
     const targetDirDebug = path.join(env.CARGO_TARGET_DIR, 'debug', binName);
-    if (isExecutable(targetDirDebug)) {
+    if (isExecutable(targetDirDebug) && pathBinaryMatchesVersion(targetDirDebug, expectedVersion)) {
       return {
         found: true,
         path: targetDirDebug,
@@ -454,7 +462,7 @@ export function resolveBinary(options = {}) {
   // 7. User ~/.cargo/bin directory
   if (homeDir) {
     const cargoHomeBin = path.join(homeDir, '.cargo', 'bin', binName);
-    if (isExecutable(cargoHomeBin)) {
+    if (isExecutable(cargoHomeBin) && pathBinaryMatchesVersion(cargoHomeBin, expectedVersion)) {
       return {
         found: true,
         path: cargoHomeBin,
@@ -462,8 +470,9 @@ export function resolveBinary(options = {}) {
       };
     }
 
-    // 8. User local cache (~/.agentworth/bin/v{version}/)
-    const cacheDir = getCacheDir(getPackageVersion(baseDir), homeDir);
+    // 8. User local cache (~/.agentworth/bin/v{version}/) -- versioned by construction,
+    // nothing to check.
+    const cacheDir = getCacheDir(expectedVersion, homeDir);
     const cachedBin = path.join(cacheDir, binName);
     if (isExecutable(cachedBin)) {
       return {
