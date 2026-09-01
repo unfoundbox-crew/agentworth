@@ -15,6 +15,9 @@ import { ArchaeologyPane } from './ArchaeologyPane';
 import { ExportsPane } from './ExportsPane';
 import './shell.css';
 import './panes.css';
+// Loaded after panes.css so each can override the shared base.
+import './inspector.css'
+import './list.css'
 
 const TOAST_DURATION_MS = 1800;
 

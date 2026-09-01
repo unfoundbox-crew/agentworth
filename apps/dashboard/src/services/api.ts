@@ -18,8 +18,8 @@ export const EMPTY_AGGREGATE_STATS: AggregateStats = {
   token_usage: {
     input_tokens: 0,
     output_tokens: 0,
-    cache_read_input_tokens: 0,
-    cache_creation_input_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
   },
   sessions_by_adapter: {},
   models_usage_count: {},
@@ -328,8 +328,8 @@ export async function fetchAggregateStats(): Promise<AggregateStats> {
         token_usage: {
           input_tokens: input,
           output_tokens: output,
-          cache_read_input_tokens: cacheRead,
-          cache_creation_input_tokens: cacheCreation,
+          cache_read_tokens: cacheRead,
+          cache_creation_tokens: cacheCreation,
         },
         sessions_by_adapter: data.sessions_by_adapter ?? {},
         models_usage_count: data.models_usage_count ?? {},
