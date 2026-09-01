@@ -64,12 +64,27 @@ API_KEY='xyz987654321'
 PASSWORD=my_strong_password!
 AUTH_TOKEN=tok_123456789
 AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+OPENAI_API_KEY=sk-proj-supersecretkey123
+STRIPE_SECRET_KEY="sk_test_51Mzxyz12345"
+DEEPSEEK_API_KEY='sk-deepseeksecret'
+MY_CUSTOM_DB_PASSWORD: super_secure_db_pass
+GITHUB_ACCESS_TOKEN=ghp_secrettokenvalue123
 "#;
     let redacted = redactor.redact_text(text);
     assert!(!redacted.contains("super_secret_value_12345"));
     assert!(!redacted.contains("my_strong_password!"));
     assert!(!redacted.contains("tok_123456789"));
     assert!(!redacted.contains("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"));
+    assert!(!redacted.contains("sk-proj-supersecretkey123"));
+    assert!(!redacted.contains("sk_test_51Mzxyz12345"));
+    assert!(!redacted.contains("sk-deepseeksecret"));
+    assert!(!redacted.contains("super_secure_db_pass"));
+    assert!(!redacted.contains("ghp_secrettokenvalue123"));
+    assert!(redacted.contains("OPENAI_API_KEY=[REDACTED_ENV_VAR]"));
+    assert!(redacted.contains("STRIPE_SECRET_KEY=[REDACTED_ENV_VAR]"));
+    assert!(redacted.contains("DEEPSEEK_API_KEY=[REDACTED_ENV_VAR]"));
+    assert!(redacted.contains("MY_CUSTOM_DB_PASSWORD=[REDACTED_ENV_VAR]"));
+    assert!(redacted.contains("GITHUB_ACCESS_TOKEN=[REDACTED_ENV_VAR]"));
 }
 
 #[test]
