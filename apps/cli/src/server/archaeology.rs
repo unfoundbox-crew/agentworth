@@ -404,8 +404,8 @@ mod tests {
     /// (no real file on disk), so it's exercised only up to the `.ok()` no-op -- the assertions
     /// below cover the shallow-pass fields that come straight from the previously-capped
     /// `all_sessions` scan.
-    #[tokio::test]
-    async fn test_archaeology_highlights_includes_sessions_beyond_old_1000_cap() {
+    #[test]
+    fn test_archaeology_highlights_includes_sessions_beyond_old_1000_cap() {
         let tmp = NamedTempFile::new().unwrap();
         let storage = Storage::open_path(tmp.path()).unwrap();
 
