@@ -17,6 +17,13 @@ interface VerdictStampProps {
   className?: string;
 }
 
+/**
+ * The verdict stamp: a semantic pill (never the brand accent — design.md's
+ * "semantic colour is separate from the accent" rule). Solid border = a
+ * checkable fact (verified rungs 2-5). Dashed border = unverified,
+ * unmeasured, or not built — reusing the same solid/dashed convention the
+ * system's diagrams use for built vs. proposed.
+ */
 export const VerdictStamp: React.FC<VerdictStampProps> = ({
   status,
   size = "md",
@@ -25,8 +32,7 @@ export const VerdictStamp: React.FC<VerdictStampProps> = ({
 }) => {
   const normalized = status.toLowerCase();
 
-  // Ink is truth (Black). Red is doubt (Stamp Red).
-  const isInkBlack =
+  const isGood =
     normalized === "ci_or_deployment_verified" ||
     normalized === "ci verified" ||
     normalized === "commit_observed" ||
@@ -37,7 +43,7 @@ export const VerdictStamp: React.FC<VerdictStampProps> = ({
     normalized === "shipped" ||
     normalized === "shipped & true";
 
-  const isPartial = normalized === "partial" || normalized === "rung 2";
+  const isWarn = normalized === "partial" || normalized === "rung 2";
 
   let label = "NO VERDICT";
   let subtitle = "UNRESOLVED";
@@ -97,53 +103,28 @@ export const VerdictStamp: React.FC<VerdictStampProps> = ({
   }
 
   const sizeClasses = {
-    sm: "px-2 py-0.5 text-[10px] tracking-wider",
-    md: "px-3 py-1.5 text-xs tracking-widest",
-    lg: "px-4 py-2 text-sm tracking-widest font-extrabold",
+    sm: "px-2.5 py-1 text-[10px] gap-0.5",
+    md: "px-3.5 py-1.5 text-xs gap-0.5",
+    lg: "px-4 py-2 text-sm gap-1",
   };
 
   const rotationClass = rotated ? "-rotate-2" : "";
 
-  if (isInkBlack) {
-    return (
-      <span
-        className={`inline-flex flex-col items-center justify-center font-mono border-2 border-black dark:border-white bg-white dark:bg-black text-black dark:text-white uppercase select-none ${sizeClasses[size]} ${rotationClass} shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,1)] ${className}`}
-      >
-        <span className="font-extrabold leading-tight">{label}</span>
-        {size !== "sm" && (
-          <span className="text-[9px] font-medium tracking-normal text-neutral-600 dark:text-neutral-400 mt-0.5">
-            {subtitle}
-          </span>
-        )}
-      </span>
-    );
-  }
+  const toneClass = isGood
+    ? "border-success-border bg-success-soft text-success"
+    : isWarn
+    ? "border-warn-border bg-warn-soft text-warn"
+    : "border-dashed border-danger-border bg-danger-soft text-danger";
 
-  if (isPartial) {
-    return (
-      <span
-        className={`inline-flex flex-col items-center justify-center font-mono border-2 border-amber-600 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300 uppercase select-none ${sizeClasses[size]} ${rotationClass} shadow-[2px_2px_0px_0px_rgba(217,119,6,0.8)] ${className}`}
-      >
-        <span className="font-extrabold leading-tight">{label}</span>
-        {size !== "sm" && (
-          <span className="text-[9px] font-medium tracking-normal text-amber-700 dark:text-amber-400 mt-0.5">
-            {subtitle}
-          </span>
-        )}
-      </span>
-    );
-  }
+  const subtitleToneClass = isGood ? "text-success/80" : isWarn ? "text-warn/80" : "text-danger/80";
 
-  // Red is doubt: unverified, unmeasured, not built
   return (
     <span
-      className={`inline-flex flex-col items-center justify-center font-mono border-2 border-dashed border-red-600 dark:border-red-500 bg-red-50/70 dark:bg-red-950/40 text-red-700 dark:text-red-400 uppercase select-none ${sizeClasses[size]} ${rotationClass} shadow-[2px_2px_0px_0px_rgba(220,38,38,0.8)] ${className}`}
+      className={`inline-flex flex-col items-center justify-center font-mono border rounded-lg uppercase select-none tracking-wider ${toneClass} ${sizeClasses[size]} ${rotationClass} ${className}`}
     >
-      <span className="font-extrabold leading-tight">{label}</span>
+      <span className="font-bold leading-tight">{label}</span>
       {size !== "sm" && (
-        <span className="text-[9px] font-medium tracking-normal text-red-600/80 dark:text-red-400/80 mt-0.5">
-          {subtitle}
-        </span>
+        <span className={`text-[9px] font-medium tracking-normal ${subtitleToneClass}`}>{subtitle}</span>
       )}
     </span>
   );

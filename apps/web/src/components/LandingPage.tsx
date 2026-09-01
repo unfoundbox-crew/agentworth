@@ -1,5 +1,4 @@
-import React, { useState } from "react";
-import { Github, Copy, Check, ShieldCheck, ArrowRight } from "lucide-react";
+import React, { useRef, useState } from "react";
 import { trackEvent } from "../services/analytics";
 import { ThemeToggle } from "./ThemeToggle";
 import { VerdictBoard } from "./VerdictBoard";
@@ -7,13 +6,70 @@ import { CacheCliffWidget } from "./CacheCliffWidget";
 import { CoverageMatrix } from "./CoverageMatrix";
 import { VerdictStamp } from "./VerdictStamp";
 import { ArchieMascot } from "./ArchieMascot";
+import { IconArrowRight, IconCheck, IconCopy, IconGithub, IconShieldCheck } from "./icons";
+import { useScrollReveal } from "../hooks/useScrollReveal";
+import { APP_VERSION } from "../version";
 
 interface LandingPageProps {
   onOpenExplorer?: () => void;
 }
 
+const INVARIANTS = [
+  {
+    title: "Never upload user data",
+    body: "Scanning works completely offline. Raw histories remain on your disk untouched. Zero network telemetry.",
+  },
+  {
+    title: "No raw-log duplication",
+    body: "AgentWorth never copies multi-gigabyte transcripts into SQLite. It stores only derived indexes, scores, and fingerprints.",
+  },
+  {
+    title: "Streaming JSONL parsing",
+    body: "Bounded-memory parsers handle 100+ GB logs without crashing. Rescans skip unchanged files in milliseconds via SHA-256.",
+  },
+  {
+    title: "Deterministic verification",
+    body: "Never trusts self-claimed completion. Scores are backed by compiler exit codes, positive diffs, and git commits.",
+  },
+];
+
+const COMMANDS = [
+  {
+    cmd: "$ agentworth stats",
+    lines: [
+      ["Sessions", "9,713"],
+      ["Total tokens", "77.9B"],
+      ["Cache read", "97.2%"],
+      ["List equivalent", "$33,234"],
+    ],
+    body: "Full token math across input, output, cache-read, and cache-creation.",
+  },
+  {
+    cmd: "$ agentworth usage --pacing",
+    lines: [
+      ["Pacing window", "5 hours"],
+      ["Burn rate", "1.4M tok/hr"],
+      ["Cache hit", "98.1%"],
+      ["5h spend", "$4.18"],
+    ],
+    body: "Real-time burn-rate pacing aligned with Anthropic's 5-hour rate limits.",
+  },
+  {
+    cmd: "$ agentworth blame src/api.ts",
+    lines: [
+      ["L10-45", "Claude Opus"],
+      ["Session", "#89312 (Rung 5)"],
+      ["Modified", "2026-08-31"],
+      ["Diff", "+45 -12 lines"],
+    ],
+    body: "Trace any line of source code back to the exact agent session and prompt that wrote it.",
+  },
+];
+
 export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
   const [copied, setCopied] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
+  useScrollReveal(mainRef);
 
   const installCommand = "npx agentworth";
 
@@ -25,327 +81,275 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
   };
 
   return (
-    <div className="min-h-screen bg-[#ffffff] dark:bg-[#0a0a0c] text-[#111111] dark:text-[#ececed] font-sans antialiased selection:bg-neutral-900 selection:text-white dark:selection:bg-white dark:selection:text-black transition-colors duration-200">
-      
-      {/* Top Navbar */}
-      <nav className="sticky top-0 z-50 bg-white/90 dark:bg-[#0a0a0c]/90 backdrop-blur-md border-b border-neutral-200 dark:border-neutral-800 transition-colors">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 bg-black dark:bg-white rounded flex items-center justify-center text-white dark:text-black font-mono text-xs font-bold shadow-xs">
-              aw
-            </div>
-            <span className="font-sans font-bold tracking-tight text-[16px] text-neutral-950 dark:text-white">
-              AgentWorth
-            </span>
-            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400 border border-neutral-200 dark:border-neutral-800">
-              v0.1.2
-            </span>
-          </div>
+    <div>
+      <div className="bg-grid" aria-hidden="true" />
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
 
-          <div className="flex items-center gap-2">
-            {onOpenExplorer && (
-              <button
-                onClick={onOpenExplorer}
-                className="px-3 py-1.5 rounded bg-black hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-200 text-white dark:text-black font-mono text-xs font-bold transition shadow-xs flex items-center gap-1"
-              >
-                <span>Launch Explorer</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-
-            <a
-              href="https://github.com/unfoundbox-crew/agentworth"
-              target="_blank"
-              rel="noreferrer"
-              title="GitHub Repository"
-              className="p-1.5 rounded-md text-neutral-600 hover:text-black dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex items-center justify-center"
-              aria-label="GitHub Repository"
+      <header className="topbar">
+        <span className="wordmark">
+          <span className="dot" />
+          AgentWorth
+        </span>
+        <div className="flex items-center gap-1.5 sm:gap-3">
+          {onOpenExplorer && (
+            <button
+              onClick={onOpenExplorer}
+              aria-label="Launch explorer"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-ink text-ground text-xs font-mono font-semibold hover:opacity-85 transition-opacity"
             >
-              <Github className="w-4 h-4" />
-            </a>
-            <div className="h-4 w-[1px] bg-neutral-200 dark:border-neutral-800 mx-1" />
-            <ThemeToggle />
-          </div>
+              <span className="hidden sm:inline">Launch explorer</span>
+              <IconArrowRight size={13} />
+            </button>
+          )}
+          <a
+            href="https://github.com/unfoundbox-crew/agentworth"
+            target="_blank"
+            rel="noreferrer"
+            title="GitHub repository"
+            aria-label="GitHub repository"
+            className="p-2 rounded-lg text-muted hover:text-ink hover:bg-surface transition-colors"
+          >
+            <IconGithub size={16} />
+          </a>
+          <div className="hidden sm:block h-4 w-px bg-border" />
+          <ThemeToggle />
         </div>
-      </nav>
+      </header>
 
-      {/* Main Container */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-12 sm:pt-16 pb-20 space-y-20 sm:space-y-28">
-        
-        {/* § 1 · HERO */}
-        <section className="text-center max-w-4xl mx-auto pt-4">
-          
-          {/* Trust badge */}
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-neutral-300 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-xs font-mono text-neutral-800 dark:text-neutral-300 mb-6">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>The Verdict Layer for AI Coding Agents</span>
-          </div>
+      <main id="main" ref={mainRef}>
+        {/* Hero */}
+        <section className="hero">
+          <div className="shell prose-shell" style={{ maxWidth: 820, paddingInline: 0, marginInline: "auto" }}>
+            <span className="eyebrow">The verdict layer for AI coding agents</span>
+            <h1 className="thesis" style={{ maxWidth: "18ch" }}>
+              Every agent says it&apos;s done. AgentWorth checks the git log.
+            </h1>
+            <p className="dek" style={{ maxWidth: "60ch" }}>
+              AgentWorth reads the session logs already on your disk &mdash; Claude Code,
+              Codex, Cursor, Antigravity and <em>20+ CLIs</em> &mdash; and grades every
+              session against evidence it can check: files changed, tests passed,
+              commits landed, CI green. Native Rust, local SQLite, zero telemetry.
+            </p>
 
-          {/* Headline */}
-          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-neutral-950 dark:text-white leading-[1.12] mb-6">
-            Every agent says it&apos;s done.
-            <br />
-            <span className="underline decoration-black dark:decoration-white decoration-4 underline-offset-8">
-              AgentWorth checks the git log.
-            </span>
-          </h1>
+            <div className="hero-meta" style={{ marginBottom: 32 }}>
+              <span>100% offline</span>
+              <span>Local SQLite WAL</span>
+              <span>Zero telemetry</span>
+              <span>Apache-2.0</span>
+            </div>
 
-          {/* Subhead */}
-          <p className="text-base sm:text-lg text-neutral-600 dark:text-neutral-400 leading-relaxed font-normal max-w-2xl mx-auto mb-8 font-sans">
-            AgentWorth reads the session logs already on your disk — Claude Code, Codex, Cursor, Antigravity and 20+ CLIs — and grades every session against evidence it can check: files changed, tests passed, commits landed, CI green. Native Rust, local SQLite, zero telemetry.
-          </p>
-
-          {/* Install box */}
-          <div className="max-w-md mx-auto mb-6">
-            <div className="border-2 border-black dark:border-white bg-white dark:bg-[#121215] shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,1)] p-3 flex items-center justify-between gap-3">
-              <code className="font-mono text-sm sm:text-base font-bold text-black dark:text-white select-all">
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface p-3"
+              style={{ maxWidth: 420 }}
+            >
+              <code className="font-mono text-sm font-semibold text-ink select-all">
                 $ {installCommand}
               </code>
               <button
                 onClick={() => handleCopy(installCommand)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-black dark:bg-white text-white dark:text-black font-mono text-xs font-bold transition hover:bg-neutral-800 dark:hover:bg-neutral-200"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-ink text-ground font-mono text-xs font-semibold hover:opacity-85 transition-opacity shrink-0"
               >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400 dark:text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
                 <span>{copied ? "Copied" : "Copy"}</span>
               </button>
             </div>
 
-            <div className="flex items-center justify-between mt-3 px-1 text-[11px] font-mono text-neutral-500 dark:text-neutral-400">
-              <span>✓ 100% Offline</span>
-              <span>✓ Local SQLite WAL</span>
-              <span>✓ Zero Telemetry</span>
-              <span>✓ Apache-2.0</span>
-            </div>
+            {/* Hero visual: a real scored session card */}
+            <figure className="diagram" style={{ marginTop: 48 }}>
+              <div className="diagram-frame">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border font-mono">
+                  <div className="flex items-center gap-3">
+                    <span className="w-2 h-2 rounded-full bg-accent inline-block" aria-hidden="true" />
+                    <span className="font-semibold text-xs text-ink">Session audit #98893-claude</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted">
+                      claude-opus-5
+                    </span>
+                  </div>
+                  <VerdictStamp status="ci_or_deployment_verified" size="sm" />
+                </div>
+
+                <div
+                  className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4 border-b border-border-soft font-mono text-xs"
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  <div>
+                    <div className="text-[10px] text-faint uppercase">Outcome rung</div>
+                    <div className="font-semibold text-ink mt-0.5">Rung 5 &middot; CI green</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-faint uppercase">Composite score</div>
+                    <div className="font-semibold text-ink mt-0.5">94.2 / 100</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-faint uppercase">Token volume</div>
+                    <div className="font-semibold text-ink mt-0.5">14.2M (97.4% cache)</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-faint uppercase">List equivalent</div>
+                    <div className="font-semibold text-ink mt-0.5">$6.12 USD</div>
+                  </div>
+                </div>
+
+                <div className="pt-4 font-mono text-xs">
+                  <div className="text-faint text-[10px] font-semibold uppercase mb-2">
+                    Empirical evidence quoted from disk
+                  </div>
+                  <div className="p-2.5 rounded-lg border border-border-soft bg-ground text-text text-[11px]">
+                    <code>✓ Git commit 4c901e8 observed → CI test-suite exit code 0 on branch main</code>
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                A real session, scored against evidence it can check on disk &mdash; not a
+                self-report the agent typed into the chat.
+              </figcaption>
+            </figure>
           </div>
-
-          {/* Hero Visual: A Real Scored Session Card */}
-          <div className="mt-12 text-left border-2 border-black dark:border-white bg-white dark:bg-[#121215] p-5 sm:p-6 font-mono shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] dark:shadow-[6px_6px_0px_0px_rgba(255,255,255,1)]">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-neutral-300 dark:border-neutral-800">
-              <div className="flex items-center gap-3">
-                <span className="w-3 h-3 bg-black dark:bg-white inline-block" />
-                <span className="font-bold text-xs sm:text-sm text-black dark:text-white">
-                  SESSION AUDIT #98893-CLAUDE
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 text-neutral-600 dark:text-neutral-400">
-                  claude-opus-5
-                </span>
-              </div>
-              <VerdictStamp status="ci_or_deployment_verified" size="sm" />
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4 border-b border-neutral-200 dark:border-neutral-800 text-xs">
-              <div>
-                <div className="text-[10px] text-neutral-500 uppercase">Outcome Rung</div>
-                <div className="font-extrabold text-black dark:text-white mt-0.5">Rung 5 · CI Green</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-neutral-500 uppercase">Composite Score</div>
-                <div className="font-extrabold text-black dark:text-white mt-0.5">94.2 / 100</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-neutral-500 uppercase">Token Volume</div>
-                <div className="font-extrabold text-black dark:text-white mt-0.5">14.2 M (97.4% Cache)</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-neutral-500 uppercase">List Equivalent</div>
-                <div className="font-extrabold text-black dark:text-white mt-0.5">$6.12 USD</div>
-              </div>
-            </div>
-
-            <div className="pt-4 text-xs space-y-2">
-              <div className="text-neutral-500 text-[10px] font-bold uppercase">Empirical Evidence Quoted from Disk:</div>
-              <div className="p-2.5 bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-800 dark:text-neutral-200 text-[11px]">
-                <code>✓ Git commit 4c901e8 observed → CI test-suite exit code 0 on branch main</code>
-              </div>
-            </div>
-          </div>
         </section>
 
-        {/* § 2 · THE LADDER / VERDICT BOARD */}
-        <section id="ladder">
-          <VerdictBoard />
-        </section>
-
-        {/* § 3 · THE CACHE CLIFF */}
-        <section id="cache-cliff">
-          <CacheCliffWidget />
-        </section>
-
-        {/* § 4 · WHAT YOU GET TODAY */}
-        <section id="features" className="space-y-6">
-          <div>
-            <div className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 mb-1">
-              § WHAT YOU GET TODAY
-            </div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Three Real CLI Commands. No Fabricated Data.
-            </h2>
-            <p className="text-xs sm:text-sm text-neutral-600 dark:text-neutral-400 mt-1 font-sans">
-              Shipped in the native Rust binary today.
+        {/* The ladder */}
+        <section className="sec" id="ladder">
+          <div className="shell">
+            <span className="eyebrow">01 &mdash; The verdict ladder</span>
+            <h2 className="sec-title">Five rungs, from claim to CI-verified.</h2>
+            <p className="lede">
+              Every session lands on a rung backed by evidence AgentWorth can check on
+              disk &mdash; never on what the agent says it did.
             </p>
+            <VerdictBoard />
           </div>
+        </section>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Terminal Block 1: Stats */}
-            <div className="border-2 border-black dark:border-white bg-black text-white p-5 font-mono text-xs shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between">
-              <div>
-                <div className="text-neutral-400 text-[11px] mb-2">$ agentworth stats</div>
-                <div className="text-zinc-300 space-y-1 text-[11px]">
-                  <div className="flex justify-between text-white font-bold"><span>Sessions:</span><span>9,713</span></div>
-                  <div className="flex justify-between"><span>Total tokens:</span><span>77.9 B</span></div>
-                  <div className="flex justify-between text-emerald-400"><span>Cache read:</span><span>97.2%</span></div>
-                  <div className="flex justify-between"><span>List equivalent:</span><span>$33,234</span></div>
-                  <div className="flex justify-between text-zinc-400"><span>Uploaded:</span><span>0 bytes</span></div>
+        {/* The cache cliff */}
+        <section className="sec" id="cache-cliff">
+          <div className="shell">
+            <span className="eyebrow">02 &mdash; The cache cliff</span>
+            <h2 className="sec-title">Long sessions get expensive fast.</h2>
+            <p className="lede">
+              Cache writes are cheap. Cache misses, past a context-window cliff, are not.
+              This is what that curve actually looks like.
+            </p>
+            <CacheCliffWidget />
+          </div>
+        </section>
+
+        {/* What you get today */}
+        <section className="sec" id="features">
+          <div className="shell">
+            <span className="eyebrow">03 &mdash; What you get today</span>
+            <h2 className="sec-title">Three real CLI commands. No fabricated data.</h2>
+            <p className="lede">Shipped in the native Rust binary today.</p>
+
+            <div className="term-grid cols-3">
+              {COMMANDS.map((block) => (
+                <div key={block.cmd} className="term-card">
+                  <div className="font-mono text-[11px] text-muted mb-3">{block.cmd}</div>
+                  <div className="space-y-1.5 font-mono text-[11px] mb-4" style={{ fontVariantNumeric: "tabular-nums" }}>
+                    {block.lines.map(([k, v]) => (
+                      <div key={k} className="flex justify-between">
+                        <span className="text-muted">{k}</span>
+                        <span className="text-ink font-semibold">{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p>{block.body}</p>
                 </div>
-              </div>
-              <div className="mt-4 pt-3 border-t border-zinc-800 text-[11px] text-zinc-400 font-sans">
-                Full token math across input, output, cache-read, and cache-creation.
-              </div>
+              ))}
             </div>
+          </div>
+        </section>
 
-            {/* Terminal Block 2: Pacing */}
-            <div className="border-2 border-black dark:border-white bg-black text-white p-5 font-mono text-xs shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between">
-              <div>
-                <div className="text-neutral-400 text-[11px] mb-2">$ agentworth usage --pacing</div>
-                <div className="text-zinc-300 space-y-1 text-[11px]">
-                  <div className="flex justify-between text-white font-bold"><span>Pacing window:</span><span>5 hours</span></div>
-                  <div className="flex justify-between"><span>Burn rate:</span><span>1.4M tok/hr</span></div>
-                  <div className="flex justify-between text-emerald-400"><span>Cache hit %:</span><span>98.1%</span></div>
-                  <div className="flex justify-between"><span>5h spend:</span><span>$4.18</span></div>
-                  <div className="flex justify-between text-zinc-400"><span>Active tasks:</span><span>3</span></div>
+        {/* Coverage matrix */}
+        <section className="sec" id="coverage">
+          <div className="shell">
+            <span className="eyebrow">04 &mdash; Coverage matrix</span>
+            <h2 className="sec-title">20 adapters, graded by what&apos;s actually measured.</h2>
+            <p className="lede">
+              Every capability is marked measured or pending &mdash; never asserted without
+              the evidence to back it.
+            </p>
+            <CoverageMatrix />
+          </div>
+        </section>
+
+        {/* Local means local */}
+        <section className="sec" id="invariants">
+          <div className="shell">
+            <span className="eyebrow">05 &mdash; AGENTS.md contract</span>
+            <h2 className="sec-title">Local means local. Always.</h2>
+            <p className="lede">Four invariants AgentWorth&apos;s own contributor contract enforces.</p>
+
+            <div className="term-grid">
+              {INVARIANTS.map((inv, i) => (
+                <div key={inv.title} className="term-card">
+                  <h3 className="flex items-center gap-2">
+                    <IconShieldCheck size={16} className="text-accent shrink-0" />
+                    <span>
+                      {i + 1}. {inv.title}
+                    </span>
+                  </h3>
+                  <p>{inv.body}</p>
                 </div>
-              </div>
-              <div className="mt-4 pt-3 border-t border-zinc-800 text-[11px] text-zinc-400 font-sans">
-                Real-time burn rate pacing aligned with Anthropic 5-hour rate limits.
-              </div>
-            </div>
-
-            {/* Terminal Block 3: Blame */}
-            <div className="border-2 border-black dark:border-white bg-black text-white p-5 font-mono text-xs shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col justify-between">
-              <div>
-                <div className="text-neutral-400 text-[11px] mb-2">$ agentworth blame src/api.ts</div>
-                <div className="text-zinc-300 space-y-1 text-[11px]">
-                  <div className="flex justify-between text-white font-bold"><span>L10-45:</span><span>Claude Opus</span></div>
-                  <div className="flex justify-between"><span>Prompt:</span><span>&apos;Zero-mock refactor&apos;</span></div>
-                  <div className="flex justify-between text-emerald-400"><span>Session:</span><span>#89312 (Rung 5)</span></div>
-                  <div className="flex justify-between"><span>Modified:</span><span>2026-08-31 10:20</span></div>
-                  <div className="flex justify-between text-zinc-400"><span>Diff:</span><span>+45 -12 lines</span></div>
-                </div>
-              </div>
-              <div className="mt-4 pt-3 border-t border-zinc-800 text-[11px] text-zinc-400 font-sans">
-                Trace any line of source code back to the exact agent session and prompt that wrote it.
-              </div>
+              ))}
             </div>
           </div>
         </section>
 
-        {/* § 5 · COVERAGE MATRIX */}
-        <section id="coverage">
-          <CoverageMatrix />
-        </section>
-
-        {/* § 6 · LOCAL MEANS LOCAL (4 Invariants from AGENTS.md) */}
-        <section id="invariants" className="border-2 border-black dark:border-white bg-white dark:bg-[#121215] p-6 sm:p-8 font-mono shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] dark:shadow-[6px_6px_0px_0px_rgba(255,255,255,1)]">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] font-bold px-2 py-0.5 bg-black dark:bg-white text-white dark:text-black">
-              CANONICAL INVARIANTS
-            </span>
-            <span className="text-xs font-bold text-neutral-500 uppercase">
-              AGENTS.md Contract
-            </span>
-          </div>
-          <h2 className="text-2xl font-extrabold tracking-tight mb-6">
-            Local Means Local. Always.
-          </h2>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-            <div className="p-4 border border-neutral-300 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 space-y-1.5">
-              <div className="font-extrabold text-black dark:text-white flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-emerald-500" />
-                <span>1. Never upload user data</span>
-              </div>
-              <p className="text-neutral-600 dark:text-neutral-400 font-sans leading-relaxed">
-                Scanning works completely offline. Raw histories remain on your disk untouched. Zero network telemetry.
-              </p>
+        {/* Roadmap */}
+        <section className="sec" id="roadmap">
+          <div className="shell prose-shell" style={{ maxWidth: 820, paddingInline: 0, marginInline: "auto" }}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="eyebrow" style={{ marginBottom: 0 }}>
+                06 &mdash; Phase 2 roadmap
+              </span>
+              <VerdictStamp status="not_built" size="sm" />
             </div>
+            <h2 className="sec-title" style={{ marginTop: 14 }}>
+              Policy engine: route, explain, run.
+            </h2>
+            <p className="body-text">
+              Transparently marked <strong>not built</strong>. Routing off your own
+              repo&apos;s verified build/test/CI history, computed locally on your machine.
+            </p>
 
-            <div className="p-4 border border-neutral-300 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 space-y-1.5">
-              <div className="font-extrabold text-black dark:text-white flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-emerald-500" />
-                <span>2. No raw-log duplication</span>
-              </div>
-              <p className="text-neutral-600 dark:text-neutral-400 font-sans leading-relaxed">
-                AgentWorth never copies multi-gigabyte transcripts into SQLite. It stores only derived indexes, scores, and fingerprints.
-              </p>
-            </div>
-
-            <div className="p-4 border border-neutral-300 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 space-y-1.5">
-              <div className="font-extrabold text-black dark:text-white flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-emerald-500" />
-                <span>3. Streaming JSONL parsing</span>
-              </div>
-              <p className="text-neutral-600 dark:text-neutral-400 font-sans leading-relaxed">
-                Bounded memory parsers handle 100+ GB logs without crashing. Rescans skip unchanged files in milliseconds via SHA-256.
-              </p>
-            </div>
-
-            <div className="p-4 border border-neutral-300 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 space-y-1.5">
-              <div className="font-extrabold text-black dark:text-white flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-emerald-500" />
-                <span>4. Deterministic verification</span>
-              </div>
-              <p className="text-neutral-600 dark:text-neutral-400 font-sans leading-relaxed">
-                Never trusts self-claimed completion. Scores are backed by compiler exit codes, positive diffs, and git commits.
+            <div className="provenance-note">
+              <span className="label">Preview &mdash; not shipped</span>
+              <p className="font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
+                $ aw route --task &apos;fix race condition in queue&apos;
+                <br />
+                RECOMMENDED: Claude Sonnet 4.6 (92.4% success on async Rust tasks in this repo)
+                <br />
+                Estimated cost: $0.18 &middot; Expected turns: 4 &middot; Context cache: warm
               </p>
             </div>
           </div>
         </section>
-
-        {/* § 7 · WHERE THIS GOES / ROADMAP */}
-        <section id="roadmap" className="border-2 border-dashed border-neutral-400 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/30 p-6 sm:p-8 font-mono">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-              § 7 · PHASE 2 ROADMAP
-            </div>
-            <VerdictStamp status="not_built" size="sm" />
-          </div>
-          <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight mb-2">
-            Policy Engine: Route, Explain, Run
-          </h2>
-          <p className="text-xs text-neutral-600 dark:text-neutral-400 font-sans leading-relaxed mb-6">
-            Transparently marked <strong>NOT BUILT</strong>. Routing off your own repo&apos;s verified build/test/CI history, computed locally on your machine.
-          </p>
-
-          <div className="bg-black text-white p-4 text-xs font-mono border border-neutral-800">
-            <div className="text-neutral-400 mb-1">$ aw route --task &apos;fix race condition in queue&apos;</div>
-            <div className="text-emerald-400 font-bold">RECOMMENDED: Claude Sonnet 4.6 (Score: 92.4% success on async Rust tasks in this repo)</div>
-            <div className="text-zinc-400 mt-1">Estimated Cost: $0.18 · Expected Turns: 4 · Context Cache: Warm</div>
-          </div>
-        </section>
-
       </main>
 
-      {/* Footer */}
-      <footer className="border-t-2 border-black dark:border-white bg-[#f8f9fa] dark:bg-[#0a0a0c] py-12 font-mono text-xs">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-6">
+      <footer className="sec">
+        <div className="shell flex flex-col sm:flex-row items-center justify-between gap-8">
           <ArchieMascot />
-          <div className="text-right space-y-1 text-neutral-500">
-            <div className="text-black dark:text-white font-bold">AgentWorth v0.1.2</div>
-            <div>Apache-2.0 License · Native Rust Core</div>
-            <div className="pt-2">
+          <div className="footer" style={{ padding: 0, border: 0, flex: 1 }}>
+            <p>
+              <span className="dot" />
+              <span>
+                AgentWorth v{APP_VERSION} &middot; Apache-2.0 license &middot; native Rust core
+              </span>
               <a
                 href="https://github.com/unfoundbox-crew/agentworth"
                 target="_blank"
                 rel="noreferrer"
-                className="underline hover:text-black dark:hover:text-white font-bold"
+                className="ml-auto inline-flex items-center gap-1 text-ink hover:text-accent transition-colors"
               >
-                github.com/unfoundbox-crew/agentworth
+                <IconGithub size={12} />
+                <span>GitHub</span>
               </a>
-            </div>
+            </p>
           </div>
         </div>
       </footer>
-
     </div>
   );
 };

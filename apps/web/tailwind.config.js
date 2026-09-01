@@ -8,8 +8,11 @@ export default {
   theme: {
     extend: {
       fontFamily: {
+        // MotionVector design system: Geist / Geist Mono, loaded in index.html
+        // and exposed as CSS vars in index.css. See /design.md §1.
         mono: [
-          'JetBrains Mono',
+          'var(--font-mono)',
+          'Geist Mono',
           'ui-monospace',
           'SFMono-Regular',
           'Menlo',
@@ -20,9 +23,13 @@ export default {
           'monospace',
         ],
         sans: [
-          'Inter',
+          'var(--font-sans)',
+          'Geist',
           '-apple-system',
           'BlinkMacSystemFont',
+          '"Segoe UI"',
+          'Helvetica',
+          'Arial',
           'sans-serif',
         ],
       },
@@ -44,6 +51,45 @@ export default {
           success: '#15803d',
           failure: '#b91c1c',
           warn: '#b45309',
+        },
+        // MotionVector --mv-* tokens (see /design.md §2). Theme-aware by
+        // construction — components using these need no dark: variant.
+        ground: 'var(--mv-ground)',
+        surface: {
+          DEFAULT: 'var(--mv-surface)',
+          2: 'var(--mv-surface-2)',
+          3: 'var(--mv-surface-3)',
+        },
+        border: {
+          DEFAULT: 'var(--mv-border)',
+          soft: 'var(--mv-border-soft)',
+        },
+        ink: 'var(--mv-ink)',
+        text: 'var(--mv-text)',
+        muted: 'var(--mv-muted)',
+        faint: 'var(--mv-faint)',
+        accent: {
+          DEFAULT: 'var(--mv-accent)',
+          soft: 'var(--mv-accent-soft)',
+          border: 'var(--mv-accent-border)',
+          contrast: 'var(--mv-accent-contrast)',
+        },
+        // Semantic status — kept separate from --mv-accent (design.md hard
+        // rule). Verified/warn/unverified states across the dashboard.
+        success: {
+          DEFAULT: 'var(--mv-success)',
+          soft: 'var(--mv-success-soft)',
+          border: 'var(--mv-success-border)',
+        },
+        warn: {
+          DEFAULT: 'var(--mv-warn)',
+          soft: 'var(--mv-warn-soft)',
+          border: 'var(--mv-warn-border)',
+        },
+        danger: {
+          DEFAULT: 'var(--mv-danger)',
+          soft: 'var(--mv-danger-soft)',
+          border: 'var(--mv-danger-border)',
         },
       },
       boxShadow: {
