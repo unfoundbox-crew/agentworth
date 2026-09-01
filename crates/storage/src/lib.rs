@@ -1440,6 +1440,8 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
         models_used,
         primary_outcome,
         composite_score,
+        prompt_preview,
+        source_mtime_epoch_secs,
     })
 }
 
@@ -1523,7 +1525,7 @@ pub fn default_db_dir() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentworth_schema::Provenance;
+    use agentworth_schema::{NormalizedEvent, Provenance};
     use chrono::Duration;
     use std::io::Write;
     use tempfile::NamedTempFile;
@@ -2207,6 +2209,100 @@ mod tests {
         expect_outcome("unscored", None);
         let stats_after_second_run = storage.get_aggregate_stats(false).expect("aggregate stats");
         assert_eq!(stats_after_second_run.verified_outcomes_count, 4);
+    }
+
+    /// Regression test for the missing `busy_timeout` pragma (docs/DECISION-INBOX.md): with no
+    /// timeout set, two independent connections to the same file-backed database (e.g. `serve`
+    /// and `scan` running concurrently) would return `SQLITE_BUSY` immediately on a write
+    /// collision instead of waiting. Assert the pragma is actually in effect on a real
+    /// connection, not just present in the schema SQL text.
+    #[test]
+    fn test_busy_timeout_pragma_is_set() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let conn = storage.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let busy_timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .expect("read busy_timeout pragma");
+        assert_eq!(busy_timeout, 5000);
+    }
+
+    /// Regression test for `prompt_preview`: previously always empty (zero Rust population,
+    /// existed only in the frontend's mock data/types). Covers extraction of the first
+    /// non-empty `UserMessage`, truncation past 200 chars with an ellipsis, an all-whitespace
+    /// message being skipped in favor of the next real one, and no `UserMessage` at all.
+    #[test]
+    fn test_prompt_preview_extracted_from_first_user_message() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let start = Utc::now();
+
+        let prov = Provenance::new("/path/short.jsonl", "claude_code", 100, 100, "fp_short");
+        let mut trace = AgentWorthTrace::new("short", "claude_code", prov, start);
+        trace.stats.total_events = 2;
+        trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage { content: "   \n  ".to_string() },
+        ));
+        trace.events.push(NormalizedEvent::new(
+            2,
+            start,
+            EventPayload::UserMessage { content: "  fix the flaky test  ".to_string() },
+        ));
+        storage.upsert_trace(&trace).expect("upsert short");
+        let summary = storage.get_session_by_id("short").unwrap().unwrap();
+        assert_eq!(summary.prompt_preview.as_deref(), Some("fix the flaky test"));
+
+        let prov_long = Provenance::new("/path/long.jsonl", "claude_code", 100, 100, "fp_long");
+        let mut trace_long = AgentWorthTrace::new("long", "claude_code", prov_long, start);
+        trace_long.stats.total_events = 1;
+        trace_long.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace_long.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage { content: "x".repeat(250) },
+        ));
+        storage.upsert_trace(&trace_long).expect("upsert long");
+        let long_summary = storage.get_session_by_id("long").unwrap().unwrap();
+        let preview = long_summary.prompt_preview.expect("expected a preview");
+        assert_eq!(preview.chars().count(), 201);
+        assert!(preview.ends_with('…'));
+        assert!(preview.starts_with(&"x".repeat(200)));
+
+        let prov_none = Provenance::new("/path/none.jsonl", "claude_code", 100, 100, "fp_none");
+        let mut trace_none = AgentWorthTrace::new("none", "claude_code", prov_none, start);
+        trace_none.stats.total_events = 1;
+        trace_none.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace_none.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::AssistantMessage { content: "hi".to_string(), thinking: None },
+        ));
+        storage.upsert_trace(&trace_none).expect("upsert none");
+        let none_summary = storage.get_session_by_id("none").unwrap().unwrap();
+        assert_eq!(none_summary.prompt_preview, None);
+    }
+
+    /// Regression test for `source_mtime_epoch_secs`: exposes the existing `sources.mtime`
+    /// column (already used for incremental scanning) via `SessionSummary`, through the
+    /// `LEFT JOIN sources` added to both `get_session_by_id` and `list_sessions_filtered`.
+    #[test]
+    fn test_source_mtime_epoch_secs_joined_from_sources_table() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let prov = Provenance::new("/path/mtime.jsonl", "claude_code", 100, 1_725_000_000, "fp_mtime");
+        let mut trace = AgentWorthTrace::new("mtime_sess", "claude_code", prov, Utc::now());
+        trace.stats.total_events = 5;
+        trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        storage.upsert_trace(&trace).expect("upsert");
+
+        let by_id = storage.get_session_by_id("mtime_sess").unwrap().unwrap();
+        assert_eq!(by_id.source_mtime_epoch_secs, Some(1_725_000_000));
+
+        let listed = storage
+            .list_sessions_filtered(&SessionFilter::default())
+            .expect("list sessions");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].source_mtime_epoch_secs, Some(1_725_000_000));
     }
 
     #[test]
