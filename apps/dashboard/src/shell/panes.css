@@ -460,13 +460,9 @@
   justify-content: center;
 }
 .shell-root .ol-node {
-  border-radius: 50%;
-  background: var(--mv-ink);
+  color: var(--mv-ink);
+  flex: none;
   transition: width 160ms ease-out, height 160ms ease-out;
-}
-.shell-root .ol-node-hollow {
-  background: transparent;
-  border: 1.5px solid var(--mv-ink);
 }
 .shell-root .ol-rung-text {
   display: flex;
