@@ -30,56 +30,89 @@ impl OutcomeDetector {
         Self
     }
 
-    /// Detect all outcome evidence items from a trace.
+    /// Detect all outcome evidence items from a trace, independently verified against real
+    /// git/filesystem state and cross-referenced against other real events in the same trace
+    /// wherever possible (see `detect_outcomes_with_verification` for the verification detail).
+    ///
+    /// This is the same detector every real caller (the scanner, the scorer) already uses, so
+    /// verification applies automatically — no call site elsewhere needs to change.
     pub fn detect_outcomes(&self, trace: &AgentWorthTrace) -> Vec<OutcomeEvidence> {
-        self.detect_from_events(&trace.events)
+        self.detect_outcomes_with_verification(trace).0
     }
 
-    /// Detect all outcome evidence items from a sequence of events.
+    /// Same as `detect_outcomes`, but also returns a note for every claim whose confidence or
+    /// kind was adjusted because reality did (or didn't) back it up.
+    pub fn detect_outcomes_with_verification(
+        &self,
+        trace: &AgentWorthTrace,
+    ) -> (Vec<OutcomeEvidence>, Vec<crate::verify::VerificationNote>) {
+        let mut indexed = self.classify_from_events(&trace.events);
+        let repo_root = crate::verify::resolve_repo_root(&trace.events, Some(&trace.provenance));
+        let notes =
+            crate::verify::verify_outcomes(&trace.events, &mut indexed, repo_root.as_deref());
+        (indexed.into_iter().map(|(_, ev)| ev).collect(), notes)
+    }
+
+    /// Detect all outcome evidence items from a sequence of events, independently verified
+    /// wherever the events themselves resolve to a real, on-disk repository (via `ShellCommand`
+    /// cwd values). Prefer `detect_outcomes` when a full `AgentWorthTrace` is available — it can
+    /// additionally fall back to Claude Code's transcript-path convention when no cwd is present.
     pub fn detect_from_events(&self, events: &[NormalizedEvent]) -> Vec<OutcomeEvidence> {
+        let mut indexed = self.classify_from_events(events);
+        let repo_root = crate::verify::resolve_repo_root(events, None);
+        let _notes = crate::verify::verify_outcomes(events, &mut indexed, repo_root.as_deref());
+        indexed.into_iter().map(|(_, ev)| ev).collect()
+    }
+
+    /// Classify raw events into outcome evidence, still paired with the source event's index so
+    /// a later verification pass can look back at exactly what produced each claim.
+    fn classify_from_events(&self, events: &[NormalizedEvent]) -> Vec<(usize, OutcomeEvidence)> {
         let mut outcomes = Vec::new();
 
-        for event in events {
+        for (idx, event) in events.iter().enumerate() {
             match &event.payload {
                 // Direct outcome evidence already attached to an event
                 EventPayload::OutcomeEvidence(evidence) => {
-                    outcomes.push(evidence.clone());
+                    outcomes.push((idx, evidence.clone()));
                 }
 
                 // File actions -> ArtifactChanged
                 EventPayload::FileAction { path, action, .. } => {
-                    outcomes.push(OutcomeEvidence {
-                        kind: OutcomeKind::ArtifactChanged,
-                        summary: format!("File {:?} operation on '{}'", action, path),
-                        confidence: 0.60,
-                    });
+                    outcomes.push((
+                        idx,
+                        OutcomeEvidence {
+                            kind: OutcomeKind::ArtifactChanged,
+                            summary: format!("File {:?} operation on '{}'", action, path),
+                            confidence: 0.60,
+                        },
+                    ));
                 }
 
                 // Tool calls that write/edit files or run git/tests/ci
                 EventPayload::ToolCall(tool_call) => {
                     if let Some(evidence) = self.detect_from_tool_call(tool_call) {
-                        outcomes.push(evidence);
+                        outcomes.push((idx, evidence));
                     }
                 }
 
                 // Shell commands
                 EventPayload::ShellCommand(cmd) => {
                     if let Some(evidence) = self.detect_from_shell_command(cmd) {
-                        outcomes.push(evidence);
+                        outcomes.push((idx, evidence));
                     }
                 }
 
                 // Tool results
                 EventPayload::ToolResult(res) => {
                     if let Some(evidence) = self.detect_from_tool_result(res) {
-                        outcomes.push(evidence);
+                        outcomes.push((idx, evidence));
                     }
                 }
 
                 // Assistant messages claiming completion
                 EventPayload::AssistantMessage { content, .. } => {
                     if let Some(evidence) = self.detect_from_assistant_message(content) {
-                        outcomes.push(evidence);
+                        outcomes.push((idx, evidence));
                     }
                 }
 
@@ -192,19 +225,7 @@ impl OutcomeDetector {
         let trimmed = cmd_str.trim().to_lowercase();
 
         // 1. CI / PR / Deployment (Highest Rank)
-        if trimmed.starts_with("gh pr create")
-            || trimmed.starts_with("gh pr merge")
-            || trimmed.starts_with("gh workflow run")
-            || trimmed.starts_with("gh run watch")
-            || trimmed.starts_with("vercel deploy")
-            || trimmed.starts_with("vercel --prod")
-            || trimmed.starts_with("fly deploy")
-            || trimmed.starts_with("kubectl apply")
-            || trimmed.starts_with("docker push")
-            || trimmed.starts_with("cargo publish")
-            || trimmed.starts_with("npm publish")
-            || trimmed.starts_with("terraform apply")
-        {
+        if is_ci_or_deploy_command(&trimmed) {
             let conf = if exit_code == Some(0) { 0.98 } else { 0.90 };
             return Some(OutcomeEvidence {
                 kind: OutcomeKind::CiOrDeploymentVerified,
@@ -214,10 +235,7 @@ impl OutcomeDetector {
         }
 
         // 2. Commit observed
-        if trimmed.starts_with("git commit")
-            || trimmed.starts_with("git merge")
-            || trimmed.starts_with("git cherry-pick")
-        {
+        if is_commit_command(&trimmed) {
             let conf = if exit_code == Some(0) { 0.90 } else { 0.80 };
             return Some(OutcomeEvidence {
                 kind: OutcomeKind::CommitObserved,
@@ -360,7 +378,31 @@ pub fn outcome_rank(kind: OutcomeKind) -> u8 {
     }
 }
 
-fn is_test_or_build_command(cmd: &str) -> bool {
+/// Matches a command string that requests a CI run, PR, or deployment — independent of
+/// whether it's paired with a real, observed exit code. Shared with `verify.rs`, which needs
+/// the same category test to look for a *real* execution corroborating a bare tool-call intent.
+pub(crate) fn is_ci_or_deploy_command(cmd: &str) -> bool {
+    cmd.starts_with("gh pr create")
+        || cmd.starts_with("gh pr merge")
+        || cmd.starts_with("gh workflow run")
+        || cmd.starts_with("gh run watch")
+        || cmd.starts_with("vercel deploy")
+        || cmd.starts_with("vercel --prod")
+        || cmd.starts_with("fly deploy")
+        || cmd.starts_with("kubectl apply")
+        || cmd.starts_with("docker push")
+        || cmd.starts_with("cargo publish")
+        || cmd.starts_with("npm publish")
+        || cmd.starts_with("terraform apply")
+}
+
+/// Matches a command string that requests a git commit/merge/cherry-pick. See
+/// `is_ci_or_deploy_command` for why this is shared rather than private.
+pub(crate) fn is_commit_command(cmd: &str) -> bool {
+    cmd.starts_with("git commit") || cmd.starts_with("git merge") || cmd.starts_with("git cherry-pick")
+}
+
+pub(crate) fn is_test_or_build_command(cmd: &str) -> bool {
     let patterns = [
         "cargo test",
         "cargo check",

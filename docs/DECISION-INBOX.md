@@ -15,7 +15,7 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 | Dashboard crash fix | Done, on integration branch | **Blocked from landing on main** — needs rebase onto PR #13 + #14 first, see Blocked below |
 | Batch-2 (9 fixes) | **Done.** Verified, fixed, tested | 8 of 9 branches did not compile as originally committed (agy again). All fixed for real — see Batch-2 findings below |
 | SSE / live-tail endpoint | **Done, merged into integration branch.** | `GET /api/live-tail`, `notify`-based watcher + broadcast channel, no polling. 25/25 tests pass on lenovo (7 new). See SSE findings below |
-| Batch-2b (7 items dispatched, 4 deferred) | Building now | 7 agents in flight, own worktrees, see table below |
+| Batch-2b (7 items dispatched, 4 deferred) | **Done — all 7 merged into integration branch.** | Full workspace build+test re-verified after the 6-way merge (before the 7th landed) — clean. See table below |
 | Cost-Aware Task Router | Deferred, not scoped | Different shape of feature — needs a live per-agent hook, not an index query. Needs its own design pass |
 | Final PR + version bump | Not yet | Saurabh's call — one PR, one version bump, only once everything this session touches is done |
 
@@ -43,7 +43,7 @@ While verifying, the branch's own isolated test run showed the `agentworth`/`agw
 
 | Item | Branch | Status |
 | --- | --- | --- |
-| Independent outcome verification | `feat/outcome-independent-verification` | Building |
+| Independent outcome verification | `feat/outcome-independent-verification` | Done, verified on lenovo (233 passed, up from 211). Cross-checks claims against real git/file state and other real events in the trace; a bare unconfirmed tool-call intent (e.g. `gh pr create` with no observed result) now demotes from `CiOrDeploymentVerified` to `DoneClaimed` instead of being trusted at face value — see findings below |
 | Per-model attribution downstream in scoring | `feat/scoring-per-model-attribution` | Done — `TraceScore` gains `per_model`/`total_estimated_cost_usd`, keyed to `per_model_token_usage`; 3 new tests incl. multi-model fixture; 214/214 pass on lenovo (commit `bf5a5ff`) |
 | High-entropy secret detector | `feat/secret-detector-entropy` | Done. Verified on lenovo (33 tests: redaction+cli+export-atif, all pass). Threshold 4.5 bits/char + hex/UUID/separator exclusions; git SHAs, UUIDs, content fingerprints, and this repo's own snake_case/kebab-case identifiers confirmed NOT flagged |
 | ModelSwitch events across 20 adapters | `feat/adapter-modelswitch-events` | **Done.** All 20 adapters wired, verified on lenovo — see findings below |
@@ -60,6 +60,16 @@ While verifying, the branch's own isolated test run showed the `agentworth`/`agw
 **Real tests, not just the mechanical wiring.** Extended `claude.rs`'s existing multi-model test plus three new tests (`cline.rs`, `aider.rs`'s markdown path, `opencode.rs`'s SQLite path) with real fixture data asserting the actual `ModelSwitch` events — one per structurally distinct code shape touched, not one per adapter.
 
 **Verified for real on lenovo**, isolated build dir + dedicated `CARGO_TARGET_DIR` (shared-target-dir staleness bug from earlier today, per punch list): `cargo build --workspace` — exit 0, only 2 pre-existing unused-import warnings (unrelated to this change). `cargo test --workspace` — exit 0, 207 passed across the whole workspace (0 failed, 0 ignored), 90 of those in `agentworth-adapters` alone. Added 3 new test functions (`cline`, `aider` markdown path, `opencode` SQLite path) plus extended `claude.rs`'s existing multi-model test with ModelSwitch assertions — didn't check the adapters crate's exact pre-change test count, so "90" is the verified post-change total, not a verified delta. Commit `eccbe09` on `feat/adapter-modelswitch-events`, not pushed.
+
+### Independent outcome verification findings (2026-09-01)
+
+**Real bug found while building this, not hypothetical**: a bare `ToolCall` — an agent *requesting* something like `gh pr create`, before any result is known — was being scored as `CiOrDeploymentVerified @ 0.90` from the command string alone (`classify_command_string` accepted a `None` exit code as a high-confidence match). That's the exact "trusting intent as reality" failure this feature exists to catch, and it was live in the scoring path before this branch.
+
+**Fix shape**: cross-checks each outcome claim against real state elsewhere in the trace — a `DoneClaimed` needs some real `ShellCommand` with `exit_code == Some(0)` somewhere in the session or its confidence drops to ≤0.10; a claim sourced from a bare `ToolCall` gets demoted in *kind*, not just confidence, from whatever rung it claimed down to `DoneClaimed` (confidence-only wouldn't have been enough — `compute_verifiability_score` branches on kind presence, not confidence); `ArtifactChanged` gets a real file/git check; `CommitObserved` gets a real `git cat-file` check against a parsed hash, falling back to a time-windowed `git log`. External CI/deploy claims are deliberately left unverified — no GitHub/Vercel API calls added, out of scope.
+
+**Design call worth knowing about**: no schema changes. Adding a `verification` field to `OutcomeEvidence` would have touched 55+ struct-literal construction sites across all 20 adapters, for a fix scoped to one crate — so verification mutates `kind`/`confidence`/`summary` in place inside the existing detection path instead, meaning `Scanner::run_scan` and `TraceScorer::score` both pick it up automatically with no changes needed outside `crates/outcomes`.
+
+233 passed workspace-wide (up from 211), zero regressions. Commit `386b23c` on `feat/outcome-independent-verification`, not pushed.
 
 **Deferred, not dispatched today:**
 - **Threat Digest** — depends on the secret detector above actually landing first. Next wave.
