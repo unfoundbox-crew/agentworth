@@ -102,6 +102,22 @@ pub struct UsagePeriodSummary {
     pub cache_hit_ratio: f64,
 }
 
+/// Per-model token usage rollup for a time period (Day, Week, Month), mirroring
+/// `UsagePeriodSummary` but grouped by model instead of adapter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelUsagePeriodSummary {
+    pub period: String,
+    pub model: String,
+    pub session_count: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub total_tokens: u64,
+    pub estimated_cost_usd: f64,
+    pub cache_hit_ratio: f64,
+}
+
 /// Rolling pacing window summary (e.g. 5-hour window).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PacingSummary {
@@ -259,6 +275,17 @@ impl Storage {
                 model TEXT,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS session_model_usage (
+                session_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(session_id, model),
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
             "#,
         )?;
 
@@ -291,6 +318,7 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_sources_fingerprint ON sources(fingerprint);
             CREATE INDEX IF NOT EXISTS idx_file_modifications_path ON file_modifications(file_path);
             CREATE INDEX IF NOT EXISTS idx_file_modifications_session ON file_modifications(session_id);
+            CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
 
             CREATE VIEW IF NOT EXISTS v_daily_usage AS
             SELECT
@@ -505,6 +533,32 @@ impl Storage {
             }
         }
 
+        // 4. Replace per-model usage rows. Delete-then-insert (rather than upsert)
+        // so a rescan correctly drops a model that no longer appears for this session.
+        tx.execute(
+            "DELETE FROM session_model_usage WHERE session_id = ?1",
+            params![trace.session_id],
+        )?;
+        for (model, usage) in &trace.stats.per_model_token_usage {
+            tx.execute(
+                r#"
+                INSERT INTO session_model_usage (
+                    session_id, model, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "#,
+                params![
+                    trace.session_id,
+                    model,
+                    usage.input_tokens as i64,
+                    usage.output_tokens as i64,
+                    usage.cache_read_tokens as i64,
+                    usage.cache_creation_tokens as i64,
+                ],
+            )?;
+        }
+
         tx.commit()?;
         Ok(())
     }
@@ -671,6 +725,39 @@ impl Storage {
         } else {
             Ok(None)
         }
+    }
+
+    /// Retrieve the per-model token usage breakdown for a single session.
+    pub fn get_session_model_usage(&self, session_id: &str) -> Result<Vec<(String, TokenUsage)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+            FROM session_model_usage
+            WHERE session_id = ?1
+            ORDER BY model
+            "#,
+        )?;
+
+        let mut rows = stmt.query(params![session_id])?;
+        let mut results = Vec::new();
+        while let Some(row) = rows.next()? {
+            let model: String = row.get(0)?;
+            let input: i64 = row.get(1)?;
+            let output: i64 = row.get(2)?;
+            let cache_read: i64 = row.get(3)?;
+            let cache_creation: i64 = row.get(4)?;
+            results.push((
+                model,
+                TokenUsage::new(
+                    input as u64,
+                    output as u64,
+                    cache_read as u64,
+                    cache_creation as u64,
+                ),
+            ));
+        }
+        Ok(results)
     }
 
     /// List recent sessions with a limit.
@@ -854,6 +941,80 @@ impl Storage {
                 cache_creation_tokens: cache_creation as u64,
                 total_tokens: total as u64,
                 total_duration_seconds: duration,
+                estimated_cost_usd,
+                cache_hit_ratio,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Retrieve per-model usage rollups bucketed by day, week, or month — the
+    /// same periods as `get_daily_usage`/`get_weekly_usage`/`get_monthly_usage`,
+    /// grouped by model instead of adapter.
+    pub fn get_model_usage(&self, period: &str, limit: usize) -> Result<Vec<ModelUsagePeriodSummary>> {
+        let conn = self.conn.lock().unwrap();
+
+        let period_expr = match period {
+            "week" => "strftime('%Y-W%W', s.started_at)",
+            "month" => "strftime('%Y-%m', s.started_at)",
+            _ => "DATE(s.started_at)",
+        };
+
+        let sql = format!(
+            r#"
+            SELECT
+                {period_expr} AS period,
+                smu.model AS model,
+                COUNT(DISTINCT smu.session_id) AS session_count,
+                COALESCE(SUM(smu.input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(smu.output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(smu.cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(smu.cache_creation_tokens), 0) AS cache_creation_tokens,
+                COALESCE(SUM(smu.input_tokens + smu.output_tokens + smu.cache_read_tokens + smu.cache_creation_tokens), 0) AS total_tokens
+            FROM session_model_usage smu
+            JOIN sessions s ON s.session_id = smu.session_id
+            WHERE s.started_at > '2020-01-01'
+            GROUP BY {period_expr}, smu.model
+            ORDER BY period DESC, total_tokens DESC
+            LIMIT ?1
+            "#,
+            period_expr = period_expr
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![limit as i64])?;
+        let mut results = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            let period: String = row.get(0)?;
+            let model: String = row.get(1)?;
+            let session_count: i64 = row.get(2)?;
+            let input: i64 = row.get(3)?;
+            let output: i64 = row.get(4)?;
+            let cache_read: i64 = row.get(5)?;
+            let cache_creation: i64 = row.get(6)?;
+            let total: i64 = row.get(7)?;
+
+            let estimated_cost_usd = estimate_model_tokens_cost_usd(
+                Some(&model),
+                input as u64,
+                output as u64,
+                cache_read as u64,
+                cache_creation as u64,
+            );
+            let cache_hit_ratio =
+                calculate_cache_hit_ratio(input as u64, cache_read as u64, cache_creation as u64);
+
+            results.push(ModelUsagePeriodSummary {
+                period,
+                model,
+                session_count: session_count as usize,
+                input_tokens: input as u64,
+                output_tokens: output as u64,
+                cache_read_tokens: cache_read as u64,
+                cache_creation_tokens: cache_creation as u64,
+                total_tokens: total as u64,
                 estimated_cost_usd,
                 cache_hit_ratio,
             });
@@ -1434,6 +1595,89 @@ mod tests {
         assert_eq!(pacing.active_adapters, vec!["claude_code"]);
         assert_eq!(pacing.active_models, vec!["claude-3-5-sonnet"]);
         assert!(pacing.burn_rate_tokens_per_hour > 0.0);
+    }
+
+    #[test]
+    fn test_session_model_usage_breakdown_and_rescan_replacement() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let started_at = DateTime::parse_from_rfc3339("2026-08-30T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let prov = Provenance::new("/path/multi_model.jsonl", "claude_code", 100, 100, "fp_multi");
+        let mut trace = AgentWorthTrace::new("sess_multi", "claude_code", prov, started_at);
+        trace.stats.total_events = 4;
+        trace.stats.models_used = vec![
+            "claude-opus-5".to_string(),
+            "claude-fable-5".to_string(),
+        ];
+        trace
+            .stats
+            .per_model_token_usage
+            .insert("claude-opus-5".to_string(), TokenUsage::new(600, 160, 200, 50));
+        trace
+            .stats
+            .per_model_token_usage
+            .insert("claude-fable-5".to_string(), TokenUsage::new(300, 80, 0, 0));
+        trace.stats.token_usage = TokenUsage::new(900, 240, 200, 50);
+
+        storage.upsert_trace(&trace).expect("upsert multi-model trace");
+
+        // 1. Per-session breakdown is queryable and exact per model.
+        let breakdown = storage
+            .get_session_model_usage("sess_multi")
+            .expect("get session model usage");
+        assert_eq!(breakdown.len(), 2);
+        let as_map: std::collections::BTreeMap<_, _> = breakdown.into_iter().collect();
+        assert_eq!(
+            as_map.get("claude-opus-5"),
+            Some(&TokenUsage::new(600, 160, 200, 50))
+        );
+        assert_eq!(
+            as_map.get("claude-fable-5"),
+            Some(&TokenUsage::new(300, 80, 0, 0))
+        );
+
+        // 2. The period-bucketed rollup groups by model, not adapter, and totals match.
+        let rollup = storage.get_model_usage("day", 10).expect("get model usage");
+        assert_eq!(rollup.len(), 2);
+        let fable_row = rollup
+            .iter()
+            .find(|r| r.model == "claude-fable-5")
+            .expect("fable row present");
+        assert_eq!(fable_row.period, "2026-08-30");
+        assert_eq!(fable_row.session_count, 1);
+        assert_eq!(fable_row.input_tokens, 300);
+        assert_eq!(fable_row.output_tokens, 80);
+        assert_eq!(fable_row.total_tokens, 380);
+        assert!(fable_row.estimated_cost_usd > 0.0);
+
+        let opus_row = rollup
+            .iter()
+            .find(|r| r.model == "claude-opus-5")
+            .expect("opus row present");
+        assert_eq!(opus_row.total_tokens, 1010);
+
+        // 3. A rescan (e.g. `agentworth scan --force`) that now attributes everything
+        // to a single model must replace the stale per-model rows, not accumulate onto them.
+        let prov2 = Provenance::new("/path/multi_model.jsonl", "claude_code", 100, 100, "fp_multi");
+        let mut rescanned = AgentWorthTrace::new("sess_multi", "claude_code", prov2, started_at);
+        rescanned.stats.total_events = 4;
+        rescanned.stats.models_used = vec!["claude-opus-5".to_string()];
+        rescanned
+            .stats
+            .per_model_token_usage
+            .insert("claude-opus-5".to_string(), TokenUsage::new(900, 240, 200, 50));
+        rescanned.stats.token_usage = TokenUsage::new(900, 240, 200, 50);
+
+        storage.upsert_trace(&rescanned).expect("upsert rescanned trace");
+
+        let after_rescan = storage
+            .get_session_model_usage("sess_multi")
+            .expect("get session model usage after rescan");
+        assert_eq!(after_rescan.len(), 1);
+        assert_eq!(after_rescan[0].0, "claude-opus-5");
+        assert_eq!(after_rescan[0].1, TokenUsage::new(900, 240, 200, 50));
     }
 
     #[test]
