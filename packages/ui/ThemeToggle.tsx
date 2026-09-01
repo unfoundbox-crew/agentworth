@@ -1,5 +1,5 @@
 import React from 'react';
-import { Theme, useTheme } from '../hooks/useTheme';
+import { Theme, useTheme } from './useTheme';
 
 /**
  * System / Light / Dark control — design.md "The toggle". Persists to

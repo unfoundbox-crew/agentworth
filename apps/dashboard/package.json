@@ -1,5 +1,5 @@
 {
-  "name": "@agentworth/web",
+  "name": "@agentworth/dashboard",
   "private": true,
   "version": "0.1.1",
   "type": "module",
@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.10",
     "clsx": "^2.1.1",
     "lucide-react": "^0.475.0",
     "react": "^18.3.1",

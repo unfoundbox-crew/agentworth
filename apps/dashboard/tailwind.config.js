@@ -10,7 +10,7 @@ export default {
     extend: {
       fontFamily: {
         // MotionVector design system: Geist / Geist Mono, loaded in index.html
-        // and exposed as CSS vars in index.css. See /design.md §1.
+        // and exposed as CSS vars via packages/ui/tokens.css. See /design.md §1.
         mono: [
           'var(--font-mono)',
           'Geist Mono',

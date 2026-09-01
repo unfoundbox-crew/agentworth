@@ -1,7 +1,8 @@
+export type RailViewId = 'sessions' | 'overview' | 'coverage' | 'archaeology' | 'exports';
+
 interface RailItem {
-  id: string;
+  id: RailViewId;
   label: string;
-  active: boolean;
   path: JSX.Element;
 }
 
@@ -9,7 +10,6 @@ const ITEMS: RailItem[] = [
   {
     id: 'sessions',
     label: 'Sessions',
-    active: true,
     path: (
       <>
         <circle cx="4" cy="6" r="1" />
@@ -22,9 +22,19 @@ const ITEMS: RailItem[] = [
     ),
   },
   {
+    id: 'overview',
+    label: 'Overview',
+    path: (
+      <>
+        <line x1="4.5" y1="16" x2="4.5" y2="11" />
+        <line x1="10" y1="16" x2="10" y2="6" />
+        <line x1="15.5" y1="16" x2="15.5" y2="9" />
+      </>
+    ),
+  },
+  {
     id: 'coverage',
     label: 'Coverage',
-    active: false,
     path: (
       <>
         <circle cx="10" cy="10" r="7" />
@@ -35,7 +45,6 @@ const ITEMS: RailItem[] = [
   {
     id: 'archaeology',
     label: 'Archaeology',
-    active: false,
     path: (
       <>
         <path d="M10 3 L17 7 L10 11 L3 7 Z" />
@@ -47,7 +56,6 @@ const ITEMS: RailItem[] = [
   {
     id: 'exports',
     label: 'Exports',
-    active: false,
     path: (
       <>
         <line x1="10" y1="3" x2="10" y2="12.5" />
@@ -56,29 +64,14 @@ const ITEMS: RailItem[] = [
       </>
     ),
   },
-  {
-    id: 'settings',
-    label: 'Settings',
-    active: false,
-    path: (
-      <>
-        <line x1="3" y1="6" x2="17" y2="6" />
-        <circle cx="8" cy="6" r="1.8" />
-        <line x1="3" y1="10" x2="17" y2="10" />
-        <circle cx="13" cy="10" r="1.8" />
-        <line x1="3" y1="14" x2="17" y2="14" />
-        <circle cx="6" cy="14" r="1.8" />
-      </>
-    ),
-  },
 ];
 
 export interface RailProps {
-  /** Called when an inert (not-yet-wired) rail item is clicked. */
-  onInert: (label: string) => void;
+  activeView: RailViewId;
+  onSelect: (view: RailViewId) => void;
 }
 
-export function Rail({ onInert }: RailProps) {
+export function Rail({ activeView, onSelect }: RailProps) {
   return (
     <nav className="rail" aria-label="Sections">
       {ITEMS.map((item) => (
@@ -87,12 +80,10 @@ export function Rail({ onInert }: RailProps) {
           type="button"
           className="rail-btn"
           data-tooltip={item.label}
-          aria-current={item.active}
+          aria-current={item.id === activeView ? 'true' : undefined}
           aria-label={item.label}
           title={item.label}
-          onClick={() => {
-            if (!item.active) onInert(item.label);
-          }}
+          onClick={() => onSelect(item.id)}
         >
           <svg
             viewBox="0 0 20 20"

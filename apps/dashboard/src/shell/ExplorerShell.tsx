@@ -3,10 +3,15 @@ import { useRoute } from '../hooks/useRoute';
 import { useShellKeys } from '../hooks/useShellKeys';
 import type { ShellNav } from '../hooks/useShellKeys';
 import { Rail } from './Rail';
+import type { RailViewId } from './Rail';
 import { CommandPalette } from './CommandPalette';
-import { ThemeToggle } from '../components/ThemeToggle';
+import { ThemeToggle } from '@ui/ThemeToggle';
 import { SessionList } from './SessionList';
 import { InspectorPane } from './InspectorPane';
+import { OverviewPane } from './OverviewPane';
+import { CoveragePane } from './CoveragePane';
+import { ArchaeologyPane } from './ArchaeologyPane';
+import { ExportsPane } from './ExportsPane';
 import './shell.css';
 import './panes.css';
 
@@ -15,14 +20,16 @@ const TOAST_DURATION_MS = 1800;
 /**
  * Three-pane keyboard-first application shell (rail / session list /
  * inspector), replacing the old scrolling dashboard. Owns routing, the
- * global key handler, live-tail state, and the command palette frame.
- * SessionList and InspectorPane render their own contents.
+ * global key handler, live-tail state, the command palette frame, and
+ * which rail view is active. SessionList, InspectorPane and the other
+ * rail-view panes render their own contents.
  */
 export function ExplorerShell() {
   const { sessionId, navigate } = useRoute();
   const [liveTail, setLiveTail] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<RailViewId>('sessions');
 
   const navRef = useRef<ShellNav | null>(null);
   const inspectorRegionRef = useRef<HTMLDivElement>(null);
@@ -92,22 +99,34 @@ export function ExplorerShell() {
       </header>
 
       <div className="shell-body">
-        <Rail onInert={(label) => showToast(`${label} — not wired yet`)} />
+        <Rail activeView={activeView} onSelect={setActiveView} />
 
-        <div className="list-region">
-          <SessionList
-            selectedId={sessionId}
-            onSelect={(id: string) => navigate(`/s/${encodeURIComponent(id)}`)}
-            registerNav={(nav: ShellNav) => {
-              navRef.current = nav;
-            }}
-            liveTail={liveTail}
-          />
-        </div>
+        {activeView === 'sessions' ? (
+          <>
+            <div className="list-region">
+              <SessionList
+                selectedId={sessionId}
+                onSelect={(id: string) => navigate(`/s/${encodeURIComponent(id)}`)}
+                registerNav={(nav: ShellNav) => {
+                  navRef.current = nav;
+                }}
+                liveTail={liveTail}
+              />
+            </div>
 
-        <div className="inspector-region" ref={inspectorRegionRef} tabIndex={-1}>
-          <InspectorPane sessionId={sessionId} liveTail={liveTail} />
-        </div>
+            <div className="inspector-region" ref={inspectorRegionRef} tabIndex={-1}>
+              <InspectorPane sessionId={sessionId} liveTail={liveTail} />
+            </div>
+          </>
+        ) : activeView === 'overview' ? (
+          <OverviewPane />
+        ) : activeView === 'coverage' ? (
+          <CoveragePane />
+        ) : activeView === 'archaeology' ? (
+          <ArchaeologyPane />
+        ) : (
+          <ExportsPane sessionId={sessionId} />
+        )}
       </div>
 
       <CommandPalette
@@ -117,6 +136,7 @@ export function ExplorerShell() {
         onToggleLiveTail={toggleLiveTail}
         sessionId={sessionId}
         showToast={showToast}
+        onNavigateView={setActiveView}
       />
 
       <div className={`toast${toastMessage ? ' show' : ''}`} role="status" aria-live="polite">

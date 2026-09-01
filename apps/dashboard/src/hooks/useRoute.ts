@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 export interface Route {
-  /** Current location.pathname, e.g. "/", "/explorer", "/s/sess_1a2b3c". */
+  /** Current location.pathname, e.g. "/" or "/s/sess_1a2b3c". */
   path: string;
   /** Decoded session id when path is /s/<id>, otherwise null. Ids are
    *  opaque strings (most are UUIDs, some are derived from folder names),
