@@ -223,7 +223,14 @@ impl ContextRotDetector {
         middle.cumulative_tokens_at_end = cumulative[mid_end - 1];
         late.cumulative_tokens_at_end = cumulative[events.len() - 1];
 
-        attach_recovery_friction(events, early_end, mid_end, &mut early, &mut middle, &mut late);
+        attach_recovery_friction(
+            events,
+            early_end,
+            mid_end,
+            &mut early,
+            &mut middle,
+            &mut late,
+        );
 
         let d_failure = worse_at_end(early.failure_rate, middle.failure_rate, late.failure_rate);
         let d_churn = worse_at_end(
@@ -266,11 +273,7 @@ impl ContextRotDetector {
                 d_verification,
                 VERIFICATION_WEIGHT,
             ),
-            (
-                "slower failure-recovery loops",
-                d_recovery,
-                RECOVERY_WEIGHT,
-            ),
+            ("slower failure-recovery loops", d_recovery, RECOVERY_WEIGHT),
         ];
 
         let triggered: Vec<String> = components
@@ -279,9 +282,13 @@ impl ContextRotDetector {
             .map(|(name, _, _)| name.to_string())
             .collect();
 
-        let magnitude_sum: f64 = components.iter().map(|(_, value, weight)| value * weight).sum();
+        let magnitude_sum: f64 = components
+            .iter()
+            .map(|(_, value, weight)| value * weight)
+            .sum();
         let trigger_fraction = triggered.len() as f64 / components.len() as f64;
-        let rot_score = (TRIGGER_COUNT_WEIGHT * trigger_fraction + MAGNITUDE_WEIGHT * magnitude_sum)
+        let rot_score = (TRIGGER_COUNT_WEIGHT * trigger_fraction
+            + MAGNITUDE_WEIGHT * magnitude_sum)
             .clamp(0.0, 1.0);
 
         let flagged = rot_score >= ROT_SCORE_THRESHOLD && triggered.len() >= MIN_TRIGGERED_SIGNALS;
@@ -333,7 +340,10 @@ fn segment_boundaries(events: &[NormalizedEvent]) -> (usize, usize, Vec<u64>) {
         // `position` finds the first event whose cumulative total reaches the threshold; that
         // event becomes the first event of the *next* segment, hence the `+ 1` boundary.
         let idx1 = cumulative.iter().position(|&t| t >= t1).unwrap_or(n / 3);
-        let idx2 = cumulative.iter().position(|&t| t >= t2).unwrap_or(2 * n / 3);
+        let idx2 = cumulative
+            .iter()
+            .position(|&t| t >= t2)
+            .unwrap_or(2 * n / 3);
         (idx1 + 1, idx2 + 1)
     } else {
         (n / 3, 2 * n / 3)
@@ -364,7 +374,10 @@ fn compute_segment(events: &[NormalizedEvent], label: SegmentLabel) -> ContextRo
             }
         }
     }
-    let churned_edits: usize = edit_counts.values().map(|&count| count.saturating_sub(1)).sum();
+    let churned_edits: usize = edit_counts
+        .values()
+        .map(|&count| count.saturating_sub(1))
+        .sum();
     let file_churn_rate = if total_edits > 0 {
         churned_edits as f64 / total_edits as f64
     } else {
@@ -487,8 +500,17 @@ mod tests {
     use agentworth_schema::{Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult};
     use chrono::{Duration, Utc};
 
-    fn push(events: &mut Vec<NormalizedEvent>, seq: u64, start: chrono::DateTime<Utc>, payload: EventPayload) {
-        events.push(NormalizedEvent::new(seq, start + Duration::seconds(seq as i64), payload));
+    fn push(
+        events: &mut Vec<NormalizedEvent>,
+        seq: u64,
+        start: chrono::DateTime<Utc>,
+        payload: EventPayload,
+    ) {
+        events.push(NormalizedEvent::new(
+            seq,
+            start + Duration::seconds(seq as i64),
+            payload,
+        ));
     }
 
     fn make_trace(events: Vec<NormalizedEvent>) -> AgentWorthTrace {
@@ -686,7 +708,11 @@ mod tests {
         assert!(!signal.insufficient_data);
         assert_eq!(signal.segments.len(), 3);
 
-        let (early, middle, late) = (&signal.segments[0], &signal.segments[1], &signal.segments[2]);
+        let (early, middle, late) = (
+            &signal.segments[0],
+            &signal.segments[1],
+            &signal.segments[2],
+        );
         assert_eq!(early.event_count, 9);
         assert_eq!(middle.event_count, 9);
         assert_eq!(late.event_count, 9);
@@ -698,7 +724,10 @@ mod tests {
 
         assert_eq!(early.file_churn_rate, 0.0);
         assert_eq!(middle.file_churn_rate, 0.0);
-        assert!(late.file_churn_rate > 0.6, "d.rs is re-edited twice out of three edits");
+        assert!(
+            late.file_churn_rate > 0.6,
+            "d.rs is re-edited twice out of three edits"
+        );
 
         // Inferred signals: self-claims rise, verification rung falls.
         assert_eq!(early.self_claim_ratio, 0.0);
@@ -712,7 +741,9 @@ mod tests {
             signal.rot_score, signal.reasons, signal.segments
         );
         assert!(signal.rot_score >= ROT_SCORE_THRESHOLD);
-        assert!(signal.reasons.contains(&"rising failure/error rate".to_string()));
+        assert!(signal
+            .reasons
+            .contains(&"rising failure/error rate".to_string()));
         assert!(signal
             .reasons
             .contains(&"rising repeat-edit churn on the same files".to_string()));
@@ -789,7 +820,8 @@ mod tests {
         // long, context-heavy session, not a trivial one.
         assert!(signal.segments[2].cumulative_tokens_at_end > 100_000);
         assert!(
-            signal.segments[0].cumulative_tokens_at_end < signal.segments[2].cumulative_tokens_at_end
+            signal.segments[0].cumulative_tokens_at_end
+                < signal.segments[2].cumulative_tokens_at_end
         );
 
         for segment in &signal.segments {
@@ -910,7 +942,11 @@ mod tests {
         let signal = ContextRotDetector::new().detect(&trace);
 
         assert!(!signal.insufficient_data);
-        let (early, middle, late) = (&signal.segments[0], &signal.segments[1], &signal.segments[2]);
+        let (early, middle, late) = (
+            &signal.segments[0],
+            &signal.segments[1],
+            &signal.segments[2],
+        );
         assert_eq!(early.event_count, 4);
         assert_eq!(middle.event_count, 4);
         assert_eq!(late.event_count, 5);
@@ -1021,7 +1057,11 @@ mod tests {
         let trace = make_trace(events);
         let signal = ContextRotDetector::new().detect(&trace);
 
-        let (early, middle, late) = (&signal.segments[0], &signal.segments[1], &signal.segments[2]);
+        let (early, middle, late) = (
+            &signal.segments[0],
+            &signal.segments[1],
+            &signal.segments[2],
+        );
         // Sanity: the middle segment really was worse than both neighbors.
         assert!(middle.failure_rate > early.failure_rate);
         assert!(middle.file_churn_rate > late.file_churn_rate);
@@ -1041,7 +1081,14 @@ mod tests {
     fn test_too_few_events_is_insufficient_data() {
         let start = Utc::now();
         let mut events = Vec::new();
-        push(&mut events, 1, start, EventPayload::UserMessage { content: "hi".to_string() });
+        push(
+            &mut events,
+            1,
+            start,
+            EventPayload::UserMessage {
+                content: "hi".to_string(),
+            },
+        );
         push(
             &mut events,
             2,
@@ -1095,8 +1142,15 @@ mod tests {
 
         assert!(!signal.insufficient_data);
         assert_eq!(signal.segments.len(), 3);
-        assert!(signal.segments.iter().all(|segment| segment.event_count > 0));
-        let total: usize = signal.segments.iter().map(|segment| segment.event_count).sum();
+        assert!(signal
+            .segments
+            .iter()
+            .all(|segment| segment.event_count > 0));
+        let total: usize = signal
+            .segments
+            .iter()
+            .map(|segment| segment.event_count)
+            .sum();
         assert_eq!(total, events.len());
     }
 
