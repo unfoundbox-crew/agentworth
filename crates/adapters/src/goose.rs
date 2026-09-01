@@ -70,12 +70,23 @@ impl AgentAdapter for GooseAdapter {
         }
 
         for custom in &options.custom_paths {
-            if custom.exists()
-                && (custom.ends_with(".goose")
-                    || custom.ends_with("goose")
-                    || custom.to_string_lossy().contains("goose"))
+            if !custom.exists() {
+                continue;
+            }
+            if custom.ends_with(".goose")
+                || custom.ends_with("goose")
+                || custom.to_string_lossy().contains("goose")
             {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // A caller can pass a parent directory (a repo root, a tempdir in tests)
+                // rather than the goose directory itself -- look one level down before
+                // giving up, matching how `enumerate()` already recurses for this adapter.
+                for sub in &[custom.join(".goose"), custom.join(".config").join("goose")] {
+                    if sub.exists() {
+                        discovered.push(sub.clone());
+                    }
+                }
             }
         }
 

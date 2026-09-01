@@ -61,9 +61,24 @@ impl AgentAdapter for OpenClawAdapter {
         }
 
         for custom in &options.custom_paths {
+            if !custom.exists() {
+                continue;
+            }
             let s = custom.to_string_lossy().to_lowercase();
-            if custom.exists() && (s.contains(".openclaw") || s.contains("openclaw")) {
+            if s.contains(".openclaw") || s.contains("openclaw") {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // A caller can pass a parent directory (a repo root, a tempdir in tests)
+                // rather than the .openclaw directory itself -- look one level down before
+                // giving up, matching how `enumerate()` already recurses for this adapter.
+                for sub in &[
+                    custom.join(".openclaw"),
+                    custom.join(".config").join("openclaw"),
+                ] {
+                    if sub.exists() {
+                        discovered.push(sub.clone());
+                    }
+                }
             }
         }
 

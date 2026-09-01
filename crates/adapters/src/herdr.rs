@@ -61,9 +61,21 @@ impl AgentAdapter for HerdrAdapter {
         }
 
         for custom in &options.custom_paths {
+            if !custom.exists() {
+                continue;
+            }
             let s = custom.to_string_lossy().to_lowercase();
-            if custom.exists() && (s.contains(".herdr") || s.contains("herdr")) {
+            if s.contains(".herdr") || s.contains("herdr") {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // A caller can pass a parent directory (a repo root, a tempdir in tests)
+                // rather than the herdr directory itself -- look one level down before
+                // giving up, matching how `enumerate()` already recurses for this adapter.
+                for sub in &[custom.join(".herdr"), custom.join(".config").join("herdr")] {
+                    if sub.exists() {
+                        discovered.push(sub.clone());
+                    }
+                }
             }
         }
 
