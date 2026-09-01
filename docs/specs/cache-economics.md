@@ -1,6 +1,6 @@
 # Cache economics — what returning cold actually costs
 
-Status: proposed. Nothing here is built.
+Status: built, #42.
 
 A session's own logs already record what every turn paid to re-read its own
 history. Nobody surfaces it, so nobody learns from it. This spec turns that into

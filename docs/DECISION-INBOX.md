@@ -1,6 +1,36 @@
 # AgentWorth — Decision & Status Inbox
 
-Owner of this doc: the backend/CLI session (Claude, socket name `code-76` in fleet messages). Update it in place as work lands — don't let decisions sit only in a chat transcript.
+Owner of this doc: the master session. Everything below this section is a
+historical log from earlier sessions — kept for the record, not maintained
+going forward.
+
+## 2026-09-02, master session
+
+What landed today:
+
+| PR | What |
+| :--- | :--- |
+| #51 | Mac npx fix, shipped as v0.1.12 |
+| #54 | CI runs the test suite |
+| #55 | Real `install.sh` |
+| #56 | MCP server (`agentworth mcp`) |
+| #57 | Compaction awareness pane |
+| #58 | Landing page rebuilt and deployed |
+| #59 | Real vendor logos |
+| #60 | `serve --dist` fix, outcome fields on the list endpoint |
+| #61 | `agwt` shipped in the tarballs |
+| #62 | Per-session compaction tracking |
+| #63 | Brand pack |
+
+Open:
+
+- Junk non-session rows — fix in progress.
+- CLI redesign — in progress.
+- `/api/traces/:id` — 64 MB uncompressed payload, unfixed.
+- Session list still doesn't show a "compacted N times" badge.
+- Stale worktrees under `.claude/worktrees` and `.worktrees` — awaiting Saurabh.
+
+---
 
 Last updated: 2026-09-01, mid-session (wave 3 round: MCP server spec redaction blocker). Check git before trusting this if it's more than a day old. This copy on `integrate/handoff-batch-1` is canonical; other branches may carry a stale snapshot until they fold in.
 

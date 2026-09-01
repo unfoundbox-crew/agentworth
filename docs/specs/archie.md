@@ -2,6 +2,8 @@
 
 Status: proposed. This is the umbrella the other specs serve.
 
+MCP server shipped 2026-09-02 (#56); this spec's precondition is met.
+
 ## The one-line version
 
 Every coding agent starts blank. AgentWorth is the only thing that persists

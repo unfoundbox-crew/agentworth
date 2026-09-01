@@ -1,5 +1,23 @@
 # Specs, and the order to build them
 
+## Where this stands, 2026-09-02
+
+| Spec | Status | PR |
+| :--- | :--- | :--- |
+| `fleet-view.md` | built | #41, plus the SSE live-tail endpoint (v0.1.10) |
+| `trajectory-scrubber.md` | built | #40 |
+| `cache-economics.md` | built | #42 |
+| `context-composition.md` | built | #46 |
+| `compaction.md` | built | #57 (dashboard pane), #62 (per-session tracking) — session list still doesn't show "compacted N times" |
+| `dropped-commitments.md` | built | #44, `agentworth loose-ends` — carry-forward over MCP not yet done |
+| `loose-ends.md` | built | #44, describes the shipped `agentworth loose-ends` command |
+| `mcp-server.md` | built | #56 |
+| `local-search.md` | draft, not built | precondition met — MCP server shipped 2026-09-02 (#56) |
+| `archie.md` | proposed (umbrella spec) | — |
+| `desktop-app.md` | proposal, not started | — |
+| `questions.md` | proposed | — |
+| `market-autofix.md` | research doc, not a build item | — |
+
 Thirteen specs sit beside this file. They are independent of each other but not of
 the backend, and two of them are worth less than they look until a bug lands
 first. This is the sequencing.
