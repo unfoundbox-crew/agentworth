@@ -62,6 +62,7 @@ While verifying, the branch's own isolated test run showed the `agentworth`/`agw
 - `verdict_breakdown.real_verified_rate` can exceed 1.0 — triage the scoring crate for a wrong denominator or double-count.
 - `models_usage_count` / `tools_usage_count` zero-seeding (low priority, see Decisions below).
 - Leftover dirty state in 9 local worktrees + `lane3-bundle` on lenovo — Saurabh's call.
+- `Cargo.lock` carries a stale package version (`0.1.3`) against the workspace's declared `0.1.5` — confirmed pre-existing (reproduces on unmodified `f45c6b1` too, not caused by any batch-2b item). Worth a clean `cargo update`/regenerate pass before the final PR, not urgent before then.
 
 ## Blocked on someone else
 
