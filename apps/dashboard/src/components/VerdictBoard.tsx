@@ -207,7 +207,7 @@ export const VerdictBoard: React.FC<VerdictBoardProps> = ({
               title={`Artifact Changed: ${dist.artifact_changed}`}
             />
             <div
-              className="seg bg-danger"
+              className="seg bg-faint"
               style={{ width: `${(unverifiedTotal / totalSessions) * 100}%` }}
               title={`Claim Only / Unresolved: ${unverifiedTotal}`}
             />
@@ -237,8 +237,8 @@ export const VerdictBoard: React.FC<VerdictBoardProps> = ({
             <span className="w-2 h-2 rounded-sm bg-success/35 inline-block" />
             Artifact Changed (R2)
           </span>
-          <span className="flex items-center gap-1.5 text-danger font-medium">
-            <span className="w-2 h-2 rounded-sm bg-danger inline-block" />
+          <span className="flex items-center gap-1.5 text-muted font-medium">
+            <span className="w-2 h-2 rounded-sm bg-faint inline-block" />
             Unverified / Claim (R1/R0)
           </span>
         </div>

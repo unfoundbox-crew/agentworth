@@ -4,6 +4,7 @@ import { formatDate, formatDuration } from '../utils/formatters';
 import { useSessions } from '../hooks/useSessions';
 import { OutcomeLadder, captionsFromOutcomes, determineReachedLevel } from './OutcomeLadder';
 import { TrajectoryView } from './TrajectoryView';
+import { OverviewPane } from './OverviewPane';
 import { ScoreBreakdown } from './ScoreBreakdown';
 import { TokenEconomics } from './TokenEconomics';
 import { ProvenanceBlock } from './ProvenanceBlock';
@@ -81,9 +82,15 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
   );
 
   if (!sessionId) {
+    // Nothing selected is the state you land in, so it should answer "how am I
+    // doing" rather than "pick something". The overview was a separate rail
+    // item nobody would think to click first.
     return (
       <section className="shell-inspector-pane" tabIndex={-1}>
-        <div className="shell-inspector-empty">Select a session to inspect it.</div>
+        <OverviewPane />
+        <p className="shell-inspector-empty">
+          Select a session on the left, or press <kbd>j</kbd> to start.
+        </p>
       </section>
     );
   }
