@@ -73,7 +73,7 @@ While verifying, the branch's own isolated test run showed the `agentworth`/`agw
 
 **Deferred, not dispatched today:**
 - **Threat Digest** — depends on the secret detector above actually landing first. Next wave.
-- **Blunder-to-Blame Bridge** — depends on blunder detection + blame both being stable under the same integration; glue work, do after this wave folds in.
+- **Blunder-to-Blame Bridge** — **Done.** `agwt blunder-blame [--session ID | --file PATH] [--top N] [--json]`, joined on the session_id/file_path both systems already share (no new data model): blunder->blame resolves a blunder forward to its files via new `Storage::find_files_for_session` (reverse of `find_sessions_for_blame`); blame->blunder resolves a file's blamed sessions backward to whether any carry a real blunder (severity != INFO). 307 passed, 0 failed on lenovo (298 baseline + 9 new). Commits `debd25b`, `a1e7635` on `feat/blunder-blame-bridge`.
 - **Personal Leaderboard** — product-fit question, not just an engineering one: this is a local-first, zero-telemetry, single-player tool — "leaderboard" implies comparing against other people, which doesn't obviously fit. Worth asking Saurabh before building rather than guessing.
 - **Hall of Blunders Share Pack** — same product-fit question: a "share pack" implies exporting for others to see, in tension with local-first/zero-telemetry positioning. Ask before building.
 
