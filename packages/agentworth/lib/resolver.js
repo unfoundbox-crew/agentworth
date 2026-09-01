@@ -32,7 +32,12 @@ export function getTargetTriple(platform = process.platform, arch = process.arch
   if (platform === 'darwin' && arch === 'x64') return 'x86_64-apple-darwin';
   if (platform === 'linux' && arch === 'x64') return 'x86_64-unknown-linux-gnu';
   if (platform === 'linux' && arch === 'arm64') return 'aarch64-unknown-linux-gnu';
-  if (platform === 'win32' && arch === 'x64') return 'x86_64-pc-windows-msvc';
+  // Windows dropped 2026-09-02: release.yml no longer builds x86_64-pc-windows-msvc, so
+  // this would 404 against the downloader even if it matched. The recurring failure was
+  // GNU tar on Windows misparsing a "C:\..." archive path as a remote "host:path" tar
+  // spec -- fixable (--force-local), but broke across multiple releases regardless, and
+  // nobody here can test a real Windows box to catch it before it ships. A user who wants
+  // this on Windows can still build it themselves: `cargo build --release -p agentworth-cli`.
   return null;
 }
 
@@ -249,9 +254,12 @@ export async function downloadAndExtractBinary(options = {}) {
 
   await downloadFile(url, archivePath);
 
-  // Extract archive
+  // Extract archive. --force-local matters on Windows: a drive-letter path like
+  // "C:\Users\...\agentworth.tar.gz" otherwise gets parsed as a "host:path" remote-tar
+  // spec (the "C" before the colon reads as a hostname), and tar tries to rsh/ssh to it
+  // instead of opening a local file.
   try {
-    execFileSync('tar', ['-xzf', archivePath, '-C', cacheDir]);
+    execFileSync('tar', ['--force-local', '-xzf', archivePath, '-C', cacheDir]);
   } catch (err) {
     throw new Error(`Failed to extract ${archiveName}: ${err.message}`);
   } finally {
