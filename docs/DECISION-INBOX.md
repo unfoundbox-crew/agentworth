@@ -76,7 +76,8 @@ While verifying, the branch's own isolated test run showed the `agentworth`/`agw
 
 ## Blocked on someone else
 
-- **PR #13** (`feat/web-design-system`) and **PR #14** (`feat/explorer-shell`) — both open, owned by the landing-page-ux-review session. The dashboard-crash-fix here touches the same 3 files (`App.tsx`, `SessionInspector.tsx`, `api.ts`). Can't rebase until both land on main.
+- **PR #13 merged to main. PR #14 merging shortly** (landing-page-ux-review session, confirmed via cross-session message, told them to go ahead rather than wait on this session's unrelated backend work). #14 restructures the frontend tree: `apps/web` splits into `apps/web` (marketing only, no API client), `apps/dashboard` (the actual local app the CLI serves), and `packages/ui` (shared `--mv-*` tokens, `ThemeToggle`, `useTheme`, icons). `App.tsx` is gone — replaced by a three-pane shell. `SessionInspector.tsx` and `services/api.ts` move to `apps/dashboard/src/`. The dashboard-crash-fix here needs a rebase onto that structure once #14 lands — not done yet. The other session says the optional-chaining fix came along verbatim in the move; re-verify that directly rather than assume when actually rebasing. `ErrorBoundary.tsx` doesn't exist on main yet — it's this session's own new file, will land under `apps/dashboard/src/components/`.
+- **`apps/cli/src/main.rs:300`** now reads `let default_dist = PathBuf::from("apps/dashboard/dist");` — a one-line fix made by the other session to match the new build output path. Not built/tested by them (no cargo, fan rule) — plain string literal so low risk, but confirm it compiles the next time this file is touched here rather than assume.
 
 ## Decisions made this session
 
