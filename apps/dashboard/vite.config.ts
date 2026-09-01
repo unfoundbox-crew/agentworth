@@ -6,7 +6,12 @@ import react from '@vitejs/plugin-react';
 // to the Rust server's /api/* over the same origin in production, and
 // through this dev proxy when run with `npm run dev`.
 export default defineConfig({
-  base: './',
+  // MUST be absolute. With './' the emitted src is "./assets/...", which the
+  // browser resolves against the current route — so on /s/<id> it requests
+  // /s/assets/... , the SPA fallback answers with index.html, and the module
+  // script dies on a MIME check before React ever mounts. Every deep link was
+  // a blank page; only / worked, which is why it looked fine.
+  base: '/',
   plugins: [react()],
   resolve: {
     alias: {

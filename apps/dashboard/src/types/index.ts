@@ -11,16 +11,23 @@ export type OutcomeKind =
 export interface TokenUsage {
   input_tokens: number;
   output_tokens: number;
-  cache_read_input_tokens: number;
-  cache_creation_input_tokens: number;
+  // The wire names. These were cache_*_input_tokens here and never matched what
+  // the server sends, so the cache split read as zero however real the data was.
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  /** @deprecated aliases some older payloads still carry */
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
 }
 
 export interface Provenance {
   source_path: string;
-  adapter: string;
   file_size_bytes: number;
-  modified_timestamp: number;
-  fingerprint: string;
+  // Wire names. Previously adapter / modified_timestamp / fingerprint, none of
+  // which the server sends — provenance rendered as em-dashes on real data.
+  adapter_name: string;
+  mtime_epoch_secs: number;
+  content_fingerprint: string;
 }
 
 export interface TraceStats {
