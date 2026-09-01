@@ -120,7 +120,11 @@ fn test_cli_matrix_command_table_and_json() {
         .stdout(predicate::str::contains("qwen"))
         .stdout(predicate::str::contains("zhipu"))
         .stdout(predicate::str::contains("manus"))
-        .stdout(predicate::str::contains("100% extraction parity"));
+        // fix/matrix-coverage replaced the old hardcoded "100% extraction parity" claim
+        // with a real per-adapter capability score; see the --json assertion below for
+        // the exact computed rate (27.1%, fixed given the current 4 real + 16 default
+        // capability profiles).
+        .stdout(predicate::str::contains("Grounded extraction coverage across feature dimensions:"));
 
     // 2. agwt matrix (--json)
     let mut matrix_json_cmd = Command::cargo_bin("agwt").unwrap();
@@ -130,7 +134,11 @@ fn test_cli_matrix_command_table_and_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"total_adapters\": 20"))
-        .stdout(predicate::str::contains("\"coverage_rate\": \"100%\""))
+        // Real computed rate: 4 adapters have full/partial hand-written capability
+        // profiles (claude_code 7/7, codex 6/7, cursor 2/7, gemini 7/7 = 22 of 28); the
+        // other 16 fall back to the trait default (prompts only = 1/7 = 16). Total
+        // 38 / 140 = 27.1%, fixed regardless of what's actually detected on this machine.
+        .stdout(predicate::str::contains("\"coverage_rate\": \"27.1%\""))
         .stdout(predicate::str::contains("\"adapter\": \"claude_code\""))
         .stdout(predicate::str::contains("\"prompts\": true"))
         .stdout(predicate::str::contains("\"tokens\": true"))
@@ -319,7 +327,11 @@ fn test_cli_export_command_json_and_atif_and_redaction() {
         .assert()
         .success()
         .stdout(predicate::str::contains("sk-testsecretkey12345678901234567890").not())
-        .stdout(predicate::str::contains("[REDACTED_API_KEY]"));
+        // fix/redaction-regex now matches this OPENAI_API_KEY=<value> form as a prefixed
+        // env-var assignment (ENV_VAR_VALUE_REGEX) rather than a bare API-key literal, so
+        // it is labeled REDACTED_ENV_VAR. The secret value itself is still fully scrubbed
+        // (see the assertion above).
+        .stdout(predicate::str::contains("[REDACTED_ENV_VAR]"));
 
     // 3. Export ATIF format to a file
     let atif_out_file = temp.path().join("exports").join("trace.atif.json");

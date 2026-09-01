@@ -37,7 +37,6 @@ pub fn is_high_risk_rm_path(cmd: &str) -> bool {
     if lower.contains(" / ")
         || lower.ends_with(" /")
         || lower.contains(" /*")
-        || lower.contains(" ~")
         || lower.contains(" $home")
         || lower.contains(" ${home}")
     {

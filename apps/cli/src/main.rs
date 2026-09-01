@@ -2222,6 +2222,7 @@ mod tests {
                 content: "help".to_string(),
             },
         ));
+        trace1.stats.total_events = 1;
         storage.upsert_trace(&trace1).unwrap();
 
         // Session 2: A multi-turn session (2 events)
@@ -2242,6 +2243,8 @@ mod tests {
                 thinking: None,
             },
         ));
+        trace2.stats.total_events = 2;
+        trace2.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
         storage.upsert_trace(&trace2).unwrap();
 
         // Without all_stubs (default): stubs excluded (total_events > 1)

@@ -795,7 +795,10 @@ mod tests {
 
         assert_eq!(result.malformed_lines, 0);
         let trace = result.trace;
-        assert_eq!(trace.adapter, "antigravity");
+        // A bare tempfile path carries no antigravity signature (no `/brain/`, no
+        // `.antigravity`), so detect_product_identity() correctly resolves this to the
+        // "gemini" default rather than the old hardcoded "antigravity" name.
+        assert_eq!(trace.adapter, "gemini");
         assert_eq!(trace.stats.models_used, vec!["gemini-2.5-pro".to_string()]);
         assert_eq!(trace.stats.token_usage.input_tokens, 600);
         assert_eq!(trace.stats.token_usage.output_tokens, 180);
