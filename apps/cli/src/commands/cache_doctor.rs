@@ -5,9 +5,10 @@
 //! where cache efficiency deteriorated and identifying the root cause (model switch, new tool, payload blowout).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use agentworth_core::Scanner;
 use agentworth_schema::{AgentWorthTrace, EventPayload};
-use agentworth_storage::Storage;
+use agentworth_storage::{calculate_cache_hit_ratio, Storage};
 use anyhow::{Context, Result};
 use console::style;
 use serde::{Deserialize, Serialize};
@@ -55,11 +56,11 @@ pub fn diagnose_cache_efficiency(trace: &AgentWorthTrace) -> CacheDoctorDiagnosi
 
     for event in &trace.events {
         match &event.payload {
-            EventPayload::ModelInvocation(inv) => {
+            EventPayload::ModelInvocation { model, token_usage, .. } => {
                 turn_idx += 1;
-                let input = inv.token_usage.input_tokens;
-                let read = inv.token_usage.cache_read_tokens;
-                let create = inv.token_usage.cache_creation_tokens;
+                let input = token_usage.input_tokens;
+                let read = token_usage.cache_read_tokens;
+                let create = token_usage.cache_creation_tokens;
                 let total_in = input + read + create;
 
                 let hit_ratio = if total_in > 0 {
@@ -69,9 +70,7 @@ pub fn diagnose_cache_efficiency(trace: &AgentWorthTrace) -> CacheDoctorDiagnosi
                 };
 
                 let prev_model = current_model.clone();
-                if let Some(m) = &inv.model {
-                    current_model = Some(m.clone());
-                }
+                current_model = Some(model.clone());
 
                 let metric = TurnCacheMetric {
                     turn_index: turn_idx,
@@ -130,7 +129,11 @@ pub fn diagnose_cache_efficiency(trace: &AgentWorthTrace) -> CacheDoctorDiagnosi
     let avg_ratio = if !turn_metrics.is_empty() {
         total_hit_ratio_sum / (turn_metrics.len() as f64)
     } else {
-        trace.stats.token_usage.cache_hit_ratio()
+        calculate_cache_hit_ratio(
+            trace.stats.token_usage.input_tokens,
+            trace.stats.token_usage.cache_read_tokens,
+            trace.stats.token_usage.cache_creation_tokens,
+        )
     };
 
     CacheDoctorDiagnosis {
@@ -149,24 +152,18 @@ pub fn run_cache_doctor_command(
     json: bool,
     db_path: Option<PathBuf>,
 ) -> Result<()> {
-    let storage = match db_path {
+    let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
         None => Storage::open_default()?,
-    };
+    });
 
-    // Load source path
-    let summary = storage
-        .get_session(session_id)?
+    storage
+        .get_session_by_id(session_id)?
         .with_context(|| format!("Session '{}' not found in local index.", session_id))?;
 
-    let source = agentworth_adapter_sdk::SessionSource::from_path(
-        &summary.source_path,
-        &summary.adapter,
-    )?;
-
-    let scanner = Scanner::default();
-    let parse_res = scanner.parse_session(&source)?;
-    let diagnosis = diagnose_cache_efficiency(&parse_res.trace);
+    let scanner = Scanner::new(storage.clone());
+    let trace = scanner.load_trace(session_id)?;
+    let diagnosis = diagnose_cache_efficiency(&trace);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&diagnosis)?);
@@ -227,7 +224,7 @@ pub fn run_cache_doctor_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentworth_schema::{ModelInvocation, NormalizedEvent, Provenance, TokenUsage};
+    use agentworth_schema::{NormalizedEvent, Provenance, TokenUsage};
     use chrono::Utc;
 
     #[test]
@@ -240,8 +237,8 @@ mod tests {
         trace.events.push(NormalizedEvent::new(
             1,
             now,
-            EventPayload::ModelInvocation(ModelInvocation {
-                model: Some("claude-3-5-sonnet".to_string()),
+            EventPayload::ModelInvocation {
+                model: "claude-3-5-sonnet".to_string(),
                 token_usage: TokenUsage {
                     input_tokens: 1_000,
                     output_tokens: 200,
@@ -249,16 +246,16 @@ mod tests {
                     cache_creation_tokens: 0,
                 },
                 cost_usd: None,
-                duration_ms: None,
-            }),
+                latency_ms: None,
+            },
         ));
 
         // Turn 2: Sharp drop to 10% after switching model
         trace.events.push(NormalizedEvent::new(
             2,
             now,
-            EventPayload::ModelInvocation(ModelInvocation {
-                model: Some("claude-3-opus".to_string()),
+            EventPayload::ModelInvocation {
+                model: "claude-3-opus".to_string(),
                 token_usage: TokenUsage {
                     input_tokens: 9_000,
                     output_tokens: 500,
@@ -266,8 +263,8 @@ mod tests {
                     cache_creation_tokens: 5_000,
                 },
                 cost_usd: None,
-                duration_ms: None,
-            }),
+                latency_ms: None,
+            },
         ));
 
         let diag = diagnose_cache_efficiency(&trace);
