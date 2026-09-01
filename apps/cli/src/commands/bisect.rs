@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use agentworth_core::Scanner;
 use agentworth_schema::{AgentWorthTrace, EventPayload};
@@ -55,7 +56,7 @@ pub fn bisect_session_trajectory(trace: &AgentWorthTrace) -> BisectResult {
                             session_id: trace.session_id.clone(),
                             adapter: trace.adapter.clone(),
                             total_events: trace.events.len(),
-                            pivotal_turn_index: Some(event.index),
+                            pivotal_turn_index: Some(event.sequence as usize),
                             pivotal_timestamp: Some(event.timestamp.to_string()),
                             reason: Some(RegressionReason::BuildOrTestFailure),
                             summary: format!(
@@ -75,7 +76,7 @@ pub fn bisect_session_trajectory(trace: &AgentWorthTrace) -> BisectResult {
                         session_id: trace.session_id.clone(),
                         adapter: trace.adapter.clone(),
                         total_events: trace.events.len(),
-                        pivotal_turn_index: Some(event.index),
+                        pivotal_turn_index: Some(event.sequence as usize),
                         pivotal_timestamp: Some(event.timestamp.to_string()),
                         reason: Some(RegressionReason::FileReversionOrThrashing),
                         summary: format!(
@@ -86,17 +87,21 @@ pub fn bisect_session_trajectory(trace: &AgentWorthTrace) -> BisectResult {
                     };
                 }
             }
-            EventPayload::ToolResult { is_error, output, .. } => {
-                if *is_error {
+            EventPayload::ToolResult(res) => {
+                if res.is_error {
+                    let output_snippet = match &res.output {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
                     return BisectResult {
                         session_id: trace.session_id.clone(),
                         adapter: trace.adapter.clone(),
                         total_events: trace.events.len(),
-                        pivotal_turn_index: Some(event.index),
+                        pivotal_turn_index: Some(event.sequence as usize),
                         pivotal_timestamp: Some(event.timestamp.to_string()),
                         reason: Some(RegressionReason::RepeatedToolError),
                         summary: "Tool execution returned an unhandled error.".to_string(),
-                        context_snippet: Some(output.clone()),
+                        context_snippet: Some(output_snippet),
                     };
                 }
             }
@@ -112,7 +117,7 @@ pub fn bisect_session_trajectory(trace: &AgentWorthTrace) -> BisectResult {
                         session_id: trace.session_id.clone(),
                         adapter: trace.adapter.clone(),
                         total_events: trace.events.len(),
-                        pivotal_turn_index: Some(event.index),
+                        pivotal_turn_index: Some(event.sequence as usize),
                         pivotal_timestamp: Some(event.timestamp.to_string()),
                         reason: Some(RegressionReason::ApologyRemorseTrigger),
                         summary: "Agent recognized a failure and entered an apology loop."
@@ -147,23 +152,18 @@ pub fn run_bisect_command(
     json: bool,
     db_path: Option<PathBuf>,
 ) -> Result<()> {
-    let storage = match db_path {
+    let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
         None => Storage::open_default()?,
-    };
+    });
 
-    let summary = storage
-        .get_session(session_id)?
+    storage
+        .get_session_by_id(session_id)?
         .with_context(|| format!("Session '{}' not found in local index.", session_id))?;
 
-    let source = agentworth_adapter_sdk::SessionSource::from_path(
-        &summary.source_path,
-        &summary.adapter,
-    )?;
-
-    let scanner = Scanner::default();
-    let parse_res = scanner.parse_session(&source)?;
-    let result = bisect_session_trajectory(&parse_res.trace);
+    let scanner = Scanner::new(storage.clone());
+    let trace = scanner.load_trace(session_id)?;
+    let result = bisect_session_trajectory(&trace);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&result)?);
