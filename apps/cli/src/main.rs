@@ -18,6 +18,8 @@ mod merge;
 mod watch;
 #[path = "commands/cache_doctor.rs"]
 mod cache_doctor;
+#[path = "commands/blind_spots.rs"]
+mod blind_spots;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -274,6 +276,18 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// List sessions whose completion claims were never independently corroborated by tests or CI
+    #[command(name = "blind-spots")]
+    BlindSpots {
+        /// Maximum number of sessions to list (default: 20)
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -387,6 +401,9 @@ fn main() -> Result<()> {
         }
         Commands::CacheDoctor { session_id, json } => {
             cache_doctor::run_cache_doctor_command(&session_id, json, cli.db_path)?;
+        }
+        Commands::BlindSpots { limit, json } => {
+            blind_spots::run_blind_spots_command(limit, json, cli.db_path)?;
         }
     }
 
