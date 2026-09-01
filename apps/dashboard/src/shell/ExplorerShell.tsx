@@ -34,6 +34,10 @@ export function ExplorerShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<RailViewId>('sessions');
+  // Collapses the session list so the trajectory gets the full shell width.
+  // A trajectory line is a command plus its result; in the 290px inspector
+  // column both truncate to roughly eight characters and read as nothing.
+  const [trajectoryFocused, setTrajectoryFocused] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanSignal, setScanSignal] = useState(0);
 
@@ -145,20 +149,27 @@ export function ExplorerShell() {
 
         {activeView === 'sessions' ? (
           <>
-            <div className="list-region">
-              <SessionList
-                selectedId={sessionId}
-                onSelect={(id: string) => navigate(`/s/${encodeURIComponent(id)}`)}
-                registerNav={(nav: ShellNav) => {
-                  navRef.current = nav;
-                }}
-                liveTail={liveTail}
-            reloadSignal={scanSignal}
-              />
-            </div>
+            {!trajectoryFocused && (
+              <div className="list-region">
+                <SessionList
+                  selectedId={sessionId}
+                  onSelect={(id: string) => navigate(`/s/${encodeURIComponent(id)}`)}
+                  registerNav={(nav: ShellNav) => {
+                    navRef.current = nav;
+                  }}
+                  liveTail={liveTail}
+                  reloadSignal={scanSignal}
+                />
+              </div>
+            )}
 
             <div className="inspector-region" ref={inspectorRegionRef} tabIndex={-1}>
-              <InspectorPane sessionId={sessionId} liveTail={liveTail} />
+              <InspectorPane
+              sessionId={sessionId}
+              liveTail={liveTail}
+              trajectoryFocused={trajectoryFocused}
+              onToggleTrajectoryFocus={() => setTrajectoryFocused((v) => !v)}
+            />
             </div>
           </>
         ) : activeView === 'overview' ? (
