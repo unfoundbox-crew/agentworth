@@ -60,3 +60,10 @@ jobs:
           grep -q "AgentWorth" "$BIN" \
             || { echo "::error::no dashboard markup found in the binary"; exit 1; }
           echo "binary size: $(du -h "$BIN" | cut -f1)"
+
+      # Must run after the dashboard build above — rust-embed needs
+      # apps/dashboard/dist to exist, and apps/cli's static-file tests read
+      # from it directly. Nothing ran the test suite in CI before this, which
+      # is how a red test sat on main unnoticed.
+      - name: Run workspace tests
+        run: cargo test --workspace
