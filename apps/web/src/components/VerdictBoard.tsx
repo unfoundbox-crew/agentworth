@@ -98,13 +98,17 @@ export const VerdictBoard: React.FC<VerdictBoardProps> = ({
     }
   };
 
-  const dist = stats?.outcome_distribution || {
+  // The API omits any outcome key that no session reached, so a partial object
+  // (e.g. only `unresolved` when nothing is verified) passes a truthiness check
+  // and then reads back undefined per key. Merge over a zeroed base, not instead of it.
+  const dist = {
     ci_or_deployment_verified: 0,
     commit_observed: 0,
     test_or_build_passed: 0,
     artifact_changed: 0,
     done_claimed: 0,
     unresolved: 0,
+    ...(stats?.outcome_distribution ?? {}),
   };
 
   const totalSessions = stats?.total_sessions || 0;
