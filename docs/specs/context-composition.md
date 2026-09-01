@@ -15,45 +15,68 @@ It is a good question because it is about waste rather than volume. Nobody
 minds a large session; people mind a large session where most of the window
 went to things that were not the task.
 
-## What is actually measurable, and what is not
+## What is actually measurable — corrected after being wrong once
 
-Checked against a real Claude Code JSONL and against what the adapter
-normalises, rather than assumed.
+An earlier draft of this spec claimed the fixed per-request overhead "cannot be
+measured from session logs, by anyone". **That was wrong, and it was asserted
+after reading 400 lines of one file.** Corrected against the full 19,955-line
+log.
 
 | Component of the window | Where it lives | Reachable? |
 | :--- | :--- | :--- |
-| Tool results | `ToolResult` content, normalised | yes |
-| Injected files and attachments | `Custom` events, which carry the raw record verbatim | yes |
+| Tool results | `ToolResult` content | yes |
+| Injected files and attachments | `Custom` events, raw record verbatim | yes |
 | User prompts | `UserMessage` content | yes |
-| Assistant text and thinking | `AssistantMessage`, `thinking_tokens` in raw usage | yes, partly normalised |
-| Shell command output | `ShellCommand` | yes |
-| **System prompt** | **never written to the transcript** | **no** |
-| **Tool definitions / schemas** | **never written to the transcript** | **no** |
+| Assistant text and thinking | `AssistantMessage`, `thinking_tokens` in raw usage | yes |
+| Shell output | `ShellCommand` | yes |
+| **Tool names and count** | `deferred_tools_delta.addedNames`, `compactMetadata.preCompactDiscoveredTools`, `attachment.allowedTools` | **yes — names, not schemas** |
+| **Total context size** | `compactMetadata.preTokens` / `postTokens` / `cumulativeDroppedTokens` | **yes, exactly, at every compaction** |
+| Tool schema bodies | not recorded | no |
+| System prompt text | not recorded | no |
 
-The last two rows are the correction, and they matter enough to change the
-feature.
+The two rows in bold are what the earlier draft missed.
 
-**The fixed per-request overhead cannot be measured from session logs, by
-anyone.** Claude Code records `usage.input_tokens`,
-`cache_creation_input_tokens` and `cache_read_input_tokens`, but nothing that
-says how those totals divide between the system prompt, the tool schemas, and
-the conversation. That is not an indexing gap this project can close — the
-information was never written down. A backend change cannot recover it and
-neither can a frontend one.
+### Total context size is recorded exactly
 
-So the literal question — "how much before working context" — is not fully
-answerable. Say that plainly rather than shipping a number that implies it is.
+Every `compact_boundary` record carries real numbers. From one session:
 
-What **is** answerable is the composition of everything the transcript does
-hold, which is most of the window on any long session and all of the part the
-user can actually act on:
+    preTokens  874,862   postTokens 15,189   dropped   859,673   tools  7
+    preTokens  756,440   postTokens 22,512   dropped 1,593,601   tools 15
+    preTokens  766,934   postTokens 24,019   dropped 2,336,516   tools 21
+    ...
+    preTokens  684,576   postTokens 21,860   dropped 5,067,603   tools 28
 
-    of the conversation that was re-sent on every request,
-    what share was tool output, what share was injected files,
-    and what share was the actual dialogue?
+Eight of them in that session. This is the provider's own accounting of how
+large the context actually was, not an estimate.
 
-That is a real question, it is actionable — a 40k-token file read that gets
-re-sent 200 times is a thing you can stop doing — and it needs no new data.
+### So the overhead is derivable by subtraction
+
+If the total context is known exactly and the transcript content is known,
+the fixed block — system prompt plus tool schemas — is the difference.
+
+A first check, using a crude 4-chars-per-token estimate on message content
+before the first compaction:
+
+    transcript content   3,707,156 chars  ~= 926,789 tokens (estimated)
+    preTokens reported                       874,862 tokens (exact)
+    difference                                -51,927
+
+Within 6%. The estimate slightly overshoots, which is expected from
+chars-over-four rather than real tokenisation. **With a proper tokeniser the
+residual is the overhead**, and the tool count from
+`preCompactDiscoveredTools` gives a per-tool schema cost once several sessions
+with different tool counts are compared.
+
+That is a harder measurement than reading a field, and it is derived rather
+than recorded. It is not impossible, and this document should not have said it
+was.
+
+### What ships first anyway
+
+Composition of the recorded transcript, which needs none of the above and is
+the part a user can act on: a 40k file read re-sent two hundred times is a
+thing you can stop doing. The derived-overhead work is a second step, and it
+wants a real tokeniser before it claims a number.
 
 ## Why not "chewed"
 
@@ -78,8 +101,9 @@ argues that "misses" points blame at the wrong thing.
       Largest single contributor
       · Read of packages/runtime/schema.json — 41k tokens, re-sent 213 times
 
-    Not measured: system prompt and tool definitions are never written to the
-    transcript, so this covers the conversation only.
+    Transcript only. Tool schema bodies and the system prompt text are not
+    recorded; total context size is, at each compaction, so the overhead can
+    be derived separately.
 
 That last line ships with the output. It is not a footnote.
 
