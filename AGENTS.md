@@ -359,12 +359,30 @@ visible from reading the source.
    full day while three deploys reported success. Always check
    `grep -c '\-\-mv-' dist/assets/*.css` before deploying.
 
-8. **Do not build in the shared checkout at `~/code/unfoundbox/agentworth`.**
+8. **"Never makes an outbound network call" is FALSE. Stop repeating it.**
+   Two paths leave the machine today:
+
+   | Path | Nature |
+   | :--- | :--- |
+   | `agwt search` | `fastembed` is a **default** cargo feature and downloads a BGE-Small model from Hugging Face on first use, with `show_download_progress(false)` — so it is silent |
+   | `agwt blunder --submit` | `reqwest` POST to `https://stfuopus.lol/api/blunders/submit` |
+
+   The second is opt-in and behaves honestly. The first is on by default and
+   says nothing, which is the one that matters for a tool whose landing page
+   promises "100% offline · zero telemetry".
+
+   Local-only is still the product decision — see the internal decision record.
+   But state it as intent, not as an achieved property, until the fastembed
+   download is either off by default, announced before it happens, or replaced
+   by a bundled model. Several documents and PR descriptions written on
+   2026-09-01 assert the false version. They are wrong.
+
+9. **Do not build in the shared checkout at `~/code/unfoundbox/agentworth`.**
    It carries other sessions' uncommitted work, so `git pull` there fails
    silently and you end up building a commit from hours ago. Use your own
    worktree and `git checkout --detach origin/main`.
 
-9. **Test the dashboard without touching Rust.**
+10. **Test the dashboard without touching Rust.**
    `agentworth serve --port 3250 --dist apps/dashboard/dist` serves any local
    build against the real index, which on the owner's machine holds ~10k real
    sessions. Far faster than rebuilding the CLI, and real data has caught every
