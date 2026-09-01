@@ -1,0 +1,380 @@
+/* ==========================================================================
+   Trajectory — the event stream behind a session's verdict: TimelineStrip
+   (shape of the whole run), the virtualized event list, and EventDetail.
+   Reuses panes.css's .shell-section-title and .shell-kv-* classes rather
+   than redeclaring them. Colors come entirely from --mv-* tokens — no new
+   custom properties here — so light/dark/system theming is inherited for
+   free. Everything is scoped under .shell-root so nothing leaks onto the
+   marketing page.
+   ========================================================================== */
+
+.shell-root .shell-trajectory-block {
+  margin-bottom: 28px;
+}
+
+.shell-root .traj-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.shell-root .traj-header .shell-section-title {
+  margin-bottom: 0;
+}
+.shell-root .traj-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------------- timeline strip ---------------- */
+.shell-root .traj-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 8px;
+  background: var(--mv-surface);
+}
+.shell-root .traj-strip-empty {
+  align-items: center;
+  justify-content: center;
+  padding: 16px 10px;
+}
+.shell-root .traj-empty-text {
+  font-size: 11.5px;
+  color: var(--mv-faint);
+}
+.shell-root .traj-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shell-root .traj-strip-label {
+  flex: 0 0 34px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+.shell-root .traj-strip-ticks {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  height: 12px;
+}
+.shell-root .traj-tick {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 1px;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 1px;
+  background: var(--mv-ink);
+  cursor: pointer;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+.shell-root .traj-tick-empty {
+  background: var(--mv-surface-2);
+  opacity: 0.6;
+  cursor: default;
+  pointer-events: none;
+}
+.shell-root .traj-tick.is-selected {
+  background: var(--mv-accent) !important;
+  opacity: 1 !important;
+  box-shadow: 0 0 0 1px var(--mv-accent-border);
+}
+.shell-root .traj-tick:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+}
+
+/* ---------------- empty state ---------------- */
+.shell-root .traj-empty {
+  padding: 22px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--mv-faint);
+}
+
+/* ---------------- event list ---------------- */
+.shell-root .traj-list {
+  position: relative;
+  max-height: 380px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin-bottom: 14px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 8px;
+  background: var(--mv-ground);
+}
+.shell-root .traj-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 10px;
+  border-bottom: 1px solid var(--mv-border-soft);
+  cursor: default;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.shell-root .traj-row:hover {
+  background: var(--mv-surface);
+}
+.shell-root .traj-row.is-selected {
+  background: var(--mv-accent-soft);
+}
+.shell-root .traj-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--mv-accent);
+}
+.shell-root .traj-row-gutter {
+  flex: 0 0 3px;
+  align-self: stretch;
+  background: transparent;
+}
+.shell-root .traj-row.is-turn-start .traj-row-gutter {
+  background: var(--mv-faint);
+}
+.shell-root .traj-row-seq {
+  flex: 0 0 34px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.shell-root .traj-chip {
+  flex: 0 0 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  color: var(--mv-muted);
+}
+.shell-root .traj-chip-message {
+  color: var(--mv-text);
+}
+.shell-root .traj-chip-action {
+  font-weight: 700;
+  background: var(--mv-surface-2);
+  color: var(--mv-ink);
+  border-color: var(--mv-border-soft);
+}
+.shell-root .traj-chip-meta {
+  color: var(--mv-faint);
+  font-style: italic;
+}
+.shell-root .traj-chip-unknown {
+  color: var(--mv-warn);
+  border: 1px dashed var(--mv-warn-border);
+  background: var(--mv-warn-soft);
+}
+.shell-root .traj-row-primary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--mv-text);
+}
+.shell-root .traj-row-result {
+  flex: 0 1 38%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-faint);
+}
+.shell-root .traj-row-arrow {
+  flex: 0 0 auto;
+  color: var(--mv-faint);
+}
+
+/* ---------------- event detail ---------------- */
+.shell-root .traj-detail {
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 8px;
+  background: var(--mv-surface);
+}
+.shell-root .traj-detail-empty {
+  padding: 18px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--mv-faint);
+}
+.shell-root .traj-detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--mv-border-soft);
+}
+.shell-root .traj-detail-type {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--mv-ink);
+}
+.shell-root .traj-detail-seq {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .traj-detail-time {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .traj-detail-section {
+  margin-bottom: 14px;
+}
+.shell-root .traj-detail-section:last-child {
+  margin-bottom: 0;
+}
+.shell-root .traj-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--mv-muted);
+  font-style: italic;
+}
+.shell-root .traj-block-label {
+  margin-bottom: 5px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+.shell-root .traj-pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 6px;
+  background: var(--mv-surface-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--mv-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---------------- motion ---------------- */
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .traj-tick,
+  .shell-root .traj-row {
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ── Expanded trajectory ────────────────────────────────────────────────────
+   In the 290px inspector column a trajectory line — a command plus its result
+   — truncates to about eight characters and reads as nothing. Expanding
+   collapses the session list and lays the stream and the detail side by side,
+   which is the width this information actually needs. */
+
+.shell-root .traj-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 3px 8px;
+  border: 1px solid var(--mv-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease-out, border-color 140ms ease-out;
+}
+.shell-root .traj-expand:hover {
+  color: var(--mv-ink);
+  border-color: var(--mv-faint);
+}
+.shell-root .traj-expand:focus-visible {
+  outline: 2px solid var(--mv-accent);
+  outline-offset: 2px;
+}
+.shell-root .traj-expand[aria-pressed='true'] {
+  background: var(--mv-accent-soft);
+  border-color: var(--mv-accent-border);
+  color: var(--mv-accent);
+}
+
+.shell-root .shell-trajectory-block.is-focused {
+  display: flex;
+  flex-direction: column;
+  /* Fill the inspector rather than sitting in the normal section rhythm. */
+  min-height: calc(100vh - 190px);
+}
+
+.shell-root .shell-trajectory-block.is-focused .traj-body {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The stream takes the room; the detail keeps a readable fixed column. */
+.shell-root .shell-trajectory-block.is-focused .traj-list {
+  flex: 1 1 auto;
+  max-height: none;
+  min-width: 0;
+}
+.shell-root .shell-trajectory-block.is-focused .traj-detail {
+  flex: 0 0 360px;
+  max-height: none;
+  overflow-y: auto;
+  border-left: 1px solid var(--mv-border);
+  padding-left: 14px;
+}
+
+@media (max-width: 900px) {
+  .shell-root .shell-trajectory-block.is-focused .traj-body {
+    flex-direction: column;
+  }
+  .shell-root .shell-trajectory-block.is-focused .traj-detail {
+    flex: 0 0 auto;
+    border-left: none;
+    border-top: 1px solid var(--mv-border);
+    padding-left: 0;
+    padding-top: 12px;
+  }
+}

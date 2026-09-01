@@ -5,4 +5,4 @@
  * single constant keeps the version badge from drifting across the four
  * places it's displayed in the UI.
  */
-export const APP_VERSION = "0.1.5";
+export const APP_VERSION = "0.1.9";

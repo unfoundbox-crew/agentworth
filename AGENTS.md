@@ -292,3 +292,80 @@ To maintain strict separation between personal and autonomous collective operati
    - SSH Key: `~/.ssh/id_ed25519_unfoundbox_crew` (Configured Host: `github.com-crew`).
    - Role: Public tool repos (`agentworth`, `memes`, `commongain`, `worldtrainer`).
    - Command Execution: Always use `GITHUB_TOKEN=$GITHUB_CREW_TOKEN gh ...` or SSH host `git@github.com-crew:...`.
+
+
+## Things you cannot learn from the code
+
+Written 2026-09-01. Each of these cost real tokens to discover and none is
+visible from reading the source.
+
+1. **The design system is not on disk.** It lives in Claude Design. Run
+   `DesignSync list_projects` — the SpacePilot project holds
+   `icons/icon-sprite.html` (27 icons, 24 grid, 1.5 stroke, square caps, miter
+   joins) plus `verdict-chips` and `provenance-chips`, which are this product's
+   own vocabulary. Searching the filesystem finds only brand marks and favicons
+   and will convince you no icon set exists. Needs a one-time `/design-login`
+   from an interactive terminal, and it is main-session only — subagents cannot
+   reach it, so fetch the files yourself and hand them the content.
+
+2. **Rust and TypeScript drift silently, and it is the recurring bug class
+   here.** Three independent instances found in one day: the DB stores
+   `OutcomeKind` PascalCase while everything else expects snake_case;
+   `/api/traces/:id` returns an envelope `{outcomes, recoveries, score, trace}`
+   with the trace nested; and five field names never matched
+   (`cache_read_tokens` not `cache_read_input_tokens`, plus `adapter_name`,
+   `mtime_epoch_secs`, `content_fingerprint`). There is no shared schema, so
+   `types/index.ts` is a claim rather than a contract — curl the endpoint.
+
+3. **`/api/traces` returns 50 by default and hides stubs.** Without an explicit
+   `limit` the UI shows the newest 50 of thousands, and any client-side filter
+   or sort then operates on that slice while looking entirely normal. It also
+   excludes `total_events <= 1 OR total_tokens = 0`, so `/api/stats` reports
+   10,188 where `/api/traces` returns 2,903. Same word, two meanings.
+
+4. **`OutcomeKind` has no failure state.** All six values are degrees of
+   evidence or its absence; none means the work went wrong. So a low rung is
+   never danger-coloured — that says error where the data says not confirmed
+   yet. Form carries confidence; colour is spent only where earned. The design
+   system's word for the bottom of the ladder is *unflown*.
+
+5. **The dashboard is compiled into the binary.** `rust-embed` pulls
+   `apps/dashboard/dist`, so `npm run build` in apps/dashboard must run before
+   cargo or the binary ships a stub — which is what every release before 0.1.6
+   did. `ci.yml` greps the built binary to prove the UI is actually inside it.
+
+7. **agentworth.dev is on Vercel, deployed by CLI. It is not GitHub Pages.**
+   `deploy-pages.yml` is green and nobody reads what it publishes — the domain
+   is served by Vercel behind Cloudflare. Both `unfoundbox` and
+   `unfoundbox-crew` are personal GitHub accounts, not orgs, and Vercel's Git
+   integration cannot import a personal-account repo you are only a
+   collaborator on. That restriction never bit because deployment goes through
+   the CLI, which ignores it. The project is already linked; `.vercel/` is
+   gitignored.
+
+   To ship the marketing site:
+
+   ```
+   cd apps/web
+   npm run build                      # verify tokens are present first
+   vercel build --prod --yes
+   vercel deploy --prebuilt --prod --yes
+   ```
+
+   Build LOCALLY, not on Vercel. `apps/web/src/index.css` imports
+   `@ui/tokens.css` from `../../packages/ui`, which is outside the deploy root,
+   so a remote build silently produces a bundle with no design tokens and no
+   Geist. That is exactly how the site served a pre-design-system build for a
+   full day while three deploys reported success. Always check
+   `grep -c '\-\-mv-' dist/assets/*.css` before deploying.
+
+8. **Do not build in the shared checkout at `~/code/unfoundbox/agentworth`.**
+   It carries other sessions' uncommitted work, so `git pull` there fails
+   silently and you end up building a commit from hours ago. Use your own
+   worktree and `git checkout --detach origin/main`.
+
+9. **Test the dashboard without touching Rust.**
+   `agentworth serve --port 3250 --dist apps/dashboard/dist` serves any local
+   build against the real index, which on the owner's machine holds ~10k real
+   sessions. Far faster than rebuilding the CLI, and real data has caught every
+   bug that mattered here.

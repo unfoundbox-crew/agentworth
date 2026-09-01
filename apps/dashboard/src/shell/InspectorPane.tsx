@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AgentWorthTrace } from '../types';
-import { formatDuration, formatTokens } from '../utils/formatters';
+import { formatDate, formatDuration } from '../utils/formatters';
 import { useSessions } from '../hooks/useSessions';
 import { fetchTraceDetail } from '../services/api';
 import { OutcomeLadder, captionsFromOutcomes, determineReachedLevel } from './OutcomeLadder';
+import { TrajectoryView } from './TrajectoryView';
+import { OverviewPane } from './OverviewPane';
+import { ScoreBreakdown } from './ScoreBreakdown';
+import { TokenEconomics } from './TokenEconomics';
+import { ProvenanceBlock } from './ProvenanceBlock';
 
 export interface InspectorPaneProps {
+  trajectoryFocused?: boolean;
+  onToggleTrajectoryFocus?: () => void;
   sessionId: string | null;
   liveTail: boolean;
 }
@@ -25,7 +32,7 @@ function collectChangedFiles(trace: AgentWorthTrace): string[] {
   return Array.from(seen);
 }
 
-export function InspectorPane({ sessionId, liveTail }: InspectorPaneProps) {
+export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggleTrajectoryFocus }: InspectorPaneProps) {
   const { sessions } = useSessions();
   const [trace, setTrace] = useState<AgentWorthTrace | null>(null);
   const [loading, setLoading] = useState(false);
@@ -67,9 +74,15 @@ export function InspectorPane({ sessionId, liveTail }: InspectorPaneProps) {
   );
 
   if (!sessionId) {
+    // Nothing selected is the state you land in, so it should answer "how am I
+    // doing" rather than "pick something". The overview was a separate rail
+    // item nobody would think to click first.
     return (
       <section className="shell-inspector-pane" tabIndex={-1}>
-        <div className="shell-inspector-empty">Select a session to inspect it.</div>
+        <OverviewPane />
+        <p className="shell-inspector-empty">
+          Select a session on the left, or press <kbd>j</kbd> to start.
+        </p>
       </section>
     );
   }
@@ -81,37 +94,35 @@ export function InspectorPane({ sessionId, liveTail }: InspectorPaneProps) {
     trace?.outcomes && trace.outcomes.length > 0 ? trace.outcomes : undefined
   );
 
-  const tokenUsage = trace?.stats?.token_usage;
-  const totalTokens = tokenUsage
-    ? (tokenUsage.input_tokens ?? 0) +
-      (tokenUsage.output_tokens ?? 0) +
-      (tokenUsage.cache_read_input_tokens ?? 0) +
-      (tokenUsage.cache_creation_input_tokens ?? 0)
-    : null;
-
   const durationSeconds = trace?.stats?.duration_seconds ?? summary?.duration_seconds;
-  const model = trace?.stats?.models_used?.[0] ?? summary?.models_used?.[0];
   const adapter = trace?.adapter ?? summary?.adapter;
+  const modelsUsed = trace?.stats?.models_used?.length
+    ? trace.stats.models_used
+    : summary?.models_used ?? [];
   const compositeScore = trace?.score?.composite_score;
 
-  const kv: [string, string][] = [
-    ['Duration', durationSeconds != null ? formatDuration(durationSeconds) : DASH],
-    ['Tokens', totalTokens != null ? formatTokens(totalTokens) : DASH],
-    ['Files changed', trace ? String(changedFiles.length) : DASH],
-    ['Tests', captions.test_or_build_passed ?? DASH],
-    ['Commit', captions.commit_observed ?? DASH],
-  ];
+  const startedLabel = trace?.started_at ? formatDate(trace.started_at) : null;
+  const durationLabel = durationSeconds != null ? formatDuration(durationSeconds) : null;
 
   return (
     <section className="shell-inspector-pane" tabIndex={-1}>
       <div className="shell-insp-header">
-        <span className="shell-insp-id">{sessionId}</span>
-        <span className="shell-insp-meta">
-          <b>{adapter ?? DASH}</b> &middot; {model ?? DASH}
-        </span>
+        <div className="shell-insp-heading">
+          <span className="shell-insp-id">{sessionId}</span>
+          <span className="shell-insp-meta">
+            <b>{adapter ?? DASH}</b>
+            {modelsUsed.length > 0 ? <> &middot; {modelsUsed.join(', ')}</> : null}
+          </span>
+          {startedLabel && (
+            <span className="shell-insp-started">
+              Started {startedLabel}
+              {durationLabel ? ` · ${durationLabel}` : ''}
+            </span>
+          )}
+        </div>
         <div className="shell-insp-score-wrap">
           <div className="shell-insp-score">
-            {compositeScore != null ? (compositeScore * 100).toFixed(0) : DASH}
+            {compositeScore != null ? Math.round(compositeScore * 100) : DASH}
           </div>
           <div className="shell-insp-score-label">score</div>
         </div>
@@ -139,21 +150,64 @@ export function InspectorPane({ sessionId, liveTail }: InspectorPaneProps) {
             <OutcomeLadder reachedLevel={reachedLevel} captions={captions} />
           </div>
 
-          <div className="shell-kv-block">
-            <div className="shell-section-title">Evidence</div>
-            <div className="shell-kv-table">
-              {kv.map(([k, v]) => (
-                <div className="shell-kv-row" key={k}>
-                  <span className="shell-kv-key">{k}</span>
-                  <span className="shell-kv-val">{v}</span>
-                </div>
-              ))}
+          {trace && (
+            <TrajectoryView
+              events={trace.events}
+              focused={trajectoryFocused}
+              onToggleFocus={onToggleTrajectoryFocus}
+            />
+          )}
+
+          {trace?.score && (
+            <div className="shell-score-section">
+              <ScoreBreakdown score={trace.score} />
             </div>
-          </div>
+          )}
+
+          {trace?.stats?.token_usage && (
+            <div className="shell-tokens-section">
+              <TokenEconomics tokenUsage={trace.stats.token_usage} />
+            </div>
+          )}
+
+          {trace?.recoveries && trace.recoveries.length > 0 && (
+            <div className="shell-recovery-block">
+              <div className="shell-section-title">
+                Recovery ({trace.recoveries.length} {trace.recoveries.length === 1 ? 'cycle' : 'cycles'})
+              </div>
+              <div className="shell-recovery-list">
+                {trace.recoveries.map((rec, i) => (
+                  <div className="shell-recovery-item" key={i}>
+                    <div className="shell-recovery-row">
+                      <span className="shell-recovery-tag is-fail">FAIL #{rec.failure_sequence}</span>
+                      <span className="shell-recovery-text">{rec.failure_summary}</span>
+                    </div>
+                    <div className="shell-recovery-row">
+                      <span className="shell-recovery-tag is-fix">FIX #{rec.recovery_sequence}</span>
+                      <span className="shell-recovery-text">{rec.recovery_summary}</span>
+                    </div>
+                    <div className="shell-recovery-meta">
+                      {rec.steps_to_recover} step{rec.steps_to_recover === 1 ? '' : 's'}
+                      {' · '}
+                      {rec.corrective_actions_count} corrective action
+                      {rec.corrective_actions_count === 1 ? '' : 's'}
+                      {rec.duration_seconds != null ? ` · ${formatDuration(rec.duration_seconds)}` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {trace?.provenance && (
+            <div className="shell-prov-section">
+              <ProvenanceBlock provenance={trace.provenance} />
+            </div>
+          )}
 
           {changedFiles.length > 0 && (
             <div className="shell-support-block">
-              <div className="shell-section-title">Support set</div>
+              <div className="shell-section-title">Support set ({changedFiles.length})</div>
               <ul className="shell-support-list">
                 {changedFiles.slice(0, 12).map((p) => (
                   <li key={p}>{p}</li>

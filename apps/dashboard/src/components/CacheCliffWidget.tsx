@@ -124,8 +124,8 @@ export const CacheCliffWidget: React.FC<CacheCliffWidgetProps> = ({ className = 
         </div>
 
         <div className="rounded-xl border border-danger-border bg-danger-soft p-3.5">
-          <div className="text-[10px] font-mono font-medium text-danger uppercase mb-1">With 1 switch</div>
-          <div className="text-2xl font-bold text-danger font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
+          <div className="text-[10px] font-mono font-medium text-muted uppercase mb-1">With 1 switch</div>
+          <div className="text-2xl font-bold text-ink font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
             {formatUSD(withSwitchTotal)}
           </div>
           <div className="text-[10px] text-danger mt-1 font-medium">

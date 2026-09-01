@@ -1,0 +1,262 @@
+/* ==========================================================================
+   SessionList overrides.
+   Loaded after panes.css (see ExplorerShell.tsx), so rules here override the
+   shared base for the pieces this list restyles: the toolbar row (sort +
+   density), the row layout (extra columns, two-line comfortable mode), and
+   the result count. Everything not redeclared here — the filter input, the
+   chip row, the skeleton, the empty/error states, the footer — keeps
+   panes.css's styling untouched.
+   ========================================================================== */
+
+/* ---------------- toolbar: chips (left) + sort/density (right) ---------------- */
+.shell-root .list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.shell-root .list-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.shell-root .list-sort {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.shell-root .list-sort-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--mv-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.shell-root .list-sort-select {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-text);
+  background: var(--mv-surface);
+  border: 1px solid var(--mv-border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  max-width: 122px;
+  cursor: pointer;
+  transition: border-color 140ms ease-out, color 140ms ease-out;
+}
+.shell-root .list-sort-select:hover {
+  border-color: var(--mv-accent-border);
+}
+.shell-root .list-sort-select:focus-visible {
+  outline: 2px solid var(--mv-accent);
+  outline-offset: 2px;
+}
+
+.shell-root .list-density {
+  display: flex;
+  border: 1px solid var(--mv-border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.shell-root .list-density-btn {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: var(--mv-surface);
+  color: var(--mv-faint);
+  cursor: pointer;
+  transition: background 140ms ease-out, color 140ms ease-out;
+}
+.shell-root .list-density-btn + .list-density-btn {
+  border-left: 1px solid var(--mv-border);
+}
+.shell-root .list-density-btn:hover {
+  color: var(--mv-text);
+}
+.shell-root .list-density-btn[aria-pressed='true'] {
+  background: var(--mv-accent-soft);
+  color: var(--mv-accent);
+}
+.shell-root .list-density-btn:focus-visible {
+  outline: 2px solid var(--mv-accent);
+  outline-offset: -2px;
+}
+
+/* ---------------- quiet result count, only shown while filtered ---------------- */
+.shell-root .list-result-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--mv-faint);
+  padding-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- row layout ----------------
+   Column order, left to right: status dot | session id (flexible, truncates
+   first) | adapter | duration | tokens | score. Score stays the rightmost,
+   fixed-width column so it never moves regardless of id length — that
+   stability is what makes the list scannable at a glance. */
+.shell-root .shell-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-root .shell-row-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.shell-root .shell-row-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.shell-root .shell-row-id {
+  font-size: 11.5px;
+  color: var(--mv-text);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-root .shell-row-agent {
+  font-size: 10.5px;
+  color: var(--mv-muted);
+  /* 54px truncated "claude_code" — the single most common value in a real
+     index — to "claude_c…". The adapter is a closed set of ~20 short names, so
+     it gets a width that fits the longest of them; the session id, which is an
+     opaque hash, absorbs the difference by truncating instead. */
+  flex: 0 0 78px;
+  width: 78px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.shell-root .shell-row-duration {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-faint);
+  flex: 0 0 32px;
+  width: 32px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-root .shell-row-tokens {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-muted);
+  flex: 0 0 44px;
+  width: 44px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-root .shell-row-score {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-ink);
+  flex: 0 0 28px;
+  width: 28px;
+  text-align: right;
+}
+
+.shell-root .shell-row-preview {
+  font-size: 10.5px;
+  color: var(--mv-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Rows are recycled by the virtualizer as you scroll — no entrance
+   transition here, that would flicker on every recycle. Only the
+   background/border-color change on selection/hover transitions, and that
+   transition already lives in panes.css's .shell-row rule. */
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .list-sort-select,
+  .shell-root .list-density-btn {
+    transition: none;
+  }
+}
+
+/* ── Outcome dots ───────────────────────────────────────────────────────────
+   OutcomeKind has no failure state. Its six values are degrees of evidence —
+   done_claimed, artifact_changed, test_or_build_passed, commit_observed,
+   ci_or_deployment_verified, unresolved — and none of them mean "it went
+   wrong". Painting the weak end danger-red said error where the data said
+   no evidence found, and since most sessions legitimately sit at the weak
+   end, the list read as one long alarm.
+
+   So form carries confidence and colour is spent only where it is earned,
+   reusing the ladder's own language: filled and green when something external
+   actually verified the work, filled and neutral when a machine checked
+   something, hollow when the only evidence is the agent's own word. */
+
+.shell-root .shell-row-dot {
+  box-sizing: border-box;
+  background: none;
+  border: 1.5px solid var(--mv-faint);
+}
+
+/* 5 · CI or deployment green — the only rung an outside system confirmed */
+.shell-root .shell-row-dot.ol-dot-success {
+  background: var(--mv-success);
+  border-color: var(--mv-success);
+}
+
+/* 4 · commit observed, 3 · test or build passed — machine-checkable, but
+   local. Solid, so they read as evidence, in ink rather than a state colour. */
+.shell-root .shell-row-dot.ol-dot-warn {
+  background: var(--mv-ink);
+  border-color: var(--mv-ink);
+  opacity: 0.7;
+}
+
+/* 2 · artifact changed — something moved on disk, weakest checkable signal */
+.shell-root .shell-row-dot.ol-dot-danger {
+  background: var(--mv-muted);
+  border-color: var(--mv-muted);
+  opacity: 0.55;
+}
+
+/* 1 · done claimed, and unresolved — hollow. Nothing outside the agent
+   agrees yet, and an empty ring says that without shouting it. */
+.shell-root .shell-row-dot.ol-dot-none,
+.shell-root .shell-row-dot.ol-dot-claimed {
+  background: none;
+  border-color: var(--mv-faint);
+}

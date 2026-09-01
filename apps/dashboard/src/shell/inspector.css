@@ -1,0 +1,334 @@
+/* ==========================================================================
+   InspectorPane substance: score breakdown, token economics, recovery and
+   provenance. Loaded after panes.css (see ExplorerShell.tsx) so this file
+   overrides the shared inspector base where needed. Colors come entirely
+   from --mv-* tokens — no new custom properties declared here, so
+   light/dark/system theming is inherited for free. Everything is scoped
+   under .shell-root so nothing leaks onto the marketing page.
+   ========================================================================== */
+
+/* Header grows a second line (adapter + models, started-at/duration), so
+   align it to the top instead of the shared base's text baseline. */
+.shell-root .shell-insp-header {
+  align-items: flex-start;
+}
+.shell-root .shell-insp-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.shell-root .shell-insp-started {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- shared section header row ---------------- */
+.shell-root .shell-section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.shell-root .shell-section-title-row .shell-section-title {
+  margin-bottom: 0;
+}
+
+.shell-root .shell-score-section,
+.shell-root .shell-tokens-section,
+.shell-root .shell-prov-section {
+  margin-bottom: 28px;
+}
+
+/* ---------------- score breakdown ---------------- */
+.shell-root .shell-score-composite {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  font-family: var(--font-mono);
+  color: var(--mv-accent);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .shell-score-composite-val {
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1;
+}
+.shell-root .shell-score-composite-max {
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.shell-root .shell-score-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.shell-root .shell-score-bar-row {
+  display: grid;
+  grid-template-columns: 92px 1fr 26px;
+  align-items: center;
+  gap: 10px;
+}
+.shell-root .shell-score-bar-label {
+  font-size: 11.5px;
+  color: var(--mv-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shell-root .shell-score-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--mv-surface-2);
+  border: 1px solid var(--mv-border-soft);
+  overflow: hidden;
+}
+.shell-root .shell-score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--mv-ink);
+  transition: width var(--motion-base, 160ms) var(--ease-out, ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .shell-score-bar-fill {
+    transition: none;
+  }
+}
+.shell-root .shell-score-bar-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.shell-root .shell-score-explanations {
+  padding-top: 10px;
+  border-top: 1px solid var(--mv-border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.shell-root .shell-score-explanation {
+  margin: 0;
+  padding-left: 12px;
+  position: relative;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--mv-faint);
+}
+.shell-root .shell-score-explanation::before {
+  content: '\00B7';
+  position: absolute;
+  left: 2px;
+  color: var(--mv-faint);
+}
+.shell-root .shell-score-explanations-toggle {
+  align-self: flex-start;
+  margin-top: 2px;
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 2px 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--mv-muted);
+  cursor: pointer;
+  transition: color var(--motion-fast, 120ms) var(--ease-out, ease-out);
+}
+.shell-root .shell-score-explanations-toggle:hover {
+  color: var(--mv-ink);
+}
+
+/* ---------------- token economics ---------------- */
+.shell-root .shell-tokens-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  gap: 1px;
+  background: var(--mv-surface-2);
+  border: 1px solid var(--mv-border-soft);
+  margin-bottom: 12px;
+}
+.shell-root .shell-tokens-seg {
+  height: 100%;
+  min-width: 2px;
+}
+/* Four categories, not four intensities. A zinc ramp made the legend
+   unmatchable — you cannot tell "muted" from "faint" in a 6px bar, and cache
+   read versus cache creation is the whole point of this chart. */
+.shell-root .shell-tokens-seg.is-input,
+.shell-root .shell-tokens-swatch.is-input {
+  background: var(--mv-cat-1);
+}
+.shell-root .shell-tokens-seg.is-output,
+.shell-root .shell-tokens-swatch.is-output {
+  background: var(--mv-cat-3);
+}
+.shell-root .shell-tokens-seg.is-cache-read,
+.shell-root .shell-tokens-swatch.is-cache-read {
+  background: var(--mv-cat-5);
+}
+/* Cache creation is the expensive one — warn, because here it IS a cost
+   signal rather than just another category. */
+.shell-root .shell-tokens-seg.is-cache-creation,
+.shell-root .shell-tokens-swatch.is-cache-creation {
+  background: var(--mv-warn);
+}
+
+.shell-root .shell-tokens-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.shell-root .shell-tokens-row {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  align-items: center;
+  gap: 9px;
+}
+.shell-root .shell-tokens-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.shell-root .shell-tokens-key {
+  font-size: 11.5px;
+  color: var(--mv-muted);
+}
+.shell-root .shell-tokens-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--mv-text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.shell-root .shell-tokens-row-total {
+  margin-top: 2px;
+  padding-top: 7px;
+  border-top: 1px solid var(--mv-border-soft);
+}
+.shell-root .shell-tokens-row-total .shell-tokens-key {
+  color: var(--mv-ink);
+  font-weight: 500;
+}
+.shell-root .shell-tokens-row-total .shell-tokens-val {
+  color: var(--mv-ink);
+  font-weight: 600;
+}
+
+/* ---------------- recovery ---------------- */
+.shell-root .shell-recovery-block {
+  margin-bottom: 28px;
+}
+.shell-root .shell-recovery-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.shell-root .shell-recovery-item {
+  border: 1px solid var(--mv-warn-border);
+  background: var(--mv-warn-soft);
+  border-radius: 8px;
+  padding: 9px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.shell-root .shell-recovery-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.shell-root .shell-recovery-tag {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+.shell-root .shell-recovery-tag.is-fail {
+  color: var(--mv-danger);
+  background: var(--mv-danger-soft);
+  border-color: var(--mv-danger-border);
+}
+.shell-root .shell-recovery-tag.is-fix {
+  color: var(--mv-success);
+  background: var(--mv-success-soft);
+  border-color: var(--mv-success-border);
+}
+.shell-root .shell-recovery-text {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--mv-text);
+  overflow-wrap: anywhere;
+}
+.shell-root .shell-recovery-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 2px;
+}
+
+/* ---------------- provenance ---------------- */
+.shell-root .shell-prov-chip {
+  font-size: 9.5px;
+  padding: 2px 8px 2px 6px;
+}
+.shell-root .shell-prov-path {
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-text);
+  background: var(--mv-surface);
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 6px;
+  padding: 7px 9px;
+  margin-bottom: 10px;
+}
+.shell-root .shell-prov-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 20px;
+  max-width: 420px;
+}
+.shell-root .shell-prov-row {
+  display: contents;
+}
+.shell-root .shell-prov-key {
+  font-size: 11px;
+  color: var(--mv-faint);
+}
+.shell-root .shell-prov-val {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--mv-text);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The spine's break at rung 2 -> 1 marks where evidence stops being externally
+   checkable. Dashed already says that. Danger red added an alarm the data does
+   not support — no OutcomeKind means failure, only "less evidence" — so the
+   break now reads as an absence rather than an error. */
+.shell-root .ol-spine-seg.ol-spine-cliff {
+  border-left-color: var(--mv-faint);
+}

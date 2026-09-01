@@ -9,6 +9,7 @@ import { CommandPalette } from './CommandPalette';
 import { ThemeToggle } from '@ui/ThemeToggle';
 import { SessionList } from './SessionList';
 import { InspectorPane } from './InspectorPane';
+import { PaletteToggle } from './PaletteToggle';
 import { OverviewPane } from './OverviewPane';
 import { CoveragePane } from './CoveragePane';
 import { ArchaeologyPane } from './ArchaeologyPane';
@@ -16,6 +17,9 @@ import { ExportsPane } from './ExportsPane';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import './shell.css';
 import './panes.css';
+// Loaded after panes.css so each can override the shared base.
+import './inspector.css'
+import './list.css'
 
 const TOAST_DURATION_MS = 1800;
 
@@ -32,6 +36,17 @@ export function ExplorerShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<RailViewId>('sessions');
+  // Collapses the session list so the trajectory gets the full shell width.
+  // A trajectory line is a command plus its result; in the 290px inspector
+  // column both truncate to roughly eight characters and read as nothing.
+  const [trajectoryFocused, setTrajectoryFocused] = useState(false);
+  // Stable identity per focus state, so the key handler re-registers exactly
+  // when the answer changes rather than on every render.
+  const exitTrajectoryFocus = useCallback(() => {
+    if (!trajectoryFocused) return false;
+    setTrajectoryFocused(false);
+    return true;
+  }, [trajectoryFocused]);
   const [scanning, setScanning] = useState(false);
   const [scanSignal, setScanSignal] = useState(0);
 
@@ -79,6 +94,7 @@ export function ExplorerShell() {
   }, []);
 
   useShellKeys({
+    exitTrajectoryFocus: exitTrajectoryFocus,
     navRef,
     paletteOpen,
     openPalette,
@@ -132,6 +148,7 @@ export function ExplorerShell() {
           <span className="livetail-dot" aria-hidden="true" />
           Live Tail
         </button>
+        <PaletteToggle />
         <ThemeToggle />
         <button type="button" className="kbd-chip" onClick={openPalette} title="Open command palette">
           &#8984;K
@@ -143,23 +160,30 @@ export function ExplorerShell() {
 
         {activeView === 'sessions' ? (
           <>
-            <div className="list-region">
-              <ErrorBoundary label="Session list">
-                <SessionList
-                  selectedId={sessionId}
-                  onSelect={(id: string) => navigate(`/s/${encodeURIComponent(id)}`)}
-                  registerNav={(nav: ShellNav) => {
-                    navRef.current = nav;
-                  }}
-                  liveTail={liveTail}
-                  reloadSignal={scanSignal}
-                />
-              </ErrorBoundary>
-            </div>
+            {!trajectoryFocused && (
+              <div className="list-region">
+                <ErrorBoundary label="Session list">
+                  <SessionList
+                    selectedId={sessionId}
+                    onSelect={(id: string) => navigate(`/s/${encodeURIComponent(id)}`)}
+                    registerNav={(nav: ShellNav) => {
+                      navRef.current = nav;
+                    }}
+                    liveTail={liveTail}
+                    reloadSignal={scanSignal}
+                  />
+                </ErrorBoundary>
+              </div>
+            )}
 
             <div className="inspector-region" ref={inspectorRegionRef} tabIndex={-1}>
               <ErrorBoundary label="Session inspector">
-                <InspectorPane sessionId={sessionId} liveTail={liveTail} />
+                <InspectorPane
+                  sessionId={sessionId}
+                  liveTail={liveTail}
+                  trajectoryFocused={trajectoryFocused}
+                  onToggleTrajectoryFocus={() => setTrajectoryFocused((v) => !v)}
+                />
               </ErrorBoundary>
             </div>
           </>

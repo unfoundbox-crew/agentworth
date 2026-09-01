@@ -82,8 +82,8 @@ export const mockAggregateStats: AggregateStats = {
   token_usage: {
     input_tokens: 5820400100,
     output_tokens: 1489200300,
-    cache_read_input_tokens: 980100200,
-    cache_creation_input_tokens: 110300000,
+    cache_read_tokens: 980100200,
+    cache_creation_tokens: 110300000,
   },
   sessions_by_adapter: {
     claude_code: 2840,
@@ -220,10 +220,10 @@ export const mockDetailedTraces: Record<string, AgentWorthTrace> = {
     adapter: 'claude_code',
     provenance: {
       source_path: '/Users/saurabh/.claude/sessions/sess-8902f.jsonl',
-      adapter: 'claude_code',
+      adapter_name: 'claude_code',
       file_size_bytes: 48920,
-      modified_timestamp: 1724938920,
-      fingerprint: 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      mtime_epoch_secs: 1724938920,
+      content_fingerprint: 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
     },
     started_at: '2026-08-29T13:42:00Z',
     ended_at: '2026-08-29T13:47:12Z',
@@ -235,8 +235,8 @@ export const mockDetailedTraces: Record<string, AgentWorthTrace> = {
       token_usage: {
         input_tokens: 112000,
         output_tokens: 30800,
-        cache_read_input_tokens: 84000,
-        cache_creation_input_tokens: 12000,
+        cache_read_tokens: 84000,
+        cache_creation_tokens: 12000,
       },
       models_used: ['claude-3-5-sonnet'],
       tools_used: {

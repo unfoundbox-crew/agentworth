@@ -114,9 +114,11 @@ export const VerdictStamp: React.FC<VerdictStampProps> = ({
     ? "border-success-border bg-success-soft text-success"
     : isWarn
     ? "border-warn-border bg-warn-soft text-warn"
-    : "border-dashed border-danger-border bg-danger-soft text-danger";
+    : "border-dashed border-border bg-surface-2 text-muted";
 
-  const subtitleToneClass = isGood ? "text-success/80" : isWarn ? "text-warn/80" : "text-danger/80";
+  // Neither good nor warn means no evidence reached us, not that something
+  // failed — the same distinction the outcome dots and ladder now make.
+  const subtitleToneClass = isGood ? "text-success/80" : isWarn ? "text-warn/80" : "text-faint";
 
   return (
     <span

@@ -203,6 +203,32 @@ AgentWorth is designed around strict privacy, performance, and local-first invar
 
 ---
 
+```text
+crates/
+  schema/        Canonical data model (AgentWorthTrace, NormalizedEvent, TokenUsage)
+  adapter-sdk/   Common traits and scan options for adapter implementations
+  adapters/      20 streaming agent history parsers
+  core/          Scanning orchestrator, incremental SHA-256 fingerprinting
+  storage/       SQLite index, transactions, B-tree queries, and pagination
+  outcomes/      Evidence hierarchy detection and failure-recovery loop extraction
+  scoring/       Explainable 5-factor TraceScore engine
+  redaction/     15-rule offline privacy engine
+  export-atif/   Standard Agent Trajectory Interchange Format (ATIF v1.0) serializer
+
+apps/
+  cli/           Rust CLI binary (agentworth, agwt) and embedded Axum API server
+  dashboard/     The local app. Keyboard-first three-pane explorer, compiled
+                 INTO the binary via rust-embed — build it before cargo or the
+                 binary ships a stub instead of a UI.
+  web/           Marketing site only. Deploys to Pages; makes no API calls.
+
+packages/
+  agentworth/    Official agentworth npm & npx package distribution
+  ui/            Design tokens, theme toggle and icons shared by both apps
+```
+
+---
+
 ## Safe ATIF v1.0 Export
 
 AgentWorth natively supports the **Agent Trajectory Interchange Format (ATIF v1.0)** for sharing anonymized, high-signal trajectories with benchmark suites, evaluators, and research harnesses.
@@ -276,6 +302,95 @@ AgentWorth is part of the Unfoundbox autonomous agent tooling collective:
 * 🤝 [**CommonGain** (`commongain.xyz`)](https://commongain.xyz) — Public commons and autonomous collective tools.
 
 ---
+
+## Working on AgentWorth
+
+### Running the dashboard without rebuilding the CLI
+
+```bash
+cd apps/dashboard && npm run build
+agentworth serve --port 3250 --dist apps/dashboard/dist --open
+```
+
+`--dist` points the installed binary at any local build, so UI work needs no
+Rust compile. Everything is served from `127.0.0.1`; nothing leaves the machine.
+
+### Cutting a release
+
+There is no publish step to run by hand. Pushing a `v*` tag does everything —
+builds four targets, creates the GitHub Release, publishes to npm, then smoke
+tests `npx agentworth@<version>` on clean Ubuntu and macOS.
+
+Four files carry the version and `version-gate` fails the release if the tag
+disagrees with any of them:
+
+| File | What |
+| :--- | :--- |
+| `Cargo.toml` | workspace version |
+| `Cargo.lock` | the ten `agentworth-*` workspace crates |
+| `packages/agentworth/package.json` | the npm package |
+| `apps/web/src/version.ts` | the badge on the marketing site |
+
+```bash
+git checkout -b release/vX.Y.Z origin/main
+# bump all four, then:
+gh pr create --base main --title "chore(release): vX.Y.Z"
+# merge once CI is green, then tag the merged commit:
+git tag -a vX.Y.Z <merged-sha> -m "..." && git push origin vX.Y.Z
+```
+
+Tag the merge commit, not your local branch — and confirm the work is actually
+on `main` first. A release has already been cut around a commit that changed
+nothing because that check was skipped; see `[0.1.7]` in the changelog.
+
+### npm publishing needs no token
+
+Publishing uses npm **Trusted Publishing** over OIDC. There is no `NPM_TOKEN`
+anywhere and adding one would be a step backwards — the granular bypass-2FA
+tokens it replaced are deprecated by npm. The workflow requires
+`id-token: write` and npm >= 11.5.1, both asserted in `release.yml`.
+
+If a smoke test fails immediately after a successful publish with `ETARGET`,
+the registry has not propagated yet. The workflow polls for resolvability
+before concluding, so a red smoke test now means a real failure.
+
+### GitHub accounts
+
+This repo belongs to **unfoundbox-crew**, not the personal account. Both are
+authenticated:
+
+```bash
+gh api user -q .login          # trust this
+gh auth switch --user unfoundbox-crew
+```
+
+`gh auth status` can report one account as active while `gh api user` returns
+the other, and a merge will then fail on permissions. Check with `gh api user`
+before anything that writes. SSH is pinned per host in `~/.ssh/config`:
+`github.com` is personal, `github.com-crew` is this repo.
+
+### Release notes and the changelog
+
+`release.yml` sets `generate_release_notes: true`, so GitHub writes the release
+page from merged PR titles — which makes PR titles the release notes. Write
+them for someone deciding whether to upgrade.
+
+`CHANGELOG.md` is maintained by hand in Keep a Changelog format and is the place
+for consequences rather than commit subjects. Add the entry in the release PR,
+while you still remember what shipped.
+
+### Public documentation
+
+`apps/web` is the marketing site and deploys to GitHub Pages on every push to
+`main` via `deploy-pages.yml`. It is a separate build from the dashboard and
+must stay free of API calls — anything that fetches `/api/*` there ships a
+request that 404s in production.
+
+### CI
+
+`ci.yml` runs on every pull request: builds both web apps, builds the Rust
+workspace, and greps the binary to prove the dashboard is actually embedded in
+it. ubuntu-latest only, to stay inside the free tier.
 
 ## License
 
