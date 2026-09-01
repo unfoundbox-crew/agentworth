@@ -14,7 +14,8 @@ use agentworth_core::Scanner;
 use agentworth_redaction::Redactor;
 use agentworth_schema::{AgentWorthTrace, EventPayload};
 use agentworth_storage::{
-    estimate_tokens_cost_usd, extract_repository_or_workspace, SessionFilter, Storage,
+    estimate_total_cost_from_per_model_usage, extract_repository_or_workspace, SessionFilter,
+    Storage,
 };
 use anyhow::{Context, Result};
 use console::style;
@@ -306,14 +307,11 @@ pub fn evaluate_trace_for_blunder(
         }
     }
 
-    // Token and Cost calculation
+    // Token and Cost calculation. Priced per model (each model's tokens at that model's own
+    // rate, then summed) rather than blended at a single default rate -- a session run on a
+    // cheap or expensive non-Sonnet model must not be billed as if it were Sonnet.
     let tokens = trace.stats.token_usage.total();
-    let input = trace.stats.token_usage.input_tokens;
-    let output = trace.stats.token_usage.output_tokens;
-    let cache_read = trace.stats.token_usage.cache_read_tokens;
-    let cache_creation = trace.stats.token_usage.cache_creation_tokens;
-
-    let mut spend_usd = estimate_tokens_cost_usd(input, output, cache_read, cache_creation);
+    let mut spend_usd = estimate_total_cost_from_per_model_usage(&trace.stats.per_model_token_usage);
     for e in &trace.events {
         if let EventPayload::ModelInvocation { cost_usd: Some(c), .. } = &e.payload {
             if *c > spend_usd {
@@ -806,6 +804,12 @@ mod tests {
             cache_creation_tokens: 100_000,
         };
         trace.stats.models_used = vec!["Claude Opus 5 (Extended Thinking)".to_string()];
+        // Real traces always populate this alongside token_usage (both come from the same
+        // recalculate_stats loop) -- set it by hand here since this fixture bypasses that.
+        trace
+            .stats
+            .per_model_token_usage
+            .insert("Claude Opus 5 (Extended Thinking)".to_string(), trace.stats.token_usage);
 
         trace.events.push(agentworth_schema::NormalizedEvent {
             id: "e1".to_string(),
@@ -837,6 +841,53 @@ mod tests {
         assert!(exhibit.blunder_score >= 100_000.0);
         assert!(exhibit.apology_count >= 1);
         assert!(exhibit.code_snippet.contains("PROTECTED_PATHS"));
+    }
+
+    /// Regression test for the pricing bug: `evaluate_trace_for_blunder` used to price every
+    /// session's spend via the blended `estimate_tokens_cost_usd` (model_id = None -> always
+    /// Claude 3.5 Sonnet's rate), regardless of which model actually ran. A session run on a
+    /// cheap non-Sonnet model (here DeepSeek Chat) must be billed at its own real rate.
+    #[test]
+    fn test_blunder_spend_uses_real_per_model_rate_not_blended_sonnet() {
+        let mut trace = AgentWorthTrace::new(
+            "sess-deepseek-1",
+            "opencode",
+            Provenance::new("/tmp/deepseek.jsonl", "opencode", 1024, 1720000000, "ds123"),
+            Utc::now(),
+        );
+
+        trace.events.push(agentworth_schema::NormalizedEvent::new(
+            1,
+            Utc::now(),
+            EventPayload::ModelInvocation {
+                model: "deepseek-chat".to_string(),
+                token_usage: TokenUsage::new(1_000_000, 500_000, 0, 0),
+                cost_usd: None,
+                latency_ms: None,
+            },
+        ));
+        trace.recalculate_stats();
+
+        let exhibit = evaluate_trace_for_blunder(&trace, "some-project").expect("exhibit produced");
+
+        // Real DeepSeek Chat rate: $0.14/M input, $0.28/M output.
+        let expected_real_cost = 1_000_000.0 / 1_000_000.0 * 0.14 + 500_000.0 / 1_000_000.0 * 0.28;
+        assert!(
+            (exhibit.spend_usd - expected_real_cost).abs() < 1e-9,
+            "expected deepseek-chat's real rate (${:.4}), got ${:.4}",
+            expected_real_cost,
+            exhibit.spend_usd
+        );
+
+        // What the old blended-Sonnet bug would have produced: $3.00/M input, $15.00/M output.
+        let wrong_blended_sonnet_cost =
+            1_000_000.0 / 1_000_000.0 * 3.00 + 500_000.0 / 1_000_000.0 * 15.00;
+        assert!(
+            (exhibit.spend_usd - wrong_blended_sonnet_cost).abs() > 1.0,
+            "spend_usd (${:.4}) must not collapse to the blended-Sonnet figure (${:.4})",
+            exhibit.spend_usd,
+            wrong_blended_sonnet_cost
+        );
     }
 
     #[test]

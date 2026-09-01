@@ -12,7 +12,7 @@ use agentworth_core::Scanner;
 use agentworth_outcomes::{evaluate_trace_outcomes, highest_outcome, RecoveryDetector};
 use agentworth_schema::{AgentWorthTrace, EventPayload, OutcomeKind};
 use agentworth_scoring::{TraceScore, TraceScorer};
-use agentworth_storage::{estimate_tokens_cost_usd, Storage};
+use agentworth_storage::Storage;
 use anyhow::{Context, Result};
 use console::style;
 use serde::{Deserialize, Serialize};
@@ -250,12 +250,10 @@ pub fn extract_flight_data(trace: &AgentWorthTrace, score: &TraceScore) -> Fligh
     let cache_read_tokens = trace.stats.token_usage.cache_read_tokens;
     let cache_creation_tokens = trace.stats.token_usage.cache_creation_tokens;
 
-    let mut spend_usd = estimate_tokens_cost_usd(
-        input_tokens,
-        output_tokens,
-        cache_read_tokens,
-        cache_creation_tokens,
-    );
+    // Real per-model cost, already computed by the scorer from `per_model_token_usage`
+    // (each model priced at its own rate, then summed) -- not a blended single-rate
+    // estimate, which would silently price a non-Sonnet session at Sonnet's rate.
+    let mut spend_usd = score.total_estimated_cost_usd;
 
     // Look for explicit model invocation costs if greater
     for ev in &trace.events {
@@ -1221,6 +1219,53 @@ mod tests {
         assert!(data.best_apology_quote.is_some());
         assert!(data.total_tokens > 0);
         assert_eq!(data.top_tools[0].0, "Bash");
+    }
+
+    /// Regression test for the pricing bug: `extract_flight_data` used to recompute
+    /// `spend_usd` from the blended `estimate_tokens_cost_usd` (model_id = None -> always
+    /// Claude 3.5 Sonnet's rate), throwing away the correctly-priced `score.total_estimated_cost_usd`
+    /// that `TraceScorer::score` had already computed from the trace's real model. A session
+    /// run entirely on a cheap non-Sonnet model must not be billed at Sonnet's rate.
+    #[test]
+    fn test_flight_receipt_spend_uses_real_model_rate_not_blended_sonnet() {
+        let start = Utc::now();
+        let prov = Provenance::new("/tmp/gpt4o_mini_session.jsonl", "codex", 512, 4096, "fp_gpt4o_mini");
+        let mut trace = AgentWorthTrace::new("sess_gpt4o_mini", "codex", prov, start);
+
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::ModelInvocation {
+                model: "gpt-4o-mini".to_string(),
+                token_usage: TokenUsage::new(1_000_000, 500_000, 0, 0),
+                cost_usd: None,
+                latency_ms: None,
+            },
+        ));
+        trace.recalculate_stats();
+
+        let scorer = TraceScorer::default();
+        let score = scorer.score(&trace);
+        let data = extract_flight_data(&trace, &score);
+
+        // Real gpt-4o-mini rate: $0.15/M input, $0.60/M output.
+        let expected_real_cost = 1_000_000.0 / 1_000_000.0 * 0.15 + 500_000.0 / 1_000_000.0 * 0.60;
+        assert!(
+            (data.spend_usd - expected_real_cost).abs() < 1e-9,
+            "expected gpt-4o-mini's real rate (${:.4}), got ${:.4}",
+            expected_real_cost,
+            data.spend_usd
+        );
+
+        // What the old blended-Sonnet bug would have produced: $3.00/M input, $15.00/M output.
+        let wrong_blended_sonnet_cost =
+            1_000_000.0 / 1_000_000.0 * 3.00 + 500_000.0 / 1_000_000.0 * 15.00;
+        assert!(
+            (data.spend_usd - wrong_blended_sonnet_cost).abs() > 1.0,
+            "spend_usd (${:.4}) must not collapse to the blended-Sonnet figure (${:.4})",
+            data.spend_usd,
+            wrong_blended_sonnet_cost
+        );
     }
 
     #[test]

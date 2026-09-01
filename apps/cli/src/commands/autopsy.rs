@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use agentworth_core::Scanner;
 use agentworth_schema::EventPayload;
-use agentworth_storage::{estimate_tokens_cost_usd, SessionFilter, Storage};
+use agentworth_storage::{estimate_total_cost_from_per_model_usage, SessionFilter, Storage};
 use anyhow::Result;
 use console::style;
 use serde::{Deserialize, Serialize};
@@ -101,12 +101,11 @@ pub fn perform_prompt_autopsy(
             // Source file no longer on disk, or unreadable -- skip, don't fail the whole report.
             Err(_) => continue,
         };
-        let session_spend = estimate_tokens_cost_usd(
-            trace.stats.token_usage.input_tokens,
-            trace.stats.token_usage.output_tokens,
-            trace.stats.token_usage.cache_read_tokens,
-            trace.stats.token_usage.cache_creation_tokens,
-        );
+        // Priced per model (each model's tokens at that model's own rate, then summed)
+        // rather than blended at a single default rate -- a session run on a non-Sonnet
+        // model must not be billed as if it were Sonnet.
+        let session_spend =
+            estimate_total_cost_from_per_model_usage(&trace.stats.per_model_token_usage);
 
         for event in &trace.events {
             if let EventPayload::UserMessage { content } = &event.payload {
@@ -326,5 +325,73 @@ mod tests {
         assert_eq!(report.clusters.len(), 1, "the correction phrase must form a cluster");
         assert_eq!(report.clusters[0].occurrences, 1);
         assert!(report.clusters[0].normalized_phrase.contains("revert"));
+    }
+
+    /// Regression test for the pricing bug: `perform_prompt_autopsy` used to price every
+    /// session's spend via the blended `estimate_tokens_cost_usd` (model_id = None -> always
+    /// Claude 3.5 Sonnet's rate), regardless of which model actually ran. Scans a real,
+    /// adapter-parsed session run on a cheap non-Sonnet model (DeepSeek Chat) and asserts the
+    /// resulting cluster spend matches DeepSeek's real rate, not Sonnet's.
+    #[test]
+    fn test_perform_prompt_autopsy_prices_non_sonnet_model_correctly() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Arc::new(Storage::open_path(tmp.path()).unwrap());
+
+        let mut session_file = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let line1 = json!({
+            "type": "user",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "content": "no, please revert that change",
+        });
+        let line2 = json!({
+            "type": "assistant",
+            "timestamp": "2026-01-01T00:00:05Z",
+            "model": "deepseek-chat",
+            "usage": {
+                "input_tokens": 1_000_000,
+                "output_tokens": 500_000,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+            "content": [{"type": "text", "text": "Reverted."}],
+        });
+        writeln!(session_file, "{}", line1).unwrap();
+        writeln!(session_file, "{}", line2).unwrap();
+
+        let scan_only_claude =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+        let scan_summary = scan_only_claude
+            .run_scan(
+                &ScanOptions {
+                    custom_paths: vec![session_file.path().to_path_buf()],
+                    force: true,
+                },
+                |_, _| {},
+            )
+            .expect("scan the real session");
+        assert_eq!(scan_summary.scanned_sessions, 1);
+
+        let report = perform_prompt_autopsy(&storage, 1).expect("autopsy should succeed");
+        assert_eq!(report.clusters.len(), 1, "the correction phrase must form a cluster");
+
+        // Real DeepSeek Chat rate: $0.14/M input, $0.28/M output.
+        let expected_real_cost = 1_000_000.0 / 1_000_000.0 * 0.14 + 500_000.0 / 1_000_000.0 * 0.28;
+        assert!(
+            (report.clusters[0].estimated_cost_usd - expected_real_cost).abs() < 1e-9,
+            "expected deepseek-chat's real rate (${:.4}), got ${:.4}",
+            expected_real_cost,
+            report.clusters[0].estimated_cost_usd
+        );
+
+        // What the old blended-Sonnet bug would have produced: $3.00/M input, $15.00/M output.
+        let wrong_blended_sonnet_cost =
+            1_000_000.0 / 1_000_000.0 * 3.00 + 500_000.0 / 1_000_000.0 * 15.00;
+        assert!(
+            (report.clusters[0].estimated_cost_usd - wrong_blended_sonnet_cost).abs() > 1.0,
+            "cluster spend (${:.4}) must not collapse to the blended-Sonnet figure (${:.4})",
+            report.clusters[0].estimated_cost_usd,
+            wrong_blended_sonnet_cost
+        );
+        assert_eq!(report.total_recurrent_spend_usd, report.clusters[0].estimated_cost_usd);
     }
 }

@@ -19,6 +19,7 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 | `OutcomeKind` PascalCase/snake_case encoding fix | **Done, merged into integration branch.** | Real bug, confirmed against a peer session's live 10,188-session index. Root cause was one level deeper than reported — see findings below. 301 passed on lenovo |
 | Cost-Aware Task Router | Deferred, not scoped | Different shape of feature — needs a live per-agent hook, not an index query. Needs its own design pass |
 | PR #11 (Skill + Receipts) | **Done, verified and merged.** | Was open/unclaimed since 2026-08-31, real bugs found and fixed (unrelated adapter bug + fabricated CLI docs) — see PR #11 findings below |
+| Model pricing wiring (6 report commands) | **Done, merged.** | Every dollar figure a user actually sees was priced as Claude 3.5 Sonnet regardless of the real model. Commit `0c27bbb`. See findings below |
 | Final PR + version bump | Not yet | Saurabh's call — one PR, one version bump, only once everything this session touches is done |
 | Quality/perf/lint audit | **Done, on `chore/quality-audit-pass` (a separate worktree/branch, NOT merged into this integration branch).** | Real bug fixed (mutex-poisoning could wedge `agentworth serve` permanently), workspace-wide clippy cleanup, a small pinned lint policy, flamegraph feasibility checked. Not yet folded in — see full section below |
 
@@ -196,7 +197,7 @@ Also fixed: 4 more SKILL.md sections with invented flags on real commands (`scan
 
 Verified on lenovo: 177 passed, 0 failed, 0 ignored, `cargo build --workspace` clean. Commits `db06270` (original) → `4df56f1` (adapter fix) → `e29955a` (SKILL.md fixes) → `5f779e9` (docs), all folded into the integration branch.
 
-## Quality/perf/lint audit (2026-09-01) — separate worktree, not yet merged here
+## Quality/perf/lint audit (2026-09-01) — merged
 
 Branch `chore/quality-audit-pass`, worktree `.worktrees/quality-audit`, branched from this file's own `integrate/handoff-batch-1` tip at the time (`cbf4556`). Scope: make the codebase top-notch on perf, quality, tests, and Rust idiom, per Saurabh's ask. Not pushed, no PR — the coordinating session decides what folds in.
 
@@ -329,3 +330,25 @@ Final, clean, full-workspace run after every commit below:
 | `9a61973` | fix(cli): move the wildcard_in_or_patterns allow to the let, not the arm |
 | `bd0b757` | perf: fix two real clippy::pedantic findings (implicit_clone, assigning_clones) |
 | `42174b1` | chore: pin a workspace clippy lint policy |
+
+## Model pricing wiring findings (2026-09-01) — merged
+
+**Confirmed real, exactly as reported.** `crates/storage/src/pricing.rs`'s `estimate_model_tokens_cost_usd(model_id, ...)` looks up a model's real rate (~35 models, 4 rates each). `estimate_tokens_cost_usd(...)` — actually defined in `crates/storage/src/lib.rs`, not `pricing.rs` as first described — is a wrapper that always calls it with `model_id = None`, which falls back to `ModelRates::default()` (Sonnet). All 6 user-facing report commands called the wrapper. Every dollar figure a user could see was priced as Sonnet, regardless of the real model — a DeepSeek or GPT session included.
+
+| Command | What it had on hand | Fix |
+| --- | --- | --- |
+| `receipt.rs` | Already receives a `TraceScorer`-computed `score` with a correct `score.total_estimated_cost_usd` | Read that field directly instead of recomputing a blended figure — the correct number was already sitting right there, unused |
+| `blunder.rs`, `autopsy.rs` | Full trace loaded per session already | Price from the trace's `per_model_token_usage` map instead of its blended `token_usage` totals |
+| `blind_spots.rs`, `pr_blame.rs`, `recall.rs` | Load the full trace *solely* to get blended `token_usage` for pricing | Read `per_model_token_usage` off that same already-loaded trace instead |
+
+New shared function: `agentworth_storage::estimate_total_cost_from_per_model_usage` (next to `estimate_tokens_cost_usd` in `crates/storage/src/lib.rs`) — sums a per-model usage map at each model's own rate. Used by the 5 non-`receipt.rs` fixes above. Mirrors what `TraceScorer::compute_per_model_attribution` already does internally, without pulling in the full scorer (outcome + recovery detection) where a call site only needs the total.
+
+No command's output shape changed — each already showed one dollar figure (or, for `pr_blame`/`recall`/`blind_spots`, one figure per row), so the fix makes that number correct rather than adding a new per-model breakdown nobody asked for.
+
+**`blunder.rs`'s existing katana test needed one line.** It set `trace.stats.token_usage` directly without the matching `per_model_token_usage` a real trace always carries alongside it (both come from the same `recalculate_stats` loop — this only diverges in hand-built test fixtures). Added `per_model_token_usage.insert(...)` so the fixture stays valid under the new pricing path. The fictional model name that test uses ("Claude Opus 5 (Extended Thinking)") doesn't match any real pricing-table pattern either way, so the asserted `blunder_score` is unchanged.
+
+**Tests**: one new test per fixed command (6 total), each constructing or scanning a real session on a clearly non-Sonnet model (DeepSeek Chat or gpt-4o-mini) and asserting the reported cost matches that model's real rate *and* differs meaningfully (>$1) from what Sonnet's blended rate would have produced on the same tokens. `autopsy`/`blind_spots`/`pr_blame`/`recall` needed a real on-disk JSONL fixture scanned through `Scanner::run_scan` (their cost path re-parses from disk via `scanner.load_trace`, not from whatever's in SQLite) — `recall.rs`'s also needed a real vector-store chunk insert via the deterministic offline embedder. `receipt.rs`/`blunder.rs` could build the trace in memory directly, no scan needed.
+
+**`estimate_tokens_cost_usd` still has 3 legitimate callers**, all in `crates/storage/src/lib.rs`, none of which this fix touches: `get_outcome_distribution` (sums across every session for one outcome label), `query_usage_view` (feeds `get_daily_usage`/`get_weekly_usage`/`get_monthly_usage`, sums across every model an adapter used in a period), `get_pacing_window` (sums across every session in a rolling time window). Each is a genuine cross-model SQL aggregate with no single model to attribute to — a different problem from these six single-session reports, not a leftover instance of the same bug. Flagging, not fixing: the dollar figures in `agentworth usage`/`pace` and the dashboard's daily/weekly/monthly views are still Sonnet-blended for exactly this reason. Making those correct would need a per-(bucket, model) SQL shape, not a code-level swap — worth its own pass if the inaccuracy matters enough to Saurabh, but out of scope here.
+
+Verified on lenovo (`agentworth-modelpricing-f8c3`, isolated build + target dir, flock-serialized): `cargo build --workspace` — exit 0, only the 2 pre-existing unused-import warnings already noted elsewhere in this doc (`watch.rs`'s `ToolCall`, `embedder.rs`'s `info`/`warn`), neither related to this change. `cargo test --workspace --no-fail-fast` — 363 passed, 0 failed, 0 ignored, including all 6 new tests (each running twice for the 4 tests compiled into both the `agentworth`/`agwt` binaries — `blunder.rs`/`receipt.rs`'s tests live in the shared lib crate and run once). Did not capture a pre-change baseline count on this branch, so 363 is the verified post-change total, not a verified delta. Commit `0c27bbb` on `fix/model-pricing-wiring`, branched from `integrate/handoff-batch-1`, not pushed.
