@@ -183,21 +183,20 @@ fn audit_trace(
                         turn_index: turn_num,
                         project: project.to_string(),
                     });
-                    } else {
-                        report.high_count += 1;
-                        report.findings.push(SafetyFinding {
-                            severity: SafetySeverity::High,
-                            session_id: trace.session_id.clone(),
-                            adapter: trace.adapter.clone(),
-                            timestamp: ts.clone(),
-                            rule_id: "RECURSIVE_DELETION".to_string(),
-                            title: "Recursive Directory Deletion".to_string(),
-                            description: "Agent invoked recursive file removal ('rm -rf').".to_string(),
-                            offending_snippet: cmd_str.clone(),
-                            turn_index: turn_num,
-                            project: project.to_string(),
-                        });
-                    }
+                } else {
+                    report.high_count += 1;
+                    report.findings.push(SafetyFinding {
+                        severity: SafetySeverity::High,
+                        session_id: trace.session_id.clone(),
+                        adapter: trace.adapter.clone(),
+                        timestamp: ts.clone(),
+                        rule_id: "RECURSIVE_DELETION".to_string(),
+                        title: "Recursive Directory Deletion".to_string(),
+                        description: "Agent invoked recursive file removal ('rm -rf').".to_string(),
+                        offending_snippet: cmd_str.clone(),
+                        turn_index: turn_num,
+                        project: project.to_string(),
+                    });
                 }
 
                 // Check High: Unconstrained sweeps
