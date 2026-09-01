@@ -7,7 +7,7 @@ use axum::http::{header, HeaderValue, Request, Response, StatusCode};
 use axum::response::IntoResponse;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
-use rust_embed::RustEmbed;
+use rust_embed::{Embed, RustEmbed};
 
 const FALLBACK_HTML: &str = r#"<!DOCTYPE html>
 <html lang="en">
@@ -366,7 +366,7 @@ const FALLBACK_HTML: &str = r#"<!DOCTYPE html>
 /// apps/dashboard before `cargo build`; empty on a fresh clone, which is why
 /// `is_empty()` is checked rather than assumed.
 #[derive(RustEmbed)]
-#[folder = "$CARGO_MANIFEST_DIR/../../apps/dashboard/dist"]
+#[folder = "../../apps/dashboard/dist"]
 struct DashboardAssets;
 
 fn embedded_response(path: &str) -> Option<Response<Body>> {
@@ -384,6 +384,10 @@ pub async fn serve_static_or_spa(
     dist_dir: Option<PathBuf>,
     req: Request<Body>,
 ) -> impl IntoResponse {
+    // Captured up front: the disk branch below moves `req` into ServeDir, and
+    // the embedded branch still needs the path afterwards.
+    let embed_path = req.uri().path().trim_start_matches('/').to_string();
+
     // If custom or standard dist_dir exists, attempt to serve from disk
     if let Some(ref dist) = dist_dir {
         if dist.exists() && dist.is_dir() {
@@ -421,9 +425,8 @@ pub async fn serve_static_or_spa(
     // No dist on disk: serve the dashboard compiled into this binary. An exact
     // asset first, then index.html as the SPA history fallback — same order as
     // the on-disk path above, so both routes behave identically.
-    let path_uri = req.uri().path().trim_start_matches('/');
-    if !path_uri.is_empty() {
-        if let Some(res) = embedded_response(path_uri) {
+    if !embed_path.is_empty() {
+        if let Some(res) = embedded_response(&embed_path) {
             return res;
         }
     }
