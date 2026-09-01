@@ -40,6 +40,7 @@ console = "0.15"
 indicatif = "0.17"
 directories = "5.0"
 regex = "1.10"
+toml = "0.8"
 
 # Workspace crates
 agentworth-schema = { path = "crates/schema" }
