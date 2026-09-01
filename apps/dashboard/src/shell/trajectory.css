@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Trajectory — the event stream behind a session's verdict: TimelineStrip
+   Trajectory — the event stream behind a session's verdict: TrajectoryScrubber
    (shape of the whole run), the virtualized event list, and EventDetail.
    Reuses panes.css's .shell-section-title and .shell-kv-* classes rather
    than redeclaring them. Colors come entirely from --mv-* tokens — no new
@@ -376,5 +376,193 @@
     border-top: 1px solid var(--mv-border);
     padding-left: 0;
     padding-top: 12px;
+  }
+}
+
+/* ---------------- scrubber: overview rail + zoomable detail strip ----------------
+   The rail owns panning and the strip owns range-select, because both are the
+   same physical drag and would otherwise need a modifier key to tell apart. */
+.shell-root .traj-scrubber {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  outline: none;
+}
+.shell-root .traj-scrubber:focus-visible {
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+  border-radius: 8px;
+}
+
+.shell-root .traj-scrubber .traj-strip {
+  position: relative;
+  margin-bottom: 0;
+  touch-action: none;
+}
+
+.shell-root .traj-axis-note {
+  padding: 5px 9px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 6px;
+  background: var(--mv-surface-2);
+  color: var(--mv-muted);
+  font-size: 11px;
+}
+
+.shell-root .traj-scrub-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.shell-root .traj-scrub-range,
+.shell-root .traj-scrub-zoom {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-muted);
+}
+.shell-root .traj-scrub-zoom {
+  color: var(--mv-faint);
+}
+.shell-root .traj-zoom-controls {
+  margin-left: auto;
+  display: flex;
+  gap: 3px;
+}
+.shell-root .traj-zoom-btn {
+  width: 22px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--mv-border);
+  border-radius: 5px;
+  background: var(--mv-surface);
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.shell-root .traj-zoom-btn:hover:not(:disabled) {
+  background: var(--mv-surface-2);
+  color: var(--mv-text);
+}
+.shell-root .traj-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.shell-root .traj-zoom-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+}
+
+.shell-root .traj-clear-brush {
+  padding: 2px 8px;
+  border: 1px solid var(--mv-accent-border);
+  border-radius: 5px;
+  background: var(--mv-accent-soft);
+  color: var(--mv-accent);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.shell-root .traj-clear-brush:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+}
+
+/* overview rail — always the full session, never zoomed */
+.shell-root .traj-rail {
+  position: relative;
+  height: 22px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 6px;
+  background: var(--mv-surface-2);
+  cursor: grab;
+  overflow: hidden;
+  touch-action: none;
+}
+.shell-root .traj-rail:active {
+  cursor: grabbing;
+}
+.shell-root .traj-rail-tick {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--mv-ink);
+  opacity: 0.5;
+}
+/* An idle stretch reads as absence, not as another tick. */
+.shell-root .traj-rail-gap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--mv-faint);
+  opacity: 0.16;
+  border-left: 1px dashed var(--mv-border-soft);
+  border-right: 1px dashed var(--mv-border-soft);
+}
+.shell-root .traj-rail-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--mv-accent-soft);
+  border-left: 2px solid var(--mv-accent);
+  border-right: 2px solid var(--mv-accent);
+  cursor: ew-resize;
+}
+
+/* One hue per row, so three stacked rows read as three kinds. */
+.shell-root .traj-tick-1 { background: var(--mv-cat-1); }
+.shell-root .traj-tick-2 { background: var(--mv-cat-2); }
+.shell-root .traj-tick-3 { background: var(--mv-cat-3); }
+.shell-root .traj-strip-label-1 { color: var(--mv-cat-1); }
+.shell-root .traj-strip-label-2 { color: var(--mv-cat-2); }
+.shell-root .traj-strip-label-3 { color: var(--mv-cat-3); }
+.shell-root .traj-scrubber .traj-tick {
+  cursor: default;
+}
+
+.shell-root .traj-brush {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--mv-accent-soft);
+  border-left: 1px solid var(--mv-accent);
+  border-right: 1px solid var(--mv-accent);
+  pointer-events: none;
+}
+
+.shell-root .traj-zoom-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px;
+  font-size: 11.5px;
+  color: var(--mv-faint);
+}
+.shell-root .traj-zoom-reset {
+  padding: 2px 8px;
+  border: 1px solid var(--mv-border);
+  border-radius: 5px;
+  background: var(--mv-surface-2);
+  color: var(--mv-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.shell-root .traj-zoom-reset:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .traj-zoom-btn,
+  .shell-root .traj-clear-brush {
+    transition: none;
   }
 }

@@ -189,7 +189,12 @@ export function ExplorerShell() {
           </>
         ) : activeView === 'overview' ? (
           <ErrorBoundary label="Overview">
-            <OverviewPane />
+            <OverviewPane
+              onOpenSession={(id: string) => {
+                setActiveView('sessions');
+                navigate(`/s/${encodeURIComponent(id)}`);
+              }}
+            />
           </ErrorBoundary>
         ) : activeView === 'coverage' ? (
           <ErrorBoundary label="Coverage">

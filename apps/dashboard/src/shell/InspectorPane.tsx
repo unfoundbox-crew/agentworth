@@ -8,6 +8,7 @@ import { TrajectoryView } from './TrajectoryView';
 import { OverviewPane } from './OverviewPane';
 import { ScoreBreakdown } from './ScoreBreakdown';
 import { TokenEconomics } from './TokenEconomics';
+import { CacheWarmth } from './CacheWarmth';
 import { ProvenanceBlock } from './ProvenanceBlock';
 
 export interface InspectorPaneProps {
@@ -167,6 +168,7 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
           {trace?.stats?.token_usage && (
             <div className="shell-tokens-section">
               <TokenEconomics tokenUsage={trace.stats.token_usage} />
+              <CacheWarmth events={trace.events} />
             </div>
           )}
 
