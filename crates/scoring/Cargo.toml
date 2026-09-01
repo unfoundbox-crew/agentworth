@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 agentworth-schema.workspace = true
 agentworth-outcomes.workspace = true
+agentworth-storage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

@@ -5,7 +5,7 @@
 
 mod scorer;
 
-pub use scorer::{ScoringWeights, TraceScore, TraceScorer};
+pub use scorer::{ModelAttribution, ScoringWeights, TraceScore, TraceScorer};
 
 #[cfg(test)]
 mod tests {
