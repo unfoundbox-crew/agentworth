@@ -97,6 +97,10 @@ pub struct SessionSummary {
     pub primary_outcome: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composite_score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_mtime_epoch_secs: Option<i64>,
 }
 
 /// Usage aggregation rollup for a time period (Day, Week, Month).
@@ -252,6 +256,7 @@ impl Storage {
             r#"
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
 
             CREATE TABLE IF NOT EXISTS sources (
                 source_path TEXT PRIMARY KEY,
@@ -285,6 +290,7 @@ impl Storage {
                 scanned_at TEXT NOT NULL,
                 primary_outcome TEXT,
                 composite_score REAL,
+                prompt_preview TEXT,
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
 
@@ -324,6 +330,9 @@ impl Storage {
             }
             if !columns.contains(&"composite_score".to_string()) {
                 let _ = conn.execute("ALTER TABLE sessions ADD COLUMN composite_score REAL", []);
+            }
+            if !columns.contains(&"prompt_preview".to_string()) {
+                let _ = conn.execute("ALTER TABLE sessions ADD COLUMN prompt_preview TEXT", []);
             }
         }
 
@@ -467,6 +476,22 @@ impl Storage {
         let tools_json = serde_json::to_string(&trace.stats.tools_used)?;
         let metadata_json = serde_json::to_string(&trace.metadata)?;
 
+        const PROMPT_PREVIEW_MAX_CHARS: usize = 200;
+        let prompt_preview = trace.events.iter().find_map(|event| match &event.payload {
+            EventPayload::UserMessage { content } => {
+                let trimmed = content.trim();
+                if trimmed.is_empty() {
+                    None
+                } else if trimmed.chars().count() > PROMPT_PREVIEW_MAX_CHARS {
+                    let truncated: String = trimmed.chars().take(PROMPT_PREVIEW_MAX_CHARS).collect();
+                    Some(format!("{truncated}…"))
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            _ => None,
+        });
+
         // 1. Upsert source
         tx.execute(
             r#"
@@ -496,9 +521,9 @@ impl Storage {
                 duration_seconds, total_events, user_messages_count, assistant_messages_count,
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata, scanned_at,
-                primary_outcome, composite_score
+                primary_outcome, composite_score, prompt_preview
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
             ON CONFLICT(session_id) DO UPDATE SET
                 adapter = excluded.adapter,
                 source_path = excluded.source_path,
@@ -520,7 +545,8 @@ impl Storage {
                 metadata = excluded.metadata,
                 scanned_at = excluded.scanned_at,
                 primary_outcome = excluded.primary_outcome,
-                composite_score = excluded.composite_score;
+                composite_score = excluded.composite_score,
+                prompt_preview = excluded.prompt_preview;
             "#,
             params![
                 trace.session_id,
@@ -545,6 +571,7 @@ impl Storage {
                 scanned_at,
                 primary_outcome,
                 composite_score,
+                prompt_preview,
             ],
         )?;
 
@@ -786,11 +813,13 @@ impl Storage {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn.prepare(
             r#"
-            SELECT session_id, adapter, source_path, started_at, duration_seconds,
-                   total_tokens, total_events, tool_calls_count, models_used,
-                   primary_outcome, composite_score
+            SELECT sessions.session_id, sessions.adapter, sessions.source_path, sessions.started_at,
+                   sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
+                   sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
+                   sessions.composite_score, sessions.prompt_preview, sources.mtime
             FROM sessions
-            WHERE session_id = ?1
+            LEFT JOIN sources ON sessions.source_path = sources.source_path
+            WHERE sessions.session_id = ?1
             "#,
         )?;
 
@@ -849,10 +878,12 @@ impl Storage {
 
         let mut sql = String::from(
             r#"
-            SELECT session_id, adapter, source_path, started_at, duration_seconds,
-                   total_tokens, total_events, tool_calls_count, models_used,
-                   primary_outcome, composite_score
+            SELECT sessions.session_id, sessions.adapter, sessions.source_path, sessions.started_at,
+                   sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
+                   sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
+                   sessions.composite_score, sessions.prompt_preview, sources.mtime
             FROM sessions
+            LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE 1=1
             "#,
         );
@@ -864,7 +895,7 @@ impl Storage {
         }
 
         if let Some(ref adapter) = filter.adapter {
-            sql.push_str(" AND adapter = ?");
+            sql.push_str(" AND sessions.adapter = ?");
             param_values.push(Box::new(adapter.clone()));
         }
 
@@ -881,7 +912,7 @@ impl Storage {
         if let Some(ref search) = filter.search {
             if !search.trim().is_empty() {
                 let pattern = format!("%{}%", search.trim());
-                sql.push_str(" AND (session_id LIKE ? OR source_path LIKE ? OR models_used LIKE ? OR adapter LIKE ?)");
+                sql.push_str(" AND (sessions.session_id LIKE ? OR sessions.source_path LIKE ? OR models_used LIKE ? OR sessions.adapter LIKE ?)");
                 param_values.push(Box::new(pattern.clone()));
                 param_values.push(Box::new(pattern.clone()));
                 param_values.push(Box::new(pattern.clone()));
@@ -1388,6 +1419,8 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
     let models_str: String = row.get(8)?;
     let primary_outcome: Option<String> = row.get(9).ok();
     let composite_score: Option<f64> = row.get(10).ok();
+    let prompt_preview: Option<String> = row.get(11).ok();
+    let source_mtime_epoch_secs: Option<i64> = row.get(12).ok();
 
     let started_at = DateTime::parse_from_rfc3339(&started_str)
         .map(|dt| dt.with_timezone(&Utc))
