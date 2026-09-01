@@ -1,12 +1,11 @@
 import React, { useRef, useState } from "react";
-import { trackEvent } from "../services/analytics";
-import { ThemeToggle } from "./ThemeToggle";
+import { trackEvent } from "../analytics";
+import { ThemeToggle } from "@ui/ThemeToggle";
 import { VerdictBoard } from "./VerdictBoard";
 import { CacheCliffWidget } from "./CacheCliffWidget";
-import { CoverageMatrix } from "./CoverageMatrix";
 import { VerdictStamp } from "./VerdictStamp";
 import { ArchieMascot } from "./ArchieMascot";
-import { IconArrowRight, IconCheck, IconCopy, IconGithub, IconShieldCheck } from "./icons";
+import { IconArrowRight, IconCheck, IconCopy, IconGithub, IconShieldCheck } from "@ui/icons";
 import { useScrollReveal } from "../hooks/useScrollReveal";
 import { APP_VERSION } from "../version";
 
@@ -261,23 +260,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
           </div>
         </section>
 
-        {/* Coverage matrix */}
-        <section className="sec" id="coverage">
-          <div className="shell">
-            <span className="eyebrow">04 &mdash; Coverage matrix</span>
-            <h2 className="sec-title">20 adapters, graded by what&apos;s actually measured.</h2>
-            <p className="lede">
-              Every capability is marked measured or pending &mdash; never asserted without
-              the evidence to back it.
-            </p>
-            <CoverageMatrix />
-          </div>
-        </section>
-
         {/* Local means local */}
         <section className="sec" id="invariants">
           <div className="shell">
-            <span className="eyebrow">05 &mdash; AGENTS.md contract</span>
+            <span className="eyebrow">04 &mdash; AGENTS.md contract</span>
             <h2 className="sec-title">Local means local. Always.</h2>
             <p className="lede">Four invariants AgentWorth&apos;s own contributor contract enforces.</p>
 
@@ -302,7 +288,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
           <div className="shell prose-shell" style={{ maxWidth: 820, paddingInline: 0, marginInline: "auto" }}>
             <div className="flex items-center justify-between gap-2">
               <span className="eyebrow" style={{ marginBottom: 0 }}>
-                06 &mdash; Phase 2 roadmap
+                05 &mdash; Phase 2 roadmap
               </span>
               <VerdictStamp status="not_built" size="sm" />
             </div>

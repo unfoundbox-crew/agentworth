@@ -297,7 +297,7 @@ fn main() -> Result<()> {
         Commands::Serve { port, open, dist } => {
             let storage = open_storage(cli.db_path)?;
             let dist_path = dist.or_else(|| {
-                let default_dist = PathBuf::from("apps/web/dist");
+                let default_dist = PathBuf::from("apps/dashboard/dist");
                 if default_dist.exists() {
                     Some(default_dist)
                 } else {

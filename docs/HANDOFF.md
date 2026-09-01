@@ -22,10 +22,9 @@ outcomes + scoring → SQLite index → CLI / web UI / ATIF export`. Rust core t
 React/Vite/Tailwind only for the optional localhost UI, thin npm wrapper for distribution.
 Design language is already set — monochrome "thermal receipt" aesthetic, don't reinvent it.
 
-**Repo state right now:** on `fix/ci-cost-and-runners`, with uncommitted changes across
-`apps/web/*` (index.html, App.tsx, Footer/Navbar/LandingPage, index.css, tailwind.config,
-plus new AgentLogos.tsx / ThemeToggle.tsx / hooks/ / icons/). That's UI/theming work sitting
-uncommitted on a CI-named branch — check `git status` and ask before assuming what it's for.
+**Frontend layout:** `apps/web/*` is the public marketing site (deploys to agentworth.dev,
+no API client), `apps/dashboard/*` is the local app `agentworth serve` ships, and
+`packages/ui/*` holds the design tokens and chrome (theme toggle, icons) both share.
 Other branches: `main`, `feat/v0-release`, `feat/gh-pages-v0`, `feat/schema-claude-scan`.
 
 ## Non-negotiables (the highlight reel — full list is in AGENTS.md)

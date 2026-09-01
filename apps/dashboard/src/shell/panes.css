@@ -1,0 +1,529 @@
+/* ==========================================================================
+   SessionList + InspectorPane + OutcomeLadder styling.
+   Everything here is scoped under .shell-root so none of it leaks onto the
+   landing page, which shares this document. Colors come entirely from the
+   --mv-* tokens already defined in index.css — no new tokens declared here,
+   so light/dark/system theming is inherited for free.
+   ========================================================================== */
+
+.shell-root .mono,
+.shell-root .shell-row-id,
+.shell-root .shell-insp-id {
+  font-family: var(--font-mono);
+}
+
+/* ---------------- list pane ---------------- */
+.shell-root .shell-list-pane {
+  width: 380px;
+  flex: 0 0 380px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--mv-border);
+  background: var(--mv-ground);
+}
+
+.shell-root .shell-list-controls {
+  flex: 0 0 auto;
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid var(--mv-border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shell-root .shell-filter-input {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--mv-border);
+  border-radius: 6px;
+  background: var(--mv-surface);
+  color: var(--mv-ink);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  transition: border-color 140ms ease-out;
+}
+.shell-root .shell-filter-input::placeholder {
+  color: var(--mv-faint);
+}
+.shell-root .shell-filter-input:focus {
+  outline: none;
+  border-color: var(--mv-accent-border);
+}
+.shell-root .shell-filter-input:focus-visible {
+  outline: 2px solid var(--mv-accent);
+  outline-offset: 1px;
+}
+
+.shell-root .shell-chip-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.shell-root .shell-chip {
+  appearance: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--mv-border);
+  background: var(--mv-surface);
+  color: var(--mv-muted);
+  cursor: pointer;
+  transition: border-color 140ms ease-out, color 140ms ease-out, background 140ms ease-out;
+}
+.shell-root .shell-chip:hover {
+  color: var(--mv-text);
+}
+.shell-root .shell-chip:focus-visible {
+  outline: 2px solid var(--mv-accent);
+  outline-offset: 2px;
+}
+.shell-root .shell-chip[aria-pressed='true'] {
+  background: var(--mv-accent-soft);
+  color: var(--mv-accent);
+  border-color: var(--mv-accent-border);
+  font-weight: 500;
+}
+
+.shell-root .shell-list-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.shell-root .shell-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px 0 8px;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--mv-border-soft);
+  cursor: default;
+  transition: background 120ms ease-out, border-color 120ms ease-out;
+}
+.shell-root .shell-row:hover {
+  background: var(--mv-surface);
+}
+.shell-root .shell-row-selected {
+  background: var(--mv-surface-2);
+  border-left-color: var(--mv-accent);
+}
+.shell-root .shell-row-selected:hover {
+  background: var(--mv-surface-2);
+}
+
+.shell-root .shell-row-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.shell-root .ol-dot-success {
+  background: var(--mv-success);
+}
+.shell-root .ol-dot-warn {
+  background: var(--mv-warn);
+}
+.shell-root .ol-dot-danger {
+  background: var(--mv-danger);
+}
+
+.shell-root .shell-row-id {
+  font-size: 11.5px;
+  color: var(--mv-text);
+  flex: 0 0 auto;
+  width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-root .shell-row-agent {
+  font-size: 11.5px;
+  color: var(--mv-muted);
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-root .shell-row-score {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-ink);
+  flex: 0 0 auto;
+  width: 28px;
+  text-align: right;
+}
+
+.shell-root .shell-list-skeleton {
+  padding: 4px 0;
+}
+.shell-root .shell-skeleton-row {
+  height: 30px;
+  margin: 0 10px;
+  border-bottom: 1px solid var(--mv-border-soft);
+  position: relative;
+  overflow: hidden;
+}
+.shell-root .shell-skeleton-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  height: 12px;
+  width: 70%;
+  border-radius: 3px;
+  background: var(--mv-surface-2);
+  animation: shell-skeleton-pulse 1.3s ease-in-out infinite;
+}
+@keyframes shell-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.shell-root .shell-list-error,
+.shell-root .shell-list-empty {
+  padding: 24px 14px;
+  color: var(--mv-faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.shell-root .shell-list-error p,
+.shell-root .shell-list-empty p {
+  margin: 0 0 8px;
+}
+.shell-root .shell-list-empty-hint code {
+  font-family: var(--font-mono);
+  background: var(--mv-surface);
+  border: 1px solid var(--mv-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--mv-text);
+}
+.shell-root .shell-retry-btn {
+  appearance: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-text);
+  background: var(--mv-surface);
+  border: 1px solid var(--mv-border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: border-color 140ms ease-out, color 140ms ease-out;
+}
+.shell-root .shell-retry-btn:hover {
+  border-color: var(--mv-accent-border);
+  color: var(--mv-ink);
+}
+.shell-root .shell-retry-btn:focus-visible {
+  outline: 2px solid var(--mv-accent);
+  outline-offset: 2px;
+}
+
+.shell-root .shell-list-footer {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-top: 1px solid var(--mv-border-soft);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  color: var(--mv-faint);
+  font-size: 10.5px;
+}
+.shell-root .shell-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.shell-root .shell-hint kbd {
+  font-family: var(--font-mono);
+  background: var(--mv-surface);
+  border: 1px solid var(--mv-border);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+  color: var(--mv-muted);
+}
+.shell-root .shell-hint-live {
+  margin-left: auto;
+  color: var(--mv-success);
+  font-family: var(--font-mono);
+}
+
+/* ---------------- inspector pane ---------------- */
+.shell-root .shell-inspector-pane {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  padding: 20px 26px 40px;
+}
+.shell-root .shell-inspector-pane:focus-visible {
+  outline: none;
+}
+.shell-root .shell-inspector-empty {
+  color: var(--mv-faint);
+  font-size: 12px;
+  padding-top: 40px;
+  text-align: center;
+}
+.shell-root .shell-inspector-loading {
+  color: var(--mv-faint);
+  font-size: 12px;
+  padding: 8px 0 20px;
+}
+
+/* ---------------- rail view panes ---------------- */
+/* A non-Sessions rail view (Overview / Coverage / Archaeology / Exports)
+   replaces both .list-region and .inspector-region: one pane, full width
+   right of the rail, scrolling internally so .shell-body itself never
+   scrolls (hard rule 4). The moved-in components (VerdictBoard,
+   CacheCliffWidget, CoverageMatrix, ArchaeologyPanel) were built for a
+   scrolling marketing/dashboard page — .view-stack gives them the
+   max-width + vertical rhythm they expect, centered in the pane. */
+.shell-root .view-region {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px 26px 40px;
+}
+.shell-root .view-stack {
+  max-width: 920px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+/* Exports: ExportModal (embedded) already manages its own internal scroll
+   regions and header/footer chrome, so the pane gives it the full box
+   with no extra padding or max-width to fight against. */
+.shell-root .view-region-flush {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.shell-root .shell-inspector-error {
+  color: var(--mv-danger);
+  font-size: 12px;
+  padding: 8px 0 20px;
+}
+
+.shell-root .shell-insp-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.shell-root .shell-insp-id {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--mv-ink);
+}
+.shell-root .shell-insp-meta {
+  font-size: 12px;
+  color: var(--mv-muted);
+}
+.shell-root .shell-insp-meta b {
+  color: var(--mv-text);
+  font-weight: 500;
+}
+.shell-root .shell-insp-score-wrap {
+  margin-left: auto;
+  text-align: right;
+}
+.shell-root .shell-insp-score {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--mv-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.shell-root .shell-insp-score-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  margin-top: 2px;
+}
+
+.shell-root .shell-livetail-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--mv-muted);
+  border: 1px dashed var(--mv-border);
+  background: var(--mv-surface);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 20px;
+}
+.shell-root .shell-livetail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mv-faint);
+  flex: 0 0 auto;
+}
+
+.shell-root .shell-section-title {
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  margin: 0 0 12px;
+}
+
+.shell-root .shell-ladder-block {
+  margin-bottom: 28px;
+}
+.shell-root .shell-kv-block {
+  margin-bottom: 28px;
+}
+.shell-root .shell-kv-table {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 20px;
+  max-width: 420px;
+}
+.shell-root .shell-kv-row {
+  display: contents;
+}
+.shell-root .shell-kv-key {
+  font-size: 11.5px;
+  color: var(--mv-faint);
+}
+.shell-root .shell-kv-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--mv-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.shell-root .shell-support-block {
+  margin-bottom: 8px;
+}
+.shell-root .shell-support-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.shell-root .shell-support-list li {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--mv-muted);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.shell-root .shell-support-list li::before {
+  content: '\203A';
+  color: var(--mv-faint);
+  margin-right: 7px;
+}
+
+/* ---------------- outcome ladder ---------------- */
+.shell-root .ol-ladder {
+  display: flex;
+  flex-direction: column;
+}
+.shell-root .ol-rung {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: opacity 160ms ease-out;
+}
+.shell-root .ol-rung-dim {
+  opacity: 0.35;
+}
+.shell-root .ol-node-col {
+  width: 24px;
+  flex: 0 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.shell-root .ol-node {
+  border-radius: 50%;
+  background: var(--mv-ink);
+  transition: width 160ms ease-out, height 160ms ease-out;
+}
+.shell-root .ol-node-hollow {
+  background: transparent;
+  border: 1.5px solid var(--mv-ink);
+}
+.shell-root .ol-rung-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 0;
+  min-width: 0;
+}
+.shell-root .ol-rung-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mv-ink);
+}
+.shell-root .ol-rung-caption {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+.shell-root .ol-spine-row {
+  display: flex;
+}
+.shell-root .ol-spine-col {
+  width: 24px;
+  flex: 0 0 24px;
+  display: flex;
+  justify-content: center;
+}
+.shell-root .ol-spine-seg {
+  width: 0;
+  height: 16px;
+  border-left: 2px solid var(--mv-success);
+  transition: opacity 160ms ease-out;
+}
+.shell-root .ol-spine-seg.ol-spine-cliff {
+  border-left-style: dashed;
+  border-left-color: var(--mv-danger);
+}
+.shell-root .ol-spine-seg.ol-spine-dim {
+  opacity: 0.35;
+}
+
+/* ---------------- motion ---------------- */
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .shell-row,
+  .shell-root .shell-chip,
+  .shell-root .shell-retry-btn,
+  .shell-root .shell-filter-input,
+  .shell-root .ol-rung,
+  .shell-root .ol-node,
+  .shell-root .ol-spine-seg,
+  .shell-root .shell-skeleton-row::before {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

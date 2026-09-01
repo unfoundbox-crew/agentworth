@@ -1,0 +1,188 @@
+/* =========================================================================
+   MotionVector design tokens — see /design.md for the binding spec.
+   Bare :root carries the full light palette (the default). The two dark
+   blocks below only override it: a guarded prefers-color-scheme query for
+   an unset ("system") choice, and an explicit [data-theme="dark"] / .dark
+   override that wins regardless of OS preference. Never give a token its
+   only definition inside either override block.
+
+   Shared by apps/web and apps/dashboard via the `@ui` alias. Geist / Geist
+   Mono are loaded as <link> tags in each app's index.html (Google Fonts
+   CDN, not @font-face) — keep both index.html files in sync with this file
+   if the font family ever changes.
+   ========================================================================= */
+:root {
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --mv-ground: #ffffff;
+  --mv-surface: #f4f4f5;
+  --mv-surface-2: #efeff1;
+  --mv-surface-3: #e4e4e7;
+  --mv-border: #e4e4e7;
+  --mv-border-soft: #ececee;
+  --mv-ink: #111113;
+  --mv-text: #3f3f46;
+  --mv-muted: #52525b;
+  --mv-faint: #a1a1aa;
+  --mv-accent: #7c6bb3;
+  --mv-accent-soft: rgba(124, 107, 179, 0.08);
+  --mv-accent-border: rgba(124, 107, 179, 0.28);
+  --mv-accent-contrast: #ffffff;
+
+  /* Semantic status tokens — the dashboard's evidence ladder and coverage
+     matrix need verified/warn/unverified colour that is NOT the brand
+     accent (design.md hard rule: semantic colour is separate from accent).
+     Same recipe as --mv-accent: soft/border opacity bumps +0.02 in dark. */
+  --mv-success: #15803d;
+  --mv-success-soft: rgba(21, 128, 61, 0.08);
+  --mv-success-border: rgba(21, 128, 61, 0.28);
+  --mv-warn: #b45309;
+  --mv-warn-soft: rgba(180, 83, 9, 0.08);
+  --mv-warn-border: rgba(180, 83, 9, 0.28);
+  --mv-danger: #b91c1c;
+  --mv-danger-soft: rgba(185, 28, 28, 0.08);
+  --mv-danger-border: rgba(185, 28, 28, 0.28);
+
+  --mv-rise: 10px;
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 220ms;
+  --motion-slower: 300ms;
+  --motion-exit: 120ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-enter-scale: 0.98;
+  --stagger-step: 40ms;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --mv-ground: #000000;
+    --mv-surface: #18181b;
+    --mv-surface-2: #1d1d20;
+    --mv-surface-3: #27272a;
+    --mv-border: #2a2a2d;
+    --mv-border-soft: #1c1c1f;
+    --mv-ink: #ffffff;
+    --mv-text: #d4d4d8;
+    --mv-muted: #a1a1aa;
+    --mv-faint: #52525b;
+    --mv-accent: #a396d6;
+    --mv-accent-soft: rgba(163, 150, 214, 0.1);
+    --mv-accent-border: rgba(163, 150, 214, 0.3);
+    --mv-accent-contrast: #0d0d0f;
+
+    --mv-success: #34d399;
+    --mv-success-soft: rgba(52, 211, 153, 0.1);
+    --mv-success-border: rgba(52, 211, 153, 0.3);
+    --mv-warn: #fbbf24;
+    --mv-warn-soft: rgba(251, 191, 36, 0.1);
+    --mv-warn-border: rgba(251, 191, 36, 0.3);
+    --mv-danger: #f87171;
+    --mv-danger-soft: rgba(248, 113, 113, 0.1);
+    --mv-danger-border: rgba(248, 113, 113, 0.3);
+  }
+}
+
+/* Explicit Dark choice. Kept in sync with the .dark class the existing
+   theme hook toggles (needed for Tailwind's class-based dark: utilities
+   used elsewhere in this app) so both selectors always agree. */
+:root[data-theme="dark"],
+:root.dark {
+  color-scheme: dark;
+  --mv-ground: #000000;
+  --mv-surface: #18181b;
+  --mv-surface-2: #1d1d20;
+  --mv-surface-3: #27272a;
+  --mv-border: #2a2a2d;
+  --mv-border-soft: #1c1c1f;
+  --mv-ink: #ffffff;
+  --mv-text: #d4d4d8;
+  --mv-muted: #a1a1aa;
+  --mv-faint: #52525b;
+  --mv-accent: #a396d6;
+  --mv-accent-soft: rgba(163, 150, 214, 0.1);
+  --mv-accent-border: rgba(163, 150, 214, 0.3);
+  --mv-accent-contrast: #0d0d0f;
+
+  --mv-success: #34d399;
+  --mv-success-soft: rgba(52, 211, 153, 0.1);
+  --mv-success-border: rgba(52, 211, 153, 0.3);
+  --mv-warn: #fbbf24;
+  --mv-warn-soft: rgba(251, 191, 36, 0.1);
+  --mv-warn-border: rgba(251, 191, 36, 0.3);
+  --mv-danger: #f87171;
+  --mv-danger-soft: rgba(248, 113, 113, 0.1);
+  --mv-danger-border: rgba(248, 113, 113, 0.3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --mv-rise: 0px;
+    --motion-enter-scale: 1;
+    --stagger-step: 0ms;
+  }
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    color-scheme: light;
+    scroll-behavior: smooth;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  body {
+    margin: 0;
+    background: var(--mv-ground);
+    color: var(--mv-text);
+    font-family: var(--font-sans);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--mv-accent-soft);
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
+    border-radius: 4px;
+  }
+}
+
+/* Custom scrollbars — shared chrome, not landing- or dashboard-specific. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--mv-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--mv-faint);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mv-muted);
+}
