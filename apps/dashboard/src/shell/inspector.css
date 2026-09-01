@@ -400,3 +400,121 @@
 .shell-root .cache-warmth-count {
   color: var(--mv-faint);
 }
+
+/* ---------------- loose ends ----------------
+   Stated intents with no evidence of action. Deliberately not styled as an
+   error: about half of what this finds is work the user cancelled, so it uses
+   neutral surfaces and the accent only on the action, never --mv-danger. */
+.shell-root .loose-ends {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 9px;
+  background: var(--mv-surface);
+}
+
+.shell-root .loose-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-root .loose-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+
+.shell-root .loose-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-muted);
+  padding: 1px 6px;
+  border: 1px solid var(--mv-border);
+  border-radius: 999px;
+}
+
+.shell-root .loose-copy {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--mv-accent-border);
+  border-radius: 6px;
+  background: var(--mv-accent-soft);
+  color: var(--mv-accent);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.shell-root .loose-copy:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+}
+
+.shell-root .loose-intro {
+  margin: 7px 0 9px;
+  font-size: 11px;
+  color: var(--mv-faint);
+}
+
+.shell-root .loose-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.shell-root .loose-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--mv-border);
+}
+
+.shell-root .loose-quote {
+  flex: 1 1 auto;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mv-text);
+}
+
+.shell-root .loose-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .loose-model {
+  color: var(--mv-muted);
+}
+
+.shell-root .loose-more {
+  margin-top: 9px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mv-muted);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.shell-root .loose-more:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .loose-copy { transition: none; }
+}
