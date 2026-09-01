@@ -32,6 +32,8 @@ mod bisect;
 mod pr_blame;
 #[path = "commands/config.rs"]
 mod config;
+#[path = "commands/version_info.rs"]
+mod version_info;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -271,6 +273,29 @@ enum Commands {
         json: bool,
     },
 
+    /// Print version details: binary version, npm install detection, and a live
+    /// check for a newer release
+    Version {
+        /// Skip the live GitHub-releases update check (fully local, no network call)
+        #[arg(long)]
+        offline: bool,
+
+        /// Output as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Check for a newer AgentWorth release and show exactly how to get it
+    Update {
+        /// Skip the live GitHub-releases check and just show install-method guidance
+        #[arg(long)]
+        offline: bool,
+
+        /// Output as formatted JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Merge another local SQLite index database into this index
     Merge {
         /// Path to the source SQLite database file to merge from
@@ -488,6 +513,12 @@ fn main() -> Result<()> {
         }
         Commands::Doctor { json } => {
             run_doctor_command(resolve_json(json), cli.db_path)?;
+        }
+        Commands::Version { offline, json } => {
+            version_info::run_version_command(resolve_json(json), offline)?;
+        }
+        Commands::Update { offline, json } => {
+            version_info::run_update_command(resolve_json(json), offline)?;
         }
         Commands::Matrix { json } => {
             run_matrix_command(resolve_json(json), cli.db_path)?;

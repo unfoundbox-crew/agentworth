@@ -481,6 +481,23 @@ export function formatMissingBinaryMessage(platformKey = getPlatformKey()) {
 }
 
 /**
+ * Builds the environment passed to the spawned native binary: the caller's base env plus
+ * the launcher markers the binary's `agentworth version`/`agentworth update` commands read
+ * to detect an npm-managed install (see `apps/cli/src/commands/version_info.rs`).
+ *
+ * @param {NodeJS.ProcessEnv} baseEnv
+ * @param {string} npmVersion
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function buildChildEnv(baseEnv, npmVersion) {
+  return {
+    ...baseEnv,
+    AGENTWORTH_LAUNCHER_ACTIVE: '1',
+    AGENTWORTH_NPM_VERSION: npmVersion,
+  };
+}
+
+/**
  * Launches the native binary with the given arguments.
  *
  * @param {string[]} [argv=process.argv.slice(2)]
@@ -522,8 +539,11 @@ export function run(argv = process.argv.slice(2), options = {}) {
     return 1;
   }
 
-  // Belt and braces: a child that somehow re-enters this launcher cannot loop.
-  const childEnv = { ...(options.env || process.env), AGENTWORTH_LAUNCHER_ACTIVE: '1' };
+  // Belt and braces: a child that somehow re-enters this launcher cannot loop (the
+  // recursion guard in findPathBinary checks AGENTWORTH_LAUNCHER_ACTIVE). The npm version
+  // is threaded through too, purely so `agentworth version`/`agentworth update` can report
+  // it -- this launcher never reads it back itself.
+  const childEnv = buildChildEnv(options.env || process.env, getPackageVersion(options.baseDir || __dirname));
   const result = spawnSync(binaryResult.path, resolvedArgs, {
     stdio: 'inherit',
     env: childEnv,
