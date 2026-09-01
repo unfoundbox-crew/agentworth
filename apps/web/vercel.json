@@ -49,11 +49,24 @@
           "value": "public, max-age=3600, stale-while-revalidate=86400"
         }
       ]
+    },
+    {
+      "source": "/install.sh",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/plain; charset=utf-8"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300, stale-while-revalidate=3600"
+        }
+      ]
     }
   ],
   "rewrites": [
     {
-      "source": "/((?!assets/|llms.txt|llms-full.txt|robots.txt|sitemap.xml|favicon.svg|og.svg).*)",
+      "source": "/((?!assets/|llms.txt|llms-full.txt|robots.txt|sitemap.xml|favicon.svg|og.svg|install.sh).*)",
       "destination": "/index.html"
     }
   ]

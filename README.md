@@ -62,7 +62,6 @@ npx -y agentworth scan
 | **Agent Skill** | `npx skills add unfoundbox-crew/agentworth -g` | Installs global Agent Skill for AI coding agents. |
 | **NPX (Zero Install)** | `npx -y agentworth scan` | Instant runner that executes the native binary on demand. |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs pre-built native binary to `~/.local/bin`. |
-| **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | Installs via official Homebrew tap. |
 | **Cargo (Native)** | `cargo install agentworth-cli` | Compiles native binaries (`agentworth` & `agwt`) into `~/.cargo/bin`. |
 
 ---
