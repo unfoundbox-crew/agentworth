@@ -39,7 +39,7 @@ Integration branch: `integrate/handoff-batch-1`, currently at commit `c438719`, 
 | --- | --- | --- |
 | Independent outcome verification | `feat/outcome-independent-verification` | Building |
 | Per-model attribution downstream in scoring | `feat/scoring-per-model-attribution` | Building |
-| High-entropy secret detector | `feat/secret-detector-entropy` | Building |
+| High-entropy secret detector | `feat/secret-detector-entropy` | Done. Verified on lenovo (33 tests: redaction+cli+export-atif, all pass). Threshold 4.5 bits/char + hex/UUID/separator exclusions; git SHAs, UUIDs, content fingerprints, and this repo's own snake_case/kebab-case identifiers confirmed NOT flagged |
 | ModelSwitch events across 20 adapters | `feat/adapter-modelswitch-events` | Building |
 | Persisted CLI config/defaults | `feat/cli-persisted-config` | Building |
 | Recovery-loop human-vs-agent distinction | `feat/recovery-loop-human-vs-agent` | Building |
