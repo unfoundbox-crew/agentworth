@@ -122,10 +122,13 @@ fn category_severity(category: RedactionCategory) -> ThreatSeverity {
     }
 }
 
-/// Weight per severity tier for a session's aggregate risk score. Deliberately convex
-/// (10/6/2/1, not linear) so a handful of Critical hits dominates the ranking over a pile of
-/// Low-severity noise -- a session with one leaked private key must outrank a session with
-/// two hundred redacted home-directory paths.
+/// Weight per severity tier for a session's aggregate risk score. This is a magnitude
+/// signal ("how much", within a tier), not what keeps a Critical session ranked above a
+/// noisy Low one -- no fixed per-tier weight can guarantee that on its own, since enough
+/// low-weight hits always sums past any fixed constant (a real session can rack up hundreds
+/// of routine home-path redactions). That guarantee instead comes from sorting by
+/// `(highest_severity, risk_score)` as a tuple in `generate_threat_digest` -- severity tier
+/// is compared first and always wins, and `risk_score` only breaks ties inside the same tier.
 fn severity_weight(severity: ThreatSeverity) -> u64 {
     match severity {
         ThreatSeverity::Critical => 10,
@@ -155,7 +158,9 @@ fn category_counts(report: &RedactionReport) -> [(RedactionCategory, usize); 10]
 }
 
 /// Aggregate risk score for a session: sum of `count * severity_weight` across every
-/// category present. Used purely for ranking -- not displayed as a probability or percentage.
+/// category present. A magnitude signal, not a probability or percentage -- and not, by
+/// itself, tier-aware enough to rank on directly (see `severity_weight`'s doc comment).
+/// Sort by `(highest_severity, risk_score)` instead, as `generate_threat_digest` does.
 fn compute_risk_score(report: &RedactionReport) -> u64 {
     category_counts(report)
         .into_iter()
@@ -353,9 +358,13 @@ pub fn generate_threat_digest(
     }
 
     let sessions_with_exposure = entries.len();
+    // Severity tier first, always -- no volume of Low-severity noise can ever outrank a
+    // Critical hit, because the tuple comparison never reaches `risk_score` unless the tiers
+    // are equal. `risk_score` only orders sessions within the same tier; recency is the final
+    // tie-breaker.
     entries.sort_by(|a, b| {
-        b.risk_score
-            .cmp(&a.risk_score)
+        (b.highest_severity, b.risk_score)
+            .cmp(&(a.highest_severity, a.risk_score))
             .then_with(|| b.started_at.cmp(&a.started_at))
     });
     if let Some(lim) = limit {
@@ -592,7 +601,12 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_risk_score_weights_critical_over_pile_of_noise() {
+    fn test_raw_risk_score_alone_is_not_tier_safe_by_design() {
+        // Documents exactly why ranking can't sort on `compute_risk_score` alone: a big enough
+        // pile of Low-severity noise (a very real shape for a long session full of file edits)
+        // outscores a single Critical hit under pure linear weighting. This is the failure mode
+        // `generate_threat_digest`'s `(highest_severity, risk_score)` tuple sort exists to avoid
+        // -- see the next test for the guarantee that actually matters.
         let mut noisy_but_low = RedactionReport::new();
         noisy_but_low.add(RedactionCategory::FilePath, 200);
         noisy_but_low.add(RedactionCategory::Email, 50);
@@ -600,12 +614,36 @@ mod tests {
         let mut single_leaked_key = RedactionReport::new();
         single_leaked_key.add(RedactionCategory::ApiKey, 1);
 
-        assert!(
-            compute_risk_score(&single_leaked_key) > compute_risk_score(&noisy_but_low),
-            "one leaked API key (score {}) must outrank 250 routine redactions (score {})",
+        assert!(compute_risk_score(&noisy_but_low) > compute_risk_score(&single_leaked_key));
+    }
+
+    #[test]
+    fn test_severity_tier_ranking_key_beats_any_amount_of_low_severity_volume() {
+        // The actual guarantee: comparing (highest_severity, risk_score) tuples -- exactly what
+        // `generate_threat_digest` sorts `top_sessions` by -- always puts the Critical session
+        // first, no matter how large the Low-severity session's raw count/score gets.
+        let mut single_leaked_key = RedactionReport::new();
+        single_leaked_key.add(RedactionCategory::ApiKey, 1);
+        let critical_key = (
+            highest_severity_present(&single_leaked_key).unwrap(),
             compute_risk_score(&single_leaked_key),
-            compute_risk_score(&noisy_but_low)
         );
+
+        for noise_volume in [1usize, 50, 200, 1_000_000] {
+            let mut noisy_but_low = RedactionReport::new();
+            noisy_but_low.add(RedactionCategory::FilePath, noise_volume);
+            let low_key = (
+                highest_severity_present(&noisy_but_low).unwrap(),
+                compute_risk_score(&noisy_but_low),
+            );
+            assert!(
+                critical_key > low_key,
+                "one leaked API key {:?} must outrank {} routine path redactions {:?}",
+                critical_key,
+                noise_volume,
+                low_key
+            );
+        }
     }
 
     #[test]
