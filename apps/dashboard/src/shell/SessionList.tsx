@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSessions } from '../hooks/useSessions';
+import { useResizableWidth } from '../hooks/useResizableWidth';
 import { SessionSummary } from '../types';
 import { determineReachedLevel } from './OutcomeLadder';
 import { formatTokens } from '../utils/formatters';
+import {
+  flattenGroups,
+  groupSessions,
+  type GroupMode,
+  type ListRow,
+} from '../utils/sessionGrouping';
 
 export interface ShellNav {
   next: () => void;
@@ -47,10 +54,23 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'events_desc', label: 'Most events' },
 ];
 
+const GROUP_OPTIONS: { key: GroupMode; label: string }[] = [
+  { key: 'none', label: 'Flat list' },
+  { key: 'repo', label: 'By repo' },
+  { key: 'worktree', label: 'By worktree' },
+  { key: 'subagent', label: 'By subagent' },
+];
+
 type Density = 'compact' | 'comfortable';
 
 const COMPACT_ROW_HEIGHT = 30;
 const COMFORTABLE_ROW_HEIGHT = 48;
+const HEADER_ROW_HEIGHT = 26;
+
+const LIST_WIDTH_KEY = 'agentworth.listWidth';
+const LIST_WIDTH_DEFAULT = 380;
+const LIST_WIDTH_MIN = 260;
+const LIST_WIDTH_MAX = 720;
 
 function dotClass(level: number): string {
   // Confidence, not alarm. Nothing here means failure — see list.css.
@@ -157,8 +177,18 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
   const [filterText, setFilterText] = useState('');
   const [chip, setChip] = useState<ChipKey>('all');
   const [sortKey, setSortKey] = useState<SortKey>('started_desc');
+  const [groupMode, setGroupMode] = useState<GroupMode>('none');
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [density, setDensity] = useState<Density>('compact');
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const listWidth = useResizableWidth({
+    storageKey: LIST_WIDTH_KEY,
+    initial: LIST_WIDTH_DEFAULT,
+    min: LIST_WIDTH_MIN,
+    max: LIST_WIDTH_MAX,
+    label: 'Resize session list',
+  });
 
   const filtered = useMemo(() => {
     const text = filterText.trim().toLowerCase();
@@ -177,44 +207,64 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
 
   const sorted = useMemo(() => sortSessions(filtered, sortKey), [filtered, sortKey]);
 
+  const groups = useMemo(() => groupSessions(sorted, groupMode), [sorted, groupMode]);
+  const rows = useMemo(() => flattenGroups(groups, collapsed), [groups, collapsed]);
+
   const rowHeight = density === 'comfortable' ? COMFORTABLE_ROW_HEIGHT : COMPACT_ROW_HEIGHT;
 
   const virtualizer = useVirtualizer({
-    count: sorted.length,
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => rowHeight,
+    // Headers and session rows differ in height, so size is per-index rather
+    // than one constant — a single estimate would misplace every row below the
+    // first header.
+    estimateSize: (index) => (rows[index]?.kind === 'header' ? HEADER_ROW_HEIGHT : rowHeight),
     overscan: 12,
   });
 
   useEffect(() => {
-    // Row sizing is fixed-per-mode rather than measured, so a density flip
-    // needs an explicit remeasure — the virtualizer otherwise keeps
-    // rendering already-laid-out rows at the previous mode's height.
+    // Row sizing is computed, not measured from the DOM, so anything that
+    // changes a row's height or the mix of row kinds needs an explicit
+    // remeasure — the virtualizer otherwise keeps already-laid-out rows at
+    // their previous offsets.
     virtualizer.measure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [density]);
+  }, [density, groupMode, rows.length]);
+
+  const toggleGroup = useCallback((key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Selection moves between sessions only. Group headers occupy list indices
+  // but are not selectable, so j/k steps over them rather than stalling.
+  const sessionRowIndices = useMemo(
+    () => rows.reduce<number[]>((acc, row, i) => (row.kind === 'session' ? (acc.push(i), acc) : acc), []),
+    [rows]
+  );
 
   useEffect(() => {
-    const nav: ShellNav = {
-      next: () => {
-        if (!sorted.length) return;
-        const idx = sorted.findIndex((s) => s.session_id === selectedId);
-        const nextIdx = idx === -1 ? 0 : Math.min(idx + 1, sorted.length - 1);
-        onSelect(sorted[nextIdx].session_id);
-      },
-      prev: () => {
-        if (!sorted.length) return;
-        const idx = sorted.findIndex((s) => s.session_id === selectedId);
-        const prevIdx = idx === -1 ? 0 : Math.max(idx - 1, 0);
-        onSelect(sorted[prevIdx].session_id);
-      },
+    const step = (direction: 1 | -1) => {
+      if (!sessionRowIndices.length) return;
+      const current = sessionRowIndices.findIndex(
+        (i) => (rows[i] as Extract<ListRow, { kind: 'session' }>).session.session_id === selectedId
+      );
+      const nextPos =
+        current === -1
+          ? 0
+          : Math.min(sessionRowIndices.length - 1, Math.max(0, current + direction));
+      const row = rows[sessionRowIndices[nextPos]] as Extract<ListRow, { kind: 'session' }>;
+      onSelect(row.session.session_id);
     };
-    registerNav(nav);
-  }, [sorted, selectedId, onSelect, registerNav]);
+    registerNav({ next: () => step(1), prev: () => step(-1) });
+  }, [rows, sessionRowIndices, selectedId, onSelect, registerNav]);
 
   useEffect(() => {
     if (!selectedId) return;
-    const idx = sorted.findIndex((s) => s.session_id === selectedId);
+    const idx = rows.findIndex((r) => r.kind === 'session' && r.session.session_id === selectedId);
     if (idx === -1) return;
     virtualizer.scrollToIndex(idx, { align: 'auto' });
     requestAnimationFrame(() => {
@@ -235,7 +285,10 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
   const isFiltered = filterText.trim() !== '' || chip !== 'all';
 
   return (
-    <section className="shell-list-pane">
+    <section
+      className="shell-list-pane"
+      style={{ width: listWidth.width, flexBasis: listWidth.width }}
+    >
       <div className="shell-list-controls">
         <input
           type="text"
@@ -263,6 +316,24 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
           </div>
 
           <div className="list-toolbar-right">
+            <div className="list-sort">
+              <label htmlFor="list-group-select" className="list-sort-label">
+                Group
+              </label>
+              <select
+                id="list-group-select"
+                className="list-sort-select"
+                value={groupMode}
+                onChange={(e) => setGroupMode(e.target.value as GroupMode)}
+              >
+                {GROUP_OPTIONS.map((opt) => (
+                  <option key={opt.key} value={opt.key}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="list-sort">
               <label htmlFor="list-sort-select" className="list-sort-label">
                 Sort
@@ -347,22 +418,47 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
         {!loading && !error && sorted.length > 0 && (
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
             {virtualizer.getVirtualItems().map((vRow) => {
-              const s: SessionSummary = sorted[vRow.index];
+              const row = rows[vRow.index];
+              if (!row) return null;
+              const position = {
+                position: 'absolute' as const,
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: vRow.size,
+                transform: `translateY(${vRow.start}px)`,
+              };
+
+              if (row.kind === 'header') {
+                const { group, collapsed: isCollapsed } = row;
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    className="shell-group-header"
+                    style={position}
+                    aria-expanded={!isCollapsed}
+                    onClick={() => toggleGroup(group.key)}
+                  >
+                    <span className={`shell-group-caret${isCollapsed ? ' is-collapsed' : ''}`} aria-hidden="true" />
+                    <span className="shell-group-label" title={group.key}>
+                      {group.label}
+                    </span>
+                    {group.detail && <span className="shell-group-detail">{group.detail}</span>}
+                    <span className="shell-group-count">{group.sessions.length.toLocaleString()}</span>
+                  </button>
+                );
+              }
+
+              const s: SessionSummary = row.session;
               const level = determineReachedLevel(s.primary_outcome);
               const selected = s.session_id === selectedId;
               return (
                 <div
-                  key={s.session_id}
+                  key={row.key}
                   data-row-id={s.session_id}
-                  className={`shell-row shell-row--${density}${selected ? ' shell-row-selected' : ''}`}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: vRow.size,
-                    transform: `translateY(${vRow.start}px)`,
-                  }}
+                  className={`shell-row shell-row--${density}${selected ? ' shell-row-selected' : ''}${row.indented ? ' shell-row--grouped' : ''}`}
+                  style={position}
                   onClick={() => onSelect(s.session_id)}
                 >
                   <span className={`shell-row-dot ${dotClass(level)}`} />
@@ -410,6 +506,12 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
         </span>
         {liveTail && <span className="shell-hint shell-hint-live">live tail on</span>}
       </div>
+
+      <div
+        className={`shell-list-resizer${listWidth.dragging ? ' is-dragging' : ''}`}
+        title="Drag to resize · double-click to reset"
+        {...listWidth.handleProps}
+      />
     </section>
   );
 }
