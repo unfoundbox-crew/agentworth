@@ -220,6 +220,15 @@ impl Redactor {
                         .map(|d| self.redact_text_internal(d, report)),
                 })
             }
+            EventPayload::Compaction(c) => {
+                EventPayload::Compaction(agentworth_schema::CompactionEvent {
+                    trigger: self.redact_text_internal(&c.trigger, report),
+                    pre_tokens: c.pre_tokens,
+                    post_tokens: c.post_tokens,
+                    dropped_tokens: c.dropped_tokens,
+                    duration_ms: c.duration_ms,
+                })
+            }
             EventPayload::Custom { kind, data } => EventPayload::Custom {
                 kind: self.redact_text_internal(kind, report),
                 data: self.redact_json_internal(data, report),

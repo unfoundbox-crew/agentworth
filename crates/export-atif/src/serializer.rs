@@ -141,6 +141,16 @@ impl AtifTrajectory {
                         });
                         (AtifStepSource::User, "human_intervention".to_string())
                     }
+                    EventPayload::Compaction(c) => {
+                        content = Some(match (c.pre_tokens, c.post_tokens) {
+                            (Some(pre), Some(post)) => format!(
+                                "Compacted ({} trigger): {} -> {} tokens",
+                                c.trigger, pre, post
+                            ),
+                            _ => format!("Compacted ({} trigger)", c.trigger),
+                        });
+                        (AtifStepSource::System, "compaction".to_string())
+                    }
                     EventPayload::Custom { kind, data } => {
                         content = Some(data.to_string());
                         (AtifStepSource::System, format!("custom_{}", kind))
