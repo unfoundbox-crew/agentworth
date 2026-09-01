@@ -341,3 +341,43 @@
     transform: translateX(-50%) translateY(0);
   }
 }
+
+/* rescan — the dashboard's only mutation */
+.shell-root .rescan-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--mv-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease-out, border-color 140ms ease-out;
+}
+.shell-root .rescan-btn:hover:not(:disabled) {
+  color: var(--mv-ink);
+  border-color: var(--mv-faint);
+}
+.shell-root .rescan-btn:disabled {
+  cursor: default;
+  color: var(--mv-faint);
+}
+.shell-root .rescan-btn:focus-visible {
+  outline: 2px solid var(--mv-accent);
+  outline-offset: 2px;
+}
+.shell-root .rescan-btn .is-spinning {
+  animation: shell-spin 900ms linear infinite;
+  transform-origin: center;
+}
+@keyframes shell-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .rescan-btn .is-spinning { animation: none; opacity: 0.55; }
+}

@@ -14,6 +14,8 @@ export interface SessionListProps {
   onSelect: (id: string) => void;
   registerNav: (nav: ShellNav) => void;
   liveTail: boolean;
+  /** Bumped by the shell after a rescan, to re-read the index. */
+  reloadSignal?: number;
 }
 
 type ChipKey = 'all' | 'ci' | 'failed' | 'claude_code';
@@ -38,8 +40,8 @@ function formatScore(score?: number): string {
   return (score * 100).toFixed(0);
 }
 
-export function SessionList({ selectedId, onSelect, registerNav, liveTail }: SessionListProps) {
-  const { sessions, loading, error, refetch } = useSessions();
+export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloadSignal }: SessionListProps) {
+  const { sessions, loading, error, refetch } = useSessions(reloadSignal);
   const [filterText, setFilterText] = useState('');
   const [chip, setChip] = useState<ChipKey>('all');
   const scrollRef = useRef<HTMLDivElement>(null);

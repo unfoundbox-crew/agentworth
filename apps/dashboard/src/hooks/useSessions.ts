@@ -19,7 +19,7 @@ export interface UseSessionsResult {
  * error can be told apart from "the API is up and there are just zero
  * sessions indexed" — the two need different UI.
  */
-export function useSessions(): UseSessionsResult {
+export function useSessions(reloadSignal = 0): UseSessionsResult {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +55,7 @@ export function useSessions(): UseSessionsResult {
     return () => {
       cancelled = true;
     };
-  }, [reloadToken]);
+  }, [reloadToken, reloadSignal]);
 
   const refetch = useCallback(() => {
     setReloadToken((t) => t + 1);

@@ -7,6 +7,7 @@ import {
   BlameResponse,
   CoverageMatrixResponse,
   AdapterCapability,
+  ScanSummary,
 } from '../types';
 
 const BASE_URL = '/api';
@@ -619,3 +620,18 @@ export function convertToAtif(trace: AgentWorthTrace): any {
   };
 }
 
+
+/** Re-reads the session logs on disk. The one mutation the dashboard owns —
+ *  everything else you do from the CLI. */
+export async function runScan(): Promise<ScanSummary> {
+  const res = await fetch('/api/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.error ?? `Scan failed (${res.status})`);
+  }
+  return res.json();
+}

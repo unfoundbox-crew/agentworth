@@ -285,3 +285,11 @@ export interface AggregateStats {
   archaeology?: ArchaeologyData;
 }
 
+
+export interface ScanSummary {
+  discovered_sources: number;
+  scanned_sessions: number;
+  skipped_unchanged: number;
+  errors_encountered: number;
+  total_indexed_sessions: number;
+}

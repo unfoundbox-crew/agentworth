@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { runScan } from '../services/api';
 import { useRoute } from '../hooks/useRoute';
 import { useShellKeys } from '../hooks/useShellKeys';
 import type { ShellNav } from '../hooks/useShellKeys';
@@ -30,6 +31,29 @@ export function ExplorerShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<RailViewId>('sessions');
+  const [scanning, setScanning] = useState(false);
+  const [scanSignal, setScanSignal] = useState(0);
+
+  // The one mutation the dashboard owns. Everything else you do from the CLI —
+  // this exists because re-reading the disk is the round trip you would
+  // otherwise make constantly with the dashboard already open.
+  const handleRescan = useCallback(async () => {
+    setScanning(true);
+    try {
+      const summary = await runScan();
+      setScanSignal((n) => n + 1);
+      const fresh = summary.scanned_sessions;
+      setToastMessage(
+        fresh > 0
+          ? `Scanned ${fresh} session${fresh === 1 ? '' : 's'} · ${summary.total_indexed_sessions} indexed`
+          : `No new sessions · ${summary.total_indexed_sessions} indexed`,
+      );
+    } catch (err) {
+      setToastMessage(err instanceof Error ? err.message : 'Scan failed');
+    } finally {
+      setScanning(false);
+    }
+  }, []);
 
   const navRef = useRef<ShellNav | null>(null);
   const inspectorRegionRef = useRef<HTMLDivElement>(null);
@@ -85,6 +109,21 @@ export function ExplorerShell() {
         <div className="topbar-spacer" />
         <button
           type="button"
+          className="rescan-btn"
+          onClick={handleRescan}
+          disabled={scanning}
+          title="Re-read session logs on disk"
+        >
+          <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor"
+               strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+               className={scanning ? 'is-spinning' : undefined}>
+            <path d="M17 10a7 7 0 1 1-2.05-4.95" />
+            <path d="M17 3v4h-4" />
+          </svg>
+          {scanning ? 'Scanning' : 'Rescan'}
+        </button>
+        <button
+          type="button"
           className="livetail-btn"
           aria-pressed={liveTail}
           onClick={toggleLiveTail}
@@ -111,6 +150,7 @@ export function ExplorerShell() {
                   navRef.current = nav;
                 }}
                 liveTail={liveTail}
+            reloadSignal={scanSignal}
               />
             </div>
 
