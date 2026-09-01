@@ -12,6 +12,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
+#[path = "commands/recall.rs"]
+mod recall;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "agentworth",
@@ -222,6 +225,24 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Semantically recall past solutions joined with outcome validation and cost
+    Recall {
+        /// Search query to match against previous trajectories
+        query: String,
+
+        /// Maximum number of results to return (default: 5)
+        #[arg(short, long, default_value_t = 5)]
+        limit: usize,
+
+        /// Minimum similarity score threshold (0.0 to 1.0)
+        #[arg(long, default_value_t = 0.0)]
+        min_score: f32,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -319,6 +340,14 @@ fn main() -> Result<()> {
             });
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(agentworth_cli::start_server(storage, port, open, dist_path))?;
+        }
+        Commands::Recall {
+            query,
+            limit,
+            min_score,
+            json,
+        } => {
+            recall::run_recall_command(&query, limit, min_score, json, cli.db_path)?;
         }
     }
 
