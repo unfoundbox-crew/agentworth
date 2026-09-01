@@ -17,7 +17,7 @@ const REPO = "https://github.com/unfoundbox-crew/agentworth";
  * to 100.0. Keep it that way — a column a reader can add up is the point.
  */
 const RUNGS = [
-  { label: "No claim, no evidence", n: 1490, pct: 50.3, evidence: false },
+  { label: "Nothing verified, or still running", n: 1490, pct: 50.3, evidence: false },
   { label: "The agent said it was done", n: 7, pct: 0.2, evidence: false },
   { label: "Some files on disk changed", n: 449, pct: 15.2, evidence: false },
   { label: "A test or a build passed", n: 808, pct: 27.3, evidence: true },
