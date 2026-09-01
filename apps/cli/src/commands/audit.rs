@@ -420,6 +420,12 @@ fn is_fake_test_claim(content: &str) -> bool {
         || content.contains("all 8 tests are now passing")
         || content.contains("test suite is green")
         || content.contains("fixed the bug and tests pass")
+        // Chinese fake test claim phrases
+        || content.contains("测试已全部通过")
+        || content.contains("所有测试通过")
+        || content.contains("测试通过")
+        || content.contains("所有测试均已通过")
+        || content.contains("测试全部通过")
 }
 
 const APOLOGY_PATTERNS: &[&str] = &[
@@ -431,6 +437,15 @@ const APOLOGY_PATTERNS: &[&str] = &[
     "turned my safety mechanism into a weapon",
     "lost track",
     "accidentally deleted",
+    // Chinese apology and grovel phrases
+    "抱歉",
+    "对不起",
+    "不好意思",
+    "我的失误",
+    "我的错误",
+    "十分抱歉",
+    "非常抱歉",
+    "请原谅",
 ];
 
 fn sanitize_snippet(full_str: &str, matched_secret: &str) -> String {

@@ -361,5 +361,26 @@ mod tests {
         assert!(rec.correlated_files.iter().any(|f| f.contains("recovery.rs")));
         assert!(rec.recovery_summary.contains("recovery.rs"));
     }
+
+    #[test]
+    fn test_chinese_done_claimed_detection() {
+        let mut trace = make_test_trace();
+        let start = trace.started_at;
+
+        // Assistant responds in Chinese
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start + Duration::seconds(1),
+            EventPayload::AssistantMessage {
+                content: "任务已完成，所有测试已全部通过，代码已修改完毕。".to_string(),
+                thinking: None,
+            },
+        ));
+
+        let outcomes = evaluate_trace_outcomes(&trace);
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].kind, OutcomeKind::DoneClaimed);
+        assert!(outcomes[0].summary.contains("已完成") || outcomes[0].summary.contains("测试"));
+    }
 }
 
