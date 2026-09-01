@@ -19,6 +19,8 @@
 Status: draft spec, not yet built (mostly). Written for someone implementing
 this in a fresh session with no memory of how this doc came to exist.
 
+MCP server shipped 2026-09-02 (#56); this spec's precondition is met.
+
 ## The honest ordering
 
 **Ship `docs/specs/mcp-server.md` first. Embeddings may never be needed.**

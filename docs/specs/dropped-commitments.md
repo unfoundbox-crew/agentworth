@@ -1,6 +1,7 @@
 # Dropped commitments
 
-Status: proposed. Measured, not imagined — the numbers below come from one real
+Status: built, #44 and `agentworth loose-ends`. Carry-forward over MCP is not
+yet done. Measured, not imagined — the numbers below come from one real
 session in this index.
 
 ## The problem, stated by the person who has it
