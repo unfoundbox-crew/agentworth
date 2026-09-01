@@ -109,50 +109,65 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#fdfdfd] dark:bg-[#0a0a0c] text-[#0a0a0c] dark:text-[#ececed]">
+    <div className="min-h-screen flex flex-col bg-ground text-text">
       {viewMode === "explorer" && (
-        <Navbar
-          onTriggerScan={handleTriggerScan}
-          isScanning={isScanning}
-          viewMode={viewMode}
-          onToggleView={(mode) => setViewMode(mode)}
-        />
+        <>
+          <div className="bg-grid" aria-hidden="true" />
+          <Navbar
+            onTriggerScan={handleTriggerScan}
+            isScanning={isScanning}
+            viewMode={viewMode}
+            onToggleView={(mode) => setViewMode(mode)}
+          />
+        </>
       )}
 
       {viewMode === "landing" ? (
         <LandingPage onOpenExplorer={() => setViewMode("explorer")} />
       ) : (
-        <main className="flex-1 space-y-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          {/* 1. Hero & Physical Receipt Section */}
+        <main className="flex-1 py-8 sm:py-10 space-y-8 sm:space-y-10">
+          {/* 1. Hero & Physical Receipt Section (self-contained .hero/.shell) */}
           <HeroReceipt stats={stats} onScanClick={handleTriggerScan} />
 
           {/* 2. Top Panel: The Verdict Board */}
-          <VerdictBoard
-            stats={stats}
-            selectedRung={(filters.outcome as OutcomeKind) || null}
-            onSelectRung={handleSelectRung}
-          />
+          <div className="shell">
+            <VerdictBoard
+              stats={stats}
+              selectedRung={(filters.outcome as OutcomeKind) || null}
+              onSelectRung={handleSelectRung}
+            />
+          </div>
 
           {/* 3. Archaeology Panel (if present in local index) */}
-          {stats.archaeology && <ArchaeologyPanel data={stats.archaeology} />}
+          {stats.archaeology && (
+            <div className="shell">
+              <ArchaeologyPanel data={stats.archaeology} />
+            </div>
+          )}
 
           {/* 4. Traces Explorer Table */}
-          <TracesExplorer
-            traces={traces}
-            totalTraces={totalTraces}
-            selectedSessionId={selectedSessionId || undefined}
-            onSelectSession={handleSelectSession}
-            onFilterChange={handleFilterChange}
-            isLoading={isLoadingTraces}
-          />
+          <div className="shell">
+            <TracesExplorer
+              traces={traces}
+              totalTraces={totalTraces}
+              selectedSessionId={selectedSessionId || undefined}
+              onSelectSession={handleSelectSession}
+              onFilterChange={handleFilterChange}
+              isLoading={isLoadingTraces}
+            />
+          </div>
 
           {/* 5. The Cache Cliff Interactive Widget */}
-          <CacheCliffWidget />
+          <div className="shell">
+            <CacheCliffWidget />
+          </div>
 
           {/* 6. Grounded Coverage Matrix */}
-          <CoverageMatrix />
+          <div className="shell">
+            <CoverageMatrix />
+          </div>
 
-          {/* 7. Local-first Architecture Footer */}
+          {/* 7. Local-first Architecture Footer (self-contained .sec/.shell) */}
           <Footer />
         </main>
       )}

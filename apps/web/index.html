@@ -3,11 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    
+
+    <!-- MotionVector design system fonts: Geist + Geist Mono, see /design.md §1 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
     <!-- Chrome WebMCP Origin Trial -->
     <meta http-equiv="origin-trial" content="A0GWeUm4e3ZTkxTQyV42DqvprHDZo4Am5s2fNtsyij+hO22qqp3vBUL1N6MgKyW+BaMaIX44wJGTO7Kyk8XbYA8AAAB1eyJvcmlnaW4iOiJodHRwczovL2FnZW50d29ydGguZGV2OjQ0MyIsImZlYXR1cmUiOiJXZWJNQ1AiLCJleHBpcnkiOjE3OTQ4NzM2MDAsImlzU3ViZG9tYWluIjp0cnVlLCJpc1RoaXJkUGFydHkiOnRydWV9" />
     
-    <!-- Theme Initialization Script -->
+    <!-- Theme Initialization Script — runs before paint to avoid a flash.
+         Mirrors hooks/useTheme.ts#applyThemeToDocument; keep both in sync. -->
     <script>
       (function() {
         try {
@@ -17,6 +26,11 @@
             document.documentElement.classList.add('dark');
           } else {
             document.documentElement.classList.remove('dark');
+          }
+          if (stored === 'light' || stored === 'dark') {
+            document.documentElement.setAttribute('data-theme', stored);
+          } else {
+            document.documentElement.removeAttribute('data-theme');
           }
         } catch (e) {}
       })();
@@ -117,7 +131,7 @@
               "name": "Which AI coding agents are supported?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "AgentWorth supports 11 native adapters: Claude Code, Google Antigravity (agy), Cursor Composer, OpenAI Codex, Block Goose, Pi, Herdr, Nous Hermes, OpenClaw, xAI Grok, and OpenCode."
+                "text": "AgentWorth supports 20 native adapters: Claude Code, Google Antigravity (agy), Cursor Composer, OpenAI Codex, Block Goose, Pi, Herdr, Nous Hermes, OpenClaw, xAI Grok, OpenCode, DeepSeek Code, Kimi Code, MiniMax, Qwen Code, Zhipu/CodeGeeX, Aider, Cline & Roo-Code, Windsurf/Cascade, and Manus."
               }
             },
             {
@@ -134,7 +148,7 @@
     }
     </script>
   </head>
-  <body class="bg-[#fdfdfd] text-[#0a0a0c] antialiased selection:bg-black selection:text-white">
+  <body class="bg-ground text-ink antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

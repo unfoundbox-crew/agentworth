@@ -60,50 +60,38 @@ export const CacheCliffWidget: React.FC<CacheCliffWidgetProps> = ({ className = 
   const switchTurnActualCost = calculateTurnCost(switchTurn, true).cost;
   const turnMultiplier = (switchTurnActualCost / switchTurnNormalCost).toFixed(1);
   const contextRewritten = switchTurn * growthPerTurn;
+  const maxCost = Math.max(...turnBreakdown.map((b) => b.cost));
 
   return (
-    <div
-      className={`border-2 border-black dark:border-white bg-white dark:bg-[#121215] text-black dark:text-white p-6 sm:p-7 font-mono shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] dark:shadow-[6px_6px_0px_0px_rgba(255,255,255,1)] ${className}`}
-    >
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b-2 border-dashed border-neutral-300 dark:border-neutral-700">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400">
-              § THE CACHE CLIFF
-            </span>
-            <span className="text-[10px] px-2 py-0.5 border border-red-600 dark:border-red-500 font-bold bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400">
-              12.5× PRICE SWING
-            </span>
-          </div>
-          <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-            The Anthropic Cache Invalidation Penalty
-          </h2>
-          <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-1 font-sans">
-            Switching models or reasoning effort mid-session destroys prefix KV-cache. The turn you switch on pays for the entire conversation again.
-          </p>
+    <div className={`panel ${className}`}>
+      {/* Panel head */}
+      <div className="panel-head">
+        <div className="panel-kicker">
+          <span className="tag-pill">The cache cliff</span>
+          <span className="status-pill is-bad">
+            <span className="dot" />
+            12.5&times; price swing
+          </span>
         </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="text-right">
-            <div className="text-[10px] text-neutral-500 uppercase font-bold">Write vs Read Delta</div>
-            <div className="text-sm font-black text-red-600 dark:text-red-400">1.25× vs 0.1×</div>
-          </div>
-        </div>
+        <h2>The Anthropic cache invalidation penalty</h2>
+        <p>
+          Switching models or reasoning effort mid-session destroys prefix KV-cache. The turn you switch on pays for
+          the entire conversation again.
+        </p>
       </div>
 
-      {/* Interactive Turn Slider Control */}
-      <div className="my-6 p-4 sm:p-5 border border-neutral-300 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/50">
+      {/* Interactive turn slider */}
+      <div className="rounded-xl border border-border bg-surface p-4 sm:p-5 mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-          <label htmlFor="turn-slider" className="text-xs font-bold uppercase tracking-wider text-black dark:text-white flex items-center gap-2">
-            <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-            <span>Switch Model or Effort at Turn:</span>
-            <span className="px-2 py-0.5 bg-black dark:bg-white text-white dark:text-black font-black text-xs">
-              Turn {switchTurn} / {totalTurns}
+          <label htmlFor="turn-slider" className="text-xs font-mono font-semibold text-ink flex items-center gap-2">
+            <Zap className="w-3.5 h-3.5 text-accent" />
+            <span>Switch model or effort at turn</span>
+            <span className="px-2 py-0.5 rounded-md bg-ink text-ground font-mono font-bold text-xs">
+              {switchTurn} / {totalTurns}
             </span>
           </label>
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            Accumulated Context: <span className="font-bold text-black dark:text-white">{formatTokens(contextRewritten)}</span>
+          <div className="text-xs text-muted font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
+            Accumulated context: <span className="font-semibold text-ink">{formatTokens(contextRewritten)}</span>
           </div>
         </div>
 
@@ -114,106 +102,81 @@ export const CacheCliffWidget: React.FC<CacheCliffWidgetProps> = ({ className = 
           max={totalTurns}
           value={switchTurn}
           onChange={(e) => setSwitchTurn(parseInt(e.target.value, 10))}
-          className="w-full h-2 bg-neutral-300 dark:bg-neutral-700 rounded-none appearance-none cursor-pointer accent-black dark:accent-white"
+          className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-border-soft"
+          style={{ accentColor: "var(--mv-accent)" }}
         />
 
-        <div className="flex justify-between text-[10px] text-neutral-500 mt-2 font-mono">
-          <span>Turn 1 (Session start)</span>
-          <span className="text-red-600 dark:text-red-400 font-bold">▲ Model Switch at Turn {switchTurn}</span>
-          <span>Turn 40 (Session end)</span>
+        <div className="flex justify-between text-[10px] text-faint mt-2 font-mono">
+          <span>Turn 1 (session start)</span>
+          <span className="text-danger font-semibold">&#9650; switch at turn {switchTurn}</span>
+          <span>Turn 40 (session end)</span>
         </div>
       </div>
 
-      {/* Real Arithmetic Comparison Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 mb-6">
-        {/* Card 1: Baseline */}
-        <div className="p-3.5 border-2 border-neutral-300 dark:border-neutral-800 bg-white dark:bg-[#151518]">
-          <div className="text-[10px] font-bold text-neutral-500 uppercase mb-1">
-            Session, No Switch
-          </div>
-          <div className="text-2xl font-black text-black dark:text-white">
+      {/* Comparison stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div className="rounded-xl border border-border p-3.5">
+          <div className="text-[10px] font-mono font-medium text-faint uppercase mb-1">Session, no switch</div>
+          <div className="text-2xl font-bold text-ink font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
             {formatUSD(noSwitchTotal)}
           </div>
-          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 font-semibold">
-            Warm prefix cache (97.2% hit)
-          </div>
+          <div className="text-[10px] text-success mt-1 font-medium">Warm prefix cache (97.2% hit)</div>
         </div>
 
-        {/* Card 2: With Switch */}
-        <div className="p-3.5 border-2 border-red-600 dark:border-red-500 bg-red-50/20 dark:bg-red-950/20">
-          <div className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase mb-1">
-            With 1 Switch
-          </div>
-          <div className="text-2xl font-black text-red-700 dark:text-red-400">
+        <div className="rounded-xl border border-danger-border bg-danger-soft p-3.5">
+          <div className="text-[10px] font-mono font-medium text-danger uppercase mb-1">With 1 switch</div>
+          <div className="text-2xl font-bold text-danger font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
             {formatUSD(withSwitchTotal)}
           </div>
-          <div className="text-[10px] text-red-600 dark:text-red-400 mt-1 font-semibold">
+          <div className="text-[10px] text-danger mt-1 font-medium">
             + {formatUSD(withSwitchTotal - noSwitchTotal)} penalty
           </div>
         </div>
 
-        {/* Card 3: Switch Turn Multiplier */}
-        <div className="p-3.5 border-2 border-neutral-300 dark:border-neutral-800 bg-white dark:bg-[#151518]">
-          <div className="text-[10px] font-bold text-neutral-500 uppercase mb-1">
-            That Single Turn Costs
+        <div className="rounded-xl border border-border p-3.5">
+          <div className="text-[10px] font-mono font-medium text-faint uppercase mb-1">That single turn costs</div>
+          <div className="text-2xl font-bold text-ink font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
+            {turnMultiplier}&times;
           </div>
-          <div className="text-2xl font-black text-black dark:text-white">
-            {turnMultiplier}×
-          </div>
-          <div className="text-[10px] text-neutral-500 mt-1">
+          <div className="text-[10px] text-muted mt-1 font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
             {formatUSD(switchTurnActualCost)} vs {formatUSD(switchTurnNormalCost)}
           </div>
         </div>
 
-        {/* Card 4: Context Re-written */}
-        <div className="p-3.5 border-2 border-neutral-300 dark:border-neutral-800 bg-white dark:bg-[#151518]">
-          <div className="text-[10px] font-bold text-neutral-500 uppercase mb-1">
-            Context Re-written
-          </div>
-          <div className="text-2xl font-black text-black dark:text-white">
+        <div className="rounded-xl border border-border p-3.5">
+          <div className="text-[10px] font-mono font-medium text-faint uppercase mb-1">Context re-written</div>
+          <div className="text-2xl font-bold text-ink font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
             {formatTokens(contextRewritten)}
           </div>
-          <div className="text-[10px] text-neutral-500 mt-1">
-            At $3.75/MTok cache-write
-          </div>
+          <div className="text-[10px] text-muted mt-1">At $3.75/MTok cache-write</div>
         </div>
       </div>
 
-      {/* Visual Turn Bar Diagram */}
-      <div className="p-4 border border-neutral-300 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/50 mb-6">
-        <div className="flex justify-between text-xs font-bold mb-3">
-          <span>PER-TURN COST PROFILE (40 TURNS)</span>
-          <span className="text-red-600 dark:text-red-400 font-mono">
-            RED SPIKE = CACHE RE-WRITE CLIFF
-          </span>
+      {/* Turn-by-turn bar chart */}
+      <div className="rounded-xl border border-border bg-surface p-4 mb-6">
+        <div className="flex justify-between text-xs font-mono mb-3">
+          <span className="font-semibold text-ink">Per-turn cost profile (40 turns)</span>
+          <span className="text-danger">red spike = cache re-write cliff</span>
         </div>
 
-        {/* Bar chart grid */}
-        <div className="h-28 flex items-end gap-1 sm:gap-1.5 pt-2 pb-1 border-b border-neutral-300 dark:border-neutral-700">
+        <div className="h-28 flex items-end gap-1 sm:gap-1.5 pt-2 pb-1 border-b border-border">
           {turnBreakdown.map((item) => {
-            const maxCost = Math.max(...turnBreakdown.map((b) => b.cost));
             const heightPercent = Math.max(8, (item.cost / maxCost) * 100);
 
             return (
-              <div
-                key={item.turn}
-                className="flex-1 flex flex-col items-center justify-end h-full group relative"
-              >
-                {/* Tooltip */}
-                <div className="opacity-0 group-hover:opacity-100 pointer-events-none absolute bottom-full mb-2 z-20 bg-black text-white text-[9px] p-1.5 whitespace-nowrap shadow-md border border-neutral-700">
-                  <div>Turn {item.turn}: {formatUSD(item.cost)}</div>
+              <div key={item.turn} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                <div className="opacity-0 group-hover:opacity-100 pointer-events-none absolute bottom-full mb-2 z-20 bg-ink text-ground text-[10px] font-mono p-1.5 rounded whitespace-nowrap shadow-lg">
+                  <div>
+                    Turn {item.turn}: {formatUSD(item.cost)}
+                  </div>
                   <div>Context: {formatTokens(item.contextSize)}</div>
-                  {item.isSpike && <div className="text-red-400 font-bold">★ Invalidation Spike</div>}
+                  {item.isSpike && <div className="text-danger font-semibold">Invalidation spike</div>}
                 </div>
 
                 <div
                   style={{ height: `${heightPercent}%` }}
-                  className={`w-full transition-all ${
-                    item.isSpike
-                      ? "bg-red-600 border border-red-700 shadow-[0_0_8px_rgba(220,38,38,0.6)] animate-pulse"
-                      : item.turn < switchTurn
-                      ? "bg-black dark:bg-white"
-                      : "bg-neutral-600 dark:bg-neutral-400"
+                  className={`w-full rounded-t-sm transition-all ${
+                    item.isSpike ? "bg-danger" : item.turn < switchTurn ? "bg-ink" : "bg-faint"
                   }`}
                 />
               </div>
@@ -221,7 +184,7 @@ export const CacheCliffWidget: React.FC<CacheCliffWidgetProps> = ({ className = 
           })}
         </div>
 
-        <div className="flex justify-between text-[9px] text-neutral-500 mt-2 font-mono">
+        <div className="flex justify-between text-[10px] text-faint mt-2 font-mono">
           <span>Turn 1</span>
           <span>Turn 10</span>
           <span>Turn 20</span>
@@ -230,17 +193,22 @@ export const CacheCliffWidget: React.FC<CacheCliffWidgetProps> = ({ className = 
         </div>
       </div>
 
-      {/* Explanatory Formula Callout */}
-      <div className="p-4 border-2 border-black dark:border-neutral-700 bg-white dark:bg-[#17171c] text-xs">
-        <div className="flex items-center gap-2 font-bold mb-2 text-black dark:text-white">
-          <AlertCircle className="w-4 h-4 text-neutral-700 dark:text-neutral-300" />
+      {/* Explanatory formula */}
+      <div className="rounded-xl border border-border p-4">
+        <div className="flex items-center gap-2 font-semibold text-sm mb-2 text-ink">
+          <AlertCircle className="w-4 h-4 text-muted" />
           <span>Why this happens under the hood</span>
         </div>
-        <p className="text-neutral-700 dark:text-neutral-300 font-sans text-xs leading-relaxed mb-3">
-          Anthropic prompt caching is an exact byte-for-byte prefix match. When you change model (e.g. from Claude Sonnet to Claude Opus) or change reasoning effort, the system prompt prefix is altered. All <strong>{formatTokens(contextRewritten)}</strong> previously cached tokens can no longer be read at <strong>$0.30/MTok</strong> (0.1×) and must be recreated at <strong>$3.75/MTok</strong> (1.25×).
+        <p className="text-sm text-text leading-relaxed mb-3">
+          Anthropic prompt caching is an exact byte-for-byte prefix match. When you change model (e.g. from Claude
+          Sonnet to Claude Opus) or change reasoning effort, the system prompt prefix is altered. All{" "}
+          <strong className="text-ink font-semibold">{formatTokens(contextRewritten)}</strong> previously cached
+          tokens can no longer be read at <strong className="text-ink font-semibold">$0.30/MTok</strong> (0.1&times;)
+          and must be recreated at <strong className="text-ink font-semibold">$3.75/MTok</strong> (1.25&times;).
         </p>
-        <div className="font-mono text-[11px] bg-neutral-100 dark:bg-neutral-900 p-2.5 border border-neutral-300 dark:border-neutral-800 text-neutral-800 dark:text-neutral-200">
-          <code>cache_invalidation_delta = context_tokens × ($3.75/MTok - $0.30/MTok) = {formatUSD((contextRewritten / 1000000) * 3.45)}</code>
+        <div className="quote-block">
+          cache_invalidation_delta = context_tokens &times; ($3.75/MTok &minus; $0.30/MTok) ={" "}
+          {formatUSD((contextRewritten / 1000000) * 3.45)}
         </div>
       </div>
     </div>

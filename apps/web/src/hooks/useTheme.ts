@@ -19,10 +19,21 @@ export function applyThemeToDocument(theme: Theme) {
     theme === 'dark' ||
     (theme === 'system' &&
       window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+  // .dark drives Tailwind's class-based dark: utilities used across the app.
   if (isDark) {
     root.classList.add('dark');
   } else {
     root.classList.remove('dark');
+  }
+
+  // data-theme drives the --mv-* token cascade (design.md's three-state
+  // contract): explicit light/dark force the override, "system" removes
+  // the attribute so the guarded prefers-color-scheme block decides.
+  if (theme === 'light' || theme === 'dark') {
+    root.setAttribute('data-theme', theme);
+  } else {
+    root.removeAttribute('data-theme');
   }
 }
 

@@ -39,6 +39,7 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
 
   const toggleThinking = (id: string) => {
     setExpandedThinking((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -54,50 +55,59 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
     setTimeout(() => setCopiedId(false), 2000);
   };
 
+  // Exits are fast and stay in place (design.md "Motion rules" — --motion-exit,
+  // no travel): fade the overlay out, then unmount via the real onClose.
+  const handleClose = () => {
+    setIsClosing(true);
+    setTimeout(onClose, 120);
+  };
+
   const adapterBadge = getAdapterBadge(trace.adapter);
   const primaryOutcome = trace.outcomes?.[0]?.kind || 'done_claimed';
   const outcomeInfo = getOutcomeBadgeInfo(primaryOutcome);
 
   const totalTokens =
-    trace.stats.token_usage.input_tokens +
-    trace.stats.token_usage.output_tokens +
-    trace.stats.token_usage.cache_read_input_tokens +
-    trace.stats.token_usage.cache_creation_input_tokens;
+    (trace.stats?.token_usage?.input_tokens ?? 0) +
+    (trace.stats?.token_usage?.output_tokens ?? 0) +
+    (trace.stats?.token_usage?.cache_read_input_tokens ?? (trace.stats?.token_usage as any)?.cache_read_tokens ?? 0) +
+    (trace.stats?.token_usage?.cache_creation_input_tokens ?? (trace.stats?.token_usage as any)?.cache_creation_tokens ?? 0);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex justify-end">
+    <div className={`overlay-backdrop fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex justify-end ${isClosing ? 'is-closing' : ''}`}>
       {/* Slideover Panel */}
-      <div className="w-full max-w-5xl bg-[#fdfdfd] h-full shadow-2xl flex flex-col border-l-2 border-zinc-900 font-mono text-xs overflow-hidden animate-in slide-in-from-right duration-200">
-        
+      <div className={`slideover-panel w-full max-w-5xl bg-ground h-full shadow-2xl flex flex-col border-l border-border overflow-hidden ${isClosing ? 'is-closing' : ''}`}>
+
         {/* Top Header Bar */}
-        <div className="bg-zinc-900 text-white p-4 flex items-center justify-between border-b-2 border-zinc-950">
-          <div className="flex items-center space-x-3 overflow-hidden">
-            <span className={`px-2 py-0.5 text-[10px] uppercase font-bold border ${adapterBadge.borderColor} bg-white text-black`}>
+        <div className="bg-ink text-ground p-4 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase font-semibold bg-ground/10 text-ground border border-ground/20 shrink-0">
               {adapterBadge.name}
             </span>
-            <div className="flex items-center space-x-2 truncate">
-              <span className="font-bold text-sm truncate text-white">{trace.session_id}</span>
+            <div className="flex items-center gap-2 truncate">
+              <span className="font-mono font-semibold text-sm truncate">{trace.session_id}</span>
               <button
                 onClick={handleCopyId}
-                className="text-zinc-400 hover:text-white transition-colors"
+                className="text-ground/60 hover:text-ground transition-colors shrink-0"
                 title="Copy Session ID"
               >
-                {copiedId ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedId ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={onOpenExport}
-              className="flex items-center space-x-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-black font-bold border border-emerald-400 transition-colors shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-accent-contrast font-mono text-xs font-semibold hover:opacity-85 transition-opacity"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Safe Redact & ATIF Export</span>
+              <span className="hidden sm:inline">Safe redact &amp; ATIF export</span>
+              <span className="sm:hidden">Export</span>
             </button>
             <button
-              onClick={onClose}
-              className="p-1 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+              onClick={handleClose}
+              className="p-1.5 rounded-lg text-ground/60 hover:text-ground hover:bg-ground/10 transition-colors"
+              aria-label="Close inspector"
             >
               <X className="w-5 h-5" />
             </button>
@@ -105,32 +115,32 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
         </div>
 
         {/* Sub-Header Metadata Ribbon */}
-        <div className="bg-zinc-100 border-b border-zinc-300 p-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 text-[11px] text-zinc-700">
+        <div className="bg-surface border-b border-border p-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 text-xs shrink-0">
           <div>
-            <span className="text-zinc-500 block text-[9px] uppercase">Started At</span>
-            <span className="font-semibold text-black">{formatDate(trace.started_at)}</span>
+            <span className="text-faint block text-[9px] uppercase font-mono tracking-wide">Started at</span>
+            <span className="font-semibold text-ink font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>{formatDate(trace.started_at)}</span>
           </div>
           <div>
-            <span className="text-zinc-500 block text-[9px] uppercase">Duration</span>
-            <span className="font-semibold text-black">{formatDuration(trace.stats.duration_seconds)}</span>
+            <span className="text-faint block text-[9px] uppercase font-mono tracking-wide">Duration</span>
+            <span className="font-semibold text-ink font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>{formatDuration(trace.stats?.duration_seconds)}</span>
           </div>
           <div>
-            <span className="text-zinc-500 block text-[9px] uppercase">Total Tokens</span>
-            <span className="font-semibold text-black">{formatTokens(totalTokens)}</span>
+            <span className="text-faint block text-[9px] uppercase font-mono tracking-wide">Total tokens</span>
+            <span className="font-semibold text-ink font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>{formatTokens(totalTokens)}</span>
           </div>
           <div>
-            <span className="text-zinc-500 block text-[9px] uppercase">Models Used</span>
-            <span className="font-semibold text-black">{trace.stats.models_used.join(', ')}</span>
+            <span className="text-faint block text-[9px] uppercase font-mono tracking-wide">Models used</span>
+            <span className="font-semibold text-ink font-mono truncate block">{trace.stats?.models_used?.join(', ') || '—'}</span>
           </div>
           <div>
-            <span className="text-zinc-500 block text-[9px] uppercase">Outcome Evidence</span>
-            <span className={`inline-block px-1.5 py-0.5 text-[9px] border font-bold ${outcomeInfo.className}`}>
+            <span className="text-faint block text-[9px] uppercase font-mono tracking-wide">Outcome evidence</span>
+            <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border ${outcomeInfo.className}`}>
               {outcomeInfo.label}
             </span>
           </div>
           <div>
-            <span className="text-zinc-500 block text-[9px] uppercase">Composite Score</span>
-            <span className="font-bold text-black">
+            <span className="text-faint block text-[9px] uppercase font-mono tracking-wide">Composite score</span>
+            <span className="font-semibold text-ink font-mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
               {trace.score ? `${(trace.score.composite_score * 100).toFixed(0)} / 100` : 'N/A'}
             </span>
           </div>
@@ -138,25 +148,25 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
 
         {/* Main Content: Split Timeline & Score Sidebar */}
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
-          
+
           {/* Left: Event Stream Timeline (8 cols) */}
-          <div className="lg:col-span-8 p-4 sm:p-6 overflow-y-auto space-y-4 border-r border-zinc-300 bg-[#fdfdfd]">
-            
+          <div className="lg:col-span-8 p-4 sm:p-6 overflow-y-auto space-y-4 border-r border-border bg-ground">
+
             {/* Recovery Loop Alert (if present) */}
             {trace.recoveries && trace.recoveries.length > 0 && (
-              <div className="bg-amber-50 border-2 border-amber-600 p-3 shadow-[2px_2px_0px_0px_rgba(217,119,6,1)] space-y-1.5">
-                <div className="flex items-center space-x-2 text-amber-900 font-bold text-xs uppercase">
-                  <RotateCcw className="w-4 h-4 text-amber-700" />
-                  <span>RECOVERY LOOP DETECTED ({trace.recoveries.length} cycles)</span>
+              <div className="rounded-xl border border-warn-border bg-warn-soft p-3 space-y-2">
+                <div className="flex items-center gap-2 text-warn font-mono font-semibold text-xs uppercase">
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Recovery loop detected ({trace.recoveries.length} cycles)</span>
                 </div>
                 {trace.recoveries.map((rec, idx) => (
-                  <div key={idx} className="text-[11px] text-amber-950 bg-white/70 p-2 border border-amber-300">
+                  <div key={idx} className="text-[11px] text-text bg-ground/60 rounded-lg p-2.5 border border-warn-border/60 font-mono">
                     <div>
-                      <span className="font-bold text-red-700">Failure [Step #{rec.failure_sequence}]: </span>
+                      <span className="font-semibold text-danger">Failure [Step #{rec.failure_sequence}]: </span>
                       {rec.failure_summary}
                     </div>
                     <div className="mt-1">
-                      <span className="font-bold text-emerald-700">Resolution [Step #{rec.recovery_sequence}]: </span>
+                      <span className="font-semibold text-success">Resolution [Step #{rec.recovery_sequence}]: </span>
                       {rec.recovery_summary} ({rec.steps_to_recover} steps, {rec.corrective_actions_count} corrective actions)
                     </div>
                   </div>
@@ -165,29 +175,29 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
             )}
 
             {/* Events Stream */}
-            <div className="space-y-4">
+            <div className="space-y-3">
               {trace.events.map((event) => (
-                <div key={event.id} className="border border-zinc-900 bg-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                  
+                <div key={event.id} className="rounded-xl border border-border bg-ground overflow-hidden">
+
                   {/* Event Sequence Header */}
-                  <div className="bg-zinc-100 border-b border-zinc-300 px-3 py-1.5 flex items-center justify-between text-[11px]">
-                    <div className="flex items-center space-x-2">
-                      <span className="w-5 h-5 rounded-none bg-black text-white font-bold flex items-center justify-center text-[10px]">
+                  <div className="bg-surface border-b border-border px-3 py-2 flex items-center justify-between text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-md bg-surface-3 text-ink font-mono font-semibold flex items-center justify-center text-[10px]">
                         #{event.sequence}
                       </span>
-                      <span className="font-bold uppercase text-zinc-800">
+                      <span className="font-mono font-semibold uppercase text-muted tracking-wide">
                         {event.payload.type.replace('_', ' ')}
                       </span>
                     </div>
-                    <span className="text-[10px] text-zinc-500">{formatDate(event.timestamp)}</span>
+                    <span className="text-[10px] text-faint font-mono">{formatDate(event.timestamp)}</span>
                   </div>
 
                   {/* Event Payload Rendering */}
                   <div className="p-3">
                     {/* 1. User Message */}
                     {event.payload.type === 'user_message' && (
-                      <div className="bg-zinc-50 border border-zinc-300 p-3 text-zinc-900 whitespace-pre-wrap leading-relaxed">
-                        <span className="font-bold text-zinc-500 mr-2">&gt;</span>
+                      <div className="rounded-lg border border-border bg-surface p-3 text-text whitespace-pre-wrap leading-relaxed text-sm">
+                        <span className="font-mono font-semibold text-faint mr-2">&gt;</span>
                         {event.payload.data.content}
                       </div>
                     )}
@@ -196,14 +206,14 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
                     {event.payload.type === 'assistant_message' && (
                       <div className="space-y-2">
                         {event.payload.data.thinking && (
-                          <div className="border border-zinc-300 bg-zinc-50">
+                          <div className="rounded-lg border border-border bg-surface overflow-hidden">
                             <button
                               onClick={() => toggleThinking(event.id)}
-                              className="w-full px-2.5 py-1.5 flex items-center justify-between text-left text-zinc-600 hover:text-black font-semibold text-[11px] bg-zinc-100/70"
+                              className="w-full px-2.5 py-1.5 flex items-center justify-between text-left text-muted hover:text-ink font-mono font-semibold text-[11px]"
                             >
-                              <div className="flex items-center space-x-1.5">
-                                <Brain className="w-3.5 h-3.5 text-zinc-700" />
-                                <span>Model Thinking &amp; Reasoning</span>
+                              <div className="flex items-center gap-1.5">
+                                <Brain className="w-3.5 h-3.5" />
+                                <span>Model thinking &amp; reasoning</span>
                               </div>
                               {expandedThinking[event.id] ? (
                                 <ChevronDown className="w-3.5 h-3.5" />
@@ -212,13 +222,13 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
                               )}
                             </button>
                             {expandedThinking[event.id] && (
-                              <div className="p-3 text-[11px] text-zinc-700 bg-zinc-50 border-t border-zinc-200 whitespace-pre-wrap font-mono leading-relaxed max-h-60 overflow-y-auto">
+                              <div className="p-3 text-[11px] text-muted bg-ground border-t border-border-soft whitespace-pre-wrap font-mono leading-relaxed max-h-60 overflow-y-auto">
                                 {event.payload.data.thinking}
                               </div>
                             )}
                           </div>
                         )}
-                        <div className="text-zinc-900 whitespace-pre-wrap leading-relaxed">
+                        <div className="text-text whitespace-pre-wrap leading-relaxed text-sm">
                           {event.payload.data.content}
                         </div>
                       </div>
@@ -226,26 +236,26 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
 
                     {/* 3. Shell Command */}
                     {event.payload.type === 'shell_command' && (
-                      <div className="bg-zinc-950 text-zinc-200 border border-zinc-900">
-                        <div className="bg-zinc-900 border-b border-zinc-800 px-3 py-1.5 flex items-center justify-between text-[11px]">
-                          <div className="flex items-center space-x-1.5 truncate">
-                            <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-                            <code className="text-emerald-400 font-bold truncate">
+                      <div className="bg-ink text-ground rounded-lg overflow-hidden">
+                        <div className="border-b border-ground/10 px-3 py-1.5 flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <Terminal className="w-3.5 h-3.5 text-success" />
+                            <code className="font-mono font-semibold truncate">
                               $ {event.payload.data.command}
                             </code>
                           </div>
                           <span
-                            className={`px-1.5 py-0.2 text-[9px] font-bold border ${
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold shrink-0 ml-2 ${
                               event.payload.data.exit_code === 0
-                                ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
-                                : 'bg-red-950 text-red-300 border-red-700'
+                                ? 'bg-success-soft text-success'
+                                : 'bg-danger-soft text-danger'
                             }`}
                           >
                             EXIT {event.payload.data.exit_code ?? '?'}
                           </span>
                         </div>
                         {event.payload.data.output && (
-                          <pre className="p-3 text-[11px] text-zinc-300 overflow-x-auto whitespace-pre font-mono max-h-64">
+                          <pre className="p-3 text-[11px] text-ground/80 overflow-x-auto whitespace-pre font-mono max-h-64">
                             {event.payload.data.output}
                           </pre>
                         )}
@@ -254,23 +264,21 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
 
                     {/* 4. File Action / Diff */}
                     {event.payload.type === 'file_action' && (
-                      <div className="border border-zinc-300 bg-zinc-50">
-                        <div className="bg-zinc-100 px-3 py-1.5 border-b border-zinc-300 flex items-center justify-between">
-                          <div className="flex items-center space-x-2">
-                            <FileCode className="w-3.5 h-3.5 text-zinc-700" />
-                            <span className="font-bold text-black">{event.payload.data.path}</span>
-                            <span className="text-[10px] uppercase font-semibold px-1 py-0.2 bg-zinc-200 border border-zinc-300">
-                              {event.payload.data.action}
-                            </span>
+                      <div className="rounded-lg border border-border bg-surface overflow-hidden">
+                        <div className="bg-surface-2 px-3 py-1.5 border-b border-border flex items-center justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileCode className="w-3.5 h-3.5 text-muted shrink-0" />
+                            <span className="font-mono font-semibold text-ink text-xs truncate">{event.payload.data.path}</span>
+                            <span className="tag-pill shrink-0">{event.payload.data.action}</span>
                           </div>
                           {event.payload.data.lines_changed !== undefined && (
-                            <span className="text-[10px] text-zinc-600 font-semibold">
-                              Δ {event.payload.data.lines_changed} lines
+                            <span className="text-[10px] font-mono text-muted font-semibold shrink-0 ml-2" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                              &Delta; {event.payload.data.lines_changed} lines
                             </span>
                           )}
                         </div>
                         {event.payload.data.diff && (
-                          <div className="p-2 overflow-x-auto bg-white max-h-64 font-mono text-[11px] leading-snug">
+                          <div className="p-2 overflow-x-auto bg-ground max-h-64 font-mono text-[11px] leading-snug">
                             {event.payload.data.diff.split('\n').map((line, lIdx) => {
                               const isAdd = line.startsWith('+') && !line.startsWith('+++');
                               const isDel = line.startsWith('-') && !line.startsWith('---');
@@ -281,12 +289,12 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
                                   key={lIdx}
                                   className={
                                     isAdd
-                                      ? 'bg-emerald-50 text-emerald-800 font-semibold'
+                                      ? 'bg-success-soft text-success font-medium'
                                       : isDel
-                                      ? 'bg-red-50 text-red-800 font-semibold'
+                                      ? 'bg-danger-soft text-danger font-medium'
                                       : isHeader
-                                      ? 'text-purple-700 bg-purple-50/50'
-                                      : 'text-zinc-700'
+                                      ? 'text-accent'
+                                      : 'text-muted'
                                   }
                                 >
                                   {line}
@@ -300,13 +308,13 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
 
                     {/* 5. Tool Call */}
                     {event.payload.type === 'tool_call' && (
-                      <div className="border border-zinc-300 bg-zinc-50">
+                      <div className="rounded-lg border border-border bg-surface overflow-hidden">
                         <button
                           onClick={() => toggleTool(event.id)}
-                          className="w-full px-3 py-1.5 flex items-center justify-between text-left font-bold text-zinc-800 bg-zinc-100 border-b border-zinc-300"
+                          className="w-full px-3 py-1.5 flex items-center justify-between text-left font-mono font-semibold text-ink bg-surface-2 border-b border-border text-xs"
                         >
-                          <div className="flex items-center space-x-2">
-                            <Code className="w-3.5 h-3.5 text-zinc-600" />
+                          <div className="flex items-center gap-2">
+                            <Code className="w-3.5 h-3.5 text-muted" />
                             <span>Tool: {event.payload.data.name}</span>
                           </div>
                           {expandedTools[event.id] ? (
@@ -315,28 +323,30 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
                             <ChevronRight className="w-3.5 h-3.5" />
                           )}
                         </button>
-                        <div className="p-2.5 bg-white overflow-x-auto">
-                          <pre className="text-[10px] text-zinc-800 font-mono">
-                            {typeof event.payload.data.arguments === 'string'
-                              ? event.payload.data.arguments
-                              : JSON.stringify(event.payload.data.arguments, null, 2)}
-                          </pre>
-                        </div>
+                        {expandedTools[event.id] && (
+                          <div className="p-2.5 bg-ground overflow-x-auto">
+                            <pre className="text-[10px] text-text font-mono">
+                              {typeof event.payload.data.arguments === 'string'
+                                ? event.payload.data.arguments
+                                : JSON.stringify(event.payload.data.arguments, null, 2)}
+                            </pre>
+                          </div>
+                        )}
                       </div>
                     )}
 
                     {/* 6. Outcome Evidence */}
                     {event.payload.type === 'outcome_evidence' && (
-                      <div className="bg-emerald-50 border-2 border-emerald-600 p-3 flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <CheckCheck className="w-4 h-4 text-emerald-700" />
-                          <span className="font-bold text-emerald-950 uppercase">
+                      <div className="rounded-lg border border-success-border bg-success-soft p-3 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CheckCheck className="w-4 h-4 text-success shrink-0" />
+                          <span className="font-mono font-semibold text-success uppercase text-xs shrink-0">
                             {event.payload.data.kind.replace(/_/g, ' ')}
                           </span>
-                          <span className="text-emerald-800">: {event.payload.data.summary}</span>
+                          <span className="text-success/90 text-xs truncate">: {event.payload.data.summary}</span>
                         </div>
-                        <span className="text-[10px] font-bold text-emerald-800 px-1.5 py-0.5 bg-emerald-200 border border-emerald-400">
-                          {(event.payload.data.confidence * 100).toFixed(0)}% CONFIDENCE
+                        <span className="status-pill is-good shrink-0">
+                          {(event.payload.data.confidence * 100).toFixed(0)}% confidence
                         </span>
                       </div>
                     )}
@@ -348,94 +358,69 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
           </div>
 
           {/* Right: Score Breakdown & Provenance Sidebar (4 cols) */}
-          <div className="lg:col-span-4 p-4 sm:p-5 overflow-y-auto bg-zinc-50 border-t lg:border-t-0 border-zinc-300 space-y-5">
-            
+          <div className="lg:col-span-4 p-4 sm:p-5 overflow-y-auto bg-surface border-t lg:border-t-0 border-border space-y-4">
+
             {/* Composite Score Card */}
             {trace.score && (
-              <div className="border-2 border-zinc-900 bg-white p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
-                <div className="flex items-center justify-between mb-3 border-b border-zinc-200 pb-2">
-                  <span className="font-bold text-xs uppercase text-black">
-                    TRACE SCORING MATRIX
+              <div className="rounded-xl border border-border bg-ground p-4">
+                <div className="flex items-center justify-between mb-3 border-b border-border-soft pb-2">
+                  <span className="font-mono font-semibold text-xs uppercase text-ink tracking-wide">
+                    Trace scoring matrix
                   </span>
-                  <span className="text-sm font-extrabold text-black bg-zinc-100 px-2 py-0.5 border border-zinc-900">
+                  <span className="text-sm font-bold text-ink font-mono bg-surface-3 px-2 py-0.5 rounded" style={{ fontVariantNumeric: 'tabular-nums' }}>
                     {(trace.score.composite_score * 100).toFixed(0)} / 100
                   </span>
                 </div>
 
                 {/* Score Dimension Bars */}
-                <div className="space-y-2.5 text-[11px]">
-                  <div>
-                    <div className="flex justify-between text-zinc-600 mb-0.5">
-                      <span>Outcome Hierarchy</span>
-                      <span className="font-bold text-black">{(trace.score.outcome_score * 100).toFixed(0)}%</span>
+                <div>
+                  <div className="score-bar">
+                    <div className="row">
+                      <span>Outcome hierarchy</span>
+                      <span className="v">{(trace.score.outcome_score * 100).toFixed(0)}%</span>
                     </div>
-                    <div className="w-full bg-zinc-200 h-2 border border-zinc-400">
-                      <div
-                        className="bg-black h-full"
-                        style={{ width: `${trace.score.outcome_score * 100}%` }}
-                      ></div>
-                    </div>
+                    <div className="track"><div className="fill" style={{ width: `${trace.score.outcome_score * 100}%` }} /></div>
                   </div>
 
-                  <div>
-                    <div className="flex justify-between text-zinc-600 mb-0.5">
-                      <span>Verifiability (Shell/Git)</span>
-                      <span className="font-bold text-black">{(trace.score.verifiability_score * 100).toFixed(0)}%</span>
+                  <div className="score-bar">
+                    <div className="row">
+                      <span>Verifiability (shell/git)</span>
+                      <span className="v">{(trace.score.verifiability_score * 100).toFixed(0)}%</span>
                     </div>
-                    <div className="w-full bg-zinc-200 h-2 border border-zinc-400">
-                      <div
-                        className="bg-black h-full"
-                        style={{ width: `${trace.score.verifiability_score * 100}%` }}
-                      ></div>
-                    </div>
+                    <div className="track"><div className="fill" style={{ width: `${trace.score.verifiability_score * 100}%` }} /></div>
                   </div>
 
-                  <div>
-                    <div className="flex justify-between text-zinc-600 mb-0.5">
-                      <span>Complexity &amp; Edits</span>
-                      <span className="font-bold text-black">{(trace.score.complexity_score * 100).toFixed(0)}%</span>
+                  <div className="score-bar">
+                    <div className="row">
+                      <span>Complexity &amp; edits</span>
+                      <span className="v">{(trace.score.complexity_score * 100).toFixed(0)}%</span>
                     </div>
-                    <div className="w-full bg-zinc-200 h-2 border border-zinc-400">
-                      <div
-                        className="bg-black h-full"
-                        style={{ width: `${trace.score.complexity_score * 100}%` }}
-                      ></div>
-                    </div>
+                    <div className="track"><div className="fill" style={{ width: `${trace.score.complexity_score * 100}%` }} /></div>
                   </div>
 
-                  <div>
-                    <div className="flex justify-between text-zinc-600 mb-0.5">
-                      <span>Error Recovery Bonus</span>
-                      <span className="font-bold text-black">{(trace.score.recovery_score * 100).toFixed(0)}%</span>
+                  <div className="score-bar">
+                    <div className="row">
+                      <span>Error recovery bonus</span>
+                      <span className="v">{(trace.score.recovery_score * 100).toFixed(0)}%</span>
                     </div>
-                    <div className="w-full bg-zinc-200 h-2 border border-zinc-400">
-                      <div
-                        className="bg-black h-full"
-                        style={{ width: `${trace.score.recovery_score * 100}%` }}
-                      ></div>
-                    </div>
+                    <div className="track"><div className="fill" style={{ width: `${trace.score.recovery_score * 100}%` }} /></div>
                   </div>
 
-                  <div>
-                    <div className="flex justify-between text-zinc-600 mb-0.5">
-                      <span>Local Provenance</span>
-                      <span className="font-bold text-black">{(trace.score.provenance_score * 100).toFixed(0)}%</span>
+                  <div className="score-bar is-good">
+                    <div className="row">
+                      <span>Local provenance</span>
+                      <span className="v">{(trace.score.provenance_score * 100).toFixed(0)}%</span>
                     </div>
-                    <div className="w-full bg-zinc-200 h-2 border border-zinc-400">
-                      <div
-                        className="bg-emerald-600 h-full"
-                        style={{ width: `${trace.score.provenance_score * 100}%` }}
-                      ></div>
-                    </div>
+                    <div className="track"><div className="fill" style={{ width: `${trace.score.provenance_score * 100}%` }} /></div>
                   </div>
                 </div>
 
                 {/* Explanations List */}
-                <div className="mt-4 pt-3 border-t border-zinc-200 space-y-1.5 text-[10px] text-zinc-600">
-                  <span className="font-bold text-black block text-[11px]">Audit Explanations:</span>
+                <div className="mt-4 pt-3 border-t border-border-soft space-y-1.5 text-[11px] text-muted">
+                  <span className="font-semibold text-ink block text-xs mb-1">Audit explanations</span>
                   {trace.score.explanations.map((exp, idx) => (
-                    <div key={idx} className="flex items-start space-x-1">
-                      <span className="text-zinc-400">•</span>
+                    <div key={idx} className="flex items-start gap-1.5">
+                      <span className="text-faint">&middot;</span>
                       <span>{exp}</span>
                     </div>
                   ))}
@@ -444,54 +429,54 @@ export const SessionInspector: React.FC<SessionInspectorProps> = ({
             )}
 
             {/* Token Economics */}
-            <div className="border border-zinc-900 bg-white p-4 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-              <span className="font-bold text-xs uppercase text-black block mb-2 border-b border-zinc-200 pb-1">
-                TOKEN ECONOMICS
+            <div className="rounded-xl border border-border bg-ground p-4">
+              <span className="font-mono font-semibold text-xs uppercase text-ink block mb-2 border-b border-border-soft pb-2 tracking-wide">
+                Token economics
               </span>
-              <div className="space-y-1.5 text-[11px] text-zinc-700">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Input Tokens:</span>
-                  <span className="font-bold text-black">{trace.stats.token_usage.input_tokens.toLocaleString()}</span>
+              <div>
+                <div className="kv-row">
+                  <span className="k">Input tokens</span>
+                  <span className="v">{trace.stats.token_usage.input_tokens.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Output Tokens:</span>
-                  <span className="font-bold text-black">{trace.stats.token_usage.output_tokens.toLocaleString()}</span>
+                <div className="kv-row">
+                  <span className="k">Output tokens</span>
+                  <span className="v">{trace.stats.token_usage.output_tokens.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Cache Read:</span>
-                  <span className="font-bold text-emerald-700">{trace.stats.token_usage.cache_read_input_tokens.toLocaleString()}</span>
+                <div className="kv-row">
+                  <span className="k">Cache read</span>
+                  <span className="v text-success">{trace.stats.token_usage.cache_read_input_tokens.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Cache Creation:</span>
-                  <span className="font-bold text-zinc-700">{trace.stats.token_usage.cache_creation_input_tokens.toLocaleString()}</span>
+                <div className="kv-row">
+                  <span className="k">Cache creation</span>
+                  <span className="v">{trace.stats.token_usage.cache_creation_input_tokens.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between pt-1 border-t border-zinc-200 font-bold text-black">
-                  <span>Total Exhaust:</span>
-                  <span>{formatTokens(totalTokens)}</span>
+                <div className="kv-row" style={{ borderTop: '1px solid var(--mv-border)', paddingTop: 8, marginTop: 2 }}>
+                  <span className="k font-semibold text-ink">Total exhaust</span>
+                  <span className="v">{formatTokens(totalTokens)}</span>
                 </div>
               </div>
             </div>
 
             {/* Provenance Stamp */}
-            <div className="border border-zinc-900 bg-white p-4 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-              <div className="flex items-center space-x-1.5 mb-2 border-b border-zinc-200 pb-1">
-                <Shield className="w-3.5 h-3.5 text-zinc-700" />
-                <span className="font-bold text-xs uppercase text-black">
-                  LOCAL PROVENANCE
+            <div className="rounded-xl border border-border bg-ground p-4">
+              <div className="flex items-center gap-1.5 mb-2 border-b border-border-soft pb-2">
+                <Shield className="w-3.5 h-3.5 text-muted" />
+                <span className="font-mono font-semibold text-xs uppercase text-ink tracking-wide">
+                  Local provenance
                 </span>
               </div>
-              <div className="space-y-1.5 text-[10px] text-zinc-600 break-all">
+              <div className="space-y-1.5 text-[10px] text-muted break-all font-mono">
                 <div>
-                  <span className="text-zinc-400 block uppercase text-[9px]">Source File</span>
-                  <code className="text-zinc-800">{trace.provenance.source_path}</code>
+                  <span className="text-faint block uppercase text-[9px] mb-0.5">Source file</span>
+                  <code className="text-text">{trace.provenance.source_path}</code>
                 </div>
                 <div>
-                  <span className="text-zinc-400 block uppercase text-[9px]">Fingerprint</span>
-                  <code className="text-zinc-800">{trace.provenance.fingerprint}</code>
+                  <span className="text-faint block uppercase text-[9px] mb-0.5">Fingerprint</span>
+                  <code className="text-text">{trace.provenance.fingerprint}</code>
                 </div>
-                <div className="flex justify-between pt-1 border-t border-zinc-200">
-                  <span>File Size: {(trace.provenance.file_size_bytes / 1024).toFixed(1)} KB</span>
-                  <span className="text-emerald-700 font-bold">✓ ON-DISK VERIFIED</span>
+                <div className="flex justify-between items-center pt-2 mt-1 border-t border-border-soft">
+                  <span>File size: {(trace.provenance.file_size_bytes / 1024).toFixed(1)} KB</span>
+                  <span className="status-pill is-good" style={{ padding: '2px 7px' }}>On-disk verified</span>
                 </div>
               </div>
             </div>
