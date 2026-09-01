@@ -41,7 +41,7 @@ Integration branch: `integrate/handoff-batch-1`, currently at commit `c438719`, 
 | Per-model attribution downstream in scoring | `feat/scoring-per-model-attribution` | Building |
 | High-entropy secret detector | `feat/secret-detector-entropy` | Building |
 | ModelSwitch events across 20 adapters | `feat/adapter-modelswitch-events` | Building |
-| Persisted CLI config/defaults | `feat/cli-persisted-config` | Building |
+| Persisted CLI config/defaults | `feat/cli-persisted-config` | Done. Built+tested on lenovo: 236 passed, 0 failed (211 baseline + 25 new). `~/.agentworth/config.toml` for json/limit/period defaults, `agentworth config get/set/list`, explicit flags always win — commit ada03ac |
 | Recovery-loop human-vs-agent distinction | `feat/recovery-loop-human-vs-agent` | Building |
 | Context-Rot Marker | `feat/context-rot-marker` | Building |
 
