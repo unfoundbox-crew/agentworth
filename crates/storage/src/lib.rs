@@ -1,5 +1,6 @@
 pub mod chunker;
 pub mod embedder;
+pub mod pricing;
 pub mod vector;
 
 use std::collections::BTreeMap;
@@ -17,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 pub use chunker::TrajectoryChunker;
 pub use embedder::LocalEmbedder;
+pub use pricing::{estimate_model_tokens_cost_usd, get_model_rates, ModelRates, MODEL_PRICING_TABLE};
 pub use vector::{SqliteVectorStore, VectorStore};
 
 /// High-level aggregate statistics across all scanned sessions in the SQLite index.
@@ -1040,10 +1042,7 @@ pub fn estimate_tokens_cost_usd(
     cache_read: u64,
     cache_creation: u64,
 ) -> f64 {
-    (input as f64 * 3.0 / 1_000_000.0)
-        + (output as f64 * 15.0 / 1_000_000.0)
-        + (cache_read as f64 * 0.30 / 1_000_000.0)
-        + (cache_creation as f64 * 3.75 / 1_000_000.0)
+    estimate_model_tokens_cost_usd(None, input, output, cache_read, cache_creation)
 }
 
 /// Calculate prompt cache hit percentage.
