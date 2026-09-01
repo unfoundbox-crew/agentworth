@@ -14,6 +14,7 @@ use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent};
 use agentworth_storage::{extract_repository_or_workspace, SessionFilter, Storage};
 use anyhow::Result;
 use console::style;
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 
 /// Severity levels for forensic safety findings.
@@ -67,13 +68,64 @@ pub fn run_audit_command(
     db_path: Option<PathBuf>,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
+    let report = build_safety_audit_report(storage, safety_only, json_output)?;
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    render_ascii_safety_report(&report);
+
+    Ok(())
+}
+
+/// Scans every indexed session for safety/threat findings and returns the aggregated report.
+/// Split out from `run_audit_command` so this can be exercised directly in tests without
+/// capturing stdout.
+///
+/// `limit: None` on the query below means genuinely unlimited (see `SessionFilter::limit`'s doc
+/// comment in `crates/storage/src/lib.rs`) -- this used to be `Some(5000)`, which silently
+/// stopped scanning past the first 5,000 non-stub sessions while `total_sessions_audited` (taken
+/// from that same capped result) reported the truncated count as if it were the whole index. For
+/// a credential/destructive-command scanner, a capped "clean" result is a false sense of safety:
+/// worse than an obviously incomplete one. This is the same "presented as complete but silently
+/// truncated" shape as the `compute_verdict_breakdown`/`get_stats_handler` caps fixed earlier
+/// today, but unlike those two, this call site's cap has a real cost to removing it --
+/// `scanner.load_trace` below does a real disk read and adapter parse per session, and
+/// `detect_credential_leak` runs the full `Redactor` over every event of every session, so an
+/// unbounded scan over a large index is genuinely slower, not just a bigger aggregate query. That
+/// heavier-per-item cost doesn't justify keeping a silent cap on a security tool, but it does
+/// justify the progress bar below (mirroring `search.rs`'s identical "loop over every session,
+/// load_trace each" indexing pass) so a large-index scan reads as working, not hung.
+fn build_safety_audit_report(
+    storage: Arc<Storage>,
+    safety_only: bool,
+    json_output: bool,
+) -> Result<SafetyAuditReport> {
     let scanner = Scanner::new(storage.clone());
 
     let all_sessions = storage.list_sessions_filtered(&SessionFilter {
-        limit: Some(5000),
+        limit: None,
         include_stubs: Some(true),
         ..Default::default()
     })?;
+
+    let pb = if !json_output {
+        let pb = ProgressBar::new(all_sessions.len() as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+                .template(
+                    "{spinner:.cyan.bold} Auditing sessions ▕{bar:30.cyan/238}▏ {pos}/{len} sessions",
+                )
+                .unwrap()
+                .progress_chars("█▉▊▋▌▍▎▏ "),
+        );
+        Some(pb)
+    } else {
+        None
+    };
 
     let mut report = SafetyAuditReport {
         total_sessions_audited: all_sessions.len(),
@@ -93,6 +145,13 @@ pub fn run_audit_command(
             let project = extract_repository_or_workspace(&sess.source_path);
             audit_trace(&trace, &project, safety_only, &redactor, &mut report);
         }
+        if let Some(ref pb) = pb {
+            pb.inc(1);
+        }
+    }
+
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
     }
 
     // Sort findings: Critical first, then High, then Warn, then by timestamp desc
@@ -102,14 +161,7 @@ pub fn run_audit_command(
             .then_with(|| b.timestamp.cmp(&a.timestamp))
     });
 
-    if json_output {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-        return Ok(());
-    }
-
-    render_ascii_safety_report(&report);
-
-    Ok(())
+    Ok(report)
 }
 
 fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
@@ -706,9 +758,10 @@ fn wrap_line(text: &str, max_width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentworth_schema::{NormalizedEvent, Provenance, ShellCommand, ToolResult};
-    use chrono::Utc;
+    use agentworth_schema::{NormalizedEvent, Provenance, ShellCommand, ToolResult, TokenUsage};
+    use chrono::{Duration, Utc};
     use serde_json::json;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_audit_safety_only_filters_warn_checks() {
@@ -974,6 +1027,61 @@ mod tests {
             report.findings.is_empty(),
             "a home path / email / private IP alone must not read as a credential leak: {:?}",
             report.findings
+        );
+    }
+
+    /// Regression test for the old `Some(5000)` cap on `run_audit_command`'s
+    /// `list_sessions_filtered` call. Seeds more non-stub sessions than that old cap and asserts
+    /// `total_sessions_audited` accounts for every one of them, not just the first 5,000.
+    ///
+    /// Scoped to the query-level fix, matching the same level the sibling
+    /// `compute_verdict_breakdown`/`get_stats_handler` cap-fix tests used: `total_sessions_audited`
+    /// is set directly from `all_sessions.len()` before the scan loop runs, so this proves the
+    /// artificial cap is gone without needing every seeded session's `scanner.load_trace` to
+    /// actually succeed (each of the 5,050 fixture rows here has no real session file on disk --
+    /// `load_trace` will fail and be silently skipped for all of them via the loop's
+    /// `if let Ok(trace) = ...`, exactly like it already does for any session whose source file
+    /// has moved or been deleted -- but that's an orthogonal, pre-existing behavior, not what
+    /// this bug or this test is about). The fixture size (5,050) is deliberately chosen to
+    /// exceed the old cap: a smaller fixture would pass on both the old and new code and
+    /// wouldn't actually exercise the fix.
+    #[test]
+    fn test_audit_scans_beyond_old_5000_session_cap() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+        let start = Utc::now();
+
+        const SESSION_COUNT: i64 = 5_050;
+        for i in 0..SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/test/audit_cap_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_audit_cap_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-audit-cap-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            // Non-stub, though `include_stubs: Some(true)` in `build_safety_audit_report`'s
+            // query means this wouldn't be filtered out even if it were a stub -- set for
+            // realism/consistency with the sibling cap-fix tests, not because it's load-bearing
+            // here.
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).unwrap();
+        }
+
+        let storage = Arc::new(storage);
+        let report = build_safety_audit_report(storage, true, true)
+            .expect("build_safety_audit_report should succeed");
+
+        assert_eq!(
+            report.total_sessions_audited, SESSION_COUNT as usize,
+            "total_sessions_audited must reflect every seeded session, not silently cap at 5,000"
         );
     }
 }
