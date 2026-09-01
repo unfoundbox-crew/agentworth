@@ -488,24 +488,66 @@ mod tests {
 
     /// Blunder -> blame, batch mode: `discover_blunder_blame_trails` ranks the same way
     /// `agwt blunder --top` does, and each returned trail carries its blamed files.
+    ///
+    /// Unlike `trace_blunder_to_blame` (pure SQL, no Scanner), `discover_blunders`
+    /// itself re-parses every session from disk via `Scanner::load_trace` to run
+    /// blunder evaluation -- a hand-built trace with no backing file on disk (the
+    /// style used by the tests above) would silently vanish from the ranking instead
+    /// of failing loudly, the same graceful-skip behavior documented on
+    /// `blunder_for_session`. So this test writes two real, minimal, adapter-parseable
+    /// JSONL fixtures and points each trace's `provenance.source_path` at one of them;
+    /// the SQL side (session row + file_modifications, via `upsert_trace`) is seeded
+    /// independently of the file's own content, exactly like the real `agwt scan`
+    /// pipeline keeps them in sync in production -- just done here by hand for two
+    /// fixtures instead of a full scan.
     #[test]
     fn test_discover_blunder_blame_trails_ranks_and_attaches_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
         let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
-        let blunder_trace = leaked_var_trace(
+
+        let leaked_path = temp.path().join("sess_top_blunder.jsonl");
+        std::fs::write(
+            &leaked_path,
+            concat!(
+                r#"{"type":"user","timestamp":"2026-09-01T09:00:00Z","content":"Clean up"}"#,
+                "\n",
+                r#"{"type":"assistant","timestamp":"2026-09-01T09:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"for d in \"${PROTECTED_PATHS[@]}\"; do rm -rf \"$d\"; done"}}]}"#,
+                "\n",
+            ),
+        )
+        .expect("write leaked fixture");
+
+        let calm_path = temp.path().join("sess_calm.jsonl");
+        std::fs::write(
+            &calm_path,
+            concat!(
+                r#"{"type":"user","timestamp":"2026-09-01T09:00:00Z","content":"Please review the readme"}"#,
+                "\n",
+                r#"{"type":"assistant","timestamp":"2026-09-01T09:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":50,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"The README looks fine, no changes needed."}]}"#,
+                "\n",
+            ),
+        )
+        .expect("write calm fixture");
+
+        let mut blunder_trace = leaked_var_trace(
             "sess_top_blunder",
             &[("crates/x/src/bad.rs", agentworth_schema::FileActionType::Write)],
         );
-        let calm_trace = benign_trace(
+        blunder_trace.provenance.source_path = leaked_path.to_string_lossy().to_string();
+        storage.upsert_trace(&blunder_trace).expect("upsert blunder");
+
+        let mut calm_trace = benign_trace(
             "sess_calm",
             &[("crates/x/src/fine.rs", agentworth_schema::FileActionType::Read)],
         );
-        storage.upsert_trace(&blunder_trace).expect("upsert blunder");
+        calm_trace.provenance.source_path = calm_path.to_string_lossy().to_string();
         storage.upsert_trace(&calm_trace).expect("upsert calm");
 
         let trails = discover_blunder_blame_trails(&storage, 5).expect("discover trails");
         assert!(!trails.is_empty());
         // The real blunder must outrank the benign trajectory-receipt session.
         assert_eq!(trails[0].blunder.session_id, "sess_top_blunder");
+        assert_eq!(trails[0].blunder.rule_id, "LEAKED_SHELL_VARIABLE");
         assert_eq!(trails[0].blamed_files.len(), 1);
         assert_eq!(trails[0].blamed_files[0].file_path, "crates/x/src/bad.rs");
     }
