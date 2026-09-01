@@ -67,3 +67,11 @@ jobs:
       # is how a red test sat on main unnoticed.
       - name: Run workspace tests
         run: cargo test --workspace
+
+      # The npm launcher (packages/agentworth) has its own test suite that nothing
+      # ran in CI -- a red launcher test (formatMissingBinaryMessage vs. stale
+      # brew/curl assertions) sat unnoticed on main for the same reason the Rust
+      # tests above did: nobody wired it in.
+      - name: Run npm launcher tests
+        working-directory: packages/agentworth
+        run: npm ci && npm test
