@@ -22,11 +22,13 @@ Nothing below is worth judging until this is true.
 | 2 | Populate `prompt_preview` | — | nothing | backend, small |
 | 3 | Resizable session column | — | nothing | frontend only |
 | 4 | Group by repo / worktree / subagent | — | nothing | frontend only |
+| 4b | MCP server | `mcp-server.md` | the outcome-encoding fix, for one filter param | backend, new module, no frontend |
 | 5 | Fleet strip, mtime inference | `fleet-view.md` | surfacing `sources.mtime` | frontend + one field |
 | 6 | Trajectory scrubber zoom and pan | `trajectory-scrubber.md` | nothing | frontend, the largest of these |
 | 6b | Cache economics | `cache-economics.md` | nothing | arithmetic on data already parsed |
 | 7 | SSE endpoint | `fleet-view.md` | file watcher | backend, shared with `agentworth watch` |
 | 8 | Desktop app | `desktop-app.md` | 7 is nicer with it | config, then signing |
+| 9 | Local search / embeddings | `local-search.md` | 4b, and real usage showing structured queries aren't enough | backend, and only if 4b shows it's warranted |
 
 ### Why that order
 
@@ -41,6 +43,13 @@ what every screen shows.
 derivable from `source_path` with no NLP and no embeddings — a 500-session
 sample yields 23 distinct repos, and 440 of those 500 were subagent runs. Do
 these before anyone reaches for a vector database.
+
+**4b sits right after the free frontend wins, ahead of the fleet strip,**
+because it is pure backend, needs no UI at all, and answers the actual
+question `fleet-view.md`'s addendum names as the real one: a session asking
+what it did yesterday, not a human reading a screen. It only waits on the
+top-of-file outcome-encoding fix for one filter parameter, nothing else in
+this table.
 
 **5 before 6** because the fleet strip is smaller, ships without streaming, and
 answers a question first: is the live direction interesting at all? If nobody
@@ -63,6 +72,12 @@ it does not have until then.
 **8 is last because it changes nothing about what the product does.** A `.dmg`
 is a distribution format. It is worth doing when the thing being distributed is
 worth installing.
+
+**9 is last, and conditional, on purpose.** `local-search.md` argues that most
+questions people actually ask are exact-match SQL that 4b already answers, and
+that embeddings only earn their place for "sessions like this one" or "what
+was this session about" — real, but not the daily case. Build 4b, see what it
+can't answer, then decide whether 9 is worth it.
 
 ## What none of these change
 
