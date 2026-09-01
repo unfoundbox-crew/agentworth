@@ -171,7 +171,11 @@ pub fn run_pr_blame_command(
     );
     println!(
         "│ AI-Authored Files:{:<39} │",
-        style(format!("{} ({}% AI generated)", report.ai_authored_files, if report.files_analyzed > 0 { (report.ai_authored_files * 100) / report.files_analyzed } else { 0 })).bold().green()
+        style(format!(
+            "{} ({}% AI generated)",
+            report.ai_authored_files,
+            (report.ai_authored_files * 100).checked_div(report.files_analyzed).unwrap_or(0)
+        )).bold().green()
     );
     println!(
         "{}",
