@@ -19,6 +19,15 @@ pub const APOLOGY_PATTERNS: &[&str] = &[
     "lost track",
     "accidentally deleted",
     "sincerely apologize",
+    // Chinese apology and grovel phrases
+    "抱歉",
+    "对不起",
+    "不好意思",
+    "我的失误",
+    "我的错误",
+    "十分抱歉",
+    "非常抱歉",
+    "请原谅",
 ];
 
 /// Checks if a shell command executes recursive deletion on top-level root/system paths,

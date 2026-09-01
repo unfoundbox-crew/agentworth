@@ -323,10 +323,21 @@ impl OutcomeDetector {
             "finished implementing",
             "done! i have",
             "done with the changes",
+            // Chinese completion phrases for Kimi / Qwen / Zhipu / DeepSeek / MiniMax
+            "已完成",
+            "任务已完成",
+            "全部完成",
+            "测试已通过",
+            "测试已全部通过",
+            "所有测试通过",
+            "已成功修复",
+            "代码已修改完毕",
+            "修改已完成",
+            "已实现",
         ];
 
         for phrase in &completion_phrases {
-            if lower.contains(phrase) {
+            if lower.contains(phrase) || content.contains(phrase) {
                 return Some(OutcomeEvidence {
                     kind: OutcomeKind::DoneClaimed,
                     summary: format!("Agent self-claimed completion: '{}'", phrase),

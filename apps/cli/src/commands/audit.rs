@@ -405,6 +405,12 @@ fn is_fake_test_claim(content: &str) -> bool {
         || content.contains("all 8 tests are now passing")
         || content.contains("test suite is green")
         || content.contains("fixed the bug and tests pass")
+        // Chinese fake test claim phrases
+        || content.contains("测试已全部通过")
+        || content.contains("所有测试通过")
+        || content.contains("测试通过")
+        || content.contains("所有测试均已通过")
+        || content.contains("测试全部通过")
 }
 
 fn sanitize_snippet(full_str: &str, matched_secret: &str) -> String {
