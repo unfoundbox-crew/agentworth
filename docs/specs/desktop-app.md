@@ -104,12 +104,12 @@ What it can realistically hold: an icon reflecting idle / scanning / error state
 ## Explicitly out of scope
 
 - **Accounts, telemetry, auto-update phoning home, or cloud sync.** None of this changes because the product now has an installer. Local-only is a privacy line rather than a scaling decision — a `.dmg` is a distribution format, and it does not reopen that.
-- Tauri ships an official updater plugin that checks a remote URL for new versions. That is a network call, and AgentWorth has never made one. If auto-update is wanted later, it needs its own explicit decision — it does not ship by default just because Tauri makes it easy.
+- Tauri ships an official updater plugin that checks a remote URL for new versions. That is a network call. So are `agwt search`'s model download and `agwt blunder --submit`, both of which already ship — see AGENTS.md. If auto-update is wanted later, it needs its own explicit decision — it does not ship by default just because Tauri makes it easy.
 - A signed Windows/Linux desktop build, unless real demand shows up — see sequencing below.
 
 ## Open questions — needs a human decision
 
-- Auto-update: does Saurabh want the Tauri updater plugin at all, given it's the first outbound network call this tool would ever make? Answer changes the "zero telemetry" framing even if scanning itself stays untouched.
+- Auto-update: does Saurabh want the Tauri updater plugin at all, given what already goes out, and that it sends nothing about the user? Answer changes the "zero telemetry" framing even if scanning itself stays untouched.
 - Which Apple Developer account does this enroll under — personal or `unfoundbox`? Ties into the multi-account conventions already in `AGENTS.md`.
 - Is a Windows desktop build wanted at all, given nobody has asked for one and it is genuinely new CI surface with its own signing cost?
 - Same binary with a tray icon that toggles a window, or two separate apps (main window app + menubar-only app)? Tauri supports either; worth deciding before writing the shell.
