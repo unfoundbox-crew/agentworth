@@ -1185,44 +1185,91 @@ impl Storage {
         let mut results = Vec::new();
 
         while let Some(row) = rows.next()? {
-            let session_id: String = row.get(0)?;
-            let adapter: String = row.get(1)?;
-            let source_path: String = row.get(2)?;
-            let started_str: String = row.get(3)?;
-            let models_str: String = row.get(4)?;
-            let total_tokens: i64 = row.get(5)?;
-            let tool_calls_count: i64 = row.get(6)?;
-            let file_path: String = row.get(7)?;
-            let action: String = row.get(8)?;
-            let occurred_str: String = row.get(9)?;
-            let model: Option<String> = row.get(10)?;
-
-            let started_at = DateTime::parse_from_rfc3339(&started_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
-            let modified_at = DateTime::parse_from_rfc3339(&occurred_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or(started_at);
-
-            let models_used = serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default();
-
-            results.push(BlameMatch {
-                session_id,
-                adapter,
-                source_path,
-                started_at,
-                models_used,
-                total_tokens: total_tokens as u64,
-                tool_calls_count: tool_calls_count as usize,
-                file_path,
-                action,
-                modified_at,
-                model,
-            });
+            results.push(row_to_blame_match(row)?);
         }
 
         Ok(results)
     }
+
+    /// Reverse of `find_sessions_for_blame`: every file a single session touched, each
+    /// represented once by its most recent action within that session. Same underlying
+    /// `file_modifications` index and the same `BlameMatch` shape, just grouped by file
+    /// instead of by session — this is the query the Blunder-to-Blame Bridge uses to go
+    /// from "here's a blunder session" to "here's exactly which files AI Code Blame
+    /// attributes to it." An unknown `session_id` returns an empty list, not an error.
+    pub fn find_files_for_session(&self, session_id: &str) -> Result<Vec<BlameMatch>> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, adapter, source_path, started_at, models_used, total_tokens,
+                   tool_calls_count, file_path, action, occurred_at, model
+            FROM (
+                SELECT
+                    s.session_id, s.adapter, s.source_path, s.started_at, s.models_used,
+                    s.total_tokens, s.tool_calls_count,
+                    fm.file_path, fm.action, fm.occurred_at, fm.model,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY fm.file_path ORDER BY fm.occurred_at DESC
+                    ) AS rn
+                FROM file_modifications fm
+                JOIN sessions s ON s.session_id = fm.session_id
+                WHERE fm.session_id = ?1
+            )
+            WHERE rn = 1
+            ORDER BY occurred_at DESC
+            LIMIT 500
+            "#,
+        )?;
+
+        let mut rows = stmt.query(params![session_id])?;
+        let mut results = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            results.push(row_to_blame_match(row)?);
+        }
+
+        Ok(results)
+    }
+}
+
+/// Decode one row of the shared 11-column shape produced by both `find_sessions_for_blame`
+/// and `find_files_for_session` into a `BlameMatch`.
+fn row_to_blame_match(row: &rusqlite::Row) -> Result<BlameMatch> {
+    let session_id: String = row.get(0)?;
+    let adapter: String = row.get(1)?;
+    let source_path: String = row.get(2)?;
+    let started_str: String = row.get(3)?;
+    let models_str: String = row.get(4)?;
+    let total_tokens: i64 = row.get(5)?;
+    let tool_calls_count: i64 = row.get(6)?;
+    let file_path: String = row.get(7)?;
+    let action: String = row.get(8)?;
+    let occurred_str: String = row.get(9)?;
+    let model: Option<String> = row.get(10)?;
+
+    let started_at = DateTime::parse_from_rfc3339(&started_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    let modified_at = DateTime::parse_from_rfc3339(&occurred_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or(started_at);
+
+    let models_used = serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default();
+
+    Ok(BlameMatch {
+        session_id,
+        adapter,
+        source_path,
+        started_at,
+        models_used,
+        total_tokens: total_tokens as u64,
+        tool_calls_count: tool_calls_count as usize,
+        file_path,
+        action,
+        modified_at,
+        model,
+    })
 }
 
 /// Estimate developer token cost in USD based on standard blended pricing.
@@ -1774,6 +1821,110 @@ mod tests {
             .find_sessions_for_blame("no_such_file_anywhere.rs")
             .expect("blame matches for absent file");
         assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn test_find_files_for_session() {
+        use agentworth_schema::NormalizedEvent;
+
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        let prov = Provenance::new(
+            "/Users/dev/.claude/projects/-Users-dev-code-motionvector/sess-blame-2.jsonl",
+            "claude_code",
+            100,
+            100,
+            "fp_blame2",
+        );
+        let start = Utc::now() - Duration::minutes(10);
+        let mut trace = AgentWorthTrace::new("sess_blame_2", "claude_code", prov, start);
+        trace.stats.models_used = vec!["claude-opus-5".to_string()];
+
+        // Touch engine.rs twice (edit then write) -- only the later write should survive
+        // the per-file ROW_NUMBER() dedup, mirroring find_sessions_for_blame's own dedup.
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::ModelInvocation {
+                model: "claude-opus-5".to_string(),
+                token_usage: TokenUsage::new(50, 10, 0, 0),
+                cost_usd: None,
+                latency_ms: None,
+            },
+        ));
+        trace.events.push(NormalizedEvent::new(
+            2,
+            start + Duration::minutes(1),
+            EventPayload::FileAction {
+                path: "crates/engine/src/engine.rs".to_string(),
+                action: FileActionType::Edit,
+                diff: None,
+                lines_changed: None,
+            },
+        ));
+        let final_touch = start + Duration::minutes(2);
+        trace.events.push(NormalizedEvent::new(
+            3,
+            final_touch,
+            EventPayload::FileAction {
+                path: "crates/engine/src/engine.rs".to_string(),
+                action: FileActionType::Write,
+                diff: None,
+                lines_changed: None,
+            },
+        ));
+        // A second, distinct file touched once.
+        trace.events.push(NormalizedEvent::new(
+            4,
+            start + Duration::minutes(3),
+            EventPayload::FileAction {
+                path: "crates/engine/src/lib.rs".to_string(),
+                action: FileActionType::Read,
+                diff: None,
+                lines_changed: None,
+            },
+        ));
+        storage.upsert_trace(&trace).expect("upsert");
+
+        let files = storage
+            .find_files_for_session("sess_blame_2")
+            .expect("files for session");
+        assert_eq!(files.len(), 2, "engine.rs dedups to its latest touch, plus lib.rs");
+
+        let engine = files
+            .iter()
+            .find(|f| f.file_path == "crates/engine/src/engine.rs")
+            .expect("engine.rs present");
+        assert_eq!(engine.action, "write", "later Write must win over the earlier Edit");
+        assert_eq!(engine.modified_at.timestamp(), final_touch.timestamp());
+        assert_eq!(engine.session_id, "sess_blame_2");
+        assert_eq!(engine.model.as_deref(), Some("claude-opus-5"));
+
+        let lib = files
+            .iter()
+            .find(|f| f.file_path == "crates/engine/src/lib.rs")
+            .expect("lib.rs present");
+        assert_eq!(lib.action, "read");
+
+        // A session with zero recorded file touches returns an empty list, not an error.
+        let prov_empty = Provenance::new("/tmp/empty.jsonl", "claude_code", 10, 10, "fp_empty");
+        let empty_trace = AgentWorthTrace::new(
+            "sess_no_files",
+            "claude_code",
+            prov_empty,
+            Utc::now(),
+        );
+        storage.upsert_trace(&empty_trace).expect("upsert empty");
+        let no_files = storage
+            .find_files_for_session("sess_no_files")
+            .expect("files for session with none");
+        assert!(no_files.is_empty());
+
+        // An unknown session_id is also an empty list, not an error.
+        let unknown = storage
+            .find_files_for_session("no_such_session_anywhere")
+            .expect("files for unknown session");
+        assert!(unknown.is_empty());
     }
 
     #[test]

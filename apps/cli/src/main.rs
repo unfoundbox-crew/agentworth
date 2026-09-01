@@ -374,6 +374,30 @@ enum Commands {
         json: bool,
     },
 
+    /// Bridge AI Code Blame with the Hall of Blunders: trace a recorded blunder forward
+    /// to the exact files it blame-attributes to, or a file's blame history backward to
+    /// any recorded blunders in the sessions blamed for it
+    #[command(name = "blunder-blame")]
+    BlunderBlame {
+        /// Blame -> blunder direction: file path or pattern. Checks every session AI
+        /// Code Blame attributes this file to for a recorded blunder
+        #[arg(long, conflicts_with = "session")]
+        file: Option<String>,
+
+        /// Blunder -> blame direction: one specific session ID. Resolves it to the
+        /// files AI Code Blame attributes to that session
+        #[arg(long, conflicts_with = "file")]
+        session: Option<String>,
+
+        /// In default mode (no --file or --session), number of top blunders to bridge
+        #[arg(short, long, default_value_t = 5)]
+        top: usize,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Get, set, or list persisted CLI defaults (~/.agentworth/config.toml)
     Config {
         #[command(subcommand)]
@@ -585,6 +609,20 @@ fn main() -> Result<()> {
         }
         Commands::PrBlame { files, json } => {
             pr_blame::run_pr_blame_command(files, resolve_json(json), cli.db_path)?;
+        }
+        Commands::BlunderBlame {
+            file,
+            session,
+            top,
+            json,
+        } => {
+            agentworth_cli::run_blunder_blame_command(
+                file,
+                session,
+                top,
+                resolve_json(json),
+                cli.db_path,
+            )?;
         }
         Commands::Config { action } => match action {
             ConfigAction::List { json } => config::run_config_list(resolve_json(json))?,
