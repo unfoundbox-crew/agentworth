@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="192" height="192" role="img" aria-labelledby="t d">
-  <title id="t">Archie, digging</title>
+  <title id="t">Archie, digging, dark background</title>
   <desc id="d">Archie: a brimmed hat over a round head, a torn thermal receipt for a torso, and a trowel in one hand. Digging: leaning in, eyes downcast, trowel lowered, three specks of spoil thrown clear.</desc>
-  <style>.b{fill:#111113} .t{fill:#7c6bb3} .ts{stroke:#7c6bb3} .d{fill:#b91c1c} .f{fill:#a1a1aa}</style>
+  <style>.b{fill:#ffffff} .t{fill:#a396d6} .ts{stroke:#a396d6} .d{fill:#f87171} .f{fill:#52525b}</style>
   <g transform="rotate(-5 24 30)">
     <path class="b" d="M34.49 32.52A1.3 1.3 0 0 0 32.44 34.12L34.91 37.28A1.3 1.3 0 0 0 36.96 35.68Z"/>
     <path class="b" d="M34.6 35.2 42.1 37.4 39.6 43.8Z"/>

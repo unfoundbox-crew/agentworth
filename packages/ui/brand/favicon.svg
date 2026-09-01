@@ -1,9 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512" role="img" aria-labelledby="t d">
   <title id="t">AgentWorth favicon</title>
-  <desc id="d">App icon: the receipt mark reversed out of an ink rounded square, its total bar in violet.</desc>
-  <rect width="512" height="512" rx="112" fill="#111113"/>
-  <g transform="translate(57.6 57.6) scale(12.4)">
-    <path fill="#ffffff" fill-rule="evenodd" d="M7 6.4A2.4 2.4 0 0 1 9.4 4H22.6A2.4 2.4 0 0 1 25 6.4V25.6L22.75 23.2 20.5 25.6 18.25 23.2 16 25.6 13.75 23.2 11.5 25.6 9.25 23.2 7 25.6ZM11.5 8.8H20.5A1.1 1.1 0 0 1 20.5 11H11.5A1.1 1.1 0 0 1 11.5 8.8ZM11.5 13H16.3A1.1 1.1 0 0 1 16.3 15.2H11.5A1.1 1.1 0 0 1 11.5 13Z"/>
-    <path fill="#7c6bb3" d="M11.8 17.2H20.2A1.4 1.4 0 0 1 20.2 20H11.8A1.4 1.4 0 0 1 11.8 17.2Z"/>
-  </g>
+  <desc id="d">App icon: the receipt mark, dark on transparent by default, reversing to light when the browser chrome is dark.</desc>
+  <style>
+    .b{fill:#111113} .t{fill:#7c6bb3}
+    @media (prefers-color-scheme:dark){.b{fill:#ffffff} .t{fill:#a396d6}}
+  </style>
+  <path class="b" fill-rule="evenodd" d="M7 6.4A2.4 2.4 0 0 1 9.4 4H22.6A2.4 2.4 0 0 1 25 6.4V25.6L22.75 23.2 20.5 25.6 18.25 23.2 16 25.6 13.75 23.2 11.5 25.6 9.25 23.2 7 25.6ZM11.5 8.8H20.5A1.1 1.1 0 0 1 20.5 11H11.5A1.1 1.1 0 0 1 11.5 8.8ZM11.5 13H16.3A1.1 1.1 0 0 1 16.3 15.2H11.5A1.1 1.1 0 0 1 11.5 13Z"/>
+  <path class="t" d="M11.8 17.2H20.2A1.4 1.4 0 0 1 20.2 20H11.8A1.4 1.4 0 0 1 11.8 17.2Z"/>
 </svg>
