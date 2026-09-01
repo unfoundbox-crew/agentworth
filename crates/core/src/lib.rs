@@ -199,7 +199,10 @@ impl Scanner {
             }
         }
 
-        let aggregate_stats = self.storage.get_aggregate_stats()?;
+        // `true`: this summary's own "Total Indexed" / "N total in index" labels (main.rs,
+        // static_files.rs) promise a raw count of everything in the SQLite index, stubs
+        // included -- not a "real activity" count. See get_aggregate_stats's doc comment.
+        let aggregate_stats = self.storage.get_aggregate_stats(true)?;
         let total_indexed_sessions = aggregate_stats.total_sessions;
 
         Ok(ScanSummary {

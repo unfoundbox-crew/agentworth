@@ -22,6 +22,12 @@ pub use pricing::{estimate_model_tokens_cost_usd, get_model_rates, ModelRates, M
 pub use vector::{SqliteVectorStore, VectorStore};
 
 /// High-level aggregate statistics across all scanned sessions in the SQLite index.
+///
+/// Every field describes the same population of sessions -- whichever one the caller chose via
+/// `get_aggregate_stats`'s `include_stubs` argument. Mixing a stub-included field from one call
+/// with a stub-excluded field from another (e.g. comparing `total_sessions` here against a
+/// `list_sessions_filtered` count) silently produces nonsense ratios; see
+/// docs/DECISION-INBOX.md's stats/stub-count-mismatch entry.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AggregateStats {
     pub total_sessions: usize,
@@ -34,6 +40,12 @@ pub struct AggregateStats {
     pub first_session_at: Option<DateTime<Utc>>,
     pub last_session_at: Option<DateTime<Utc>>,
 }
+
+/// SQL predicate identifying a "stub" session: near-empty, no real activity. Single source of
+/// truth for both `list_sessions_filtered` and `get_aggregate_stats` so the two can't drift on
+/// what counts as a stub the way `total_sessions` and the traces list drifted before this const
+/// existed (docs/DECISION-INBOX.md, stats/stub-count-mismatch entry).
+const NON_STUB_SQL_PREDICATE: &str = "total_events > 1 AND total_tokens > 0";
 
 /// Ordering options when querying session traces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -600,12 +612,31 @@ impl Storage {
     }
 
     /// Retrieve summary statistics across the whole indexed database.
-    pub fn get_aggregate_stats(&self) -> Result<AggregateStats> {
+    ///
+    /// `include_stubs` decides which population every field in the returned `AggregateStats`
+    /// describes:
+    /// - `false` -- exclude stubs (near-empty, no real activity; see
+    ///   `NON_STUB_SQL_PREDICATE`), matching `list_sessions_filtered`'s own default. Use this for
+    ///   any verdict/analytics surface that gets shown alongside a `list_sessions_filtered`-backed
+    ///   count or ratio (`/api/stats`, `agentworth stats`, the adapter coverage matrix) -- mixing
+    ///   an unfiltered total with a stub-excluded breakdown silently corrupts every percentage
+    ///   computed from them (docs/DECISION-INBOX.md, stats/stub-count-mismatch entry).
+    /// - `true` -- every row, stubs included. Use this only for raw index-inventory /
+    ///   health-check reporting that already promises "everything in the index" (`agentworth
+    ///   scan`'s "Total Indexed" line, `agentworth doctor`'s `total_indexed_sessions`) -- those
+    ///   labels would become false if stubs silently vanished from the count.
+    pub fn get_aggregate_stats(&self, include_stubs: bool) -> Result<AggregateStats> {
         let conn = self.conn.lock().unwrap();
 
         let mut stats = AggregateStats::default();
 
-        let mut stmt = conn.prepare(
+        let where_clause = if include_stubs {
+            String::new()
+        } else {
+            format!("WHERE {NON_STUB_SQL_PREDICATE}")
+        };
+
+        let mut stmt = conn.prepare(&format!(
             r#"
             SELECT
                 COUNT(*),
@@ -618,8 +649,9 @@ impl Storage {
                 MAX(started_at),
                 COALESCE(SUM(CASE WHEN primary_outcome IN ('ci_or_deployment_verified', 'commit_observed', 'test_or_build_passed') THEN 1 ELSE 0 END), 0)
             FROM sessions
+            {where_clause}
             "#,
-        )?;
+        ))?;
 
         let mut rows = stmt.query([])?;
         if let Some(row) = rows.next()? {
@@ -655,10 +687,12 @@ impl Storage {
             });
         }
 
-        // Sessions count by adapter
-        let mut adapter_stmt = conn.prepare(
-            "SELECT adapter, COUNT(*) FROM sessions GROUP BY adapter ORDER BY COUNT(*) DESC",
-        )?;
+        // Sessions count by adapter -- same where_clause so per-adapter counts here agree with
+        // an adapter-filtered `list_sessions_filtered` count for the same adapter (e.g. the
+        // coverage matrix's per-adapter `sessions_count` vs. `/api/traces?adapter=X`).
+        let mut adapter_stmt = conn.prepare(&format!(
+            "SELECT adapter, COUNT(*) FROM sessions {where_clause} GROUP BY adapter ORDER BY COUNT(*) DESC",
+        ))?;
         let mut adapter_rows = adapter_stmt.query([])?;
         while let Some(row) = adapter_rows.next()? {
             let adapter: String = row.get(0)?;
@@ -666,8 +700,10 @@ impl Storage {
             stats.sessions_by_adapter.insert(adapter, count as usize);
         }
 
-        // Aggregate models and tools
-        let mut items_stmt = conn.prepare("SELECT models_used, tools_used FROM sessions")?;
+        // Aggregate models and tools -- same where_clause, so these counts describe the same
+        // population as total_sessions rather than a silently larger (or smaller) one.
+        let mut items_stmt =
+            conn.prepare(&format!("SELECT models_used, tools_used FROM sessions {where_clause}"))?;
         let mut items_rows = items_stmt.query([])?;
         while let Some(row) = items_rows.next()? {
             let models_str: String = row.get(0)?;
@@ -816,7 +852,7 @@ impl Storage {
         let mut param_values: Vec<Box<dyn ToSql>> = Vec::new();
 
         if !filter.include_stubs.unwrap_or(false) {
-            sql.push_str(" AND (total_events > 1 AND total_tokens > 0)");
+            sql.push_str(&format!(" AND ({NON_STUB_SQL_PREDICATE})"));
         }
 
         if let Some(ref adapter) = filter.adapter {
@@ -1453,7 +1489,7 @@ mod tests {
         assert!(!storage.should_scan_source(&source).unwrap());
 
         // 4. Check aggregate stats
-        let stats = storage.get_aggregate_stats().expect("get stats");
+        let stats = storage.get_aggregate_stats(false).expect("get stats");
         assert_eq!(stats.total_sessions, 1);
         assert_eq!(stats.total_events, 5);
         assert_eq!(stats.token_usage.total(), 660);
@@ -1989,7 +2025,7 @@ mod tests {
                 .expect("upsert");
         }
 
-        let stats = storage.get_aggregate_stats().expect("aggregate stats");
+        let stats = storage.get_aggregate_stats(false).expect("aggregate stats");
         assert_eq!(stats.total_sessions, 6);
         // Verified count should only include: ci_or_deployment_verified, commit_observed, test_or_build_passed
         assert_eq!(stats.verified_outcomes_count, 3);
@@ -2084,7 +2120,7 @@ mod tests {
         expect_outcome("unscored", None);
 
         // Aggregate queries must now see the corrected values too.
-        let stats = storage.get_aggregate_stats().expect("aggregate stats");
+        let stats = storage.get_aggregate_stats(false).expect("aggregate stats");
         assert_eq!(stats.total_sessions, 7);
         // real-verified tiers: legacy_ci, legacy_commit, legacy_test, already_fixed = 4
         assert_eq!(stats.verified_outcomes_count, 4);
@@ -2097,7 +2133,7 @@ mod tests {
         expect_outcome("legacy_commit", Some("commit_observed"));
         expect_outcome("already_fixed", Some("commit_observed"));
         expect_outcome("unscored", None);
-        let stats_after_second_run = storage.get_aggregate_stats().expect("aggregate stats");
+        let stats_after_second_run = storage.get_aggregate_stats(false).expect("aggregate stats");
         assert_eq!(stats_after_second_run.verified_outcomes_count, 4);
     }
 
@@ -2139,5 +2175,103 @@ mod tests {
             })
             .expect("list all");
         assert_eq!(all_list.len(), 3);
+    }
+
+    /// Regression test for the `get_aggregate_stats`/`list_sessions_filtered` stub-count
+    /// mismatch (docs/DECISION-INBOX.md): `get_aggregate_stats` used to run an unconditional
+    /// `COUNT(*)`/`SUM(...)` over every row, including stubs, while `list_sessions_filtered`
+    /// excludes them by default -- so a dashboard showing `total_sessions` next to a
+    /// `list_sessions_filtered`-backed traces count (or a ratio of the two, like a verified
+    /// rate) saw two numbers that looked like they should describe the same population but
+    /// didn't. Seeds a mix of stub and real sessions -- including a stub that itself carries a
+    /// "verified" outcome, so a fix that only touches `total_sessions` and forgets
+    /// `verified_outcomes_count` still fails this test.
+    #[test]
+    fn test_aggregate_stats_matches_list_sessions_filtered_population() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        // Two stubs: one under the event-count floor, one with zero tokens. Neither should
+        // count toward the non-stub population, even though one of them (stub_verified) has a
+        // "verified" primary_outcome -- verified_outcomes_count must exclude it too, or the
+        // verified/total ratio silently mixes populations.
+        let stub_low_events_prov =
+            Provenance::new("/path/stub_low_events.jsonl", "claude_code", 100, 100, "fp_stub_low_events");
+        let mut stub_low_events =
+            AgentWorthTrace::new("stub_low_events", "claude_code", stub_low_events_prov, Utc::now());
+        stub_low_events.stats.total_events = 1;
+        stub_low_events.stats.token_usage = TokenUsage::new(500, 50, 0, 0);
+        storage.upsert_trace(&stub_low_events).expect("upsert stub_low_events");
+
+        let stub_verified_prov =
+            Provenance::new("/path/stub_verified.jsonl", "codex", 100, 100, "fp_stub_verified");
+        let mut stub_verified =
+            AgentWorthTrace::new("stub_verified", "codex", stub_verified_prov, Utc::now());
+        stub_verified.stats.total_events = 5;
+        stub_verified.stats.token_usage = TokenUsage::new(0, 0, 0, 0);
+        storage
+            .upsert_session(&stub_verified, Some("commit_observed"), Some(0.9))
+            .expect("upsert stub_verified");
+
+        // Three real sessions across two adapters, one carrying a verified outcome.
+        let real_specs = [
+            ("real_1", "claude_code", Some("ci_or_deployment_verified")),
+            ("real_2", "claude_code", None),
+            ("real_3", "codex", Some("done_claimed")),
+        ];
+        for (id, adapter, outcome) in real_specs {
+            let prov = Provenance::new(format!("/path/{id}.jsonl"), adapter, 100, 100, format!("fp_{id}"));
+            let mut trace = AgentWorthTrace::new(id, adapter, prov, Utc::now());
+            trace.stats.total_events = 10;
+            trace.stats.token_usage = TokenUsage::new(1000, 200, 0, 0);
+            storage
+                .upsert_session(&trace, outcome, Some(0.5))
+                .expect("upsert real session");
+        }
+
+        // The population get_aggregate_stats(false) must agree with: list_sessions_filtered's
+        // own stub-excluded default (what /api/traces and the CLI's `traces` command return).
+        let non_stub_sessions = storage
+            .list_sessions_filtered(&SessionFilter::default())
+            .expect("list non-stub sessions");
+        assert_eq!(
+            non_stub_sessions.len(),
+            3,
+            "fixture sanity check: exactly the 3 real_* sessions should pass the non-stub filter"
+        );
+
+        let stats_excl = storage
+            .get_aggregate_stats(false)
+            .expect("aggregate stats excluding stubs");
+
+        assert_eq!(
+            stats_excl.total_sessions,
+            non_stub_sessions.len(),
+            "total_sessions must match list_sessions_filtered's default (non-stub) count"
+        );
+        assert_eq!(stats_excl.total_sessions, 3);
+        assert_eq!(stats_excl.total_events, 30, "sum of total_events over the 3 real sessions only");
+        assert_eq!(
+            stats_excl.token_usage.total(),
+            3 * 1200,
+            "token sums must exclude the two stubs' tokens"
+        );
+        assert_eq!(
+            stats_excl.verified_outcomes_count, 1,
+            "only real_1's ci_or_deployment_verified should count -- stub_verified's \
+             commit_observed must be excluded even though it's a 'verified' outcome kind"
+        );
+        assert_eq!(stats_excl.sessions_by_adapter.get("claude_code"), Some(&2));
+        assert_eq!(stats_excl.sessions_by_adapter.get("codex"), Some(&1));
+
+        // The raw-inventory mode (used by `agentworth scan`'s "Total Indexed" line and
+        // `agentworth doctor`) must still see every row, stubs included.
+        let stats_incl = storage
+            .get_aggregate_stats(true)
+            .expect("aggregate stats including stubs");
+        assert_eq!(stats_incl.total_sessions, 5, "all 3 real + 2 stub sessions");
+        assert_eq!(
+            stats_incl.verified_outcomes_count, 2,
+            "including stubs, both real_1 and stub_verified count as verified"
+        );
     }
 }

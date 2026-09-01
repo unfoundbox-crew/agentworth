@@ -82,7 +82,6 @@ pub fn compute_archaeology_highlights(
     storage: &Storage,
     scanner: &Scanner,
 ) -> Result<ArchaeologyHighlights> {
-    let stats = storage.get_aggregate_stats()?;
     // `limit: None` = unlimited (SessionFilter::limit's doc comment, crates/storage/src/lib.rs).
     // This was `Some(1000)` ordered oldest-first (StartedAtAsc) -- worse than a plain
     // undercount: on any index over 1000 non-stub sessions it silently dropped every session
@@ -105,6 +104,11 @@ pub fn compute_archaeology_highlights(
     // wins an exact-value tie. Kept as StartedAtDesc anyway -- if a cap ever comes back here,
     // "missing old history" is a safer failure than "missing today's session," which is the bug
     // this fix closes.
+    //
+    // false: matches this function's own `all_sessions` below (list_sessions_filtered's
+    // stub-excluded default) -- average_tokens_per_session divides stats.token_usage by
+    // stats.total_sessions, so both must describe the same population.
+    let stats = storage.get_aggregate_stats(false)?;
     let all_sessions = storage.list_sessions_filtered(&SessionFilter {
         limit: None,
         order_by: Some(SessionOrderBy::StartedAtDesc),

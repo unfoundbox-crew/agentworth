@@ -468,7 +468,7 @@ async fn test_api_post_scan_endpoint() {
     assert!(summary["total_indexed_sessions"].as_u64().unwrap() >= 1);
 
     // Verify indexed in storage
-    let stats = storage.get_aggregate_stats().unwrap();
+    let stats = storage.get_aggregate_stats(false).unwrap();
     assert_eq!(stats.total_sessions, 1);
 }
 

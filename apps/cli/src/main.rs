@@ -802,7 +802,10 @@ fn compute_verdict_breakdown(storage: &Arc<Storage>, total_sessions: usize) -> V
 
 fn run_stats_command(json: bool, db_path: Option<PathBuf>) -> Result<()> {
     let storage = open_storage(db_path)?;
-    let stats = storage.get_aggregate_stats()?;
+    // false: compute_verdict_breakdown below iterates list_sessions_filtered's stub-excluded
+    // default, so stats.total_sessions must exclude stubs too or real_verified_rate divides by
+    // an inflated, mismatched denominator (docs/DECISION-INBOX.md, stats/stub-count-mismatch).
+    let stats = storage.get_aggregate_stats(false)?;
     let top_repos = storage.get_top_repositories()?;
     let verdict = compute_verdict_breakdown(&storage, stats.total_sessions);
 
@@ -1918,7 +1921,10 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
 
     if let Ok(st) = &storage_res {
         storage_healthy = true;
-        if let Ok(stats) = st.get_aggregate_stats() {
+        // true: this is a raw index-health count ("total_indexed_sessions" under "storage"),
+        // matching `agentworth scan`'s own "Total Indexed... in SQLite index" promise -- not a
+        // "real activity" metric.
+        if let Ok(stats) = st.get_aggregate_stats(true) {
             total_indexed = stats.total_sessions;
         }
         let actual_path = PathBuf::from(&db_path_display);
@@ -2759,7 +2765,7 @@ mod tests {
         }
 
         let storage = Arc::new(storage);
-        let total_sessions = storage.get_aggregate_stats().unwrap().total_sessions;
+        let total_sessions = storage.get_aggregate_stats(false).unwrap().total_sessions;
         assert_eq!(total_sessions, SESSION_COUNT as usize);
 
         let breakdown = compute_verdict_breakdown(&storage, total_sessions);
