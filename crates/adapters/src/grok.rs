@@ -64,14 +64,39 @@ impl AgentAdapter for GrokAdapter {
         }
 
         for custom in &options.custom_paths {
+            if !custom.exists() {
+                continue;
+            }
             let s = custom.to_string_lossy().to_lowercase();
-            if custom.exists()
-                && (s.contains(".grok")
-                    || s.contains("grok")
-                    || s.contains(".xai")
-                    || s.contains("xai"))
+            if s.contains(".grok") || s.contains("grok") || s.contains(".xai") || s.contains("xai")
             {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // custom_paths may point at a generic parent directory rather than
+                // the adapter-specific dir itself; look a few levels in before
+                // giving up, matching how `enumerate()` already recurses.
+                let mut found_nested = false;
+                for sub in &[
+                    custom.join(".grok"),
+                    custom.join(".xai"),
+                    custom.join(".config").join("grok"),
+                    custom.join(".config").join("xai"),
+                ] {
+                    if sub.exists() {
+                        discovered.push(sub.clone());
+                        found_nested = true;
+                    }
+                }
+                if !found_nested {
+                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        let ps = path.to_string_lossy().to_lowercase();
+                        if ps.contains(".grok") || ps.contains("grok") || ps.contains(".xai") || ps.contains("xai") {
+                            discovered.push(path.to_path_buf());
+                            break;
+                        }
+                    }
+                }
             }
         }
 

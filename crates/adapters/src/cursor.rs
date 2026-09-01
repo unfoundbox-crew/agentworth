@@ -86,9 +86,31 @@ impl AgentAdapter for CursorAdapter {
         }
 
         for custom in &options.custom_paths {
+            if !custom.exists() {
+                continue;
+            }
             let s = custom.to_string_lossy().to_lowercase();
-            if custom.exists() && (s.contains(".cursor") || s.contains("cursor")) {
+            if s.contains(".cursor") || s.contains("cursor") {
                 discovered.push(custom.clone());
+            } else if custom.is_dir() {
+                // custom_paths may point at a generic parent directory rather than
+                // the adapter-specific dir itself; look a few levels in before
+                // giving up, matching how `enumerate()` already recurses.
+                let mut found_nested = false;
+                if custom.join(".cursor").exists() {
+                    discovered.push(custom.join(".cursor"));
+                    found_nested = true;
+                }
+                if !found_nested {
+                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        let ps = path.to_string_lossy().to_lowercase();
+                        if ps.contains(".cursor") || ps.contains("cursor") {
+                            discovered.push(path.to_path_buf());
+                            break;
+                        }
+                    }
+                }
             }
         }
 
