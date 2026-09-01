@@ -9,6 +9,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::commands::{is_high_risk_rm_path, is_leaked_katana_var, APOLOGY_PATTERNS};
 use agentworth_core::Scanner;
 use agentworth_redaction::Redactor;
 use agentworth_schema::{AgentWorthTrace, EventPayload};
@@ -228,12 +229,7 @@ pub fn evaluate_trace_for_blunder(
                 }
 
                 // 1. Critical: Leaked shell variable in destructive rm -rf (Katana Incident)
-                if (lower.contains("rm -rf") || lower.contains("rm -fr"))
-                    && (lower.contains("$d")
-                        || lower.contains("${d}")
-                        || lower.contains("$target")
-                        || lower.contains("$dir"))
-                {
+                if is_leaked_katana_var(&lower) {
                     critical_rule_id = Some("LEAKED_SHELL_VARIABLE");
                     fatal_command = Some(cmd_str.clone());
                     title_override =
@@ -243,9 +239,7 @@ pub fn evaluate_trace_for_blunder(
                     critical_rule_id = Some("WINDOWS_DRIVE_WIPE");
                     fatal_command = Some(cmd_str.clone());
                     title_override = Some("The 2TB Windows C:\\ Wipe".to_string());
-                } else if (lower.contains("rm -rf") || lower.contains("rm -fr"))
-                    && is_root_or_home_rm(&lower)
-                {
+                } else if is_high_risk_rm_path(&lower) {
                     // Root or Home unconstrained rm -rf
                     if critical_rule_id.is_none() {
                         critical_rule_id = Some("FORBIDDEN_RM_RF");
@@ -673,17 +667,6 @@ fn is_test_cmd(cmd: &str) -> bool {
         || cmd.contains("jest")
 }
 
-fn is_root_or_home_rm(cmd: &str) -> bool {
-    cmd.contains(" / ")
-        || cmd.contains(" /users")
-        || cmd.contains(" /home")
-        || cmd.contains(" ~")
-        || cmd.contains(" *")
-        || cmd.contains("/katana")
-        || cmd.contains("/code")
-        || cmd.contains("/projects")
-}
-
 fn check_destructive_sweeps(cmd: &str) -> Option<&'static str> {
     if cmd.contains("chmod -r 777") || cmd.contains("chmod 777") {
         return Some("chmod -R 777");
@@ -728,18 +711,6 @@ fn is_fake_test_claim_str(content: &str) -> bool {
         || content.contains("all 8 tests are now passing")
         || content.contains("test suite is green")
 }
-
-const APOLOGY_PATTERNS: &[&str] = &[
-    "my mistake",
-    "i apologize",
-    "my apologies",
-    "i am sorry",
-    "i'm sorry",
-    "turned my safety mechanism into a weapon",
-    "lost track",
-    "accidentally deleted",
-    "i made an error",
-];
 
 fn extract_best_remorse_sentence(text: &str) -> Option<String> {
     for line in text.lines() {
@@ -902,5 +873,38 @@ mod tests {
         let redacted = redactor.redact_text(sensitive_quote);
         assert!(!redacted.contains("sk-ant-api03-"));
         assert!(!redacted.contains("/Users/saurabh/"));
+    }
+
+    #[test]
+    fn test_high_risk_rm_path_precision() {
+        // Safe user-space nested paths should NOT be flagged as high-risk root/home deletion
+        assert!(!is_high_risk_rm_path("rm -rf /Users/saurabh/code/agentworth/target"));
+        assert!(!is_high_risk_rm_path("rm -rf ~/code/my-app/node_modules"));
+        assert!(!is_high_risk_rm_path("rm -rf ./projects/foo/dist"));
+
+        // Dangerous top-level root paths MUST be flagged
+        assert!(is_high_risk_rm_path("rm -rf /"));
+        assert!(is_high_risk_rm_path("rm -rf /*"));
+        assert!(is_high_risk_rm_path("rm -rf /Users"));
+        assert!(is_high_risk_rm_path("rm -rf /home"));
+        assert!(is_high_risk_rm_path("rm -rf ~"));
+        assert!(is_high_risk_rm_path("rm -rf $HOME"));
+        assert!(is_high_risk_rm_path("rm -rf /code"));
+        assert!(is_high_risk_rm_path("rm -rf /projects"));
+    }
+
+    #[test]
+    fn test_leaked_katana_var_precision() {
+        // Normal words starting with $d should NOT be flagged
+        assert!(!is_leaked_katana_var("rm -rf $dist"));
+        assert!(!is_leaked_katana_var("rm -rf $data"));
+        assert!(!is_leaked_katana_var("rm -rf $destination/tmp"));
+
+        // Unscoped Katana loop variable $d or ${d} MUST be flagged
+        assert!(is_leaked_katana_var("rm -rf $d"));
+        assert!(is_leaked_katana_var("rm -rf \"$d\""));
+        assert!(is_leaked_katana_var("rm -rf ${d}"));
+        assert!(is_leaked_katana_var("rm -rf \"${d}\""));
+        assert!(is_leaked_katana_var("rm -rf $d/protected"));
     }
 }
