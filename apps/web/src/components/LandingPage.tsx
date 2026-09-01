@@ -12,9 +12,12 @@ const REPO = "https://github.com/unfoundbox-crew/agentworth";
  *
  * Source: `agentworth stats` on the author's laptop, 2026-09-02, over an
  * index of 2,960 sessions. Every figure here is copied from that output —
- * nothing on this page is illustrative.
+ * nothing on this page is illustrative. All six rows together are the whole
+ * index: 7 + 449 + 808 + 120 + 86 + 1,490 = 2,960, and the percentages sum
+ * to 100.0. Keep it that way — a column a reader can add up is the point.
  */
 const RUNGS = [
+  { label: "No claim, no evidence", n: 1490, pct: 50.3, evidence: false },
   { label: "The agent said it was done", n: 7, pct: 0.2, evidence: false },
   { label: "Some files on disk changed", n: 449, pct: 15.2, evidence: false },
   { label: "A test or a build passed", n: 808, pct: 27.3, evidence: true },
@@ -160,13 +163,13 @@ export const LandingPage: React.FC = () => {
 
               {RUNGS.map((r, i) => (
                 <React.Fragment key={r.label}>
-                  {i === 2 && (
+                  {i === 3 && (
                     <div className="ladder-rule">Evidence starts here</div>
                   )}
                   <div className={`rung${r.evidence ? " evidence" : ""}`}>
                     <span
                       className="bar"
-                      style={{ ["--w" as string]: `${r.pct * 2.4}%` }}
+                      style={{ ["--w" as string]: `${r.pct * 1.24}%` }}
                       aria-hidden="true"
                     />
                     <span className="label">{r.label}</span>
@@ -178,9 +181,11 @@ export const LandingPage: React.FC = () => {
               ))}
 
               <p className="ladder-foot">
-                The first two are things an agent can say without doing
-                anything. Only the last three left a trace someone else can
-                check. <b>{verifiedPct}% of sessions cleared that line.</b>
+                Half of them never got far enough to tell, and the two rows
+                above the line are things an agent can say without doing much.
+                Only the last three left a trace someone else can check.{" "}
+                <b>{verifiedPct}% of all {indexed.toLocaleString()} cleared
+                that line.</b>
               </p>
             </div>
           </div>
