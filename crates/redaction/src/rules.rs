@@ -110,7 +110,7 @@ pub fn default_rules() -> Vec<RedactionRule> {
         RedactionRule::new(
             "sensitive_env_vars",
             RedactionCategory::EnvVar,
-            Regex::new(r#"(?i)\b(PASSWORD|PASSWD|SECRET(?:_KEY)?|AUTH_TOKEN|ACCESS_TOKEN|API_KEY|API_SECRET|PRIVATE_KEY|DATABASE_URL|DB_PASSWORD|REDIS_URL|MONGODB_URI|AWS_SECRET_ACCESS_KEY|CLIENT_SECRET|SESSION_SECRET|ENCRYPTION_KEY)\s*[:=]\s*(?:"([^"]*)"|'([^']*)'|([^\s,;'"\n\r]+))"#)
+            Regex::new(r#"(?i)\b([a-zA-Z0-9_]*(?:PASSWORD|PASSWD|SECRET(?:_KEY)?|AUTH_TOKEN|ACCESS_TOKEN|API_KEY|API_SECRET|PRIVATE_KEY|DATABASE_URL|DB_PASSWORD|REDIS_URL|MONGODB_URI|AWS_SECRET_ACCESS_KEY|CLIENT_SECRET|SESSION_SECRET|ENCRYPTION_KEY))\s*[:=]\s*(?:"([^"]*)"|'([^']*)'|([^\s,;'"\n\r]+))"#)
                 .expect("valid regex"),
             "$1=[REDACTED_ENV_VAR]",
         ),
