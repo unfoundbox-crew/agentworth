@@ -37,7 +37,7 @@ Integration branch: `integrate/handoff-batch-1`, currently at commit `c438719`, 
 
 | Item | Branch | Status |
 | --- | --- | --- |
-| Independent outcome verification | `feat/outcome-independent-verification` | Building |
+| Independent outcome verification | `feat/outcome-independent-verification` | Done, verified on lenovo (233 passed, up from 211). Cross-checks claims against real git/file state and other real events in the trace; a bare unconfirmed tool-call intent (e.g. `gh pr create` with no observed result) now demotes from `CiOrDeploymentVerified` to `DoneClaimed` instead of being trusted at face value |
 | Per-model attribution downstream in scoring | `feat/scoring-per-model-attribution` | Building |
 | High-entropy secret detector | `feat/secret-detector-entropy` | Building |
 | ModelSwitch events across 20 adapters | `feat/adapter-modelswitch-events` | Building |
