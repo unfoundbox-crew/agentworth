@@ -55,8 +55,24 @@ pub fn generate_blind_spots_report(
     // include_stubs: true also surfaces thin/short sessions -- a session that barely did
     // anything before claiming "done" is exactly the kind of blind spot this report exists
     // to catch, so it should not be hidden behind the normal stub filter.
+    //
+    // `limit: None` means genuinely unlimited (see SessionFilter::limit's doc comment in
+    // crates/storage/src/lib.rs). This used to be `Some(10000)`, which silently dropped older
+    // sessions past that cap from `all_sessions` -- so `total_blind_spots`,
+    // `total_unverified_tokens`, and `total_unverified_spend_usd` below under-reported on any
+    // index bigger than 10,000 non-stub sessions, the same "presented as complete but silently
+    // truncated" shape already fixed for get_stats_handler and compute_verdict_breakdown. The
+    // `--limit` CLI flag (`run_blind_spots_command`'s own `limit` param, below) is unrelated:
+    // it only truncates the *displayed* entries after these totals are already computed (see
+    // `entries.truncate(lim)` below), so it can't be used to bound this query.
+    //
+    // Cost check before removing the cap: this is a manually-invoked CLI report, not a polled
+    // server endpoint, and it's lighter than the already-unbounded compute_verdict_breakdown,
+    // which does the same per-session `scanner.load_trace()` call unconditionally for every
+    // indexed session. Here that load only runs for the outcome-matching subset (see the loop
+    // below), never more than the entire index -- so the same removal is safe.
     let filter = SessionFilter {
-        limit: Some(10000),
+        limit: None,
         order_by: Some(SessionOrderBy::StartedAtDesc),
         include_stubs: Some(true),
         ..Default::default()
@@ -189,8 +205,10 @@ pub fn run_blind_spots_command(
 mod tests {
     use super::*;
     use agentworth_outcomes::{highest_outcome, outcome_kind_name, OutcomeHierarchyDetector};
-    use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent, Provenance};
-    use chrono::Utc;
+    use agentworth_schema::{
+        AgentWorthTrace, EventPayload, NormalizedEvent, Provenance, TokenUsage,
+    };
+    use chrono::{Duration, Utc};
     use tempfile::NamedTempFile;
 
     /// Store a trace the same way `Scanner::run_scan` does: detect outcomes first and persist
@@ -242,5 +260,68 @@ mod tests {
         let report = generate_blind_spots_report(&storage, None).unwrap();
         assert_eq!(report.total_blind_spots, 1);
         assert_eq!(report.entries[0].session_id, "sess-unverified-1");
+    }
+
+    /// Regression test for the old `Some(10000)` cap on
+    /// `generate_blind_spots_report`'s `list_sessions_filtered` call. Seeds more non-stub
+    /// sessions than that old cap -- each left with `primary_outcome = NULL` via
+    /// `upsert_trace`, which the report treats as the "done_claimed" blind-spot default -- and
+    /// asserts `total_blind_spots` and `total_unverified_tokens` account for every one of them.
+    /// Before the fix, sessions past the old 10,000-row cap (the oldest ones, since the query
+    /// orders `StartedAtDesc`) were silently dropped from `all_sessions` and never counted at
+    /// all. The fixture size (10,050) is deliberately chosen to exceed the old cap: a smaller
+    /// fixture would pass on both the old and new code and wouldn't actually exercise the fix.
+    #[test]
+    fn test_blind_spots_scans_beyond_old_10000_cap() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+        let start = Utc::now();
+
+        const SESSION_COUNT: i64 = 10_050;
+        for i in 0..SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/test/blind_spot_cap_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_blind_spot_cap_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-blind-spot-cap-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            // Non-stub: list_sessions_filtered's default excludes total_events <= 1 or
+            // total_tokens <= 0.
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).unwrap();
+        }
+
+        let storage = Arc::new(storage);
+        // limit: None here is the *display* truncation (run_blind_spots_command's --limit
+        // flag), not the internal fetch cap under test -- pass None so entries isn't truncated
+        // and we can assert its length too, not just the totals computed before truncation.
+        let report = generate_blind_spots_report(&storage, None).unwrap();
+
+        assert_eq!(
+            report.total_blind_spots, SESSION_COUNT as usize,
+            "generate_blind_spots_report must count every session, not silently cap at 10,000"
+        );
+        assert_eq!(
+            report.entries.len(),
+            SESSION_COUNT as usize,
+            "every seeded session should appear in entries -- a lower count means sessions past \
+             the old 10,000 cap were dropped before the outcome filter even ran"
+        );
+
+        let expected_tokens_per_session = TokenUsage::new(100, 20, 0, 0).total();
+        assert_eq!(
+            report.total_unverified_tokens,
+            expected_tokens_per_session * SESSION_COUNT as u64,
+            "total_unverified_tokens should sum every seeded session's tokens, not just the \
+             first 10,000"
+        );
     }
 }
