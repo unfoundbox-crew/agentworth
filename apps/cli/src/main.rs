@@ -1081,7 +1081,10 @@ fn run_traces_command(
                     "tool_calls_count": s.tool_calls_count,
                     "models_used": s.models_used,
                     "verdict_badge": badge,
-                    "primary_outcome": kind.map(|k| format!("{:?}", k)),
+                    // Use the canonical snake_case encoding (see agentworth_outcomes::outcome_kind_name),
+                    // not `{:?}` Debug formatting -- Debug prints the raw PascalCase variant name, which
+                    // is exactly the encoding mismatch this codebase has already shipped as a bug once.
+                    "primary_outcome": kind.map(agentworth_outcomes::outcome_kind_name),
                     "score": score,
                     "model_filter_tokens": model_filter_tokens,
                 })

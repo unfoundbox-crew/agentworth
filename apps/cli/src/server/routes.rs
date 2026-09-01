@@ -182,18 +182,25 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Maps a stored `primary_outcome` value (the PascalCase `OutcomeKind` variant
-/// name produced by `agentworth_outcomes::outcome_kind_name`, or "Unresolved"
-/// for a session that hasn't been scored) to the snake_case key the web
-/// dashboard's `OutcomeDistribution` type expects. Anything unrecognized
-/// folds into "unresolved" rather than silently minting a new bucket.
+/// Maps a stored `primary_outcome` value to the snake_case key the web dashboard's
+/// `OutcomeDistribution` type expects.
+///
+/// `agentworth_outcomes::outcome_kind_name` now writes the snake_case form directly (it defers
+/// to `OutcomeKind`'s own serde encoding — see `crates/outcomes/src/outcome.rs`), and the
+/// storage-layer migration in `crates/storage/src/lib.rs::initialize_schema` corrects any
+/// pre-existing PascalCase rows on open. So in the common case this is close to an identity
+/// mapping. It still recognizes the legacy PascalCase literals (e.g. `"CommitObserved"`) as a
+/// defense-in-depth fallback — belt and suspenders in case some row is ever read before a
+/// migration runs — and anything else unrecognized (including the "Unresolved" sentinel used
+/// below for a session that hasn't been scored) folds into "unresolved" rather than silently
+/// minting a new bucket.
 fn outcome_distribution_key(outcome: &str) -> &'static str {
     match outcome {
-        "CiOrDeploymentVerified" => "ci_or_deployment_verified",
-        "CommitObserved" => "commit_observed",
-        "TestOrBuildPassed" => "test_or_build_passed",
-        "ArtifactChanged" => "artifact_changed",
-        "DoneClaimed" => "done_claimed",
+        "ci_or_deployment_verified" | "CiOrDeploymentVerified" => "ci_or_deployment_verified",
+        "commit_observed" | "CommitObserved" => "commit_observed",
+        "test_or_build_passed" | "TestOrBuildPassed" => "test_or_build_passed",
+        "artifact_changed" | "ArtifactChanged" => "artifact_changed",
+        "done_claimed" | "DoneClaimed" => "done_claimed",
         _ => "unresolved",
     }
 }
@@ -243,12 +250,12 @@ async fn get_stats_handler(
     let mut scored_count = 0usize;
 
     for s in &all_sessions {
-        // `primary_outcome` is stored as the PascalCase OutcomeKind variant
-        // name (see crates/outcomes/src/outcome.rs), not the snake_case keys
-        // below. An unpopulated column used to fall back to the literal
-        // string "done_claimed", which fabricated a fake verified-outcome
-        // bucket for every un-scored session instead of reporting it as
-        // unresolved.
+        // `primary_outcome` is stored as the snake_case OutcomeKind variant name (see
+        // crates/outcomes/src/outcome.rs), matching the keys below directly. An unpopulated
+        // column used to fall back to the literal string "done_claimed", which fabricated a
+        // fake verified-outcome bucket for every un-scored session instead of reporting it as
+        // unresolved — "Unresolved" here is just a sentinel for outcome_distribution_key to
+        // fold into the "unresolved" bucket, not an OutcomeKind value.
         let outcome_str = s.primary_outcome.as_deref().unwrap_or("Unresolved");
         let key = outcome_distribution_key(outcome_str);
         *outcome_dist.entry(key.to_string()).or_insert(0) += 1;
