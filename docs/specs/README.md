@@ -24,6 +24,7 @@ Nothing below is worth judging until this is true.
 | 4 | Group by repo / worktree / subagent | — | nothing | frontend only |
 | 5 | Fleet strip, mtime inference | `fleet-view.md` | surfacing `sources.mtime` | frontend + one field |
 | 6 | Trajectory scrubber zoom and pan | `trajectory-scrubber.md` | nothing | frontend, the largest of these |
+| 6b | Cache economics | `cache-economics.md` | nothing | arithmetic on data already parsed |
 | 7 | SSE endpoint | `fleet-view.md` | file watcher | backend, shared with `agentworth watch` |
 | 8 | Desktop app | `desktop-app.md` | 7 is nicer with it | config, then signing |
 
@@ -44,6 +45,11 @@ these before anyone reaches for a vector database.
 **5 before 6** because the fleet strip is smaller, ships without streaming, and
 answers a question first: is the live direction interesting at all? If nobody
 looks at it, 7 gets cheaper to decline.
+
+**6b rides alongside 6** because both read the same per-event timestamps, and
+because it needs no backend at all — `cache_read_tokens`, `cache_creation_tokens`
+and a timestamp are already on every model invocation. It is the cheapest real
+insight left in the repo.
 
 **6 is the biggest frontend piece here.** At 6,978 events the current strip is a
 solid bar. Zoom and pan turn it from a decoration into an instrument, and the
