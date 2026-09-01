@@ -193,6 +193,10 @@ enum Commands {
         #[arg(long, default_value_t = 5)]
         hours: i64,
 
+        /// Alert and highlight if window spend exceeds this threshold in USD
+        #[arg(long)]
+        alert_above: Option<f64>,
+
         /// Maximum number of rows to display
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
@@ -286,10 +290,19 @@ fn main() -> Result<()> {
             period,
             pacing,
             hours,
+            alert_above,
             limit,
             json,
         } => {
-            run_usage_command(&period, pacing, hours, limit, json, cli.db_path)?;
+            run_usage_command(
+                &period,
+                *pacing,
+                *hours,
+                *alert_above,
+                *limit,
+                *json,
+                cli.db_path,
+            )?;
         }
         Commands::Blame { file_path, json } => {
             run_blame_command(&file_path, json, cli.db_path)?;
@@ -1876,6 +1889,7 @@ fn run_usage_command(
     period: &str,
     pacing: bool,
     hours: i64,
+    alert_above: Option<f64>,
     limit: usize,
     json: bool,
     db_path: Option<PathBuf>,
@@ -1884,12 +1898,46 @@ fn run_usage_command(
 
     if pacing {
         let p = storage.get_pacing_window(hours)?;
+        let alert_triggered = alert_above
+            .map(|t| p.estimated_cost_usd >= t)
+            .unwrap_or(false);
+
         if json {
-            println!("{}", serde_json::to_string_pretty(&p)?);
+            let mut val = serde_json::to_value(&p)?;
+            if let Some(threshold) = alert_above {
+                val["alert_threshold_usd"] = serde_json::json!(threshold);
+                val["alert_triggered"] = serde_json::json!(alert_triggered);
+            }
+            println!("{}", serde_json::to_string_pretty(&val)?);
             return Ok(());
         }
 
         println!();
+        if let Some(threshold) = alert_above {
+            if alert_triggered {
+                println!(
+                    "{}",
+                    style(format!(
+                        "🚨 BURN ALARM TRIGGERED: Window spend (${:.2}) exceeds alert threshold (${:.2})!",
+                        p.estimated_cost_usd, threshold
+                    ))
+                    .bold()
+                    .red()
+                );
+            } else {
+                println!(
+                    "{}",
+                    style(format!(
+                        "🛡️  Burn Alarm Safe: Window spend (${:.2}) is below threshold (${:.2}).",
+                        p.estimated_cost_usd, threshold
+                    ))
+                    .bold()
+                    .green()
+                );
+            }
+            println!();
+        }
+
         println!(
             "{}",
             style("┌──────────────────────────────────────────────────────────┐").bold()
@@ -2154,8 +2202,8 @@ fn run_blame_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent, Provenance};
-    use chrono::Utc;
+    use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent, Provenance, TokenUsage};
+    use chrono::{Duration, Utc};
     use tempfile::NamedTempFile;
 
     #[test]
@@ -2212,5 +2260,43 @@ mod tests {
         };
         let all_stubs_results = storage.list_sessions_filtered(&all_stubs_filter).unwrap();
         assert_eq!(all_stubs_results.len(), 2);
+    }
+
+    #[test]
+    fn test_burn_alarm_threshold_triggering() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+
+        let now = Utc::now();
+        let prov = Provenance::new("/tmp/test.jsonl", "claude_code", 100, 1000, "fp1");
+        let mut trace = AgentWorthTrace::new("sess-pacing-1", "claude_code", prov, now - Duration::hours(1));
+
+        trace.token_usage = TokenUsage {
+            input_tokens: 10_000_000,   // 10M input = $30.00
+            output_tokens: 2_000_000,  // 2M output = $30.00
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+        };
+
+        trace.events.push(NormalizedEvent::new(
+            1,
+            now - Duration::hours(1),
+            EventPayload::UserMessage {
+                content: "run simulation".to_string(),
+            },
+        ));
+
+        storage.insert_trace(&trace).unwrap();
+
+        let pacing = storage.get_pacing_window(5).unwrap();
+        assert!(pacing.estimated_cost_usd >= 50.0);
+
+        // Alert threshold $100 -> NOT triggered
+        let alert_triggered_high = pacing.estimated_cost_usd >= 100.0;
+        assert!(!alert_triggered_high);
+
+        // Alert threshold $20 -> TRIGGERED
+        let alert_triggered_low = pacing.estimated_cost_usd >= 20.0;
+        assert!(alert_triggered_low);
     }
 }
