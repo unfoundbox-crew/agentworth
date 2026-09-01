@@ -14,7 +14,7 @@ Last updated: 2026-09-01, mid-session. Check git before trusting this if it's mo
 | Per-model token attribution | Done, on integration branch | |
 | Dashboard crash fix | Done, on integration branch | **Blocked from landing on main** — needs rebase onto PR #13 + #14 first, see Blocked below |
 | Batch-2 (9 fixes) | Merged into integration branch, verify pass running now | Same pattern as batch-1: agent independently rebuilds and fixes forward, doesn't trust the handoff doc |
-| SSE / live-tail endpoint | Building now | own branch `feat/sse-live-tail`, folds into integration branch after batch-2 settles |
+| SSE / live-tail endpoint | Done-with-real-test-output, on `feat/sse-live-tail` | `GET /api/live-tail`, notify watcher + broadcast channel, no polling. 25/25 tests pass on lenovo (7 new). Commits 5336483/8f08d8d/6c006dd. Not merged into integration yet — still folds in after batch-2 settles, per Saurabh's one-PR call (see bottom row). Side finding while verifying: the `agentworth`/`agwt` CLI binaries don't actually compile on the current integration tip (8 unrelated already-merged command files call Storage/Scanner methods that don't exist) — unrelated to this branch, flagged as a separate task, not fixed here |
 | Batch-2b (11 items) | Scoped, not started | Gated on batch-2 settling — touches the same files (adapters, redaction, outcomes, blunder.rs) |
 | Cost-Aware Task Router | Deferred, not scoped | Different shape of feature — needs a live per-agent hook, not an index query. Needs its own design pass, not a bolt-on to batch-2b |
 | Final PR + version bump | Not yet | Saurabh's call — standing decision is one PR, one version bump, only once everything this session touches is done |
