@@ -234,6 +234,23 @@ jobs:
         timeout-minutes: 6
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+
+          # The registry does not serve a new version the instant publish
+          # returns. v0.1.6 published fine and both smoke tests failed seconds
+          # later with ETARGET, reporting a good release as broken. Wait for the
+          # version to actually be resolvable before concluding anything.
+          for i in $(seq 1 30); do
+            if npm view "agentworth@${VERSION}" version >/dev/null 2>&1; then
+              echo "agentworth@${VERSION} resolvable after $(( i * 10 ))s"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "::error::agentworth@${VERSION} still not on the registry after 5 minutes"
+              exit 1
+            fi
+            sleep 10
+          done
+
           # Clean room: no repo checkout, no cargo target dir, no ~/.agentworth cache.
           # This is the case that shipped broken and that nothing was checking.
           OUT=$(npx -y "agentworth@${VERSION}" --version </dev/null 2>&1) || {
