@@ -7,6 +7,7 @@ use axum::http::{header, HeaderValue, Request, Response, StatusCode};
 use axum::response::IntoResponse;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
+use rust_embed::RustEmbed;
 
 const FALLBACK_HTML: &str = r#"<!DOCTYPE html>
 <html lang="en">
@@ -361,6 +362,23 @@ const FALLBACK_HTML: &str = r#"<!DOCTYPE html>
 </body>
 </html>"#;
 
+/// The dashboard, compiled into the binary. Populated by `npm run build` in
+/// apps/dashboard before `cargo build`; empty on a fresh clone, which is why
+/// `is_empty()` is checked rather than assumed.
+#[derive(RustEmbed)]
+#[folder = "$CARGO_MANIFEST_DIR/../../apps/dashboard/dist"]
+struct DashboardAssets;
+
+fn embedded_response(path: &str) -> Option<Response<Body>> {
+    let asset = DashboardAssets::get(path)?;
+    let mime = asset.metadata.mimetype();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime)
+        .body(Body::from(asset.data.into_owned()))
+        .ok()
+}
+
 /// Fallback handler when serving SPA static files or embedded fallback.
 pub async fn serve_static_or_spa(
     dist_dir: Option<PathBuf>,
@@ -400,7 +418,20 @@ pub async fn serve_static_or_spa(
         }
     }
 
-    // Default: Return embedded fallback SPA HTML
+    // No dist on disk: serve the dashboard compiled into this binary. An exact
+    // asset first, then index.html as the SPA history fallback — same order as
+    // the on-disk path above, so both routes behave identically.
+    let path_uri = req.uri().path().trim_start_matches('/');
+    if !path_uri.is_empty() {
+        if let Some(res) = embedded_response(path_uri) {
+            return res;
+        }
+    }
+    if let Some(res) = embedded_response("index.html") {
+        return res;
+    }
+
+    // Nothing embedded either — a binary built without the web app.
     Response::builder()
         .status(StatusCode::OK)
         .header(
