@@ -183,7 +183,12 @@ export function ExplorerShell() {
             </div>
           </>
         ) : activeView === 'overview' ? (
-          <OverviewPane />
+          <OverviewPane
+            onOpenSession={(id: string) => {
+              setActiveView('sessions');
+              navigate(`/s/${encodeURIComponent(id)}`);
+            }}
+          />
         ) : activeView === 'coverage' ? (
           <CoveragePane />
         ) : activeView === 'archaeology' ? (
