@@ -650,3 +650,144 @@
 .shell-root .shell-row--grouped {
   padding-left: 18px;
 }
+
+/* ---------------- fleet strip: what is running, what it costs ----------------
+   Every value here is inferred from a file write, never observed from a running
+   process. Dashed borders carry that: solid elsewhere in this app means a
+   checked fact, so dashed says "inferred" in the vocabulary already in use. */
+.shell-root .fleet-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--mv-border-soft);
+  border-radius: 10px;
+  background: var(--mv-surface);
+}
+
+.shell-root .fleet-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.shell-root .fleet-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+
+.shell-root .fleet-stale {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--mv-warn);
+}
+
+.shell-root .fleet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.shell-root .fleet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px dashed var(--mv-border);
+  border-radius: 999px;
+  background: var(--mv-surface);
+  color: var(--mv-text);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+.shell-root .fleet-chip:hover {
+  background: var(--mv-surface-2);
+}
+.shell-root .fleet-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent);
+}
+
+.shell-root .fleet-chip-more {
+  cursor: default;
+  color: var(--mv-muted);
+}
+
+.shell-root .fleet-chip-adapter {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.shell-root .fleet-chip-age {
+  color: var(--mv-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Accent, not success: green already means "verified outcome" here, and
+   "probably running" has earned no verdict at all. */
+.shell-root .fleet-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mv-accent);
+  animation: fleet-pulse 2s var(--ease-out) infinite;
+}
+
+@keyframes fleet-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* design.md only specs one-shot entrances; an indefinite pulse is a case it
+   does not cover, so it collapses to a static dot in the same spirit. */
+@media (prefers-reduced-motion: reduce) {
+  .shell-root .fleet-dot {
+    animation: none;
+  }
+  .shell-root .fleet-chip {
+    transition: none;
+  }
+}
+
+.shell-root .fleet-empty {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--mv-faint);
+}
+
+.shell-root .fleet-chip-skeleton {
+  width: 96px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--mv-surface-2);
+  opacity: 0.7;
+}
+
+.shell-root .fleet-spend {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--mv-muted);
+  font-variant-numeric: tabular-nums;
+}
+.shell-root .fleet-spend-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+.shell-root .fleet-spend-value {
+  color: var(--mv-text);
+}
+.shell-root .fleet-spend-sep {
+  color: var(--mv-faint);
+}
