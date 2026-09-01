@@ -26,6 +26,7 @@ Nothing below is worth judging until this is true.
 | 5 | Fleet strip, mtime inference | `fleet-view.md` | surfacing `sources.mtime` | frontend + one field |
 | 6 | Trajectory scrubber zoom and pan | `trajectory-scrubber.md` | nothing | frontend, the largest of these |
 | 6b | Cache economics | `cache-economics.md` | nothing | arithmetic on data already parsed |
+| 6c | Compaction awareness | `compaction.md` | nothing | one flag already in the logs |
 | 7 | SSE endpoint | `fleet-view.md` | file watcher | backend, shared with `agentworth watch` |
 | 8 | Desktop app | `desktop-app.md` | 7 is nicer with it | config, then signing |
 | 9 | Local search / embeddings | `local-search.md` | 4b, and real usage showing structured queries aren't enough | backend, and only if 4b shows it's warranted |
