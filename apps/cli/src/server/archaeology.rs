@@ -82,7 +82,10 @@ pub fn compute_archaeology_highlights(
     storage: &Storage,
     scanner: &Scanner,
 ) -> Result<ArchaeologyHighlights> {
-    let stats = storage.get_aggregate_stats()?;
+    // false: matches this function's own `all_sessions` below (list_sessions_filtered's
+    // stub-excluded default) -- average_tokens_per_session divides stats.token_usage by
+    // stats.total_sessions, so both must describe the same population.
+    let stats = storage.get_aggregate_stats(false)?;
     let all_sessions = storage.list_sessions_filtered(&SessionFilter {
         limit: Some(1000),
         order_by: Some(SessionOrderBy::StartedAtAsc),

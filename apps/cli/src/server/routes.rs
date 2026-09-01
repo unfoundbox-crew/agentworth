@@ -222,9 +222,15 @@ async fn get_stats_handler(
     // get_top_repositories calls already do unbounded full-table scans of `sessions` on every
     // request, the response only ever carries fixed-shape aggregates (not the session list
     // itself), and the frontend fetches this endpoint once per pane-mount, not on a poll.
+    // get_aggregate_stats(false): this handler's own outcome_distribution/average_composite_score
+    // below are already computed from the stub-excluded `all_sessions` list, so total_sessions
+    // and the other aggregates must exclude stubs too or every percentage derived from them
+    // (e.g. VerdictBoard's ladder bars, dividing an outcome count by total_sessions) silently
+    // corrupts against an inflated denominator. See docs/DECISION-INBOX.md,
+    // stats/stub-count-mismatch entry.
     let (stats_res, top_repos_res, all_sessions_res) = tokio::task::spawn_blocking(move || {
         (
-            storage.get_aggregate_stats(),
+            storage.get_aggregate_stats(false),
             storage.get_top_repositories(),
             storage.list_sessions_filtered(&SessionFilter {
                 limit: None,
@@ -489,7 +495,9 @@ async fn get_matrix_handler(
 
 /// Compute capability and detection matrix across all registered adapters.
 fn compute_adapter_matrix(storage: &Storage) -> AdapterMatrixResponse {
-    let stats = storage.get_aggregate_stats().unwrap_or_default();
+    // false: per-adapter `sessions_count` below should agree with what `/api/traces?adapter=X`
+    // reports for the same adapter, which is stub-excluded by default.
+    let stats = storage.get_aggregate_stats(false).unwrap_or_default();
     let scan_opts = ScanOptions::default();
 
     #[allow(clippy::type_complexity)]
@@ -1063,6 +1071,129 @@ mod tests {
         assert_eq!(
             scanned, SESSION_COUNT as u64,
             "get_stats_handler must scan every session, not silently cap at 10,000"
+        );
+    }
+
+    /// Regression test for the `/api/stats` stub-count mismatch (docs/DECISION-INBOX.md,
+    /// stats/stub-count-mismatch entry): `get_aggregate_stats` used to run an unconditional
+    /// `COUNT(*)` over every row including stubs, while this same handler's own
+    /// `outcome_distribution` (computed from a `list_sessions_filtered` call a few lines below
+    /// it) already excluded them by default -- so `/api/stats` reported a `total_sessions` that
+    /// disagreed with its own `outcome_distribution` bucket sum, and every percentage the
+    /// frontend derives by dividing an outcome count by `total_sessions` (VerdictBoard's ladder
+    /// bars) was silently corrupted against an inflated denominator. Seeds a fixture DB with a
+    /// mix of stub and real sessions -- including a stub carrying a "verified" outcome, so a fix
+    /// that only touches `total_sessions` and misses `verified_outcomes_count` still fails this
+    /// test -- and asserts every population-sized number in the `/api/stats` response agrees
+    /// with `list_sessions_filtered`'s own stub-excluded count for the same DB.
+    #[tokio::test]
+    async fn test_stats_handler_total_sessions_matches_non_stub_population() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+        let start = Utc::now();
+
+        // Two stubs -- one below the event floor, one with zero tokens -- neither should count
+        // toward any population-sized field in the /api/stats response.
+        let stub_specs: &[(&str, i64, u64, Option<&str>)] = &[
+            ("stub_low_events", 1, 500, None),
+            ("stub_zero_tokens", 5, 0, Some("commit_observed")),
+        ];
+        for (id, events, tokens, outcome) in stub_specs.iter().copied() {
+            let prov = Provenance::new(format!("/test/{id}.jsonl"), "claude_code", 10, 100, format!("fp_{id}"));
+            let mut trace = AgentWorthTrace::new(id, "claude_code", prov, start);
+            trace.stats.total_events = events as usize;
+            trace.stats.token_usage = TokenUsage::new(tokens, 0, 0, 0);
+            storage.upsert_session(&trace, outcome, outcome.map(|_| 0.9)).unwrap();
+        }
+
+        // Five real sessions, two of them verified.
+        const REAL_COUNT: i64 = 5;
+        let real_outcomes: [Option<&str>; 5] = [
+            Some("ci_or_deployment_verified"),
+            Some("commit_observed"),
+            None,
+            Some("done_claimed"),
+            None,
+        ];
+        for i in 0..REAL_COUNT {
+            let prov = Provenance::new(
+                format!("/test/stats_pop_{i}.jsonl"),
+                "claude_code",
+                10,
+                100,
+                format!("fp_stats_pop_{i}"),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-stats-pop-{i}"),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            trace.stats.total_events = 10;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            let outcome = real_outcomes[i as usize];
+            storage.upsert_session(&trace, outcome, outcome.map(|_| 0.8)).unwrap();
+        }
+
+        let storage = Arc::new(storage);
+
+        // The ground truth this test holds /api/stats to: whatever list_sessions_filtered's own
+        // stub-excluded default reports for this exact DB (the same population /api/traces and
+        // the CLI's `traces` command use).
+        let non_stub_sessions = storage
+            .list_sessions_filtered(&SessionFilter {
+                limit: None,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            non_stub_sessions.len(),
+            REAL_COUNT as usize,
+            "fixture sanity check: exactly the 5 real sessions should pass the non-stub filter"
+        );
+
+        let scanner = Arc::new(Scanner::new(storage.clone()));
+        let (live_tail_tx, _live_tail_rx) = broadcast::channel::<LiveTailEvent>(16);
+        let state = AppState {
+            storage,
+            scanner,
+            dist_dir: None,
+            live_tail: live_tail_tx,
+        };
+
+        let response = get_stats_handler(State(state))
+            .await
+            .expect("get_stats_handler should succeed")
+            .0;
+
+        let total_sessions = response["total_sessions"]
+            .as_u64()
+            .expect("total_sessions should be present and numeric");
+        assert_eq!(
+            total_sessions,
+            non_stub_sessions.len() as u64,
+            "total_sessions must match list_sessions_filtered's default (non-stub) count, not a \
+             raw unfiltered COUNT(*) that includes the 2 seeded stubs"
+        );
+
+        let outcome_dist = response["outcome_distribution"]
+            .as_object()
+            .expect("outcome_distribution should be a JSON object");
+        let dist_sum: u64 = outcome_dist.values().filter_map(|v| v.as_u64()).sum();
+        assert_eq!(
+            dist_sum, total_sessions,
+            "outcome_distribution's own bucket sum must equal total_sessions in the same response"
+        );
+
+        let verified_outcomes_count = response["verified_outcomes_count"]
+            .as_u64()
+            .expect("verified_outcomes_count should be present and numeric");
+        assert_eq!(
+            verified_outcomes_count, 2,
+            "only the two real verified sessions (ci_or_deployment_verified, commit_observed) \
+             should count -- the stub carrying commit_observed must be excluded even though it's \
+             a 'verified' outcome kind, or the verified/total ratio would mix two different \
+             populations"
         );
     }
 }
