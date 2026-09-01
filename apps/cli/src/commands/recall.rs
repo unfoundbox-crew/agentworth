@@ -5,13 +5,27 @@
 //! answering: "Have I solved this before, and did it actually work?"
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use agentworth_storage::{
-    estimate_tokens_cost_usd, LocalEmbedder, SessionFilter, Storage, VectorStore,
-};
+use agentworth_core::Scanner;
+use agentworth_storage::{estimate_tokens_cost_usd, LocalEmbedder, Storage, VectorStore};
 use anyhow::Result;
 use console::style;
 use serde::{Deserialize, Serialize};
+
+/// Confidence weight for a `primary_outcome` label, matching the constants
+/// `OutcomeDetector` assigns when it first classifies these outcome kinds
+/// (see `crates/outcomes/src/outcome.rs`).
+fn confidence_for_outcome(outcome: &str) -> f64 {
+    match outcome {
+        "DoneClaimed" => 0.35,
+        "ArtifactChanged" => 0.60,
+        "TestOrBuildPassed" => 0.85,
+        "CommitObserved" => 0.88,
+        "CiOrDeploymentVerified" => 0.95,
+        _ => 0.50,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecalledSolution {
@@ -35,7 +49,7 @@ pub struct RecallReport {
 
 /// Execute recall search joining vector results with session metadata.
 pub fn recall_experience(
-    storage: &Storage,
+    storage: &Arc<Storage>,
     query: &str,
     limit: usize,
     min_score: f32,
@@ -43,24 +57,31 @@ pub fn recall_experience(
     let embedder = LocalEmbedder::new();
     let query_vector = embedder.embed_text(query)?;
 
-    let chunk_matches = storage.search_similar_chunks(&query_vector, limit, min_score, None)?;
+    let vector_store = storage.vector_store()?;
+    let chunk_matches = vector_store.search_filtered(&query_vector, limit, min_score, None, None)?;
+    let scanner = Scanner::new(storage.clone());
 
     let mut results = Vec::new();
 
     for m in chunk_matches {
-        let session_opt = storage.get_session(&m.session_id)?;
+        let session_opt = storage.get_session_by_id(&m.session_id)?;
 
         let (adapter, models, outcome, conf, spend) = if let Some(s) = session_opt {
-            let models = serde_json::from_str::<Vec<String>>(&s.models_used).unwrap_or_default();
-            let outcome = s.primary_outcome.unwrap_or_else(|| "done_claimed".to_string());
-            let conf = s.primary_outcome_confidence.unwrap_or(0.50);
+            let outcome = s.primary_outcome.clone().unwrap_or_else(|| "DoneClaimed".to_string());
+            let conf = confidence_for_outcome(&outcome);
+            // SessionSummary only carries an aggregate total_tokens; the input/output/cache
+            // breakdown estimate_tokens_cost_usd needs lives on the full trace.
+            let token_usage = scanner
+                .load_trace(&s.session_id)
+                .map(|t| t.stats.token_usage)
+                .unwrap_or_default();
             let spend = estimate_tokens_cost_usd(
-                s.input_tokens as u64,
-                s.output_tokens as u64,
-                s.cache_read_tokens as u64,
-                s.cache_creation_tokens as u64,
+                token_usage.input_tokens,
+                token_usage.output_tokens,
+                token_usage.cache_read_tokens,
+                token_usage.cache_creation_tokens,
             );
-            (s.adapter, models, outcome, conf, spend)
+            (s.adapter, s.models_used, outcome, conf, spend)
         } else {
             ("unknown".to_string(), Vec::new(), "unknown".to_string(), 0.0, 0.0)
         };
@@ -72,9 +93,9 @@ pub fn recall_experience(
             primary_outcome: outcome,
             outcome_confidence: conf,
             spend_usd: spend,
-            similarity_score: m.similarity_score,
-            chunk_kind: m.chunk_kind,
-            snippet: m.content,
+            similarity_score: m.score,
+            chunk_kind: m.kind.as_str().to_string(),
+            snippet: m.text_content,
         });
     }
 
@@ -93,10 +114,10 @@ pub fn run_recall_command(
     json: bool,
     db_path: Option<PathBuf>,
 ) -> Result<()> {
-    let storage = match db_path {
+    let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
         None => Storage::open_default()?,
-    };
+    });
 
     let report = recall_experience(&storage, query, limit, min_score)?;
 
@@ -163,14 +184,12 @@ pub fn run_recall_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent, Provenance};
-    use chrono::Utc;
     use tempfile::NamedTempFile;
 
     #[test]
     fn test_recall_experience_empty_graceful() {
         let tmp = NamedTempFile::new().unwrap();
-        let storage = Storage::open_path(tmp.path()).unwrap();
+        let storage = Arc::new(Storage::open_path(tmp.path()).unwrap());
 
         let report = recall_experience(&storage, "fix utf-8 boundary", 5, 0.0).unwrap();
         assert_eq!(report.matches_count, 0);
