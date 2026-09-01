@@ -2691,6 +2691,57 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_verdict_breakdown_scans_beyond_default_limit() {
+        // Regression test: compute_verdict_breakdown asks list_sessions_filtered for every
+        // session via `limit: None`, then divides its bucket counts against the true total.
+        // list_sessions_filtered used to silently resolve `limit: None` to 50, so on any index
+        // bigger than that the buckets summed to 50 instead of the real count. This seeds more
+        // than 50 non-stub sessions and asserts the buckets cover all of them.
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+        let start = Utc::now();
+
+        const SESSION_COUNT: i64 = 60;
+        for i in 0..SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/test/verdict_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_verdict_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-verdict-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            // Non-stub: list_sessions_filtered's default excludes total_events <= 1 or
+            // total_tokens <= 0.
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).unwrap();
+        }
+
+        let storage = Arc::new(storage);
+        let total_sessions = storage.get_aggregate_stats().unwrap().total_sessions;
+        assert_eq!(total_sessions, SESSION_COUNT as usize);
+
+        let breakdown = compute_verdict_breakdown(&storage, total_sessions);
+        let scanned = breakdown.ci_or_deployment_verified
+            + breakdown.commit_observed
+            + breakdown.test_or_build_passed
+            + breakdown.artifact_changed
+            + breakdown.done_claimed
+            + breakdown.unverified;
+
+        assert_eq!(
+            scanned, SESSION_COUNT as usize,
+            "compute_verdict_breakdown must scan every session, not silently cap at 50"
+        );
+    }
+
+    #[test]
     fn test_burn_alarm_threshold_triggering() {
         let tmp = NamedTempFile::new().unwrap();
         let storage = Storage::open_path(tmp.path()).unwrap();

@@ -60,6 +60,8 @@ pub struct SessionFilter {
     pub start_date: Option<DateTime<Utc>>,
     pub end_date: Option<DateTime<Utc>>,
     pub min_tokens: Option<u64>,
+    /// Maximum rows to return. `None` means unlimited -- callers that want the old
+    /// implicit default-50 pagination behavior must pass `Some(50)` explicitly.
     pub limit: Option<usize>,
     pub offset: Option<usize>,
     pub order_by: Option<SessionOrderBy>,
@@ -871,9 +873,16 @@ impl Storage {
             SessionOrderBy::ScoreAsc => sql.push_str(" ORDER BY composite_score ASC"),
         }
 
-        let limit = filter.limit.unwrap_or(50);
-        sql.push_str(" LIMIT ?");
-        param_values.push(Box::new(limit as i64));
+        match filter.limit {
+            Some(limit) => {
+                sql.push_str(" LIMIT ?");
+                param_values.push(Box::new(limit as i64));
+            }
+            // SQLite requires a LIMIT clause to precede OFFSET; -1 means "unbounded" so an
+            // explicit offset with no limit still works instead of producing a syntax error.
+            None if filter.offset.is_some() => sql.push_str(" LIMIT -1"),
+            None => {}
+        }
 
         if let Some(offset) = filter.offset {
             sql.push_str(" OFFSET ?");
