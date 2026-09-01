@@ -51,7 +51,10 @@ describe('npm-wrapper / launcher', () => {
       assert.equal(getTargetTriple('darwin', 'x64'), 'x86_64-apple-darwin');
       assert.equal(getTargetTriple('linux', 'x64'), 'x86_64-unknown-linux-gnu');
       assert.equal(getTargetTriple('linux', 'arm64'), 'aarch64-unknown-linux-gnu');
-      assert.equal(getTargetTriple('win32', 'x64'), 'x86_64-pc-windows-msvc');
+      // Windows dropped 2026-09-02 -- no target triple, so downloadAndExtractBinary's
+      // existing "Unsupported platform/architecture" error covers it instead of
+      // attempting a download that would 404 against the (no longer built) release asset.
+      assert.equal(getTargetTriple('win32', 'x64'), null);
       assert.equal(getTargetTriple('unknown', 'arch'), null);
     });
 
