@@ -15,6 +15,7 @@ import {
   findPathBinary,
   resolveBinary,
   formatMissingBinaryMessage,
+  buildChildEnv,
   run,
 } from '../lib/resolver.js';
 
@@ -69,6 +70,28 @@ describe('npm-wrapper / launcher', () => {
       ]);
       assert.deepEqual(resolveArguments(['--version']), ['--version']);
       assert.deepEqual(resolveArguments(['-v', 'stats']), ['-v', 'stats']);
+    });
+  });
+
+  describe('launcher markers for the child process (agentworth version/update)', () => {
+    it('sets AGENTWORTH_LAUNCHER_ACTIVE and threads the npm version through', () => {
+      const childEnv = buildChildEnv({ FOO: 'bar' }, '0.1.9');
+      assert.equal(childEnv.AGENTWORTH_LAUNCHER_ACTIVE, '1');
+      assert.equal(childEnv.AGENTWORTH_NPM_VERSION, '0.1.9');
+      assert.equal(childEnv.FOO, 'bar');
+    });
+
+    it('does not mutate the base environment object it was given', () => {
+      const base = { FOO: 'bar' };
+      buildChildEnv(base, '0.1.9');
+      assert.deepEqual(base, { FOO: 'bar' });
+    });
+
+    it('overrides a pre-existing AGENTWORTH_LAUNCHER_ACTIVE from the base env', () => {
+      // Defense in depth: even if something upstream already set this (e.g. a nested
+      // launcher invocation), the real spawn must always mark itself active.
+      const childEnv = buildChildEnv({ AGENTWORTH_LAUNCHER_ACTIVE: '0' }, '0.1.9');
+      assert.equal(childEnv.AGENTWORTH_LAUNCHER_ACTIVE, '1');
     });
   });
 
