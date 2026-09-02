@@ -1832,6 +1832,102 @@ impl Storage {
 
         Ok(results)
     }
+
+    /// When this index last took a write, i.e. the newest `scanned_at` across all sessions.
+    ///
+    /// A handoff's receipt has to say how stale the answer is, and "newest session start" is
+    /// not that -- a scan run today over a session from last week updates the index without
+    /// moving any `started_at`. `None` for an empty index.
+    pub fn last_scanned_at(&self) -> Result<Option<DateTime<Utc>>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let raw: Option<String> = conn
+            .query_row("SELECT MAX(scanned_at) FROM sessions", [], |row| row.get(0))
+            .unwrap_or(None);
+
+        Ok(raw.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        }))
+    }
+
+    /// The most recent non-stub sessions whose derived repository/workspace name equals
+    /// `repo`, newest first. Backs `carry_forward` and the "most recent session for the
+    /// caller's cwd" default on `session_handoff` (docs/specs/handoff.md).
+    ///
+    /// **`repo` is not a stored column.** There is only `source_path`, and
+    /// `extract_repository_or_workspace` derives the key from it at read time -- the same
+    /// derivation `get_top_repositories` and the MCP `sessions_find` tool already do. So this
+    /// walks sessions newest-first and filters in Rust, stopping as soon as `limit` matches
+    /// are found. That is a scan, so it is bounded by `REPO_SCAN_BUDGET` rows, and
+    /// `scan_exhausted` says plainly when the budget ran out before `limit` was reached
+    /// rather than letting a partial answer look complete.
+    ///
+    /// Deliberately no schema change: the derivation is a pure string function over a column
+    /// that is already indexed and already read, and adding a stored `repo` column would need
+    /// a migration plus a rescan to backfill, for a query that runs at most a handful of times
+    /// per session.
+    pub fn list_sessions_for_repo(&self, repo: &str, limit: usize) -> Result<RepoSessionPage> {
+        if limit == 0 {
+            return Ok(RepoSessionPage {
+                sessions: Vec::new(),
+                scan_exhausted: false,
+            });
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&format!(
+            r#"
+            SELECT sessions.session_id, sessions.adapter, sessions.source_path, sessions.started_at,
+                   sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
+                   sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
+                   sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
+                   sessions.compaction_tokens_dropped, sources.mtime
+            FROM sessions
+            LEFT JOIN sources ON sessions.source_path = sources.source_path
+            WHERE ({NON_STUB_SQL_PREDICATE})
+            ORDER BY sessions.started_at DESC
+            LIMIT {REPO_SCAN_BUDGET}
+            "#
+        ))?;
+
+        let mut rows = stmt.query([])?;
+        let mut sessions = Vec::new();
+        let mut scanned = 0usize;
+
+        while let Some(row) = rows.next()? {
+            scanned += 1;
+            let source_path: String = row.get(2)?;
+            if extract_repository_or_workspace(&source_path) != repo {
+                continue;
+            }
+            sessions.push(row_to_session_summary(row)?);
+            if sessions.len() >= limit {
+                break;
+            }
+        }
+
+        Ok(RepoSessionPage {
+            scan_exhausted: sessions.len() < limit && scanned >= REPO_SCAN_BUDGET,
+            sessions,
+        })
+    }
+}
+
+/// How many sessions `list_sessions_for_repo` will walk before giving up. Every row is one
+/// `extract_repository_or_workspace` call over an already-fetched string, so this is cheap;
+/// the budget exists so an index that grows to six figures can't turn one handoff lookup into
+/// a full table scan.
+const REPO_SCAN_BUDGET: usize = 5_000;
+
+/// What `Storage::list_sessions_for_repo` found, and whether it ran out of budget looking.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RepoSessionPage {
+    pub sessions: Vec<SessionSummary>,
+    /// True when the newest-first scan hit `REPO_SCAN_BUDGET` rows without finding `limit`
+    /// matches -- older sessions for this repo may exist past it. Never true when the
+    /// requested number of sessions was found.
+    pub scan_exhausted: bool,
 }
 
 /// Decode one row of the shared 11-column shape produced by both `find_sessions_for_blame`
@@ -3345,5 +3441,80 @@ mod tests {
         assert!(open_ended.window.since.is_none());
         assert!(open_ended.window.until.is_some());
         assert_eq!(open_ended.baseline.n, 3, "no window means every claimed session counts");
+    }
+
+    #[test]
+    fn test_list_sessions_for_repo_collapses_worktrees_and_orders_newest_first() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base = Utc::now();
+
+        // Three Claude Code project slugs for the SAME repo: the plain checkout and two
+        // worktrees. `extract_repository_or_workspace` prunes the `--` suffix, so all three
+        // collapse to one key -- which is exactly what carry-forward wants.
+        let paths = [
+            ("old", "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/a.jsonl", 0),
+            (
+                "middle",
+                "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth--claude-worktrees-feat-a/b.jsonl",
+                60,
+            ),
+            (
+                "newest",
+                "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth--claude-worktrees-feat-b/c.jsonl",
+                120,
+            ),
+            ("other", "/Users/x/.claude/projects/-Users-x-code-unfoundbox-memes/d.jsonl", 90),
+        ];
+
+        for (id, path, offset_secs) in paths {
+            let prov = Provenance::new(path, "claude_code", 100, 1, format!("fp_{id}"));
+            let mut trace = AgentWorthTrace::new(
+                id,
+                "claude_code",
+                prov,
+                base + Duration::seconds(offset_secs),
+            );
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).expect("seed session");
+        }
+
+        let page = storage
+            .list_sessions_for_repo("unfoundbox/agentworth", 10)
+            .expect("repo lookup");
+        let ids: Vec<&str> = page.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["newest", "middle", "old"],
+            "all three worktrees answer to one repo key, newest first, and the other repo \
+             is excluded"
+        );
+        assert!(!page.scan_exhausted);
+
+        // A limit smaller than the match count truncates without claiming exhaustion.
+        let page = storage
+            .list_sessions_for_repo("unfoundbox/agentworth", 1)
+            .expect("repo lookup");
+        assert_eq!(page.sessions.len(), 1);
+        assert_eq!(page.sessions[0].session_id, "newest");
+        assert!(!page.scan_exhausted);
+
+        // An unknown repo is an empty list, not an error.
+        let page = storage
+            .list_sessions_for_repo("nobody/nothing", 3)
+            .expect("repo lookup");
+        assert!(page.sessions.is_empty());
+
+        // The receipt's staleness line reads from here, so a write must populate it.
+        assert!(
+            storage.last_scanned_at().expect("last scanned").is_some(),
+            "four upserts must leave a scanned_at behind"
+        );
+    }
+
+    #[test]
+    fn test_last_scanned_at_is_none_on_an_empty_index() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        assert_eq!(storage.last_scanned_at().expect("last scanned"), None);
     }
 }
