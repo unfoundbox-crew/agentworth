@@ -1,6 +1,34 @@
 # Archie bench
 
-Status: proposed, measured 2026-09-02.
+Status: the local table is **built** in #TBD; measured 2026-09-02.
+
+**What #TBD shipped, and what it did not.** The local leaderboard is
+`archie stats ladder` and the `stats_ladder` MCP tool: the ladder with the
+API-equivalent spend below the evidence line, cost per verified outcome by
+model, repo, adapter or effort, and the newest verified sessions. Three
+departures from the plan below, each on purpose.
+
+- **The name is `stats ladder`, not `stats bench`.** The screen leads with the
+  ladder and the spend under it; the group table is the second block, not the
+  page. A bench ranks models, and this deliberately does not — see "What this
+  deliberately does not do".
+- **One axis at a time, not the cross.** `--by model|repo|adapter|effort`
+  returns one axis; the `model x repo` cross this spec measured is not built.
+  The measurement below still stands and the cross is still the informative
+  shape; it needs a two-key row and a wider screen than 80 columns.
+- **The floor is 20, the code's number, not this spec's 10.** The open question
+  below is unresolved. `agentworth_storage::OUTCOME_RATE_DEFAULT_MIN_N` is now
+  the single place it lives, so settling it is a one-line change. Under it a
+  rate and a cost render blank rather than being hidden: the row still ships
+  its `n`.
+
+Two preconditions cleared since this was written. Pricing was refreshed in
+#115, so the dollar column is no longer one rate card applied to every model.
+`sessions.effort` landed in #116, so `--by effort` reads what Codex records and
+names the sessions that carry none rather than faking a value.
+
+**Not built here:** the opt-in aggregate export across users. Nothing in #TBD
+sends anything anywhere.
 
 ## The one-line version
 

@@ -4157,10 +4157,12 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
     out.push('\n');
 
     // -- the ladder -----------------------------------------------------------
-    const SESS: usize = 8;
-    const SHARE: usize = 6;
-    const TOK: usize = 7;
-    const PER: usize = 7;
+    // Every column is wider than its own head, which is where the gap between columns
+    // comes from -- a head that exactly fills its column runs into the next one.
+    const SESS: usize = 6;
+    const SHARE: usize = 7;
+    const TOK: usize = 8;
+    const PER: usize = 8;
     const SPEND: usize = 8;
     const OF: usize = 8;
     // The name column absorbs the remainder, so the row always sums to the content width.
@@ -4176,12 +4178,12 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
                 &format!(
                     "{}{}{}{}{}{}{}",
                     lpad("EVIDENCE LADDER", name),
-                    rpad("SESSIONS", SESS),
+                    rpad("SESS", SESS),
                     rpad("SHARE", SHARE),
                     rpad("MED TOK", TOK),
                     rpad("$/SESS", PER),
                     rpad("SPEND", SPEND),
-                    rpad("OF SPEND", OF),
+                    rpad("%SPEND", OF),
                 )
             )
         ),
@@ -4208,6 +4210,13 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
             ui.meter(r.rung),
             truncate(r.label, name.saturating_sub(6))
         );
+        // There is no median of nothing. A rung nobody reached prints a dash, not a 0 and
+        // not a $0.00 -- those would each assert a measurement that was never made.
+        let (median_tokens, median_cost) = if r.sessions == 0 {
+            (ui.dash().to_string(), ui.dash().to_string())
+        } else {
+            (compact(r.median_tokens), money(r.median_cost_usd))
+        };
         push(
             &mut out,
             ui,
@@ -4216,8 +4225,8 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
                 ui.paint(rung_role(r.rung), &lpad(&label, name)),
                 ui.paint(Role::Value, &rpad(&thousands(r.sessions as u64), SESS)),
                 ui.paint(Role::Label, &rpad(&format!("{:.1}%", r.share * 100.0), SHARE)),
-                ui.paint(Role::Value, &rpad(&compact(r.median_tokens), TOK)),
-                ui.paint(Role::Value, &rpad(&money(r.median_cost_usd), PER)),
+                ui.paint(Role::Value, &rpad(&median_tokens, TOK)),
+                ui.paint(Role::Value, &rpad(&median_cost, PER)),
                 ui.paint(Role::Value, &rpad(&spend, SPEND)),
                 ui.paint(Role::Label, &rpad(&of_spend, OF)),
             ),
@@ -4263,8 +4272,8 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
             ),
         );
     } else {
-        const N: usize = 6;
-        const RATE: usize = 8;
+        const N: usize = 5;
+        const RATE: usize = 9;
         const GTOK: usize = 9;
         const STEPS: usize = 7;
         const PERV: usize = 12;
@@ -4358,8 +4367,8 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
         );
     } else {
         const WHEN: usize = 12;
-        const EV: usize = 8;
-        const RTOK: usize = 7;
+        const EV: usize = 9;
+        const RTOK: usize = 8;
         const RCOST: usize = 9;
         let rest = i.saturating_sub(WHEN + EV + RTOK + RCOST);
         let repo = (rest * 3 / 5).max(6);
@@ -4423,7 +4432,7 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
     );
     out.push_str(&ui.next(
         "archie session list --unproven",
-        "the sessions that spend bought nothing provable",
+        "spend that bought nothing provable",
     ));
     out
 }

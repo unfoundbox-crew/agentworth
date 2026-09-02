@@ -25,7 +25,7 @@
 | `beliefs.md` | proposed, measured | — |
 | `efficiency-receipts.md` | proposed, measured | — |
 | `cli-grammar.md` | §1, §2 and §4(1) built | #118 — the noun tree, one session resolver, the `archie` name, completions, and a regenerated reference. The cockpit (§3) and `window receipt` are not built. |
-| `archie-bench.md` | proposed, measured | — |
+| `archie-bench.md` | the local table built, #TBD | #TBD — `archie stats ladder` and the `stats_ladder` tool. The opt-in aggregate export is not built |
 | `convergence.md` | proposed, measured | — |
 
 Twenty specs sit beside this file. They are independent of each other but not of
@@ -138,7 +138,7 @@ worth drawing.
 | G | `efficiency-receipts.md` | `repeat_check`, `fanout_reads` | nothing — the P0 experiment is done and it picked the detector |
 | H | `cli-grammar.md` — **built, #118 and #121** | every tool renamed to match the CLI noun | only `window receipt`, which waits on G's `fanout_reads`/`repeat_check` |
 | I | `spacepilot-loop.md` | `--route`, `--resolve-entities`, `--summarize` (each a call to SpacePilot) | the contract, then `asks.md`'s tier 2 |
-| J | `archie-bench.md` | `stats_bench` | a pricing-table refresh, then B's shared rung ordering |
+| J | `archie-bench.md` — **the local table built, #TBD** | `stats_ladder` (the name that shipped, not `stats_bench`) | nothing left for the local table: pricing was refreshed in #115 and the rung ordering is shared. The opt-in aggregate export is still open |
 | K | `convergence.md` | `session_explain` | nothing — the measurement is done |
 
 ### Why that order

@@ -2606,7 +2606,7 @@ impl Storage {
             .iter()
             .filter(|f| (f.rung as usize) >= LADDER_EVIDENCE_FLOOR)
             .collect();
-        verified.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        verified.sort_by_key(|f| std::cmp::Reverse(f.started_at));
         let recent_verified = verified
             .into_iter()
             .take(q.recent_limit)
