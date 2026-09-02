@@ -31,8 +31,12 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
 
     // Opening through Storage first guarantees the target has the full schema (sources,
     // sessions, file_modifications, indexes) even if target_db_path is a brand new file --
-    // the raw rusqlite Connection below does not run migrations itself.
+    // the raw rusqlite Connection below does not run migrations itself. The source gets the
+    // same treatment: it may be an older index (pre-dating `parser_version`/
+    // `backfilled_version`), and the cross-database SELECT below names those columns
+    // explicitly, so it must exist on both sides before ATTACH.
     drop(agentworth_storage::Storage::open_path(target_db_path)?);
+    drop(agentworth_storage::Storage::open_path(source_db_path)?);
 
     let mut target_conn = Connection::open(target_db_path)
         .with_context(|| format!("Failed to open target DB: {}", target_db_path.display()))?;
@@ -78,7 +82,7 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                 duration_seconds, total_events, user_messages_count, assistant_messages_count,
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata,
-                scanned_at, primary_outcome, composite_score
+                scanned_at, primary_outcome, composite_score, parser_version, backfilled_version
              FROM other_db.sessions;",
         )?;
 
@@ -92,10 +96,10 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                 duration_seconds, total_events, user_messages_count, assistant_messages_count,
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata,
-                scanned_at, primary_outcome, composite_score
+                scanned_at, primary_outcome, composite_score, parser_version, backfilled_version
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
+                ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
             );",
         )?;
 
@@ -106,7 +110,8 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                 assistant_messages_count = ?10, tool_calls_count = ?11, input_tokens = ?12,
                 output_tokens = ?13, cache_read_tokens = ?14, cache_creation_tokens = ?15,
                 total_tokens = ?16, models_used = ?17, tools_used = ?18, metadata = ?19,
-                scanned_at = ?20, primary_outcome = ?21, composite_score = ?22
+                scanned_at = ?20, primary_outcome = ?21, composite_score = ?22,
+                parser_version = ?23, backfilled_version = ?24
              WHERE session_id = ?1;",
         )?;
 
@@ -141,6 +146,8 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                         row.get::<_, String>(19)?,
                         row.get::<_, Option<String>>(20)?,
                         row.get::<_, Option<f64>>(21)?,
+                        row.get::<_, i64>(22)?,
+                        row.get::<_, Option<i64>>(23)?,
                     ])?;
                     stats.sessions_updated += 1;
                     sessions_to_refresh_files.push(session_id);
@@ -171,6 +178,8 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                     row.get::<_, String>(19)?,
                     row.get::<_, Option<String>>(20)?,
                     row.get::<_, Option<f64>>(21)?,
+                    row.get::<_, i64>(22)?,
+                    row.get::<_, Option<i64>>(23)?,
                 ])?;
                 stats.sessions_inserted += 1;
                 sessions_to_refresh_files.push(session_id);
@@ -352,5 +361,97 @@ mod tests {
         // Verify storage1 now has 2 sessions
         let all = storage1.list_sessions(10).unwrap();
         assert_eq!(all.len(), 2);
+    }
+
+    /// Finding #2: the merge SQL used to copy `primary_outcome`/`composite_score` verbatim
+    /// but never selected `parser_version` or `backfilled_version`, so every merged row landed
+    /// at the schema default (`parser_version = 0`) -- correct for a source that also exists
+    /// locally (it just gets reparsed once, same as any legacy row), but permanently wrong for
+    /// a row whose source lives only on another machine: `needs_backfill` would flag it as
+    /// stale forever with no local file to ever reparse it from. Both the insert path (a
+    /// session that exists only in the source db) and the update path (a session that exists
+    /// in both, where the source's copy is more complete) must carry the source's own
+    /// `parser_version` and `backfilled_version` across.
+    #[test]
+    fn test_merge_carries_parser_version_and_backfill_marker() {
+        let db1 = NamedTempFile::new().unwrap();
+        let db2 = NamedTempFile::new().unwrap();
+
+        let storage1 = agentworth_storage::Storage::open_path(db1.path()).unwrap();
+        let storage2 = agentworth_storage::Storage::open_path(db2.path()).unwrap();
+
+        use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent, Provenance};
+        use chrono::Utc;
+
+        let now = Utc::now();
+
+        // Insert path: a session that exists only in the source db, parsed and scored there
+        // at parser version 3 -- the shape a row from another machine's index takes.
+        let prov_new = Provenance::new("/machine-b/session.jsonl", "claude_code", 100, 1000, "fp_new");
+        let mut trace_new = AgentWorthTrace::new("sess-new", "claude_code", prov_new, now);
+        trace_new.events.push(NormalizedEvent::new(
+            1,
+            now,
+            EventPayload::UserMessage { content: "hello from machine b".to_string() },
+        ));
+        trace_new.events.push(model_invocation_event(2, now));
+        trace_new.recalculate_stats();
+        storage2
+            .upsert_session(&trace_new, Some("done_claimed"), Some(0.75), 3)
+            .unwrap();
+
+        // Update path: a session in both dbs, where the source's copy is more complete (3
+        // events vs. 2) and was scored there at parser version 5 -- higher than the local
+        // copy's version 2, mirroring a source that has since been reparsed under newer code.
+        let prov_shared =
+            Provenance::new("/machine-b/shared.jsonl", "claude_code", 100, 1000, "fp_shared");
+        let mut trace_shared = AgentWorthTrace::new("sess-shared", "claude_code", prov_shared, now);
+        trace_shared.events.push(NormalizedEvent::new(
+            1,
+            now,
+            EventPayload::UserMessage { content: "hi".to_string() },
+        ));
+        trace_shared.events.push(model_invocation_event(2, now));
+        trace_shared.recalculate_stats();
+        storage1
+            .upsert_session(&trace_shared, Some("done_claimed"), Some(0.4), 2)
+            .unwrap();
+
+        let mut trace_shared_remote = trace_shared.clone();
+        trace_shared_remote.events.push(NormalizedEvent::new(
+            3,
+            now,
+            EventPayload::AssistantMessage { content: "more".to_string(), thinking: None },
+        ));
+        trace_shared_remote.recalculate_stats();
+        storage2
+            .upsert_session(&trace_shared_remote, Some("done_claimed"), Some(0.9), 5)
+            .unwrap();
+
+        merge_sqlite_databases(db1.path(), db2.path()).unwrap();
+
+        let target = Connection::open(db1.path()).unwrap();
+        let (pv_new, bv_new): (i64, Option<i64>) = target
+            .query_row(
+                "SELECT parser_version, backfilled_version FROM sessions WHERE session_id = 'sess-new'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(pv_new, 3, "an inserted merged row must carry the source's parser_version");
+        assert_eq!(bv_new, Some(3), "and its backfill marker, so it isn't flagged as stale forever");
+
+        let (pv_shared, bv_shared): (i64, Option<i64>) = target
+            .query_row(
+                "SELECT parser_version, backfilled_version FROM sessions WHERE session_id = 'sess-shared'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            pv_shared, 5,
+            "an updated merged row (the source's more-complete copy) must carry its parser_version too"
+        );
+        assert_eq!(bv_shared, Some(5));
     }
 }

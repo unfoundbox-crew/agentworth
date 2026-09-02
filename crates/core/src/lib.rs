@@ -26,6 +26,10 @@ pub struct ScanSummary {
     /// the version stored on the row -- the parse output itself changed, so the indexed
     /// answer is stale even though the file is not. See `AgentAdapter::parser_version`.
     pub reparsed_sessions: usize,
+    /// Rows that would otherwise need a backfill or reparse, but whose source lives on
+    /// another machine's disk (typically arrived via `agentworth merge`) and so can't be
+    /// re-read from here. See `agentworth_storage::BackfillReason::SourceUnavailable`.
+    pub sources_unavailable: usize,
     pub errors_encountered: usize,
     pub total_indexed_sessions: usize,
     pub aggregate_stats: AggregateStats,
@@ -173,6 +177,7 @@ impl Scanner {
         let mut skipped_unchanged = 0;
         let mut backfilled_sessions = 0;
         let mut reparsed_sessions = 0;
+        let mut sources_unavailable = 0;
         let mut errors_encountered = 0;
 
         for (idx, (adapter_idx, source)) in all_sources.iter().enumerate() {
@@ -192,6 +197,15 @@ impl Scanner {
                             .storage
                             .needs_backfill(&path_str, adapter.parser_version())
                         {
+                            // In practice unreachable from this call site -- `source` came
+                            // from `adapter.enumerate()`, which only returns paths that exist
+                            // right now -- but `needs_backfill` is a general predicate, and a
+                            // merged row reached some other way must not be treated as a
+                            // normal reparse (there is nothing local to parse it from).
+                            Ok(Some(BackfillReason::SourceUnavailable)) => {
+                                sources_unavailable += 1;
+                                continue;
+                            }
                             Ok(Some(reason)) => {
                                 backfill_reason = Some(reason);
                             }
@@ -280,6 +294,9 @@ impl Scanner {
                         match backfill_reason {
                             Some(BackfillReason::StaleParserVersion) => reparsed_sessions += 1,
                             Some(BackfillReason::MissingDerivedField) => backfilled_sessions += 1,
+                            // Unreachable: the `SourceUnavailable` arm above always
+                            // `continue`s before a parse is even attempted.
+                            Some(BackfillReason::SourceUnavailable) => sources_unavailable += 1,
                             None => scanned_sessions += 1,
                         }
                     }
@@ -326,6 +343,7 @@ impl Scanner {
             skipped_unchanged,
             backfilled_sessions,
             reparsed_sessions,
+            sources_unavailable,
             errors_encountered,
             total_indexed_sessions,
             aggregate_stats,
