@@ -9,7 +9,10 @@ use std::sync::{Arc, Mutex};
 
 use agentworth_adapter_sdk::SessionSource;
 use agentworth_outcomes::outcome_rank;
-use agentworth_schema::{AgentWorthTrace, EventPayload, FileActionType, OutcomeKind, TokenUsage};
+use agentworth_schema::{
+    compaction_rounds, AgentWorthTrace, CompactionRound, EventPayload, FileActionType, OutcomeKind,
+    TokenUsage,
+};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use directories::BaseDirs;
@@ -441,6 +444,18 @@ impl Storage {
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS session_compaction (
+                session_id TEXT NOT NULL,
+                round INTEGER NOT NULL,
+                start_seq INTEGER NOT NULL,
+                end_seq INTEGER NOT NULL,
+                summary_seq INTEGER,
+                tokens_before INTEGER,
+                summary_tokens INTEGER,
+                PRIMARY KEY(session_id, round),
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS session_model_usage (
                 session_id TEXT NOT NULL,
                 model TEXT NOT NULL,
@@ -633,24 +648,41 @@ impl Storage {
     /// unchanged source is unchanged forever, so a row stuck in this state would otherwise
     /// never get rescanned.
     ///
-    /// Only checks `prompt_preview`. `compaction_count` and `compaction_tokens_dropped`
-    /// can't be used for this: their columns are `NOT NULL DEFAULT 0`, so the `ALTER TABLE`
-    /// that added them already stamped every pre-existing row with `0`, indistinguishable
-    /// from "genuinely never compacted" (see the caveat on `get_compaction_outcome_correlation`).
+    /// Two conditions, both unambiguous:
+    ///
+    /// - `prompt_preview` is null or empty. It's nullable and every real user-initiated session
+    ///   has a non-empty first user message, so "missing" means "the extractor didn't exist
+    ///   when this row was written."
+    /// - `compaction_count > 0` with no `session_compaction` rows. The round-boundary table
+    ///   (this PR) is populated in the same transaction as the count, so a row that has the
+    ///   count and not the boundaries predates the table. This fires at most once per session:
+    ///   the reparse writes the rows, and a session that genuinely compacted always derives at
+    ///   least one round from the same events the count came from.
+    ///
+    /// `compaction_count` alone still can't drive this, for the reason it couldn't before:
+    /// its column is `NOT NULL DEFAULT 0`, so the `ALTER TABLE` that added it stamped every
+    /// pre-existing row with `0`, indistinguishable from "genuinely never compacted" (see the
+    /// caveat on `get_compaction_outcome_correlation`). Only a *non-zero* count is evidence.
     /// `source_mtime_epoch_secs` is joined from `sources.mtime`, which is written in the same
     /// transaction as the session row, so it's never missing for a row that has a `sources`
-    /// entry at all. `prompt_preview` is the one column where "missing" is unambiguous: it's
-    /// nullable and every real user-initiated session has a non-empty first user message.
-    /// A caller that reparses on `true` here backfills all three anyway, since parsing is
-    /// all-or-nothing.
+    /// entry at all. A caller that reparses on `true` here backfills everything anyway, since
+    /// parsing is all-or-nothing.
     pub fn needs_backfill(&self, source_path: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut stmt =
-            conn.prepare("SELECT prompt_preview FROM sessions WHERE source_path = ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT s.prompt_preview, s.compaction_count,
+                    (SELECT COUNT(*) FROM session_compaction c WHERE c.session_id = s.session_id)
+             FROM sessions s WHERE s.source_path = ?1",
+        )?;
         let mut rows = stmt.query(params![source_path])?;
         while let Some(row) = rows.next()? {
             let prompt_preview: Option<String> = row.get(0)?;
             if prompt_preview.as_deref().unwrap_or("").trim().is_empty() {
+                return Ok(true);
+            }
+            let compaction_count: i64 = row.get(1)?;
+            let stored_rounds: i64 = row.get(2)?;
+            if compaction_count > 0 && stored_rounds == 0 {
                 return Ok(true);
             }
         }
@@ -692,6 +724,7 @@ impl Storage {
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM file_modifications WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM session_model_usage WHERE session_id = ?1", params![session_id])?;
+        tx.execute("DELETE FROM session_compaction WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM sessions WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM sources WHERE source_path = ?1", params![source_path])?;
         tx.commit()?;
@@ -881,8 +914,64 @@ impl Storage {
             )?;
         }
 
+        // 5. Replace this session's compaction round boundaries. Delete-then-insert for the
+        // same reason as step 4: a rescan of a session that has since compacted again must not
+        // leave the old round list behind, and a round that moved must not double up.
+        tx.execute(
+            "DELETE FROM session_compaction WHERE session_id = ?1",
+            params![trace.session_id],
+        )?;
+        for round in compaction_rounds(trace) {
+            tx.execute(
+                r#"
+                INSERT INTO session_compaction (
+                    session_id, round, start_seq, end_seq, summary_seq,
+                    tokens_before, summary_tokens
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "#,
+                params![
+                    trace.session_id,
+                    round.round as i64,
+                    round.start_seq as i64,
+                    round.end_seq as i64,
+                    round.summary_seq.map(|s| s as i64),
+                    round.tokens_before.map(|t| t as i64),
+                    round.summary_tokens.map(|t| t as i64),
+                ],
+            )?;
+        }
+
         tx.commit()?;
         Ok(())
+    }
+
+    /// Every stored compaction round for one session, in round order.
+    ///
+    /// Empty both for a session that never compacted and for one indexed before this table
+    /// existed. Those are told apart by `compaction_count`, which is why `needs_backfill`
+    /// compares the two rather than treating an empty result as an answer.
+    pub fn get_compaction_rounds(&self, session_id: &str) -> Result<Vec<CompactionRound>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT round, start_seq, end_seq, summary_seq, tokens_before, summary_tokens
+             FROM session_compaction WHERE session_id = ?1 ORDER BY round",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(CompactionRound {
+                round: row.get::<_, i64>(0)? as u32,
+                start_seq: row.get::<_, i64>(1)? as u64,
+                end_seq: row.get::<_, i64>(2)? as u64,
+                summary_seq: row.get::<_, Option<i64>>(3)?.map(|v| v as u64),
+                tokens_before: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
+                summary_tokens: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     /// Upsert an indexed trace into the database atomically.
@@ -3121,6 +3210,108 @@ mod tests {
         assert!(
             !storage.needs_backfill("/path/never-indexed.jsonl").unwrap(),
             "no existing row is a normal new-source scan, not a backfill"
+        );
+    }
+
+    fn compacted_trace(session_id: &str, source_path: &str) -> AgentWorthTrace {
+        let start = Utc::now();
+        let prov = Provenance::new(source_path, "claude_code", 100, 100, "fp_compacted");
+        let mut trace = AgentWorthTrace::new(session_id, "claude_code", prov, start);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage { content: "do the thing".to_string() },
+        ));
+        trace.events.push(NormalizedEvent::new(
+            2,
+            start + Duration::seconds(1),
+            EventPayload::AssistantMessage { content: "on it".to_string(), thinking: None },
+        ));
+        trace.events.push(NormalizedEvent::new(
+            3,
+            start + Duration::seconds(2),
+            EventPayload::Compaction(agentworth_schema::CompactionEvent {
+                trigger: "manual".to_string(),
+                pre_tokens: Some(700_000),
+                post_tokens: Some(21_000),
+                dropped_tokens: Some(679_000),
+                duration_ms: None,
+            }),
+        ));
+        trace.events.push(NormalizedEvent::new(
+            4,
+            start + Duration::seconds(3),
+            EventPayload::Custom {
+                kind: agentworth_schema::COMPACT_SUMMARY_KIND.to_string(),
+                data: serde_json::json!({"message": {"content": "summary text"}}),
+            },
+        ));
+        trace.recalculate_stats();
+        trace
+    }
+
+    /// The round-boundary table is written by the same transaction as the session row, and a
+    /// rescan replaces it rather than appending -- the failure a plain insert would produce on
+    /// the second scan of an unchanged session.
+    #[test]
+    fn test_compaction_rounds_persist_and_replace_on_rescan() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let trace = compacted_trace("sess_rounds", "/path/rounds.jsonl");
+        storage.upsert_trace(&trace).expect("upsert");
+
+        let rounds = storage.get_compaction_rounds("sess_rounds").expect("rounds");
+        assert_eq!(rounds.len(), 1);
+        assert_eq!(rounds[0].round, 1);
+        assert_eq!((rounds[0].start_seq, rounds[0].end_seq), (1, 2));
+        assert_eq!(rounds[0].summary_seq, Some(4));
+        assert_eq!(rounds[0].tokens_before, Some(700_000));
+        assert_eq!(rounds[0].summary_tokens, Some(21_000));
+
+        storage.upsert_trace(&trace).expect("rescan");
+        assert_eq!(
+            storage.get_compaction_rounds("sess_rounds").unwrap().len(),
+            1,
+            "a rescan must replace the round list, not append to it"
+        );
+
+        assert!(
+            storage.get_compaction_rounds("no_such_session").unwrap().is_empty(),
+            "an unknown session has no rounds, and that is not an error"
+        );
+    }
+
+    /// A session indexed before `session_compaction` existed carries `compaction_count > 0`
+    /// and no round rows. That shape must reparse exactly once: flagged before the reparse,
+    /// quiet after it, so the scanner doesn't re-read a 68 MB JSONL on every run forever.
+    #[test]
+    fn test_needs_backfill_flags_a_compacted_session_with_no_round_rows_once() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let trace = compacted_trace("sess_backfill", "/path/backfill.jsonl");
+        storage.upsert_trace(&trace).expect("upsert");
+
+        assert!(
+            !storage.needs_backfill("/path/backfill.jsonl").unwrap(),
+            "a freshly written row has its rounds already"
+        );
+
+        // Reproduce the pre-migration shape: the count without the boundaries.
+        {
+            let conn = storage.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            conn.execute(
+                "DELETE FROM session_compaction WHERE session_id = 'sess_backfill'",
+                [],
+            )
+            .expect("drop round rows");
+        }
+        assert!(
+            storage.needs_backfill("/path/backfill.jsonl").unwrap(),
+            "compaction_count > 0 with no round rows is a row that predates the table"
+        );
+
+        storage.upsert_trace(&trace).expect("reparse");
+        assert!(
+            !storage.needs_backfill("/path/backfill.jsonl").unwrap(),
+            "the reparse must settle it -- this predicate fires at most once per session"
         );
     }
 
