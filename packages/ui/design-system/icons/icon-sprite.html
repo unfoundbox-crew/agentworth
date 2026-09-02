@@ -1,0 +1,534 @@
+<!-- @dsCard group="Icons" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentWorth DS — Icon sprite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+
+:root {
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --mv-ground: #ffffff;
+  --mv-surface: #f4f4f5;
+  --mv-surface-2: #efeff1;
+  --mv-surface-3: #e4e4e7;
+  --mv-border: #e4e4e7;
+  --mv-border-soft: #ececee;
+  --mv-ink: #111113;
+  --mv-text: #3f3f46;
+  --mv-muted: #52525b;
+  --mv-faint: #a1a1aa;
+  --mv-accent: #7c6bb3;
+
+  --mv-cat-1: #6b7fc7;
+  --mv-cat-2: #c78a4a;
+  --mv-cat-3: #4f9d76;
+  --mv-cat-4: #b06a94;
+  --mv-cat-5: #5b9bb5;
+  --mv-cat-6: #a3843f;
+  --mv-cat-7: #8b74c4;
+  --mv-cat-8: #9a9aa4;
+  --mv-accent-soft: rgba(124, 107, 179, 0.08);
+  --mv-accent-border: rgba(124, 107, 179, 0.28);
+  --mv-accent-contrast: #ffffff;
+
+  --mv-success: #15803d;
+  --mv-success-soft: rgba(21, 128, 61, 0.08);
+  --mv-success-border: rgba(21, 128, 61, 0.28);
+  --mv-warn: #b45309;
+  --mv-warn-soft: rgba(180, 83, 9, 0.08);
+  --mv-warn-border: rgba(180, 83, 9, 0.28);
+  --mv-danger: #b91c1c;
+  --mv-danger-soft: rgba(185, 28, 28, 0.08);
+  --mv-danger-border: rgba(185, 28, 28, 0.28);
+
+  --mv-rise: 10px;
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 220ms;
+  --motion-slower: 300ms;
+  --motion-exit: 120ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-enter-scale: 0.98;
+  --stagger-step: 40ms;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --mv-ground: #000000;
+    --mv-surface: #18181b;
+    --mv-surface-2: #1d1d20;
+    --mv-surface-3: #27272a;
+    --mv-border: #2a2a2d;
+    --mv-border-soft: #1c1c1f;
+    --mv-ink: #ffffff;
+    --mv-text: #d4d4d8;
+    --mv-muted: #a1a1aa;
+    --mv-faint: #52525b;
+    --mv-accent: #a396d6;
+    --mv-accent-soft: rgba(163, 150, 214, 0.1);
+    --mv-accent-border: rgba(163, 150, 214, 0.3);
+    --mv-accent-contrast: #0d0d0f;
+
+    --mv-success: #34d399;
+    --mv-success-soft: rgba(52, 211, 153, 0.1);
+    --mv-success-border: rgba(52, 211, 153, 0.3);
+    --mv-warn: #fbbf24;
+    --mv-warn-soft: rgba(251, 191, 36, 0.1);
+    --mv-warn-border: rgba(251, 191, 36, 0.3);
+    --mv-danger: #f87171;
+    --mv-danger-soft: rgba(248, 113, 113, 0.1);
+    --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+    --mv-cat-1: #8b9ee0;
+    --mv-cat-2: #dda86a;
+    --mv-cat-3: #6fbf95;
+    --mv-cat-4: #cd8ab2;
+    --mv-cat-5: #7bb9d2;
+    --mv-cat-6: #c3a45c;
+    --mv-cat-7: #a996dd;
+    --mv-cat-8: #b4b4bd;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --mv-ground: #000000;
+  --mv-surface: #18181b;
+  --mv-surface-2: #1d1d20;
+  --mv-surface-3: #27272a;
+  --mv-border: #2a2a2d;
+  --mv-border-soft: #1c1c1f;
+  --mv-ink: #ffffff;
+  --mv-text: #d4d4d8;
+  --mv-muted: #a1a1aa;
+  --mv-faint: #52525b;
+  --mv-accent: #a396d6;
+  --mv-accent-soft: rgba(163, 150, 214, 0.1);
+  --mv-accent-border: rgba(163, 150, 214, 0.3);
+  --mv-accent-contrast: #0d0d0f;
+
+  --mv-success: #34d399;
+  --mv-success-soft: rgba(52, 211, 153, 0.1);
+  --mv-success-border: rgba(52, 211, 153, 0.3);
+  --mv-warn: #fbbf24;
+  --mv-warn-soft: rgba(251, 191, 36, 0.1);
+  --mv-warn-border: rgba(251, 191, 36, 0.3);
+  --mv-danger: #f87171;
+  --mv-danger-soft: rgba(248, 113, 113, 0.1);
+  --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+  --mv-cat-1: #8b9ee0;
+  --mv-cat-2: #dda86a;
+  --mv-cat-3: #6fbf95;
+  --mv-cat-4: #cd8ab2;
+  --mv-cat-5: #7bb9d2;
+  --mv-cat-6: #c3a45c;
+  --mv-cat-7: #a996dd;
+  --mv-cat-8: #b4b4bd;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --mv-rise: 0px;
+    --motion-enter-scale: 1;
+    --stagger-step: 0ms;
+  }
+}
+
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--mv-ground);
+  color: var(--mv-text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--mv-accent-soft); }
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
+  border-radius: 4px;
+}
+
+a { color: var(--mv-accent); }
+
+.card-shell {
+  max-width: 1080px;
+  margin-inline: auto;
+  padding: 0 clamp(18px, 4vw, 40px) 72px;
+}
+
+.card-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px clamp(18px, 4vw, 40px);
+  border-bottom: 0.5px solid var(--mv-border);
+  background: var(--mv-ground);
+}
+
+.card-eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+
+.card-eyebrow .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mv-accent);
+  display: inline-block;
+  flex: none;
+}
+
+.card-eyebrow .group { color: var(--mv-muted); }
+.card-eyebrow a { color: var(--mv-faint); text-decoration: none; }
+.card-eyebrow a:hover { color: var(--mv-text); }
+
+.card-title {
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  color: var(--mv-ink);
+  margin: 28px 0 10px;
+  text-wrap: balance;
+}
+
+.card-dek {
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 66ch;
+  margin: 0 0 8px;
+}
+
+.card-rule-note {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--mv-muted);
+  max-width: 66ch;
+  margin: 4px 0 0;
+  border-left: 2px solid var(--mv-accent-border);
+  padding-left: 12px;
+}
+
+.sec {
+  padding: 36px 0;
+  border-top: 0.5px solid var(--mv-border);
+}
+.sec:first-of-type { border-top: none; padding-top: 28px; }
+
+.sec-eyebrow {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mv-muted);
+  margin-bottom: 14px;
+}
+
+.sec-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mv-ink);
+  margin: 0 0 12px;
+}
+
+.sec-lede {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 62ch;
+  margin: 0 0 20px;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--mv-border);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.swatch {
+  background: var(--mv-surface);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
+.swatch .chip {
+  width: 100%;
+  height: 44px;
+  border-radius: 8px;
+  border: 0.5px solid var(--mv-border);
+}
+
+.swatch .name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--mv-ink);
+}
+
+.swatch .hex {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+  margin-top: 2px;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.mini-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--mv-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  padding: 0 12px 8px 0;
+  border-bottom: 0.5px solid var(--mv-border);
+}
+.mini-table td {
+  padding: 9px 12px 9px 0;
+  color: var(--mv-text);
+  border-bottom: 0.5px solid var(--mv-border-soft);
+  vertical-align: top;
+}
+.mini-table tr:last-child td { border-bottom: none; }
+.mini-table td.dim { color: var(--mv-muted); }
+
+.code-block {
+  background: var(--mv-surface);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--mv-text);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-muted);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 5px;
+  padding: 2px 7px;
+}
+
+@media (max-width: 640px) {
+  .swatch-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+}
+
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 0.5px solid var(--mv-border);
+  border-radius: 8px;
+  background: var(--mv-surface);
+  flex: none;
+}
+.theme-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.theme-toggle button:hover { color: var(--mv-ink); }
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--mv-surface-3);
+  color: var(--mv-ink);
+}
+
+
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 1px;
+  background: var(--mv-border);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.icon-cell {
+  background: var(--mv-surface);
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.icon-cell .sizes { display: flex; align-items: center; gap: 10px; color: var(--mv-ink); }
+.icon-cell .sizes svg { display: block; }
+.icon-cell .name { font-family: var(--font-mono); font-size: 10.5px; color: var(--mv-muted); text-align: center; }
+.logo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 1px;
+  background: var(--mv-border);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.logo-cell {
+  background: var(--mv-surface);
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--mv-ink);
+}
+.logo-cell .name { font-family: var(--font-mono); font-size: 9.5px; color: var(--mv-muted); }
+
+</style>
+</head>
+<body>
+<div class="card-topbar">
+  <div class="card-eyebrow"><a href="../index.html">&larr; Index</a><span class="dot"></span><span class="group">Icons</span></div>
+  <div class="theme-toggle" role="group" aria-label="Theme">
+  <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+  <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+  <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+</div>
+</div>
+<div class="card-shell">
+  <h1 class="card-title">Icon sprite</h1>
+  <p class="card-dek">Every dsIcon, the marketing set, the brand mark, and a sample of the real adapter logos — at 16, 20, and 24px.</p>
+  
+<section class="sec">
+  <span class="sec-eyebrow">01 — Brand mark</span>
+  <h2 class="sec-title">The receipt mark</h2>
+  <div class="icon-grid">
+    <div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 32 32" aria-label="AgentWorth" aria-hidden="true"><path fill="var(--mv-ink)" fill-rule="evenodd" d="M7 6.4A2.4 2.4 0 0 1 9.4 4H22.6A2.4 2.4 0 0 1 25 6.4V25.6L22.75 23.2 20.5 25.6 18.25 23.2 16 25.6 13.75 23.2 11.5 25.6 9.25 23.2 7 25.6ZM11.5 8.8H20.5A1.1 1.1 0 0 1 20.5 11H11.5A1.1 1.1 0 0 1 11.5 8.8ZM11.5 13H16.3A1.1 1.1 0 0 1 16.3 15.2H11.5A1.1 1.1 0 0 1 11.5 13Z"/><path fill="var(--mv-accent)" d="M11.8 17.2H20.2A1.4 1.4 0 0 1 20.2 20H11.8A1.4 1.4 0 0 1 11.8 17.2Z"/></svg><svg width="20" height="20" viewBox="0 0 32 32" aria-label="AgentWorth" aria-hidden="true"><path fill="var(--mv-ink)" fill-rule="evenodd" d="M7 6.4A2.4 2.4 0 0 1 9.4 4H22.6A2.4 2.4 0 0 1 25 6.4V25.6L22.75 23.2 20.5 25.6 18.25 23.2 16 25.6 13.75 23.2 11.5 25.6 9.25 23.2 7 25.6ZM11.5 8.8H20.5A1.1 1.1 0 0 1 20.5 11H11.5A1.1 1.1 0 0 1 11.5 8.8ZM11.5 13H16.3A1.1 1.1 0 0 1 16.3 15.2H11.5A1.1 1.1 0 0 1 11.5 13Z"/><path fill="var(--mv-accent)" d="M11.8 17.2H20.2A1.4 1.4 0 0 1 20.2 20H11.8A1.4 1.4 0 0 1 11.8 17.2Z"/></svg><svg width="24" height="24" viewBox="0 0 32 32" aria-label="AgentWorth" aria-hidden="true"><path fill="var(--mv-ink)" fill-rule="evenodd" d="M7 6.4A2.4 2.4 0 0 1 9.4 4H22.6A2.4 2.4 0 0 1 25 6.4V25.6L22.75 23.2 20.5 25.6 18.25 23.2 16 25.6 13.75 23.2 11.5 25.6 9.25 23.2 7 25.6ZM11.5 8.8H20.5A1.1 1.1 0 0 1 20.5 11H11.5A1.1 1.1 0 0 1 11.5 8.8ZM11.5 13H16.3A1.1 1.1 0 0 1 16.3 15.2H11.5A1.1 1.1 0 0 1 11.5 13Z"/><path fill="var(--mv-accent)" d="M11.8 17.2H20.2A1.4 1.4 0 0 1 20.2 20H11.8A1.4 1.4 0 0 1 11.8 17.2Z"/></svg></div><div class="name">BrandMark</div></div>
+  </div>
+  <p class="card-rule-note">Two neutral line items over one heavier violet bar — the total, the number that got checked. Inlined as <code>packages/ui/BrandMark.tsx</code> with <code>--mv-ink</code> / <code>--mv-accent</code> fills, so it never needs a separate <code>-dark</code> file. Clear space: one line-item bar height (1/8 of the mark) on every side.</p>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">02 — Marketing set</span>
+  <h2 class="sec-title">packages/ui/icons.tsx — 20x20, round caps</h2>
+  <p class="sec-lede">Hand-drawn on a shared 20x20 stroke grid: strokeWidth 1.6, round caps and joins, <code>fill: none</code>. Belongs to the landing/chrome components.</p>
+  <div class="icon-grid"><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/><path d="M5 12.5h-.5A1.5 1.5 0 0 1 3 11V4.5A1.5 1.5 0 0 1 4.5 3H11a1.5 1.5 0 0 1 1.5 1.5V5"/></svg><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/><path d="M5 12.5h-.5A1.5 1.5 0 0 1 3 11V4.5A1.5 1.5 0 0 1 4.5 3H11a1.5 1.5 0 0 1 1.5 1.5V5"/></svg><svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/><path d="M5 12.5h-.5A1.5 1.5 0 0 1 3 11V4.5A1.5 1.5 0 0 1 4.5 3H11a1.5 1.5 0 0 1 1.5 1.5V5"/></svg></div><div class="name">IconCopy</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg></div><div class="name">IconCheck</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 10h13M11 4.5l5.5 5.5-5.5 5.5"/></svg><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 10h13M11 4.5l5.5 5.5-5.5 5.5"/></svg><svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 10h13M11 4.5l5.5 5.5-5.5 5.5"/></svg></div><div class="name">IconArrowRight</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 14L14 6M8 6h6v6"/></svg><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 14L14 6M8 6h6v6"/></svg><svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 14L14 6M8 6h6v6"/></svg></div><div class="name">IconArrowUpRight</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.3l6.2 2.25v4.9c0 4.15-2.66 7.05-6.2 8.05-3.54-1-6.2-3.9-6.2-8.05v-4.9L10 2.3Z"/><path d="M7 10.1l2.1 2.1 3.9-4.3"/></svg><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.3l6.2 2.25v4.9c0 4.15-2.66 7.05-6.2 8.05-3.54-1-6.2-3.9-6.2-8.05v-4.9L10 2.3Z"/><path d="M7 10.1l2.1 2.1 3.9-4.3"/></svg><svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.3l6.2 2.25v4.9c0 4.15-2.66 7.05-6.2 8.05-3.54-1-6.2-3.9-6.2-8.05v-4.9L10 2.3Z"/><path d="M7 10.1l2.1 2.1 3.9-4.3"/></svg></div><div class="name">IconShieldCheck</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="10" cy="5.2" rx="6" ry="2.3"/><path d="M4 5.2v9.6c0 1.27 2.69 2.3 6 2.3s6-1.03 6-2.3V5.2"/><path d="M4 10c0 1.27 2.69 2.3 6 2.3s6-1.03 6-2.3"/></svg><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="10" cy="5.2" rx="6" ry="2.3"/><path d="M4 5.2v9.6c0 1.27 2.69 2.3 6 2.3s6-1.03 6-2.3V5.2"/><path d="M4 10c0 1.27 2.69 2.3 6 2.3s6-1.03 6-2.3"/></svg><svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="10" cy="5.2" rx="6" ry="2.3"/><path d="M4 5.2v9.6c0 1.27 2.69 2.3 6 2.3s6-1.03 6-2.3V5.2"/><path d="M4 10c0 1.27 2.69 2.3 6 2.3s6-1.03 6-2.3"/></svg></div><div class="name">IconDatabase</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.7 6.6A6 6 0 0 0 5.1 8.6"/><path d="M4.3 13.4A6 6 0 0 0 14.9 11.4"/><path d="M15.7 3.4v3.4h-3.4"/><path d="M4.3 16.6v-3.4h3.4"/></svg><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.7 6.6A6 6 0 0 0 5.1 8.6"/><path d="M4.3 13.4A6 6 0 0 0 14.9 11.4"/><path d="M15.7 3.4v3.4h-3.4"/><path d="M4.3 16.6v-3.4h3.4"/></svg><svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.7 6.6A6 6 0 0 0 5.1 8.6"/><path d="M4.3 13.4A6 6 0 0 0 14.9 11.4"/><path d="M15.7 3.4v3.4h-3.4"/><path d="M4.3 16.6v-3.4h3.4"/></svg></div><div class="name">IconRefresh</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.5 5.73.5 12c0 5.09 3.29 9.39 7.86 10.91.57.1.78-.25.78-.55 0-.27-.01-1.16-.02-2.11-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.05 11.05 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.64 1.59.24 2.76.12 3.05.74.8 1.19 1.83 1.19 3.09 0 4.43-2.69 5.41-5.25 5.69.41.36.78 1.07.78 2.15 0 1.55-.01 2.8-.01 3.18 0 .3.2.66.79.55A10.52 10.52 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z"/></svg><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.5 5.73.5 12c0 5.09 3.29 9.39 7.86 10.91.57.1.78-.25.78-.55 0-.27-.01-1.16-.02-2.11-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.05 11.05 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.64 1.59.24 2.76.12 3.05.74.8 1.19 1.83 1.19 3.09 0 4.43-2.69 5.41-5.25 5.69.41.36.78 1.07.78 2.15 0 1.55-.01 2.8-.01 3.18 0 .3.2.66.79.55A10.52 10.52 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z"/></svg><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.5 5.73.5 12c0 5.09 3.29 9.39 7.86 10.91.57.1.78-.25.78-.55 0-.27-.01-1.16-.02-2.11-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.05 11.05 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.64 1.59.24 2.76.12 3.05.74.8 1.19 1.83 1.19 3.09 0 4.43-2.69 5.41-5.25 5.69.41.36.78 1.07.78 2.15 0 1.55-.01 2.8-.01 3.18 0 .3.2.66.79.55A10.52 10.52 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z"/></svg></div><div class="name">IconGithub</div></div></div>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">03 — Dashboard set</span>
+  <h2 class="sec-title">apps/dashboard/src/shell/dsIcons.tsx — 24x24, square caps</h2>
+  <p class="sec-lede">A deliberately different construction from the marketing set: 1.5px stroke, square caps, miter joins, on a 24x24 grid — ported from the shell's own icon sprite. Do not mix the two grids in one screen.</p>
+  <div class="icon-grid"><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><rect x="3" y="5" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><circle cx="7" cy="8" r=".85" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r=".85" fill="currentColor" stroke="none"/></svg><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><rect x="3" y="5" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><circle cx="7" cy="8" r=".85" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r=".85" fill="currentColor" stroke="none"/></svg><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><rect x="3" y="5" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><circle cx="7" cy="8" r=".85" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r=".85" fill="currentColor" stroke="none"/></svg></div><div class="name">IconDock</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M3.5 18a8.5 8.5 0 0 1 17 0"/><path d="M12 18 16.5 10.5"/></svg><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M3.5 18a8.5 8.5 0 0 1 17 0"/><path d="M12 18 16.5 10.5"/></svg><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M3.5 18a8.5 8.5 0 0 1 17 0"/><path d="M12 18 16.5 10.5"/></svg></div><div class="name">IconMeter</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1"/></svg><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1"/></svg><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1"/></svg></div><div class="name">IconCargo</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8 20.5 20.5"/></svg><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8 20.5 20.5"/></svg><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8 20.5 20.5"/></svg></div><div class="name">IconProbe</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 3v12M7 10.5 12 15.5l5-5M4 20h16"/></svg><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 3v12M7 10.5 12 15.5l5-5M4 20h16"/></svg><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M12 3v12M7 10.5 12 15.5l5-5M4 20h16"/></svg></div><div class="name">IconDownload</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.2 10.8 15 16 9.8"/></svg><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.2 10.8 15 16 9.8"/></svg><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.2 10.8 15 16 9.8"/></svg></div><div class="name">IconVerified</div></div><div class="icon-cell"><div class="sizes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke-dasharray="2.4 3"/></svg><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke-dasharray="2.4 3"/></svg><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke-dasharray="2.4 3"/></svg></div><div class="name">IconUnflown</div></div></div>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">04 — Adapter logos</span>
+  <h2 class="sec-title">Real vendor marks — a sample of the set</h2>
+  <p class="sec-lede">Sourced from the Dashboard Icons project (homarr-labs/dashboard-icons), Apache License 2.0. Single-color sources are recolored to <code>currentColor</code>; genuinely multi-color brand marks (Codex, Gemini, Qwen) keep real hex/gradient values. Adapters with no catalog match fall back to a plain initials monogram. Full set of 15+ lives in <code>apps/dashboard/src/components/AgentLogos.tsx</code> — this card samples six to show both treatments.</p>
+  <div class="logo-grid"><div class="logo-cell"><svg width="24" height="24" viewBox="0 0 1200 1200" fill="currentColor" aria-hidden="true"><path d="m233.96 800.215 234.684-131.678 3.947-11.436-3.947-6.363h-11.436l-39.221-2.416-134.094-3.624-116.296-4.832-112.67-6.04-28.35-6.04L0 592.751l2.738-17.477 23.84-16.027 34.147 2.98 75.463 5.155 113.235 7.812 82.147 4.832 121.692 12.644h19.329l2.738-7.812-6.604-4.832-5.154-4.832-117.182-79.41-126.845-83.92-66.443-48.321-35.92-24.484-18.12-22.953-7.813-50.093 32.618-35.92 43.812 2.98 11.195 2.98 44.375 34.147 94.792 73.37 123.786 91.167 18.12 15.06 7.249-5.154.886-3.624-8.135-13.61-67.329-121.692-71.838-123.785-31.974-51.302-8.456-30.765c-2.98-12.645-5.154-23.275-5.154-36.242l37.127-50.416 20.537-6.604 49.53 6.604 20.86 18.121 30.765 70.39 49.852 110.818 77.315 150.684 22.631 44.698 12.08 41.396 4.51 12.645h7.813v-7.248l6.362-84.886 11.759-104.215 11.436-134.094 3.946-37.772 18.685-45.262L697.53 24l28.994 13.852L750.363 72l-3.303 22.067-14.174 92.134-27.785 144.323-18.121 96.644h10.55l12.08-12.08 48.887-64.913 82.147-102.685 36.242-40.752 42.282-45.02 27.14-21.423h51.303l37.772 56.135-16.913 57.986-52.832 67.007-43.812 56.779-62.82 84.563-39.22 67.651 3.623 5.396 9.343-.886 141.906-30.201 76.671-13.852 91.49-15.705 41.396 19.329 4.51 19.65-16.269 40.189-97.852 24.16L959.84 601.45l-170.9 40.43-2.093 1.53 2.416 2.98 76.993 7.248 32.94 1.771h80.617l150.12 11.195 39.222 25.933 23.517 31.732-3.946 24.16-60.403 30.766-81.503-19.33-190.228-45.26-65.235-16.27h-9.02v5.397l54.362 53.154 99.624 89.96 124.752 115.973 6.362 28.671-16.027 22.63-16.912-2.415-109.611-82.47-42.282-37.127-95.758-80.618h-6.363v8.456l22.067 32.296 116.537 175.167 6.04 53.719-8.456 17.476-30.201 10.55-33.181-6.04-68.215-95.758-70.39-107.84-56.778-96.644-6.926 3.947-33.503 360.886-15.705 18.443L565.53 1200l-30.201-22.953-16.027-37.127 16.027-73.37 19.329-95.758 15.704-76.107 14.175-94.55 8.456-31.41-.563-2.094-6.927.886-71.275 97.852-108.402 146.497-85.772 91.812-20.537 8.134-35.597-18.443 3.301-32.94 19.893-29.315 118.712-151.007 71.597-93.583 46.228-54.04-.322-7.813h-2.738L205.289 929.396l-56.135 7.248-24.16-22.63 2.98-37.128 11.435-12.08 94.792-65.236-.322.323Z"/></svg><div class="name">Claude</div></div><div class="logo-cell"><svg width="24" height="24" viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="256" fill="#000"/><circle cx="256" cy="256" r="69" fill="none" stroke="#c07000" stroke-width="58.5"/><path fill="#e08800" d="M256 139c-93.6 0-173.7 47.6-206.2 114.8l-1.3 2.7 1.3 2.7C82.2 326.4 162.4 374 256 374s173.8-47.6 206.2-114.8l1.3-2.7-1.3-2.7C430.3 186.6 350.1 139 256.5 139Zm0 18.7c84.8 0 154.9 38.6 185.6 98.8-30.7 60.2-100.7 98.8-185.6 98.8s-154.9-38.6-185.5-98.8c30.6-60.2 100.7-98.8 185.5-98.8"/></svg><div class="name">Codex</div></div><div class="logo-cell"><svg width="24" height="24" viewBox="0 0 65 65" aria-hidden="true"><path fill="url(#gg1)" d="M32.447 0c.68 0 1.273.465 1.439 1.125a39 39 0 0 0 1.999 5.905q3.23 7.5 8.854 13.125 5.626 5.626 13.125 8.855a39 39 0 0 0 5.906 1.999c.66.166 1.124.758 1.124 1.438s-.464 1.273-1.125 1.439a39 39 0 0 0-5.905 1.999q-7.5 3.23-13.125 8.854-5.625 5.626-8.854 13.125a39 39 0 0 0-2 5.906 1.485 1.485 0 0 1-1.438 1.124c-.68 0-1.272-.464-1.438-1.125a39 39 0 0 0-2-5.905q-3.227-7.5-8.854-13.125-5.625-5.625-13.125-8.854a39 39 0 0 0-5.905-2A1.485 1.485 0 0 1 0 32.448c0-.68.465-1.272 1.125-1.438a39 39 0 0 0 5.905-2q7.5-3.228 13.125-8.854 5.626-5.624 8.855-13.125a39 39 0 0 0 1.999-5.905A1.485 1.485 0 0 1 32.447 0"/><defs><linearGradient id="gg1" x1="18.447" x2="52.153" y1="43.42" y2="15.004" gradientUnits="userSpaceOnUse"><stop stop-color="#4893fc"/><stop offset=".777" stop-color="#969dff"/><stop offset="1" stop-color="#bd99fe"/></linearGradient></defs></svg><div class="name">Gemini</div></div><div class="logo-cell"><svg width="24" height="24" viewBox="27.55 17.52 147.28 145.51" aria-hidden="true"><path fill="url(#qg1)" d="M174.82 108.75 155.38 75l10.26-17.25c.82-1.44.82-3.22 0-4.66l-10.26-17.25a2.97 2.97 0 0 0-2.6-1.51h-37.9l-8.74-15.3a2.97 2.97 0 0 0-2.6-1.51H83.3c-1.09 0-2.08.58-2.6 1.51L61.26 52.77H41.02c-1.09 0-2.08.58-2.6 1.51L28.16 71.53a4.72 4.72 0 0 0 0 4.66l17.36 31.31-8.74 15.3a4.72 4.72 0 0 0 0 4.66l10.26 17.25c.52.93 1.51 1.51 2.6 1.51h37.9l8.74 15.3c.52.93 1.51 1.51 2.6 1.51h20.24c1.09 0 2.08-.58 2.6-1.51l19.44-33.74h17.36c1.09 0 2.08-.58 2.6-1.51l10.26-17.25c.82-1.44.82-3.22 0-4.66z"/><path fill="#fff" d="M119.12 163.03H98.88l-11.34-18.32h-37.9l11.62-18.32H80.7l-42.28-71.1h22.84L83.3 19.03l10.26 18.32L83.3 55.29h78.28l-10.26 17.25 19.44 33.74h-19.44l-10.16-17.94-39.98 74.69z"/><path fill="url(#qg1)" d="M127.86 79.83H76.14l25.04 42.28z"/><defs><radialGradient id="qg1" cx="0" cy="0" r="1" gradientTransform="rotate(90 0 100)scale(100)" gradientUnits="userSpaceOnUse"><stop stop-color="#665cee"/><stop offset="1" stop-color="#332e91"/></radialGradient></defs></svg><div class="name">Qwen</div></div><div class="logo-cell"><svg width="24" height="24" viewBox="-30 0 300 300" fill="currentColor" aria-hidden="true"><path fill-opacity=".55" d="M180 240H60V120h120z"/><path d="M180 60H60v180h120zm60 240H0V0h240z"/></svg><div class="name">OpenCode</div></div><div class="logo-cell"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor" fill-opacity="0.12"/><text x="12" y="12.5" text-anchor="middle" dominant-baseline="middle" font-size="9.5" font-weight="600" fill="currentColor">Cu</text></svg><div class="name">Cursor (fallback)</div></div></div>
+  <p class="card-rule-note">Icons are used for identification only and do not imply endorsement, per the Dashboard Icons project's own legal notice. Copyright Bjorn Lammers, Meier Lukas, Thomas Camlong and Homarr Labs.</p>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">05 — Usage rule</span>
+  <h2 class="sec-title">One glyph, one meaning, one grid per surface</h2>
+  <table class="mini-table">
+    <tr><th>Rule</th><th>Why</th></tr>
+    <tr><td>No emoji, anywhere</td><td class="dim">design.md hard rule 3 — number sections with mono eyebrows instead</td></tr>
+    <tr><td>Never mix the 20x20 round-cap and 24x24 square-cap grids on one screen</td><td class="dim">Different constructions read as two different products</td></tr>
+    <tr><td>Multi-color brand marks keep their real hex</td><td class="dim">A recolored Gemini or Qwen mark stops being recognizable</td></tr>
+    <tr><td>Everything else is <code>currentColor</code></td><td class="dim">Follows text color in both themes for free</td></tr>
+    <tr><td>16 / 20 / 24px are the only sizes shipped</td><td class="dim">Matches the dashboard's rail, list-row, and inline-text contexts</td></tr>
+  </table>
+</section>
+
+</div>
+<script>
+
+(function () {
+  var root = document.documentElement;
+  var STORAGE_KEY = "agentworth-ds-card-theme";
+  var buttons = document.querySelectorAll("[data-theme-choice]");
+
+  function apply(choice) {
+    if (choice === "light" || choice === "dark") {
+      root.setAttribute("data-theme", choice);
+    } else {
+      root.removeAttribute("data-theme");
+    }
+    buttons.forEach(function (btn) {
+      btn.setAttribute("aria-pressed", String(btn.getAttribute("data-theme-choice") === choice));
+    });
+  }
+
+  var stored = "system";
+  try { stored = localStorage.getItem(STORAGE_KEY) || "system"; } catch (e) {}
+  apply(stored);
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var choice = btn.getAttribute("data-theme-choice");
+      apply(choice);
+      try { localStorage.setItem(STORAGE_KEY, choice); } catch (e) {}
+    });
+  });
+})();
+
+
+</script>
+</body>
+</html>

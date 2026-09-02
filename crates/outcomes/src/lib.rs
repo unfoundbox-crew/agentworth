@@ -4,6 +4,7 @@
 //! up to externally verified CI and deployment) and recovery signals (when agents
 //! fix failing tests, compiler errors, and broken states).
 
+pub mod asks;
 pub mod compaction_diff;
 pub mod loops;
 pub mod loose_ends;
@@ -11,6 +12,7 @@ mod outcome;
 mod recovery;
 mod verify;
 
+pub use asks::{find_asks, find_asks_in_trace, Ask, AskPointer, AskStatus, AskedBy};
 pub use compaction_diff::{
     diff_compaction_rounds, CompactionDiff, Evidence, ForgottenStatement, RoundDiff,
     StatementClass, SURVIVAL_JACCARD_THRESHOLD,

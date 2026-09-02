@@ -124,7 +124,9 @@ fn report_for(
     let storage = open_storage(db_path)?;
     let resolved = resolve_session(&storage, session_id, ui)?;
     let scanner = Scanner::new(storage.clone());
-    let (report, trace) = load_handoff(&storage, &scanner, &resolved, options)?;
+    let (report, trace) = crate::ui::with_status(ui, "loading session", || {
+        load_handoff(&storage, &scanner, &resolved, options)
+    })?;
     Ok(if redact {
         report.redacted(&Redactor::new().for_trace(&trace))
     } else {
