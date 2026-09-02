@@ -59,6 +59,11 @@ filled — `docs/specs/README.md` already names it as item 2. A handoff that
 opens with "session `agent-af702e89` touched 14 files" is not a handoff. Fill
 that field first, or this tool ships a title-less document.
 
+> **Corrected during the build.** The *code* has filled `prompt_preview` since
+> #47; every one of those 2,960 rows was written before it and nothing
+> rescanned them. `agentworth scan --force` fills them. See "Shipped" under
+> New work.
+
 Loose ends are further from ready than the sequencing table suggests. #44
 shipped `apps/dashboard/src/utils/looseEnds.ts` — a browser-side detector that
 runs on a trace already loaded into the dashboard. There is no
@@ -175,8 +180,18 @@ answer to one `repo` value, which is what carry-forward wants and what a
 
 **Shipped:**
 
-1. Still empty, and a separate branch is filling it. The tool does not wait: an
-   absent prompt renders as "first prompt not indexed yet" and puts
+1. **Already fixed, in #47, before this spec was written.**
+   `Storage::upsert_session` has populated `prompt_preview` from the first
+   user message since v0.1.10, with a regression test
+   (`test_prompt_preview_extracted_from_first_user_message`). The measurement
+   above — 0 of 2,960 — is true of *rows written before #47*, not of the code:
+   nothing rescanned them, so they still carry the null they were indexed
+   with. Verified on lenovo by scanning a fresh fixture transcript, where the
+   handoff opens with its real task line.
+
+   So the gate this spec called blocking is `agentworth scan --force`, not a
+   missing feature. The tool still does not depend on it: a session indexed
+   before #47 renders "first prompt not indexed yet" and puts
    `prompt_preview_empty` in `gaps`.
 2. Done — `crates/outcomes/src/loose_ends.rs`, verified sentence-for-sentence
    against the TypeScript in node. Two things the port had to get right: the

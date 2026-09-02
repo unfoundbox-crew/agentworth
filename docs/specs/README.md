@@ -17,7 +17,7 @@
 | `questions.md` | proposed | — |
 | `verified-outcome-rate.md` | proposed, measured | — |
 | `suspect-commits.md` | proposed, measured | — |
-| `handoff.md` | built | #TBD — `session_handoff`, `carry_forward`, `agentworth handoff`; `prompt_preview` still unfilled and reported as a gap |
+| `handoff.md` | built | #TBD — `session_handoff`, `carry_forward`, `agentworth handoff`; `prompt_preview` turned out to be filled since #47, only the pre-#47 rows are null |
 | `compaction-diff.md` | proposed, measured | — |
 | `market-autofix.md` | research doc, not a build item | — |
 
@@ -40,7 +40,7 @@ Nothing below is worth judging until this is true.
 | # | What | Spec | Depends on | Shape |
 | :-- | :--- | :--- | :--- | :--- |
 | 1 | `busy_timeout` on SQLite connections | — | nothing | one pragma, one test |
-| 2 | Populate `prompt_preview` | — | nothing | backend, small |
+| 2 | ~~Populate `prompt_preview`~~ **done in #47** | — | a `scan --force` to backfill old rows | backend, small |
 | 3 | Resizable session column | — | nothing | frontend only |
 | 4 | Group by repo / worktree / subagent | — | nothing | frontend only |
 | 4b | MCP server | `mcp-server.md` | the outcome-encoding fix, for one filter param | backend, new module, no frontend |
@@ -58,9 +58,14 @@ Nothing below is worth judging until this is true.
 **1 and 2 are cheap and unblock judgement.** No busy timeout means a write
 collision returns `SQLITE_BUSY` immediately, and `agentworth serve` alongside
 `agentworth scan` already reaches that today. An empty `prompt_preview` is why
-sessions are unrecognisable — `agent-af702e89` tells a human nothing, and the
-field built to fix that has never been filled. Neither is glamorous; both change
-what every screen shows.
+sessions are unrecognisable — `agent-af702e89` tells a human nothing.
+
+**Item 2 was already done and nobody noticed** (found 2026-09-02, building
+`handoff.md`). `Storage::upsert_session` has filled `prompt_preview` from the
+first user message since #47, with a regression test. Every null row predates
+that commit and nothing rescanned it, so what is left is a `scan --force`, not
+a feature. The "never been filled" reading came from measuring the index rather
+than the code, which is worth remembering the next time a column looks dead.
 
 **3 and 4 are free wins already asked for.** Repo, worktree and subagent are all
 derivable from `source_path` with no NLP and no embeddings — a 500-session
@@ -119,7 +124,7 @@ worth drawing.
 | :-- | :--- | :--- | :--- |
 | A | `capability-matrix.md` (in `docs/`, not here) | — | nothing, it is written |
 | B | `verified-outcome-rate.md` | `outcome_rate` | one aggregate query |
-| C | `handoff.md` — **built, #TBD** | `session_handoff`, `carry_forward` | loose ends are ported; `prompt_preview` is still empty and now shows as a `gaps` entry rather than blocking the tool |
+| C | `handoff.md` — **built, #TBD** | `session_handoff`, `carry_forward` | nothing left: loose ends are ported, and `prompt_preview` has been populated since #47 |
 | D | `suspect-commits.md` | `suspect_commits` | absolute-path filtering, then a `session_risk` table |
 | E | `compaction-diff.md` | `forgotten_context` | stored compaction round boundaries |
 
@@ -141,12 +146,13 @@ files sit under `~/code`, 78 in the last eight days. It was sequenced third
 because it looked gated on `prompt_preview` — item 2 of the table above, never
 filled, and the one field a handoff cannot open without.
 
-**Built anyway, and the gate turned out to be softer than it read.** An empty
-`prompt_preview` renders as "first prompt not indexed yet" and lands in `gaps`
-as `prompt_preview_empty`, so the document is honest about the line it is
-missing instead of being blocked on it. Everything else the spec asked for is
-assembled from rows. Fill `prompt_preview` and every handoff gets its title
-with no further work here.
+**Built, and the gate turned out not to exist.** `Storage::upsert_session` has
+filled `prompt_preview` from the first user message since #47; the 2,960 null
+rows were all written before it and nothing rescanned them, so the fix is
+`agentworth scan --force`, not code. Verified by scanning a fresh fixture on
+lenovo — the handoff opens with its real task line. A pre-#47 row still renders
+"first prompt not indexed yet" and lands in `gaps`, so the document is honest
+about what it is missing rather than blocked on it.
 
 **D is fourth because its naive version is wrong.** Measured on this repo's
 main, the obvious join flags 33% of commits and nine of ten sampled flags are
