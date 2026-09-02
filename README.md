@@ -271,6 +271,7 @@ archie session export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | `archie scan [PATHS...]` | Discovers and incrementally indexes agent sessions into local SQLite. |
 | `archie stats [--json]` | Displays machine-wide token totals, top models, top tools, and session counts. |
 | `archie stats usage [--period ...]` | Usage rollups by `day`, `week`, `month`, `year`, or `all` (no period column); group with `--by adapter\|model\|repo` (`model` is usually the useful one -- most sessions share one adapter); filter with `--since <date\|1d\|2w\|3m>`; or rolling 5-hour pacing (`--pacing`). Cost is always an API list-price equivalent, labelled as such, not what a subscription plan actually billed. |
+| `archie stats ladder [--period ...]` | The evidence ladder over a window, the API-equivalent spend that sits below the evidence line, what a verified outcome costs per model (or `--by repo\|adapter\|effort`), and the newest sessions that left evidence. Filter with `--repo`, `--adapter`, `--model`; `--min-n` sets the floor below which a rate and a cost render blank. |
 | `archie repo blame <FILE>` | AI code lineage: finds all agent sessions and prompts that modified a given file. |
 | `archie session list [OPTIONS]` | Tabular directory of indexed sessions (`--limit`, `--adapter`, `--model`, `--json`). |
 | `archie agent list [--json]` | Extraction capability and coverage matrix across all 20 agent adapters. |
@@ -293,50 +294,66 @@ Every command accepts `--plain` (no colour, ASCII-only glyphs, same column posit
 
 `inspect`, `export`, `receipt`, `handoff`, and `forgotten` all take the session ID the same way, and it's always optional. Every one of them also takes `--last` (the newest session for this directory's repository, falling back to the newest session anywhere) and `--current` (an alias of `--last`); `blunder-blame` and `asks` take the same two flags for `--session`. Leave the ID off entirely on a terminal and a picker lists the newest sessions to choose from — type a number, type text to filter by ID, repo, adapter, or prompt, `m` for more, `q` to quit. Off a terminal, or with `--json`, the same list prints as JSON or a plain table and the command exits 2 with `pass a session id or prefix` — nothing is guessed for a script.
 
----
+### Where the spend went
 
-## The cockpit
+`archie stats ladder` is the one screen that answers "of everything I spent, how
+much of it bought something a test, a commit or a CI run can be pointed at."
+Captured at 80 columns from the test fixture — one session on every rung, so the
+whole ladder has something to say. This is the `--plain` rendering, which is what
+a pipe or a redirect gets; on a terminal the meter draws as `● ○` and the rungs
+above the line carry the accent:
 
-Type `archie` with nothing after it and, on a terminal, it opens full screen over the index
-you already scanned. `archie tui` is the explicit spelling of the same thing. Not a
-terminal, or `--plain`, or `TERM=dumb`, or JSON output, and it prints the overview — what
-`archie stats` prints plus the current rolling window — and exits 0, so anything that pipes
-`archie` keeps working.
+```text
+$ archie stats ladder --plain --period all --min-n 1
 
-Six screens, each one a command you can also print:
+archie stats ladder                                      all time - 6 sessions
+------------------------------------------------------------------------------
 
-| Screen | The command it shows |
-| :--- | :--- |
-| overview | `archie stats`, plus `archie window show` |
-| sessions | `archie session list`, with a cursor |
-| one session | `archie session show`, and its handoff, asks, forgotten and receipt |
-| agents | `archie agent list` |
-| repos | `archie repo list` |
-| windows | `archie window list` |
+  cost: API-equivalent at list prices; your account is on
+  default_claude_max_20x, so this is not what you paid
 
-| Key | Does |
-| :--- | :--- |
-| `j` / `k`, arrows | move |
-| `Enter` | drill into the highlighted session |
-| `Esc` | back: out of a reading, out of a session, then out of a filter |
-| `/` | filter the current list; `Esc` clears it |
-| `1` - `6` | jump to a screen |
-| `h` | this session's handoff |
-| `a` | the questions it asked, and where the answers are |
-| `f` | what compaction dropped |
-| `r` | its Flight Receipt |
-| `?` | the key list |
-| `q` | quit |
+  EVIDENCE LADDER                  SESS  SHARE MED TOK   MED $   SPEND  %SPEND
+  ----------------------------------------------------------------------------
+  ##### CI or deployment verified     1  16.7%  652.0K   $0.45
+  ####. commit observed               1  16.7%  652.0K   $0.45
+  ###.. test or build passed          1  16.7%  652.2K   $0.12
+  ---------------------------- the evidence line -----------------------------
+  ##... artifact changed              1  16.7%  652.0K   $0.12   $0.12    8.7%
+  #.... done claimed                  1  16.7%  652.0K   $0.12   $0.12    8.7%
+  ..... unflown                       1  16.7%  652.0K   $0.12   $0.12    8.7%
+  ----------------------------------------------------------------------------
+  BELOW THE LINE                      3  50.0%                   $0.36   26.1%
 
-It is read-only, permanently: no writes, no scan, no config changes, no model calls. `scan`
-and `config` stay commands you type. Colour follows the same rules as every printed screen,
-so `--no-color` and `NO_COLOR` give a monochrome cockpit.
+  COST PER VERIFIED OUTCOME                                 by model - min n 1
+  ----------------------------------------------------------------------------
+  MODEL                                 N VERIFIED  MED TOK  STEPS  $/VERIFIED
+  ----------------------------------------------------------------------------
+  claude-3-5-haiku-20241022             3      33%   652.0K      1       $0.36
+  claude-3-5-sonnet-20241022            2     100%   652.0K      1       $0.45
+  claude-unknown                        1     100%      230      2      <$0.01
+  ----------------------------------------------------------------------------
 
-One thing it does share with every other command: a bare `archie` opens the index the same
-way they all do, which creates the database file on a machine that has never scanned. You
-get the "no sessions found" screen, and an empty `~/.agentworth/agentworth.db` beside it.
-`Esc` at the overview does nothing — it walks back, it never quits — and `Ctrl-C` quits from
-anywhere, filter entry included.
+  RECENT VERIFIED                                                      3 shown
+  ----------------------------------------------------------------------------
+  WHEN        REPO                  MODEL            EVIDENCE  TOKENS     COST
+  ----------------------------------------------------------------------------
+  08-27 10:00 tmp/ladder-fixture    3-5-haiku           ###..  652.2K    $0.12
+  08-26 10:00 tmp/ladder-fixture    3-5-sonnet          ####.  652.0K    $0.45
+  08-25 10:00 tmp/ladder-fixture    3-5-sonnet          #####  652.0K    $0.45
+  ----------------------------------------------------------------------------
+
+  26.1% of spend this period sits below the evidence line.
+  Next  archie session list --unproven   spend that bought nothing provable
+```
+
+(`--min-n 1` is only there because six sessions is a small fixture. The real
+floor is 20 — `agentworth_storage::OUTCOME_RATE_DEFAULT_MIN_N`, the one floor in
+the product: below it a group's rate and cost render **blank**, never a zero and
+never a dash, and the row still carries its `n`.)
+
+The bottom row is *unflown* — no outcome evidence of any kind was found. It is
+not a failure. `OutcomeKind` has no failure value, so nothing on this screen is
+ever coloured as one.
 
 ---
 
@@ -350,7 +367,7 @@ claude mcp add agentworth --scope user -- archie mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-12 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, plus the two handoff tools, `session_forgotten`, `session_asks`, and `repo_suspect` below. A client's `tools/list` shows 22: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.18. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+13 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, plus the two handoff tools, `session_forgotten`, `session_asks`, and `repo_suspect` below. A client's `tools/list` shows 23: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.18. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
 
 ### The handoff, over MCP
 

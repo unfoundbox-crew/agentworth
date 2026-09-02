@@ -1217,3 +1217,90 @@ async fn test_suspect_commits_rejects_a_non_repo_path() {
         .expect_err("a non-repo path must be rejected");
     assert!(err.message.contains("git repository"), "got: {}", err.message);
 }
+
+/// `stats_ladder` answers with all three blocks, and defaults to the shared sample floor
+/// rather than a second number invented at the tool boundary.
+#[tokio::test]
+async fn test_stats_ladder_returns_three_blocks_and_the_shared_floor() {
+    let storage = Storage::open_in_memory().unwrap();
+    seed_claimed_session(
+        &storage,
+        "sess-ci",
+        "claude_code",
+        "/home/u/code/org-a/repo-a/s1.jsonl",
+        &["model-x"],
+        Some("ci_or_deployment_verified"),
+    );
+    seed_claimed_session(
+        &storage,
+        "sess-done",
+        "claude_code",
+        "/home/u/code/org-a/repo-a/s2.jsonl",
+        &["model-x"],
+        Some("done_claimed"),
+    );
+    seed_claimed_session(
+        &storage,
+        "sess-unflown",
+        "claude_code",
+        "/home/u/code/org-a/repo-a/s3.jsonl",
+        &["model-x"],
+        None,
+    );
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let result = server
+        .stats_ladder(Parameters(
+            serde_json::from_value(serde_json::json!({ "period": "all" })).unwrap(),
+        ))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+
+    assert_eq!(value["min_n"], 20, "the floor comes from storage, not from here");
+    assert_eq!(value["period"], "all");
+    assert_eq!(value["cost_basis"], "api_list_price_equivalent");
+    assert_eq!(value["total_sessions"], 3);
+
+    let rungs = value["rungs"].as_array().expect("rungs");
+    assert_eq!(rungs.len(), 6);
+    assert_eq!(rungs[0]["outcome"], "ci_or_deployment_verified");
+    assert_eq!(rungs[0]["sessions"], 1);
+    assert_eq!(rungs[5]["outcome"], "unflown");
+    assert_eq!(rungs[5]["sessions"], 1);
+
+    // Two claimed sessions is far under the floor, so the rate is null -- not 50%.
+    let groups = value["groups"].as_array().expect("groups");
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0]["key"], "model-x");
+    assert_eq!(groups[0]["n"], 2);
+    assert!(groups[0]["rate"].is_null());
+
+    assert_eq!(value["recent_verified"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn test_stats_ladder_rejects_a_period_that_is_not_a_window() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let err = server
+        .stats_ladder(Parameters(
+            serde_json::from_value(serde_json::json!({ "period": "fortnight" })).unwrap(),
+        ))
+        .await
+        .expect_err("an unknown period is an error, not a silent default");
+    assert!(err.to_string().contains("period must be one of"));
+}
+
+#[test]
+fn test_stats_ladder_group_by_accepts_effort_and_rejects_anything_else() {
+    for value in ["model", "repo", "adapter", "effort"] {
+        let params: Result<super::params::LadderParams, _> =
+            serde_json::from_value(serde_json::json!({ "by": value }));
+        assert!(params.is_ok(), "by={value} must deserialize");
+    }
+    let params: Result<super::params::LadderParams, _> =
+        serde_json::from_value(serde_json::json!({ "by": "worktree" }));
+    assert!(params.is_err(), "by must reject anything off the four axes");
+}

@@ -53,7 +53,7 @@ No emoji, anywhere, in any surface — CLI, dashboard, marketing site, this docu
 
 1. **Sequential for magnitude, categorical for identity, semantic for state.** Never mix jobs on one palette.
 2. **Categorical is a known gap.** The 8-slot `--mv-cat-*` palette was split per-theme in #93 but still fails the dataviz skill's validator on chroma floor and CVD separation for several slots (`charts/categorical-palette.html` has the full run). Until it's re-stepped: cap active series at 4 (`cat-1`..`cat-4`, the widest pairwise gaps) with direct labels, or drop to `:root[data-palette='mono']`, which already ships a validated zinc ramp.
-3. **A rate never ships without its `n`.** Below a confidence floor (n<10 in this system), suppress the rate rather than show it with false confidence — `charts/outcome-rate-table.html`.
+3. **A rate never ships without its `n`.** Below a confidence floor (n<20 in this system, the value of `agentworth_storage::OUTCOME_RATE_DEFAULT_MIN_N` — one product, one floor), suppress the rate rather than show it with false confidence — `charts/outcome-rate-table.html`. Suppressed means blank, never a zero and never a dash: the row still carries its `n`.
 4. **A share that can't be measured renders nothing, not a false zero** — `charts/cache-warmth-meter.html`'s real component behavior.
 5. **Legend for 2+ series, direct labels too at ≤4.** No chart hides identity behind color alone.
 

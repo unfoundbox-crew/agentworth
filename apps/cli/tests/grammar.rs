@@ -76,6 +76,7 @@ fn every_new_verb_answers_against_a_fixture_index() {
         (&["window", "list", "--json"], "windows"),
         (&["window", "show", "--json"], "window_hours"),
         (&["stats", "outcomes", "--json"], "baseline"),
+        (&["stats", "ladder", "--json"], "below_line_cost_share"),
         (&["session", "list", "--json"], "session_id"),
         (&["session", "list", "--unproven", "--json"], "total_blind_spots"),
         (&["agent", "list", "--json"], "total_adapters"),

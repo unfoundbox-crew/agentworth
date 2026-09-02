@@ -209,6 +209,55 @@ pub struct OutcomeRateParams {
     pub include_stubs: Option<bool>,
 }
 
+/// Mirrors `agentworth_storage::LadderGroupBy` with the same snake_case wire values -- a
+/// local copy for the same reason `OutcomeRateGroupByParam` is one.
+#[derive(Debug, Clone, Copy, Default, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LadderGroupByParam {
+    #[default]
+    Model,
+    Repo,
+    Adapter,
+    /// Only Codex records an effort today; sessions without one are counted and named, not
+    /// given a made-up value.
+    Effort,
+}
+
+impl From<LadderGroupByParam> for agentworth_storage::LadderGroupBy {
+    fn from(value: LadderGroupByParam) -> Self {
+        match value {
+            LadderGroupByParam::Model => agentworth_storage::LadderGroupBy::Model,
+            LadderGroupByParam::Repo => agentworth_storage::LadderGroupBy::Repo,
+            LadderGroupByParam::Adapter => agentworth_storage::LadderGroupBy::Adapter,
+            LadderGroupByParam::Effort => agentworth_storage::LadderGroupBy::Effort,
+        }
+    }
+}
+
+/// Parameters for the `stats_ladder` tool -- the same set `archie stats ladder` takes.
+/// See `docs/specs/archie-bench.md`.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct LadderParams {
+    /// Lookback window: `day`, `week`, `month`, `year` or `all`. Defaults to `month`
+    /// (30 days). This is how far back the window reaches, not a rollup granularity.
+    pub period: Option<String>,
+    /// Axis for the cost-per-verified-outcome table. Defaults to `model`.
+    #[serde(default)]
+    pub by: LadderGroupByParam,
+    /// Repository or workspace substring, as `session_list`'s `repo` reports it.
+    pub repo: Option<String>,
+    /// Exact adapter name (`claude_code`, `codex`, `opencode`, ...).
+    pub adapter: Option<String>,
+    /// Model substring (`sonnet`, `gpt-4o`, ...).
+    pub model: Option<String>,
+    /// A group with fewer than this many claimed sessions returns a null rate and a null
+    /// cost rather than a number nothing supports. Defaults to 20.
+    pub min_n: Option<usize>,
+    /// Include near-empty session stubs in the population. Defaults to false.
+    #[serde(default)]
+    pub include_stubs: Option<bool>,
+}
+
 /// Parameters for the `session_handoff` tool (`docs/specs/handoff.md`).
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SessionHandoffParams {

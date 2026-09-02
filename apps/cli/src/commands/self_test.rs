@@ -299,6 +299,23 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
     steps.push(run_step(
         &exe,
         db_path_ref,
+        "stats ladder --period month",
+        &["stats", "ladder", "--period", "month", "--json"],
+        DEFAULT_BUDGET,
+        |v| {
+            let sessions = v.get("total_sessions").and_then(Value::as_u64).unwrap_or(0);
+            let below = v
+                .get("below_line_cost_share")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let groups = v.get("groups").and_then(Value::as_array).map_or(0, Vec::len);
+            format!("{sessions} sessions, {groups} groups, {:.0}% of spend below the line", below * 100.0)
+        },
+    ));
+
+    steps.push(run_step(
+        &exe,
+        db_path_ref,
         "session list --limit 5",
         &["session", "list", "--limit", "5", "--json"],
         DEFAULT_BUDGET,

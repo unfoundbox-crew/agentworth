@@ -76,7 +76,7 @@ fn test_cli_scan_and_stats_commands() {
         .stdout(predicate::str::contains("archie stats"))
         .stdout(predicate::str::contains("EVIDENCE LADDER"))
         .stdout(predicate::str::contains("the evidence line"))
-        .stdout(predicate::str::contains("tests passed"))
+        .stdout(predicate::str::contains("test or build passed"))
         .stdout(predicate::str::contains("VERIFIED"))
         .stdout(predicate::str::contains("claude_code"))
         // Models lose the vendor prefix and the release date; the family stays.
@@ -267,7 +267,7 @@ fn test_cli_inspect_command() {
         .stdout(predicate::str::contains("SESSION"))
         .stdout(predicate::str::contains("OUTCOME"))
         .stdout(predicate::str::contains("rung 3"))
-        .stdout(predicate::str::contains("tests passed"))
+        .stdout(predicate::str::contains("test or build passed"))
         .stdout(predicate::str::contains("TIMELINE"))
         .stdout(predicate::str::contains("USER"))
         .stdout(predicate::str::contains("thinking:"))

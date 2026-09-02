@@ -434,6 +434,10 @@ enum StatsCommand {
     /// Verified-outcome rate by model, adapter, or repo: of the sessions that claimed done,
     /// what share left evidence a test, build, commit or CI run can be pointed at
     Outcomes(OutcomesArgs),
+
+    /// The evidence ladder, what a verified outcome costs, and the newest sessions that left
+    /// evidence -- one screen, ending on the share of spend that sits below the evidence line
+    Ladder(LadderCliArgs),
 }
 
 // -----------------------------------------------------------------------------
@@ -1135,6 +1139,46 @@ struct OutcomesArgs {
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
+struct LadderCliArgs {
+    /// How far back the window reaches: day, week, month, year, or all. Single-letter
+    /// aliases d/w/m/y also work. Default month (30 days), or persisted `config period`.
+    /// Note this is a lookback, where `stats usage --period` is a rollup granularity.
+    #[arg(short, long, value_parser = parse_period_arg)]
+    period: Option<String>,
+
+    /// Group the cost-per-verified-outcome table by model (default), repo, adapter, or
+    /// effort. Only Codex records an effort today, so `--by effort` counts what it can and
+    /// names what it cannot
+    #[arg(long, default_value = "model", value_parser = ["model", "repo", "adapter", "effort"])]
+    by: String,
+
+    /// Filter by repository or workspace substring (e.g. unfoundbox/agentworth)
+    #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::completions::repo_candidates))]
+    repo: Option<String>,
+
+    /// Filter by adapter name (e.g. claude_code, codex, gemini, opencode)
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(crate::completions::adapter_candidates))]
+    adapter: Option<String>,
+
+    /// Filter by model substring (e.g. sonnet, gpt-4o, gemini-2.5)
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(crate::completions::model_candidates))]
+    model: Option<String>,
+
+    /// Blank a group's rate and cost below this many claimed sessions (default 20, the same
+    /// floor `stats outcomes` applies)
+    #[arg(long)]
+    min_n: Option<usize>,
+
+    /// Include 1-event session stubs in the population
+    #[arg(long)]
+    include_stubs: bool,
+
+    /// Output all three blocks as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
 struct WindowShowArgs {
     /// Window duration in hours
     #[arg(long, default_value_t = 5)]
@@ -1413,6 +1457,26 @@ pub fn run() -> Result<()> {
                 a.include_stubs,
                 resolve_json(a.json),
                 cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Stats { action: Some(StatsCommand::Ladder(a)), .. } => {
+            // `month` is the built-in default rather than `usage`'s `day`: a ladder over the
+            // last 24 hours is mostly empty on a normal machine, and 30 days is the window
+            // docs/specs/archie-bench.md measured against.
+            let period = config::resolve_period(a.period, persisted_config.period.clone(), "month")?;
+            crate::commands::run_ladder_command(
+                crate::commands::LadderArgs {
+                    period,
+                    by: a.by,
+                    repo: a.repo,
+                    adapter: a.adapter,
+                    model: a.model,
+                    min_n: a.min_n,
+                    include_stubs: a.include_stubs,
+                    json: resolve_json(a.json),
+                    db_path: cli.db_path,
+                },
                 &ui,
             )?;
         }
@@ -4034,8 +4098,9 @@ fn run_stats_outcomes_command(
         "repo" => OutcomeRateGroupBy::Repo,
         _ => OutcomeRateGroupBy::Model,
     };
-    // The same floor `outcome_rate` uses over MCP (docs/specs/verified-outcome-rate.md).
-    let min_n = min_n.unwrap_or(20);
+    // The same floor `outcome_rate` uses over MCP and `stats ladder` applies to its group
+    // table -- one constant, three readers (docs/specs/verified-outcome-rate.md).
+    let min_n = min_n.unwrap_or(agentworth_storage::OUTCOME_RATE_DEFAULT_MIN_N);
     let result = storage.get_outcome_rate(group_by, since, until, min_n, include_stubs)?;
 
     if json {
