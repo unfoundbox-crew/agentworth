@@ -50,22 +50,19 @@ fn every_completer_answers_within_the_tab_budget() {
     // SQLite file is not what the budget is about.
     let _ = agentworth_cli::completions::session_candidates_for(&db);
 
-    let cases: Vec<(&str, Box<dyn Fn(&Path) -> usize>)> = vec![
-        (
-            "session",
-            Box::new(|p: &Path| agentworth_cli::completions::session_candidates_for(p).len()),
-        ),
-        (
-            "repo",
-            Box::new(|p: &Path| agentworth_cli::completions::repo_candidates_for(p).len()),
-        ),
-        (
-            "model",
-            Box::new(|p: &Path| agentworth_cli::completions::model_candidates_for(p).len()),
-        ),
+    let cases: [(&str, fn(&Path) -> usize); 3] = [
+        ("session", |p| {
+            agentworth_cli::completions::session_candidates_for(p).len()
+        }),
+        ("repo", |p| {
+            agentworth_cli::completions::repo_candidates_for(p).len()
+        }),
+        ("model", |p| {
+            agentworth_cli::completions::model_candidates_for(p).len()
+        }),
     ];
 
-    for (name, f) in &cases {
+    for (name, f) in cases {
         let start = Instant::now();
         let count = f(&db);
         let elapsed = start.elapsed();

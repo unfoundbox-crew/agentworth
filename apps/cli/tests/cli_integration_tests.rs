@@ -181,9 +181,9 @@ fn test_cli_traces_list_and_filters() {
         .stdout(predicate::str::contains("SCORE"))
         .stdout(predicate::str::contains("SESSION"))
         // The column truncates, but the closing command carries the whole id, because
-        // `inspect` resolves an exact id and not a prefix.
+        // `session show` resolves an exact id and not a prefix.
         .stdout(predicate::str::contains(format!(
-            "agentworth inspect {}",
+            "archie session show {}",
             session_id
         )))
         .stdout(predicate::str::contains("claude_code"));
