@@ -88,15 +88,55 @@ export interface Downloads {
   offline: boolean;
 }
 
+export type DocSection = "learn" | "specs" | "research";
+
+export interface DocHeading {
+  id: string;
+  depth: number;
+  text: string;
+  excerpt: string;
+}
+
+export interface DocLink {
+  slug: string;
+  title: string;
+  section: DocSection;
+}
+
+export interface Doc {
+  section: DocSection;
+  slug: string;
+  file: string;
+  title: string;
+  /** The spec's own `Status:` line, lifted out of the body. Guides have none. */
+  status: string | null;
+  description: string;
+  headings: DocHeading[];
+  html: string;
+  prev: DocLink | null;
+  next: DocLink | null;
+}
+
+export interface Docs {
+  learn: Doc[];
+  specs: Doc[];
+  research: Doc[];
+}
+
 export interface SiteContent {
   releases: Release[];
   posts: Post[];
   reference: Reference;
+  docs: Docs;
   downloads: Downloads;
 }
 
 export const content = generated as unknown as SiteContent;
-export const { releases, posts, reference, downloads } = content;
+export const { releases, posts, reference, docs, downloads } = content;
+
+/** Directory path for one docs page. Mirrors `docPath` in scripts/content.mjs. */
+export const docPath = (section: DocSection, slug: string): string =>
+  `/docs/${section}/${slug}/`;
 
 export const humanDate = (d: string): string =>
   new Date(`${d}T00:00:00Z`).toLocaleDateString("en-US", {
