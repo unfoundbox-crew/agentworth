@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::Arc;
 
 use agentworth_schema::{AgentWorthTrace, Provenance, TokenUsage};
@@ -6,8 +7,58 @@ use chrono::Utc;
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
-use super::params::{SessionGetParams, SessionsFindParams};
+use super::params::{SessionGetParams, SessionsFindParams, SESSION_GET_DEFAULT_EVENTS_LIMIT};
 use super::server::AgentWorthMcpServer;
+
+/// Builds `n` minimal single-line Claude Code "user message" events, one per line, so a real
+/// `Scanner::load_trace` parse produces a trace with exactly `n` events (unlike
+/// `seed_non_stub_session`, which only ever populates the SQLite summary row -- `session_get`
+/// goes through `Scanner::load_trace`, which re-parses the on-disk history file rather than
+/// reading events back out of storage).
+fn build_n_event_claude_jsonl(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                r#"{{"type":"user","timestamp":"2026-08-29T10:{:02}:{:02}Z","content":"event {i}"}}"#,
+                (i / 60) % 60,
+                i % 60
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Writes `contents` to a real temp `.jsonl` file and seeds a matching (non-stub) session row
+/// pointing at it, so `Scanner::load_trace` can find and parse it. Returns the session ID and
+/// the temp file (which must stay alive for the file to still exist on disk).
+fn seed_trace_from_jsonl(storage: &Storage, contents: &str) -> (String, tempfile::NamedTempFile) {
+    let mut temp_file = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .expect("create temp jsonl file");
+    temp_file
+        .write_all(contents.as_bytes())
+        .expect("write temp jsonl contents");
+
+    let session_id = temp_file
+        .path()
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    let prov = Provenance::new(
+        temp_file.path().to_string_lossy().to_string(),
+        "claude_code",
+        1024,
+        1700000000,
+        format!("sha256:mock_hash_{session_id}"),
+    );
+    let trace = AgentWorthTrace::new(session_id.clone(), "claude_code", prov, Utc::now());
+    storage.upsert_trace(&trace).expect("seed trace");
+
+    (session_id, temp_file)
+}
 
 fn empty_sessions_find_params(limit: usize) -> SessionsFindParams {
     SessionsFindParams {
@@ -216,10 +267,106 @@ async fn test_session_get_not_found_returns_resource_not_found_error() {
         .session_get(Parameters(SessionGetParams {
             session_id: "does-not-exist".to_string(),
             include_raw: false,
+            events_offset: None,
+            events_limit: None,
         }))
         .await
         .expect_err("an unknown session_id must fail");
     assert!(err.message.contains("does-not-exist"));
+}
+
+#[tokio::test]
+async fn test_session_get_default_events_limit_caps_large_trace() {
+    // A session with more events than the default cap must never come back in full just
+    // because the caller didn't pass events_limit -- that's the exact 64MB-by-accident shape
+    // this default exists to prevent.
+    let storage = Storage::open_in_memory().unwrap();
+    let n = SESSION_GET_DEFAULT_EVENTS_LIMIT + 100;
+    let (session_id, _temp_file) = seed_trace_from_jsonl(&storage, &build_n_event_claude_jsonl(n));
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let result = server
+        .session_get(Parameters(SessionGetParams {
+            session_id,
+            include_raw: true,
+            events_offset: None,
+            events_limit: None,
+        }))
+        .await
+        .expect("session_get should succeed");
+    let value = call_result_json(result);
+
+    assert_eq!(
+        value["trace"]["events"].as_array().unwrap().len(),
+        SESSION_GET_DEFAULT_EVENTS_LIMIT,
+        "omitting events_limit must cap at the default, not return every event"
+    );
+    assert_eq!(value["events_total"], n as u64);
+    assert_eq!(value["events_offset"], 0);
+}
+
+#[tokio::test]
+async fn test_session_get_events_offset_and_limit_page_through_trace() {
+    let storage = Storage::open_in_memory().unwrap();
+    let (session_id, _temp_file) = seed_trace_from_jsonl(&storage, &build_n_event_claude_jsonl(10));
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let result = server
+        .session_get(Parameters(SessionGetParams {
+            session_id,
+            include_raw: true,
+            events_offset: Some(7),
+            events_limit: Some(5),
+        }))
+        .await
+        .expect("session_get should succeed");
+    let value = call_result_json(result);
+
+    // 10 events total, offset 7, limit 5 -- only 3 remain (indices 7, 8, 9).
+    let events = value["trace"]["events"].as_array().unwrap();
+    assert_eq!(events.len(), 3);
+    assert_eq!(value["events_total"], 10);
+    assert_eq!(value["events_offset"], 7);
+}
+
+#[tokio::test]
+async fn test_session_get_events_offset_past_end_returns_empty_page() {
+    let storage = Storage::open_in_memory().unwrap();
+    let (session_id, _temp_file) = seed_trace_from_jsonl(&storage, &build_n_event_claude_jsonl(5));
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let result = server
+        .session_get(Parameters(SessionGetParams {
+            session_id,
+            include_raw: true,
+            events_offset: Some(100),
+            events_limit: None,
+        }))
+        .await
+        .expect("an out-of-range offset is not an error, just an empty page");
+    let value = call_result_json(result);
+
+    assert!(value["trace"]["events"].as_array().unwrap().is_empty());
+    assert_eq!(value["events_total"], 5);
+    assert_eq!(value["events_offset"], 100);
+}
+
+#[tokio::test]
+async fn test_session_get_events_limit_zero_is_rejected() {
+    let storage = Storage::open_in_memory().unwrap();
+    let (session_id, _temp_file) = seed_trace_from_jsonl(&storage, &build_n_event_claude_jsonl(5));
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let err = server
+        .session_get(Parameters(SessionGetParams {
+            session_id,
+            include_raw: true,
+            events_offset: None,
+            events_limit: Some(0),
+        }))
+        .await
+        .expect_err("events_limit=0 must be rejected");
+    assert!(err.message.contains("events_limit"));
 }
 
 #[tokio::test]

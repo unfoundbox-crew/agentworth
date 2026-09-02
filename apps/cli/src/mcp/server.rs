@@ -179,15 +179,26 @@ impl AgentWorthMcpServer {
                         TraceScore, outcome evidence, and recovery signals -- the same shape \
                         /api/traces/:id returns. Redacted by default (trace events, outcome \
                         summaries, and recovery summaries all pass through the redaction \
-                        engine); pass include_raw=true for the unredacted trace."
+                        engine); pass include_raw=true for the unredacted trace. \
+                        `trace.events` is paginated: events_offset (default 0) and \
+                        events_limit (default 500, must be > 0) page through it, and the \
+                        response's events_total says how many events the session actually has, \
+                        so a large session is never returned in full by accident."
     )]
     pub(crate) async fn session_get(
         &self,
         Parameters(params): Parameters<SessionGetParams>,
     ) -> Result<CallToolResult, McpError> {
+        if params.events_limit == Some(0) {
+            return Err(McpError::invalid_params(
+                "events_limit must be greater than 0".to_string(),
+                None,
+            ));
+        }
+
         let scanner = self.scanner.clone();
         let session_id_for_task = params.session_id.clone();
-        let trace = tokio::task::spawn_blocking(move || scanner.load_trace(&session_id_for_task))
+        let mut trace = tokio::task::spawn_blocking(move || scanner.load_trace(&session_id_for_task))
             .await
             .map_err(Self::join_error)?
             .map_err(|e| {
@@ -201,6 +212,19 @@ impl AgentWorthMcpServer {
         let score = scorer.score(&trace);
         let outcomes = OutcomeDetector::new().detect_outcomes(&trace);
         let recoveries = RecoveryDetector::new().detect_recoveries(&trace);
+
+        let events_limit = Some(
+            params
+                .events_limit
+                .unwrap_or(super::params::SESSION_GET_DEFAULT_EVENTS_LIMIT),
+        );
+        let (events, events_total, events_offset) = crate::server::routes::paginate_events(
+            std::mem::take(&mut trace.events),
+            params.events_offset,
+            events_limit,
+        )
+        .map_err(|e| McpError::invalid_params(e, None))?;
+        trace.events = events;
 
         let (trace, outcomes, recoveries) = if params.include_raw {
             (trace, outcomes, recoveries)
@@ -223,6 +247,8 @@ impl AgentWorthMcpServer {
             "score": score,
             "outcomes": outcomes,
             "recoveries": recoveries,
+            "events_total": events_total,
+            "events_offset": events_offset,
         }))
     }
 
