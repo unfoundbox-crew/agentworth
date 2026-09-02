@@ -507,140 +507,231 @@ pub struct UsageRow {
     pub measured: bool,
 }
 
-pub fn usage(
-    ui: &Ui,
-    command: &str,
-    who_head: &str,
-    period_noun: &str,
-    rows: &[UsageRow],
-) -> String {
+/// Everything `usage()` needs beyond the rows themselves.
+pub struct UsageView<'a> {
+    pub command: &'a str,
+    /// Column head for the group axis: `ADAPTER`, `MODEL`, or `REPO`.
+    pub who_head: &'a str,
+    /// Singular noun for one period (`day`/`week`/`month`/`year`); ignored when
+    /// `show_period` is false.
+    pub period_noun: &'a str,
+    pub rows: &'a [UsageRow],
+    /// False for `--period all`: no period axis, one row per group across all time, so the
+    /// table drops the PERIOD column entirely rather than printing it empty.
+    pub show_period: bool,
+    /// The honest cost-basis sentence (`CostBasis::label_long`), word-wrapped under the
+    /// header so a long subscription-tier name never breaks the grid.
+    pub cost_note: &'a str,
+    /// Set when `--limit` cut periods (or, under `--period all`, groups) out of the result --
+    /// see `UsageReport::truncated`. Rendered as its own wrapped note below the table so the
+    /// totals above it are never mistaken for the whole history.
+    pub truncation_note: Option<&'a str>,
+}
+
+/// Break `text` into lines no wider than `width`, breaking only on spaces. A single word
+/// longer than `width` (an unusually long subscription-tier name) is left intact rather than
+/// cut mid-word -- `push` truncates it defensively if that's still too wide for the terminal.
+fn wrap_note(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate_len = if current.is_empty() {
+            word.len()
+        } else {
+            current.len() + 1 + word.len()
+        };
+        if candidate_len > width && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+/// The four measured-value cells for one row, or four dashes when the adapter keeps no
+/// token counts at all -- a dash says not measured, a zero would assert something false.
+fn usage_measured_cells(ui: &Ui, r: &UsageRow) -> (String, String, String, String) {
+    if r.measured {
+        (
+            compact(r.input),
+            compact(r.output),
+            compact(r.cache_read),
+            format!("${:.2}", r.cost_usd),
+        )
+    } else {
+        let d = ui.dash().to_string();
+        (d.clone(), d.clone(), d.clone(), d)
+    }
+}
+
+pub fn usage(ui: &Ui, v: &UsageView) -> String {
     let mut out = String::new();
     let i = ui.inner();
+    let sessions: usize = v.rows.iter().map(|r| r.sessions).sum();
 
+    let group_count = {
+        let mut g: Vec<&str> = v.rows.iter().map(|r| r.who.as_str()).collect();
+        g.sort_unstable();
+        g.dedup();
+        g.len()
+    };
     let periods = {
-        let mut p: Vec<&str> = rows.iter().map(|r| r.period.as_str()).collect();
+        let mut p: Vec<&str> = v.rows.iter().map(|r| r.period.as_str()).collect();
         p.dedup();
         p.len()
     };
-    let noun = |n: usize| {
-        if n == 1 {
-            period_noun.to_string()
-        } else {
-            format!("{}s", period_noun)
-        }
-    };
-    let sessions: usize = rows.iter().map(|r| r.sessions).sum();
+    let plural = |n: usize, noun: &str| if n == 1 { noun.to_string() } else { format!("{}s", noun) };
+
     out.push_str(&ui.header(
-        command,
-        &format!(
-            "{} {} {} {} sessions",
-            periods,
-            noun(periods),
-            ui.dot(),
-            thousands(sessions as u64)
-        ),
+        v.command,
+        &if v.show_period {
+            format!(
+                "{} {} {} {} sessions",
+                periods,
+                plural(periods, v.period_noun),
+                ui.dot(),
+                thousands(sessions as u64)
+            )
+        } else {
+            format!(
+                "{} {} {} {} sessions",
+                group_count,
+                plural(group_count, &v.who_head.to_lowercase()),
+                ui.dot(),
+                thousands(sessions as u64)
+            )
+        },
     ));
+    out.push('\n');
+
+    for line in wrap_note(v.cost_note, i) {
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Label, &line)));
+    }
     out.push('\n');
 
     const P: usize = 10;
     const S: usize = 8;
     const N: usize = 8;
-    const C: usize = 10;
-    let who = i.saturating_sub(P + S + N * 3 + C + 12).max(6);
+    // Exactly `crate::cost_basis::CostBasis::label_short()`'s width, so the column head and
+    // every value beneath it line up without truncation.
+    const C: usize = 13;
+    let fixed = if v.show_period { P + S + N * 3 + C + 12 } else { S + N * 3 + C + 10 };
+    let who = i.saturating_sub(fixed).max(6);
+    let cost_head = crate::cost_basis::CostBasis::label_short();
 
-    push(
-        &mut out,
-        ui,
+    let header_cells = if v.show_period {
         format!(
-            "  {}",
-            ui.paint(
-                Role::Label,
-                &format!(
-                    "{}  {}  {}  {}  {}  {}  {}",
-                    lpad("PERIOD", P),
-                    lpad(who_head, who),
-                    rpad("SESSIONS", S),
-                    rpad("INPUT", N),
-                    rpad("OUTPUT", N),
-                    rpad("CACHE RD", N),
-                    rpad("COST", C),
-                )
-            )
-        ),
-    );
+            "{}  {}  {}  {}  {}  {}  {}",
+            lpad("PERIOD", P),
+            lpad(v.who_head, who),
+            rpad("SESSIONS", S),
+            rpad("INPUT", N),
+            rpad("OUTPUT", N),
+            rpad("CACHE RD", N),
+            rpad(cost_head, C),
+        )
+    } else {
+        format!(
+            "{}  {}  {}  {}  {}  {}",
+            lpad(v.who_head, who),
+            rpad("SESSIONS", S),
+            rpad("INPUT", N),
+            rpad("OUTPUT", N),
+            rpad("CACHE RD", N),
+            rpad(cost_head, C),
+        )
+    };
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Label, &header_cells)));
 
     let mut any_dash = false;
     let mut last_period: Option<&str> = None;
     let mut total_cost = 0.0;
-    for r in rows {
-        // The date column collapses after its first row, so the eye reads periods rather
-        // than repetitions.
-        let new_period = last_period != Some(r.period.as_str());
-        if new_period {
+    for r in v.rows {
+        if v.show_period {
+            // The date column collapses after its first row, so the eye reads periods
+            // rather than repetitions.
+            let new_period = last_period != Some(r.period.as_str());
+            if new_period {
+                push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+            }
+            let shown_period = if new_period { r.period.as_str() } else { "" };
+            last_period = Some(r.period.as_str());
+            total_cost += r.cost_usd;
+            any_dash |= !r.measured;
+            let (input, output, cache, cost) = usage_measured_cells(ui, r);
+
             push(
                 &mut out,
                 ui,
-                format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))),
+                format!(
+                    "  {}  {}  {}  {}  {}  {}  {}",
+                    ui.paint(Role::Label, &lpad(shown_period, P)),
+                    ui.paint(Role::Value, &lpad(&truncate(&r.who, who), who)),
+                    ui.paint(Role::Value, &rpad(&thousands(r.sessions as u64), S)),
+                    ui.paint(Role::Value, &rpad(&input, N)),
+                    ui.paint(Role::Value, &rpad(&output, N)),
+                    ui.paint(Role::Value, &rpad(&cache, N)),
+                    ui.paint(Role::Value, &rpad(&cost, C)),
+                ),
+            );
+        } else {
+            total_cost += r.cost_usd;
+            any_dash |= !r.measured;
+            let (input, output, cache, cost) = usage_measured_cells(ui, r);
+
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}  {}  {}  {}  {}  {}",
+                    ui.paint(Role::Value, &lpad(&truncate(&r.who, who), who)),
+                    ui.paint(Role::Value, &rpad(&thousands(r.sessions as u64), S)),
+                    ui.paint(Role::Value, &rpad(&input, N)),
+                    ui.paint(Role::Value, &rpad(&output, N)),
+                    ui.paint(Role::Value, &rpad(&cache, N)),
+                    ui.paint(Role::Value, &rpad(&cost, C)),
+                ),
             );
         }
-        let shown_period = if new_period { r.period.as_str() } else { "" };
-        last_period = Some(r.period.as_str());
-        total_cost += r.cost_usd;
+    }
 
-        let (input, output, cache, cost) = if r.measured {
-            (
-                compact(r.input),
-                compact(r.output),
-                compact(r.cache_read),
-                format!("${:.2}", r.cost_usd),
-            )
-        } else {
-            any_dash = true;
-            let d = ui.dash().to_string();
-            (d.clone(), d.clone(), d.clone(), d)
-        };
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
 
+    if v.show_period {
         push(
             &mut out,
             ui,
             format!(
-                "  {}  {}  {}  {}  {}  {}  {}",
-                ui.paint(Role::Label, &lpad(shown_period, P)),
-                ui.paint(Role::Value, &lpad(&truncate(&r.who, who), who)),
-                ui.paint(Role::Value, &rpad(&thousands(r.sessions as u64), S)),
-                ui.paint(Role::Value, &rpad(&input, N)),
-                ui.paint(Role::Value, &rpad(&output, N)),
-                ui.paint(Role::Value, &rpad(&cache, N)),
-                ui.paint(Role::Value, &rpad(&cost, C)),
+                "  {}  {}{}",
+                ui.paint(Role::Label, &lpad(&format!("{} {}", periods, plural(periods, v.period_noun)), P)),
+                ui.paint(Role::Emphasis, &rpad(&thousands(sessions as u64), who + S + 2)),
+                // The one violet number: what the whole table cost.
+                ui.paint(
+                    Role::Verified,
+                    &rpad(&format!("${:.2}", total_cost), i.saturating_sub(P + who + S + 4))
+                ),
+            ),
+        );
+    } else {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}{}",
+                ui.paint(Role::Emphasis, &rpad(&format!("{} TOTAL", thousands(sessions as u64)), who + S + 2)),
+                ui.paint(
+                    Role::Verified,
+                    &rpad(&format!("${:.2}", total_cost), i.saturating_sub(who + S + 4))
+                ),
             ),
         );
     }
-
-    push(
-        &mut out,
-        ui,
-        format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))),
-    );
-    push(
-        &mut out,
-        ui,
-        format!(
-            "  {}  {}{}",
-            ui.paint(Role::Label, &lpad(&format!("{} {}", periods, noun(periods)), P)),
-            ui.paint(
-                Role::Emphasis,
-                &rpad(&thousands(sessions as u64), who + S + 2)
-            ),
-            // The one violet number: what the whole table cost.
-            ui.paint(
-                Role::Verified,
-                &rpad(
-                    &format!("${:.2}", total_cost),
-                    i.saturating_sub(P + who + S + 4)
-                )
-            ),
-        ),
-    );
 
     if any_dash {
         out.push('\n');
@@ -659,6 +750,14 @@ pub fn usage(
             ),
         );
     }
+
+    if let Some(note) = v.truncation_note {
+        out.push('\n');
+        for line in wrap_note(note, i) {
+            push(&mut out, ui, format!("  {}", ui.paint(Role::Label, &line)));
+        }
+    }
+
     out
 }
 

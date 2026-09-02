@@ -67,11 +67,18 @@ pub struct UsageQuery {
 }
 
 /// Aggregated usage response containing daily, weekly, and monthly rollups.
+///
+/// `cost_basis`/`subscription_tier` label every `estimated_cost_usd` in `daily`/`weekly`/
+/// `monthly` as an API list-price equivalent, not what the account actually paid -- see
+/// `crate::cost_basis`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageResponse {
     pub daily: Vec<UsagePeriodSummary>,
     pub weekly: Vec<UsagePeriodSummary>,
     pub monthly: Vec<UsagePeriodSummary>,
+    pub cost_basis: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscription_tier: Option<String>,
 }
 
 /// Query parameters for rolling pacing window.
@@ -521,10 +528,13 @@ async fn get_usage_handler(
         let daily = storage.get_daily_usage(query.daily_limit.or(Some(30)))?;
         let weekly = storage.get_weekly_usage(query.weekly_limit.or(Some(20)))?;
         let monthly = storage.get_monthly_usage(query.monthly_limit.or(Some(12)))?;
+        let cost_basis = crate::cost_basis::CostBasis::detect();
         Ok::<_, anyhow::Error>(UsageResponse {
             daily,
             weekly,
             monthly,
+            cost_basis: cost_basis.cost_basis,
+            subscription_tier: cost_basis.subscription_tier,
         })
     })
     .await

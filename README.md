@@ -75,8 +75,9 @@ agentworth scan
 # 2. View machine-wide token burn, top models, and expenditures
 agentworth stats
 
-# 3. Inspect daily token burn and 5-hour rolling pacing windows
+# 3. Inspect daily token burn, per-model spend, and 5-hour rolling pacing windows
 agentworth usage --period day
+agentworth usage --period month --by model
 agentworth usage --pacing
 
 # 4. Blame file edits back to the agent session and prompt that authored them
@@ -253,7 +254,7 @@ agentworth export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | :--- | :--- |
 | `agentworth scan [PATHS...]` | Discovers and incrementally indexes agent sessions into local SQLite. |
 | `agentworth stats [--json]` | Displays machine-wide token totals, top models, top tools, and session counts. |
-| `agentworth usage [--period ...]` | Usage rollups by `day`, `week`, or `month`, or rolling 5-hour pacing (`--pacing`). |
+| `agentworth usage [--period ...]` | Usage rollups by `day`, `week`, `month`, `year`, or `all` (no period column); group with `--by adapter\|model\|repo` (`model` is usually the useful one -- most sessions share one adapter); filter with `--since <date\|1d\|2w\|3m>`; or rolling 5-hour pacing (`--pacing`). Cost is always an API list-price equivalent, labelled as such, not what a subscription plan actually billed. |
 | `agentworth blame <FILE>` | AI code lineage: finds all agent sessions and prompts that modified a given file. |
 | `agentworth traces [OPTIONS]` | Tabular directory of indexed sessions (`--limit`, `--adapter`, `--model`, `--json`). |
 | `agentworth matrix [--json]` | Extraction capability and coverage matrix across all 20 agent adapters. |

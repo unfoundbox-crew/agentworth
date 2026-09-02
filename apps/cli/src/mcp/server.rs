@@ -372,7 +372,9 @@ impl AgentWorthMcpServer {
     #[tool(
         description = "Daily, weekly, or monthly usage rollups: session counts, token \
                         breakdown, estimated cost, and cache hit ratio, grouped by adapter -- \
-                        the same rollups /api/usage returns for one period at a time."
+                        the same rollups /api/usage returns for one period at a time. Every \
+                        estimated_cost_usd is an API list-price equivalent, not what the \
+                        account actually paid -- see cost_basis/subscription_tier."
     )]
     pub(crate) async fn usage_summary(
         &self,
@@ -390,7 +392,12 @@ impl AgentWorthMcpServer {
         .map_err(Self::join_error)?
         .map_err(|e| McpError::internal_error(format!("usage_summary query failed: {e}"), None))?;
 
-        Self::json_result(&rows)
+        let cost_basis = crate::cost_basis::CostBasis::detect();
+        Self::json_result(&serde_json::json!({
+            "rows": rows,
+            "cost_basis": cost_basis.cost_basis,
+            "subscription_tier": cost_basis.subscription_tier,
+        }))
     }
 
     #[tool(
