@@ -36,6 +36,30 @@
   }
 }
 
+/* Below ~520px the five nav links plus the toggle no longer fit even with the
+   labels dropped, and body{overflow-x:hidden} clips the toggle rather than
+   letting the row scroll. Measured at 375: this brings the row to 317px inside
+   a 335px budget. */
+@media (max-width: 520px) {
+  /* Selectors carry the .nav ancestor on purpose. index.css @imports this file
+     before declaring its own .nav-link, so a bare .nav-link here loses the
+     cascade at equal specificity -- which is why the sizes in the 620px block
+     above have never taken effect. */
+  .nav .nav-right {
+    gap: 0;
+  }
+  .nav .nav-link {
+    padding: 5px 4px;
+    font-size: 10.5px;
+  }
+  .nav .theme-toggle {
+    padding: 2px;
+  }
+  .nav .theme-toggle button {
+    padding: 4px 5px;
+  }
+}
+
 .crumbs {
   display: flex;
   flex-wrap: wrap;

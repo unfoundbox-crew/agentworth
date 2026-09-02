@@ -16,14 +16,16 @@ import {
   rfc822,
   humanDate,
   escapeXml,
+  docPath,
 } from './content.mjs';
 import { readLockup, postCardSvg, renderSvgToPng } from './og-template.mjs';
 
 const dist = path.join(webRoot, 'dist');
 const { render } = await import(path.join(webRoot, 'dist-ssr/entry-server.js'));
-const { releases, posts, reference, downloads } = JSON.parse(
+const { releases, posts, reference, docs, downloads } = JSON.parse(
   readFileSync(path.join(webRoot, 'src/content.generated.json'), 'utf8')
 );
+const allDocs = [...docs.learn, ...docs.specs, ...docs.research];
 
 const template = readFileSync(path.join(dist, 'index.html'), 'utf8');
 const OG_DEFAULT = `${SITE}/og.png`;
@@ -243,6 +245,133 @@ pages.push({
     ],
   }),
 });
+
+// /docs/
+pages.push({
+  route: '/docs/',
+  file: 'docs/index.html',
+  head: head({
+    title: 'Docs — AgentWorth',
+    description: `Guides, the generated CLI/API/MCP reference, the specs behind every feature, and the research that fed them. ${docs.learn.length} guides, ${docs.specs.length} specs, ${docs.research.length} research memos, and v${reference.version} of the reference.`,
+    canonical: `${SITE}/docs/`,
+    feeds: FEEDS,
+    jsonLd: [
+      {
+        '@context': 'https://schema.org',
+        '@graph': [
+          ORG,
+          {
+            '@type': 'CollectionPage',
+            '@id': `${SITE}/docs/#page`,
+            url: `${SITE}/docs/`,
+            name: 'AgentWorth documentation',
+            about: { '@id': `${SITE}/#software` },
+            publisher: { '@id': `${SITE}/#org` },
+          },
+          crumbs([
+            { name: 'Home', url: `${SITE}/` },
+            { name: 'Docs', url: `${SITE}/docs/` },
+          ]),
+        ],
+      },
+    ],
+  }),
+});
+
+// /docs/specs/ and /docs/research/
+const SECTION_INDEXES = [
+  {
+    section: 'specs',
+    name: 'Specs',
+    title: 'Specs — the design doc behind every AgentWorth feature',
+    description: `Every feature here was specified and measured before it was built. ${docs.specs.length} design documents, read straight out of docs/specs in the repository: the problem, the measurement, what shipped, and what was deliberately left out.`,
+  },
+  {
+    section: 'research',
+    name: 'Research',
+    title: 'Research — memos that fed a spec',
+    description: `${docs.research.length} research memos behind the AgentWorth specs. Every claim carries its source; unverified means no primary source was found, not false. Context only, never a decision.`,
+  },
+];
+
+for (const idx of SECTION_INDEXES) {
+  pages.push({
+    route: `/docs/${idx.section}/`,
+    file: `docs/${idx.section}/index.html`,
+    head: head({
+      title: idx.title,
+      description: idx.description,
+      canonical: `${SITE}/docs/${idx.section}/`,
+      feeds: FEEDS,
+      jsonLd: [
+        {
+          '@context': 'https://schema.org',
+          '@graph': [
+            ORG,
+            {
+              '@type': 'CollectionPage',
+              '@id': `${SITE}/docs/${idx.section}/#page`,
+              url: `${SITE}/docs/${idx.section}/`,
+              name: `AgentWorth ${idx.name.toLowerCase()}`,
+              publisher: { '@id': `${SITE}/#org` },
+            },
+            crumbs([
+              { name: 'Home', url: `${SITE}/` },
+              { name: 'Docs', url: `${SITE}/docs/` },
+              { name: idx.name, url: `${SITE}/docs/${idx.section}/` },
+            ]),
+          ],
+        },
+      ],
+    }),
+  });
+}
+
+// /docs/learn/<slug>/, /docs/specs/<slug>/, /docs/research/<slug>/
+const SECTION_NAME = { learn: 'Learn', specs: 'Specs', research: 'Research' };
+const SECTION_URL = {
+  learn: `${SITE}/docs/`,
+  specs: `${SITE}/docs/specs/`,
+  research: `${SITE}/docs/research/`,
+};
+
+for (const doc of allDocs) {
+  const url = `${SITE}${docPath(doc.section, doc.slug)}`;
+  pages.push({
+    route: docPath(doc.section, doc.slug),
+    file: `docs/${doc.section}/${doc.slug}/index.html`,
+    head: head({
+      title: `${doc.title} — AgentWorth docs`,
+      description: doc.description || `${doc.title}, from the AgentWorth documentation.`,
+      canonical: url,
+      feeds: FEEDS,
+      jsonLd: [
+        {
+          '@context': 'https://schema.org',
+          '@graph': [
+            ORG,
+            {
+              '@type': 'TechArticle',
+              '@id': `${url}#article`,
+              headline: doc.title,
+              description: doc.description || undefined,
+              url,
+              mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+              about: { '@id': `${SITE}/#software` },
+              publisher: { '@id': `${SITE}/#org` },
+            },
+            crumbs([
+              { name: 'Home', url: `${SITE}/` },
+              { name: 'Docs', url: `${SITE}/docs/` },
+              { name: SECTION_NAME[doc.section], url: SECTION_URL[doc.section] },
+              { name: doc.title, url },
+            ]),
+          ],
+        },
+      ],
+    }),
+  });
+}
 
 // /docs/reference/
 pages.push({
@@ -498,10 +627,19 @@ console.log('wrote blog/rss.xml and changelog/rss.xml');
 // deploy is one Google learns to distrust.
 const newest = (a, b) => (a > b ? a : b);
 const latestPost = posts.reduce((d, p) => newest(d, p.date), '0000-00-00');
+// The docs pages carry the reference's generated date rather than a file mtime:
+// a fresh CI checkout stamps every file with the checkout time, which is exactly
+// the deploy-clock lastmod the rule above rejects. reference.generatedDate is
+// committed and only moves when the docs bundle is regenerated.
+const docsDate = reference.generatedDate;
 const sitemapUrls = [
   { loc: `${SITE}/`, lastmod: newest(releases[0].date, latestPost) },
   { loc: `${SITE}/changelog/`, lastmod: releases[0].date },
+  { loc: `${SITE}/docs/`, lastmod: docsDate },
   { loc: `${SITE}/docs/reference/`, lastmod: reference.generatedDate },
+  { loc: `${SITE}/docs/specs/`, lastmod: docsDate },
+  { loc: `${SITE}/docs/research/`, lastmod: docsDate },
+  ...allDocs.map((d) => ({ loc: `${SITE}${docPath(d.section, d.slug)}`, lastmod: docsDate })),
   { loc: `${SITE}/archie/`, lastmod: releases[0].date },
   { loc: `${SITE}/blog/`, lastmod: latestPost },
   ...posts.map((p) => ({ loc: `${SITE}/blog/${p.slug}/`, lastmod: p.date })),
@@ -595,15 +733,22 @@ ${MCP_TOOLS.map(([n, d]) => `- \`${n}\`: ${d}`).join('\n')}
 
 ## Docs
 
+- [Docs](${SITE}/docs/): guides, reference, specs and research in one index
 - [Changelog](${SITE}/changelog/): every release with the pull request behind each line
 - [Releases RSS](${SITE}/changelog/rss.xml): the changelog as a feed
 - [Reference](${SITE}/docs/reference/): every CLI command, API route, and MCP tool, generated from the code
+- [Specs](${SITE}/docs/specs/): the design doc behind every feature, ${docs.specs.length} of them
+- [Research](${SITE}/docs/research/): memos that fed a spec, context only
 - [Archie](${SITE}/archie/): the mascot, his kit and the four colourways
 - [Reference (markdown)](${SITE}/docs/reference.md): the same reference, plain text
 - [Blog](${SITE}/blog/): measurements from our own index
 - [Blog RSS](${SITE}/blog/rss.xml): the blog as a feed
 - [Full text](${SITE}/llms-full.txt): this file plus every post, release, and the full reference
 - [Source](${REPO}): Apache-2.0
+
+## Guides
+
+${docs.learn.map((d) => `- [${d.title}](${SITE}${docPath('learn', d.slug)}): ${d.description}`).join('\n')}
 
 ## Posts
 
@@ -695,6 +840,78 @@ console.log('wrote llms.txt, llms-full.txt and humans.txt');
 // -- the same committed file the page above renders and the CI staleness check verifies.
 write('docs/reference.md', reference.markdown);
 console.log('wrote docs/reference.md');
+
+// ----------------------------------------------------------- search index
+
+// One static file the ⌘K palette fetches on first open, then filters in memory.
+// Keys are one letter because they repeat on every entry and this file is
+// downloaded by a reader, not read by one: t=title, s=section, u=url,
+// x=excerpt. Excerpts are already capped at 200 characters upstream.
+const SECTION_LABELS = { learn: 'Learn', specs: 'Specs', research: 'Research' };
+
+const searchIndex = [];
+const seenEntry = new Set();
+const addEntry = (t, section, u, x) => {
+  const key = `${u}|${t}`;
+  if (!t || seenEntry.has(key)) return;
+  seenEntry.add(key);
+  searchIndex.push({ t, s: section, u, x: x || '' });
+};
+
+for (const doc of allDocs) {
+  const label = SECTION_LABELS[doc.section];
+  const url = docPath(doc.section, doc.slug);
+  addEntry(doc.title, label, url, doc.description);
+  for (const h of doc.headings) {
+    addEntry(h.text, `${label} · ${doc.title}`, `${url}#${h.id}`, h.excerpt);
+  }
+}
+
+// The generated reference is one page with three groups of anchors; without
+// these, searching for a flag or a tool name finds nothing.
+const refId = (str) =>
+  str
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+for (const cmd of reference.cli) {
+  addEntry(cmd.path, 'Reference · CLI', `/docs/reference/#${refId(cmd.path)}`, cmd.about);
+}
+for (const route of reference.api) {
+  addEntry(
+    `${route.method} ${route.path}`,
+    'Reference · HTTP API',
+    `/docs/reference/#${refId(`${route.method} ${route.path}`)}`,
+    route.description
+  );
+}
+for (const tool of reference.mcp) {
+  addEntry(
+    tool.name,
+    'Reference · MCP',
+    `/docs/reference/#${refId(tool.name)}`,
+    (tool.description || '').slice(0, 200)
+  );
+}
+
+for (const r of releases) {
+  addEntry(
+    `AgentWorth ${r.version}`,
+    'Changelog',
+    `/changelog/#${r.id}`,
+    `${humanDate(r.date)} — ${r.changeCount} ${r.changeCount === 1 ? 'change' : 'changes'}`
+  );
+}
+for (const p of posts) {
+  addEntry(p.title, 'Blog', `/blog/${p.slug}/`, p.description);
+}
+
+write('docs/search-index.json', JSON.stringify(searchIndex));
+console.log(
+  `wrote docs/search-index.json: ${searchIndex.length} entries, ` +
+    `${(JSON.stringify(searchIndex).length / 1024).toFixed(1)} KB`
+);
 
 // ------------------------------------------------------------ social cards
 

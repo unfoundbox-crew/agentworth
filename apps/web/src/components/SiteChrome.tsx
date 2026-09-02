@@ -10,7 +10,7 @@ export const CURL_CMD = "curl -fsSL https://agentworth.dev/install.sh | sh";
 
 /** `current` dims the link for the page you are already on. */
 export const SiteHeader: React.FC<{
-  current?: "changelog" | "reference" | "blog" | "archie";
+  current?: "changelog" | "docs" | "blog" | "archie";
 }> = ({ current }) => (
   <header className="wrap">
     <nav className="nav">
@@ -23,17 +23,17 @@ export const SiteHeader: React.FC<{
       <div className="nav-right">
         <a
           className="nav-link"
+          href="/docs/"
+          aria-current={current === "docs" ? "page" : undefined}
+        >
+          Docs
+        </a>
+        <a
+          className="nav-link"
           href="/changelog/"
           aria-current={current === "changelog" ? "page" : undefined}
         >
           Changelog
-        </a>
-        <a
-          className="nav-link"
-          href="/docs/reference/"
-          aria-current={current === "reference" ? "page" : undefined}
-        >
-          Reference
         </a>
         <a
           className="nav-link"

@@ -191,12 +191,14 @@ export const ReferencePage: React.FC = () => {
       <a className="skip" href="#main">
         Skip to content
       </a>
-      <SiteHeader current="reference" />
+      <SiteHeader current="docs" />
 
       <main id="main">
         <div className="wrap">
           <nav className="crumbs" aria-label="Breadcrumb">
             <a href="/">Home</a>
+            <span aria-hidden="true">/</span>
+            <a href="/docs/">Docs</a>
             <span aria-hidden="true">/</span>
             <span aria-current="page">Reference</span>
           </nav>
