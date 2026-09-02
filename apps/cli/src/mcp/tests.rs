@@ -1143,7 +1143,10 @@ async fn test_suspect_commits_flags_the_unproven_commit() {
     run(&["commit", "-q", "-m", "feat: second"]);
 
     let storage = Arc::new(Storage::open_in_memory().unwrap());
-    let at = Utc::now();
+    // Comfortably inside the attribution window and unambiguously before the commits, so the
+    // test does not lean on `COMMIT_TIME_SLACK` to pass. Git records whole seconds; `Utc::now()`
+    // does not, and an edit stamped in the same second as its commit reads as later.
+    let at = Utc::now() - chrono::Duration::minutes(1);
     let prov = Provenance::new(
         format!(
             "/tmp/claude/projects/{}/s.jsonl",

@@ -919,14 +919,16 @@ pub fn run() -> Result<()> {
             json,
         } => {
             crate::commands::suspect::run_suspect_command(
-                repo,
-                since,
-                branch,
-                base,
-                window_hours,
-                resolve_json(json),
-                hook,
-                quiet,
+                crate::commands::suspect::SuspectArgs {
+                    repo,
+                    since,
+                    branch,
+                    base,
+                    window_hours,
+                    json: resolve_json(json),
+                    hook,
+                    quiet,
+                },
                 cli.db_path,
                 &ui,
             )?;

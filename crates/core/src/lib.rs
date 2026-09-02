@@ -373,8 +373,8 @@ pub fn compute_session_risk(
         })
         .map(|n| DemotedClaim {
             event_sequence: n.event_sequence,
-            original_kind: outcome_kind_name(n.original_kind).to_string(),
-            final_kind: outcome_kind_name(n.final_kind).to_string(),
+            original_kind: outcome_kind_name(n.original_kind),
+            final_kind: outcome_kind_name(n.final_kind),
             original_confidence: n.original_confidence,
             final_confidence: n.final_confidence,
             reason: n.reason.clone(),

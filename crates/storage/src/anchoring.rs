@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn a_worktree_root_wins_over_the_checkout_that_contains_it() {
         let worktree = format!("{ROOT}/.claude/worktrees/feat-x");
-        let roots = sorted_roots(ROOT, &[worktree.clone()]);
+        let roots = sorted_roots(ROOT, std::slice::from_ref(&worktree));
         assert_eq!(roots[0], worktree, "longest root first");
 
         let (a, rel) = anchor_path(

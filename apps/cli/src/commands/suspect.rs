@@ -43,6 +43,14 @@ pub const DEFAULT_MAX_COMMITS: usize = 200;
 /// The rung a session has to reach before "it never proved anything" stops being true.
 const PROVEN_RUNG: u8 = 3; // OutcomeKind::TestOrBuildPassed
 
+/// How far past a commit's recorded time a file touch still counts as having preceded it.
+///
+/// Git stores a committer time in whole seconds, truncated. A blame row carries sub-second
+/// precision. So an edit made at 12:00:00.700 and committed at 12:00:00.900 is recorded as
+/// happening *after* a commit stamped 12:00:00 — the ordering is real, the comparison is not.
+/// One second is exactly the truncation, no more.
+const COMMIT_TIME_SLACK: Duration = Duration::seconds(1);
+
 /// One reason a session is worth a second look, and the receipt behind it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SuspectReason {
@@ -279,7 +287,7 @@ fn resolve_range(root: &Path, q: &SuspectQuery) -> Result<(Vec<String>, String)>
 /// `%x01` starts each record and `%x1f` separates the fields inside its first line, so a subject
 /// containing newlines, tabs, or pipes cannot be mistaken for structure.
 fn read_commits(root: &Path, range: &[String], max_commits: usize) -> Result<Vec<GitCommit>> {
-    let cap = max_commits.min(MAX_COMMITS_CEILING).max(1);
+    let cap = max_commits.clamp(1, MAX_COMMITS_CEILING);
     let n_arg = format!("-n{cap}");
     let mut args: Vec<&str> = vec![
         "log",
@@ -444,7 +452,7 @@ pub fn compute_suspect_commits(storage: &Storage, q: &SuspectQuery) -> Result<Su
         for file in &commit.files {
             let Some(rows) = by_path.get(file.as_str()) else { continue };
             for row in rows {
-                if row.modified_at > commit.committed_at
+                if row.modified_at > commit.committed_at + COMMIT_TIME_SLACK
                     || row.modified_at < commit.committed_at - window
                 {
                     continue;
@@ -510,7 +518,7 @@ pub fn compute_suspect_commits(storage: &Storage, q: &SuspectQuery) -> Result<Su
             });
         }
     }
-    suspect.sort_by(|a, b| b.committed_at.cmp(&a.committed_at));
+    suspect.sort_by_key(|c| std::cmp::Reverse(c.committed_at));
 
     let attributed = matched.len();
     let prompt = build_prompt(&range_desc, &suspect, commits.len(), attributed);
@@ -622,32 +630,40 @@ agentworth suspect --repo . --quiet || true
 exit 0
 "#;
 
+/// Everything `agentworth suspect` accepts from the command line, so the runner takes one
+/// argument instead of nine positional ones a caller can transpose.
+#[derive(Debug, Default, Clone)]
+pub struct SuspectArgs {
+    pub repo: Option<PathBuf>,
+    /// A date or a git ref — resolved by `parse_since`.
+    pub since: Option<String>,
+    pub branch: Option<String>,
+    pub base: Option<String>,
+    pub window_hours: Option<i64>,
+    pub json: bool,
+    pub hook: bool,
+    pub quiet: bool,
+}
+
 /// Execute `agentworth suspect`.
 pub fn run_suspect_command(
-    repo: Option<PathBuf>,
-    since: Option<String>,
-    branch: Option<String>,
-    base: Option<String>,
-    window_hours: Option<i64>,
-    json: bool,
-    hook: bool,
-    quiet: bool,
+    args: SuspectArgs,
     db_path: Option<PathBuf>,
     ui: &crate::ui::Ui,
 ) -> Result<()> {
-    if hook {
+    if args.hook {
         print!("{PRE_PUSH_HOOK}");
         return Ok(());
     }
 
     // `--since` takes a date or a ref, because a person reaching for it means "since this
     // point" and does not want to know which of the two the tool wanted.
-    let (since_time, base_ref) = match since {
-        None => (None, base),
+    let (since_time, base_ref) = match args.since {
+        None => (None, args.base),
         Some(value) => match parse_since(&value) {
-            Some(t) => (Some(t), base),
+            Some(t) => (Some(t), args.base),
             None => {
-                if base.is_some() {
+                if args.base.is_some() {
                     bail!("--since '{value}' is not a date, and --base is already set");
                 }
                 (None, Some(value))
@@ -660,23 +676,23 @@ pub fn run_suspect_command(
         None => Storage::open_default()?,
     };
     let query = SuspectQuery {
-        repo: repo.unwrap_or_else(|| PathBuf::from(".")),
-        branch,
+        repo: args.repo.unwrap_or_else(|| PathBuf::from(".")),
+        branch: args.branch,
         base: base_ref,
         since: since_time,
-        window_hours: window_hours.unwrap_or(DEFAULT_WINDOW_HOURS),
+        window_hours: args.window_hours.unwrap_or(DEFAULT_WINDOW_HOURS),
         max_commits: DEFAULT_MAX_COMMITS,
     };
     let report = compute_suspect_commits(&storage, &query)?;
 
-    if json {
+    if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
     // `--quiet` is what the hook runs: say nothing on a clean push rather than printing a
     // screen the reader learns to scroll past.
-    if quiet {
+    if args.quiet {
         if !report.suspect.is_empty() {
             println!();
             print!("{}", report.prompt);
