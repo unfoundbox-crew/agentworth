@@ -1843,6 +1843,7 @@ fn print_scan_summary(summary: &ScanSummary, ui: &crate::ui::Ui) {
         scanned: summary.scanned_sessions,
         skipped: summary.skipped_unchanged,
         backfilled: summary.backfilled_sessions,
+        reparsed: summary.reparsed_sessions,
         errors: summary.errors_encountered,
         total_indexed: summary.total_indexed_sessions,
         pruned: summary.stub_sessions_removed,

@@ -146,6 +146,21 @@ pub trait AgentAdapter: Send + Sync {
         }
     }
 
+    /// Version of this adapter's parse output, recorded on every session row it indexes.
+    ///
+    /// An incremental scan skips a source whose bytes have not changed, so a fix to *how* a
+    /// file is read never reaches an already-indexed session -- the index keeps serving the
+    /// old, wrong answer until someone runs `--force`. Bumping this makes the scanner reparse
+    /// every row an older version produced, exactly once.
+    ///
+    /// Bump it whenever the parse output changes for files that already parse successfully:
+    /// new or corrected fields, different event normalization, changed token accounting. Do
+    /// not bump it for discovery/enumeration changes (those alter which files are seen, not
+    /// what a seen file yields) or for pure refactors.
+    fn parser_version(&self) -> i64 {
+        1
+    }
+
     /// Every distinct `adapter` name this adapter's parsed sessions can be stored under.
     /// Defaults to `[name()]`. An adapter that routes sessions into more than one product
     /// identity at parse time (e.g. Gemini vs. Antigravity, both handled by one adapter

@@ -1079,7 +1079,7 @@ async fn test_api_traces_includes_primary_outcome_and_composite_score() {
     scored_trace.stats.total_events = 10;
     scored_trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
     storage
-        .upsert_session(&scored_trace, Some("commit_observed"), Some(0.87))
+        .upsert_session(&scored_trace, Some("commit_observed"), Some(0.87), 1)
         .expect("upsert scored session");
 
     let unscored_prov = Provenance::new(

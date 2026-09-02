@@ -1056,6 +1056,7 @@ pub struct ScanView {
     pub scanned: usize,
     pub skipped: usize,
     pub backfilled: usize,
+    pub reparsed: usize,
     pub errors: usize,
     pub total_indexed: usize,
     pub pruned: usize,
@@ -1092,13 +1093,21 @@ pub fn scan_summary(ui: &Ui, v: &ScanView) -> String {
             ui.paint(
                 Role::Label,
                 &format!(
-                    "{} new, {} unchanged, {} error{}{}{}",
+                    "{} new, {} unchanged, {} error{}{}{}{}",
                     thousands(v.scanned as u64),
                     thousands(v.skipped as u64),
                     v.errors,
                     if v.errors == 1 { "" } else { "s" },
                     if v.backfilled > 0 {
                         format!(", {} backfilled", thousands(v.backfilled as u64))
+                    } else {
+                        String::new()
+                    },
+                    if v.reparsed > 0 {
+                        format!(
+                            ", {} reparsed (newer parser)",
+                            thousands(v.reparsed as u64)
+                        )
                     } else {
                         String::new()
                     },

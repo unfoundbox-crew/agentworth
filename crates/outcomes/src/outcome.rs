@@ -237,12 +237,27 @@ impl OutcomeDetector {
         let trimmed = cmd_str.trim().to_lowercase();
 
         // 1. CI / PR / Deployment (Highest Rank)
+        //
+        // Same line rung 3 draws below: "CI verified" means the run exited 0, not that a
+        // deploy command was typed. `gh pr create` that died on a merge conflict reads
+        // identically to one that opened the PR, so without a real exit code this cannot
+        // reach the top rung -- it is only a claim that something was attempted.
         if is_ci_or_deploy_command(&trimmed) {
-            let conf = if exit_code == Some(0) { 0.98 } else { 0.90 };
+            if exit_code != Some(0) {
+                return Some(OutcomeEvidence {
+                    kind: OutcomeKind::DoneClaimed,
+                    summary: format!(
+                        "CI or deployment command ran, result unknown (no exit code captured): '{}'",
+                        cmd_str
+                    ),
+                    confidence: 0.45,
+                });
+            }
+
             return Some(OutcomeEvidence {
                 kind: OutcomeKind::CiOrDeploymentVerified,
-                summary: format!("Deployment or CI command executed: '{}'", cmd_str),
-                confidence: conf,
+                summary: format!("Deployment or CI command exited 0: '{}'", cmd_str),
+                confidence: 0.98,
             });
         }
 
