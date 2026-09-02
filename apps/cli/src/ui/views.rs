@@ -2030,6 +2030,11 @@ pub fn blunder_blame_trails(ui: &Ui, rows: &[BlunderBlameTrailRow<'_>]) -> Strin
         if row.blamed_files.is_empty() {
             push(&mut out, ui, format!("  {}", ui.paint(Role::Unverified, "no blamed files indexed")));
         } else {
+            push(
+                &mut out,
+                ui,
+                ui.leaders("  blamed files", &row.blamed_files.len().to_string(), ui.width(), Role::Label),
+            );
             for (path, action) in &row.blamed_files {
                 push(
                     &mut out,

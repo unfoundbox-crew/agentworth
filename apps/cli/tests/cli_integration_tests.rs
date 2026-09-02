@@ -481,7 +481,8 @@ fn test_cli_audit_command_safety_detection() {
     audit_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("Agent Safety & Forensic Threat Audit"))
+        .stdout(predicate::str::contains("agentworth audit"))
+        .stdout(predicate::str::contains("THREAT SUMMARY"))
         .stdout(predicate::str::contains("CRITICAL"))
         .stdout(predicate::str::contains("LEAKED_SHELL_VARIABLE"))
         .stdout(predicate::str::contains("rm -rf $d"))
@@ -641,14 +642,15 @@ fn test_cli_blunder_command() {
     blunder_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("AGENTWORTH HALL OF BLUNDERS"))
+        .stdout(predicate::str::contains("agentworth blunder"))
+        .stdout(predicate::str::contains("EXHIBIT #01"))
         .stdout(predicate::str::contains("The Missing `local` Weapon (The Katana Incident)"))
         .stdout(predicate::str::contains("LEAKED_SHELL_VARIABLE"))
         .stdout(predicate::str::contains("CRITICAL"))
-        .stdout(predicate::str::contains("AGENT REMORSE QUOTE"))
-        .stdout(predicate::str::contains("FATAL MONOSPACE SNIPPET"))
+        .stdout(predicate::str::contains("remorse quote"))
+        .stdout(predicate::str::contains("fatal snippet"))
         .stdout(predicate::str::contains("for d in \"${PROTECTED_PATHS[@]}\"; do rm -rf \"$d\"; done"))
-        .stdout(predicate::str::contains("[ VERIFIED BY AGENTWORTH ]"));
+        .stdout(predicate::str::contains("receipt hash"));
 
     // 3. Run blunder with --submit --json (offline fallback mode)
     let mut blunder_submit_cmd = Command::cargo_bin("agwt").unwrap();
@@ -753,9 +755,10 @@ fn test_cli_blunder_blame_bridge_command() {
     session_text_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("BLUNDER-TO-BLAME BRIDGE"))
+        .stdout(predicate::str::contains("agentworth blunder-blame"))
+        .stdout(predicate::str::contains("BLUNDER #01"))
         .stdout(predicate::str::contains("CRITICAL"))
-        .stdout(predicate::str::contains("Blamed files"))
+        .stdout(predicate::str::contains("blamed files"))
         .stdout(predicate::str::contains("sweep.rs"));
 
     // 2. Blame -> blunder direction: `--file <PATH>` must resolve the file's blame
