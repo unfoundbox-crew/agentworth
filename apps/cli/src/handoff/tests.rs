@@ -369,7 +369,7 @@ fn the_line_budget_is_a_ceiling_and_truncation_is_stated() {
         .collect();
     report.files_total = 60;
 
-    for budget in [14usize, 20, 40, DEFAULT_MAX_LINES, MAX_LINES_CEILING] {
+    for budget in [14usize, 20, 40, DEFAULT_MAX_LINES] {
         let markdown = render_markdown(&report, budget);
         let lines = markdown.lines().count();
         assert!(
@@ -391,6 +391,12 @@ fn the_line_budget_is_a_ceiling_and_truncation_is_stated() {
     assert!(render_markdown(&report, 40).contains("more, not shown"));
     let tight = render_markdown(&report, 20);
     assert!(tight.contains("Dropped whole, for room: Files touched (60)"), "{tight}");
+
+    // Given room for everything, nothing is cut and nothing apologises for being cut.
+    let roomy = render_markdown(&report, MAX_LINES_CEILING);
+    assert!(!roomy.contains("more, not shown"), "{roomy}");
+    assert!(!roomy.contains("Dropped whole"), "{roomy}");
+    assert!(roomy.contains("crates/thing/src/file_59.rs"), "all 60 rows are present");
 }
 
 #[test]
@@ -422,7 +428,7 @@ fn every_non_empty_section_gets_a_row_before_any_section_gets_a_second() {
         .collect();
     report.files_total = 40;
 
-    let markdown = render_markdown(&report, 22);
+    let markdown = render_markdown(&report, DEFAULT_MAX_LINES);
     for heading in [
         "## Said it would, no evidence it did",
         "## Ran",
@@ -434,6 +440,10 @@ fn every_non_empty_section_gets_a_row_before_any_section_gets_a_second() {
             "a long file list must not starve {heading}:\n{markdown}"
         );
     }
+    assert!(
+        markdown.contains("more, not shown"),
+        "the file list is the section that pays for the others, and it says so"
+    );
 }
 
 #[test]
