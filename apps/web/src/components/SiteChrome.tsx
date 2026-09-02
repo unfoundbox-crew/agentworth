@@ -9,9 +9,9 @@ export const SCAN_CMD = "npx -y agentworth scan";
 export const CURL_CMD = "curl -fsSL https://agentworth.dev/install.sh | sh";
 
 /** `current` dims the link for the page you are already on. */
-export const SiteHeader: React.FC<{ current?: "changelog" | "reference" | "blog" }> = ({
-  current,
-}) => (
+export const SiteHeader: React.FC<{
+  current?: "changelog" | "reference" | "blog" | "archie";
+}> = ({ current }) => (
   <header className="wrap">
     <nav className="nav">
       <a className="mark" href="/" aria-label="AgentWorth home">
@@ -42,6 +42,13 @@ export const SiteHeader: React.FC<{ current?: "changelog" | "reference" | "blog"
         >
           Blog
         </a>
+        <a
+          className="nav-link"
+          href="/archie/"
+          aria-current={current === "archie" ? "page" : undefined}
+        >
+          Archie
+        </a>
         <a className="nav-link" href={REPO} target="_blank" rel="noreferrer">
           <IconGithub size={14} />
           <span className="nav-label">GitHub</span>
@@ -52,10 +59,11 @@ export const SiteHeader: React.FC<{ current?: "changelog" | "reference" | "blog"
   </header>
 );
 
-export const SiteFooter: React.FC = () => (
+/** `signoff` replaces the licence line on the one page that has earned a sign-off. */
+export const SiteFooter: React.FC<{ signoff?: React.ReactNode }> = ({ signoff }) => (
   <footer className="wrap">
     <div className="foot">
-      <span>Apache-2.0 &middot; native Rust &middot; nothing uploaded</span>
+      <span>{signoff ?? "Apache-2.0 \u00b7 native Rust \u00b7 nothing uploaded"}</span>
       <span className="foot-links">
         <a href="/blog/rss.xml">Blog RSS</a>
         <a href="/changelog/rss.xml">Releases RSS</a>

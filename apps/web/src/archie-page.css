@@ -1,0 +1,318 @@
+/* =========================================================================
+   agentworth.dev/archie
+
+   The mascot page, built from the two approved page boards. Same instrument
+   grammar as the rest of the site — hairlines instead of boxes, monospace for
+   anything named in code, --mv-accent kept scarce. Archie carries the colour
+   here; the page around him does not compete for it.
+
+   The colourways and the motion live in @ui/brand/archie/archie.css, imported
+   beside this file. Nothing here redefines them.
+   ========================================================================= */
+
+/* Every figure sits on the page as a block of drawing, not as a run of text. */
+.archie-figure {
+  display: inline-flex;
+  line-height: 0;
+}
+.archie-figure svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Hero ------------------------------------------------------------------ */
+.ar-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: clamp(32px, 6vw, 72px);
+  padding: clamp(40px, 7vw, 88px) 0 clamp(40px, 6vw, 72px);
+}
+.ar-hero h1 {
+  font-size: clamp(2rem, 1.2rem + 3.4vw, 3.75rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+  color: var(--mv-ink);
+  margin: 0 0 20px;
+  max-width: 15ch;
+  text-wrap: balance;
+}
+.ar-hero .lede {
+  font-size: clamp(1rem, 0.95rem + 0.4vw, 1.19rem);
+  max-width: 50ch;
+  margin-bottom: 26px;
+}
+.ar-hero-figure {
+  justify-self: end;
+}
+
+/* At a phone width Archie moves above the headline, per the 375 board. */
+@media (max-width: 860px) {
+  .ar-hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+    padding-top: 32px;
+  }
+  .ar-hero-figure {
+    order: -1;
+    justify-self: center;
+  }
+  /* He introduces the page here rather than anchoring it, so he steps back to
+     roughly the size the headline can carry above it. */
+  .ar-hero-figure svg {
+    width: 168px;
+    height: 168px;
+  }
+}
+
+.ar-cmd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+.ar-cmd .alt-install {
+  margin: 0;
+}
+
+/* The kit switch — the one interactive thing on the page ----------------- */
+.ar-try {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(20px, 4vw, 44px);
+  padding: 22px;
+  border: 1px solid var(--mv-border);
+  border-radius: 14px;
+  background: var(--mv-ground);
+}
+@media (max-width: 720px) {
+  .ar-try {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+}
+.ar-try-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--mv-surface);
+  min-width: 140px;
+}
+.ar-try-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+.ar-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ar-switch > .ar-switch-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  width: 84px;
+  flex: none;
+}
+.ar-switch button {
+  appearance: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--mv-border);
+  border-radius: 8px;
+  background: var(--mv-ground);
+  color: var(--mv-muted);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+.ar-switch button:hover {
+  color: var(--mv-ink);
+  background: var(--mv-surface);
+}
+.ar-switch button[aria-pressed="true"] {
+  color: var(--mv-ink);
+  border-color: var(--mv-accent-border);
+  background: var(--mv-accent-soft);
+}
+.ar-try-note {
+  margin: 12px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--mv-muted);
+  max-width: 62ch;
+}
+.ar-try-note code {
+  color: var(--mv-ink);
+}
+
+/* What he does ---------------------------------------------------------- */
+.ar-section-head {
+  margin: 0 0 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--mv-muted);
+}
+.ar-verbs {
+  margin: 18px 0 0;
+}
+.ar-verb {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 290px;
+  align-items: start;
+  gap: 28px;
+  padding: 28px 0;
+  border-top: 1px solid var(--mv-border);
+}
+.ar-verb-tile {
+  display: flex;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--mv-surface);
+}
+.ar-verb h3 {
+  margin: 0 0 8px;
+  font-size: clamp(1.05rem, 0.95rem + 0.7vw, 1.375rem);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  font-weight: 600;
+  color: var(--mv-ink);
+}
+.ar-verb p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.62;
+  color: var(--mv-muted);
+  max-width: 52ch;
+}
+.ar-names {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+.ar-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.ar-name .ar-name-kind {
+  width: 34px;
+  flex: none;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--mv-faint);
+}
+.ar-name code {
+  color: var(--mv-ink);
+  background: var(--mv-surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+@media (max-width: 900px) {
+  .ar-verb {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 14px 16px;
+    align-items: center;
+    padding: 16px 0;
+  }
+  /* The board drops the CLI name at a phone width and keeps the MCP tool: it
+     is the one you would actually be looking up away from a keyboard. */
+  .ar-names {
+    grid-column: 2;
+    padding-top: 0;
+  }
+  .ar-names .ar-name.is-cli {
+    display: none;
+  }
+  .ar-name .ar-name-kind {
+    display: none;
+  }
+  .ar-verb p {
+    display: none;
+  }
+}
+
+/* Offline band ---------------------------------------------------------- */
+.ar-band {
+  display: flex;
+  align-items: center;
+  gap: clamp(24px, 5vw, 56px);
+  margin: clamp(28px, 4vw, 44px) 0 clamp(44px, 6vw, 72px);
+  padding: clamp(24px, 4vw, 48px);
+  border-radius: 16px;
+  background: var(--mv-surface);
+}
+.ar-band-tile {
+  display: flex;
+  flex: none;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--mv-ground);
+}
+.ar-band h3 {
+  margin: 0 0 12px;
+  font-size: clamp(1.05rem, 0.95rem + 0.7vw, 1.375rem);
+  letter-spacing: -0.015em;
+  font-weight: 600;
+  color: var(--mv-ink);
+}
+.ar-band p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.62;
+  color: var(--mv-muted);
+  max-width: 58ch;
+}
+@media (max-width: 760px) {
+  .ar-band {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 20px;
+  }
+}
+
+/* The terminal block ---------------------------------------------------- */
+.ar-term {
+  margin: 18px 0 clamp(48px, 7vw, 88px);
+  padding: 20px 22px;
+  border: 1px solid #26262a;
+  border-radius: 10px;
+  background: #0d0d0f;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ar-term pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: #d4d4d8;
+  white-space: pre;
+}
+
+/* The footer sign-off --------------------------------------------------- */
+.ar-signoff {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
