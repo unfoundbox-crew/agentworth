@@ -175,8 +175,8 @@ fn resolve_and_load(
             let (report, trace) = load_asks(storage, scanner, &id, options)?;
             Ok((report, trace, Resolution::Explicit))
         }
-        crate::ui::picker::Resolved::NotFound(_) => {
-            unreachable!("picker::resolve with no id_or_prefix never returns NotFound")
+        crate::ui::picker::Resolved::NotFound(_) | crate::ui::picker::Resolved::Ambiguous { .. } => {
+            unreachable!("picker::resolve with no id_or_prefix resolves or exits")
         }
     }
 }

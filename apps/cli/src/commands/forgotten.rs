@@ -28,25 +28,7 @@ const TERMINAL_ROWS: usize = 10;
 /// (#76) made the prefix the normal way to name a session and this follows it. With
 /// nothing typed on a TTY, the picker takes over.
 fn resolve_session(storage: &Storage, ui: &Ui, json: bool, arg: &SessionArg) -> Result<String> {
-    match picker::resolve(storage, ui, json, arg)? {
-        picker::Resolved::Id(id) => Ok(id),
-        picker::Resolved::NotFound(input) => {
-            print!(
-                "{}",
-                picker::not_found(
-                    ui,
-                    storage,
-                    &format!("agentworth forgotten {input}"),
-                    &input,
-                    &[(
-                        "agentworth forgotten --last".to_string(),
-                        "the newest session in this repo".to_string(),
-                    )],
-                )
-            );
-            std::process::exit(1);
-        }
-    }
+    picker::resolve_or_exit(storage, ui, json, "session forgotten", arg)
 }
 
 // One parameter per CLI flag, same as every other command entry point here.

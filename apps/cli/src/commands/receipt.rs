@@ -789,25 +789,8 @@ pub fn run_receipt_command(
     };
 
     let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
-    let session_id = match crate::ui::picker::resolve(&storage, ui, false, &arg)? {
-        crate::ui::picker::Resolved::Id(id) => id,
-        crate::ui::picker::Resolved::NotFound(input) => {
-            print!(
-                "{}",
-                crate::ui::picker::not_found(
-                    ui,
-                    &storage,
-                    &format!("agentworth receipt {input}"),
-                    &input,
-                    &[(
-                        "agentworth receipt --last".to_string(),
-                        "the receipt for the newest session in this repo".to_string(),
-                    )],
-                )
-            );
-            std::process::exit(1);
-        }
-    };
+    let session_id =
+        crate::ui::picker::resolve_or_exit(&storage, ui, false, "session receipt", &arg)?;
 
     let scanner = Scanner::new(storage);
     let trace = scanner

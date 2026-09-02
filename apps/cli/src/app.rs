@@ -2196,6 +2196,9 @@ fn run_inspect_command(
     let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
     let resolved_id = match crate::ui::picker::resolve(&storage, ui, json, &arg)? {
         crate::ui::picker::Resolved::Id(id) => id,
+        crate::ui::picker::Resolved::Ambiguous { input, candidates } => {
+            crate::ui::picker::exit_ambiguous(ui, json, &input, &candidates)
+        }
         crate::ui::picker::Resolved::NotFound(input) => {
             if json {
                 anyhow::bail!(
@@ -2631,25 +2634,8 @@ fn run_export_command(
     let scanner = Scanner::new(storage.clone());
 
     let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
-    let session_id = match crate::ui::picker::resolve(&storage, ui, false, &arg)? {
-        crate::ui::picker::Resolved::Id(id) => id,
-        crate::ui::picker::Resolved::NotFound(input) => {
-            print!(
-                "{}",
-                crate::ui::picker::not_found(
-                    ui,
-                    &storage,
-                    &format!("agentworth export {input}"),
-                    &input,
-                    &[(
-                        "agentworth export --last".to_string(),
-                        "export the newest session in this repo".to_string(),
-                    )],
-                )
-            );
-            std::process::exit(1);
-        }
-    };
+    let session_id =
+        crate::ui::picker::resolve_or_exit(&storage, ui, false, "session export", &arg)?;
     let session_id = session_id.as_str();
 
     let mut trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(session_id))?;
@@ -3520,42 +3506,34 @@ mod tests {
     fn test_cli_binary_alias_parsing() {
         use clap::Parser;
 
-        // Test parsing command using "agentworth" binary name
-        let parsed_agentworth = Cli::try_parse_from(["agentworth", "doctor", "--json"]).unwrap();
-        match parsed_agentworth.command {
-            Commands::Doctor { json, self_test } => {
-                assert!(json);
-                assert!(!self_test);
+        // The same argv under each of the three binary names it answers to.
+        for argv0 in ["agentworth", "agwt", "archie"] {
+            let parsed = Cli::try_parse_from([argv0, "doctor", "--json"]).unwrap();
+            match parsed.command {
+                Commands::Doctor(a) => {
+                    assert!(a.json);
+                    assert!(!a.self_test);
+                }
+                _ => panic!("Expected Doctor command"),
             }
-            _ => panic!("Expected Doctor command"),
-        }
-
-        // Test parsing command using "agwt" binary alias
-        let parsed_agwt = Cli::try_parse_from(["agwt", "doctor", "--json"]).unwrap();
-        match parsed_agwt.command {
-            Commands::Doctor { json, self_test } => {
-                assert!(json);
-                assert!(!self_test);
-            }
-            _ => panic!("Expected Doctor command"),
         }
 
         // Test parsing "doctor --self-test"
         let parsed_self_test = Cli::try_parse_from(["agentworth", "doctor", "--self-test"]).unwrap();
         match parsed_self_test.command {
-            Commands::Doctor { json, self_test } => {
-                assert!(!json);
-                assert!(self_test);
+            Commands::Doctor(a) => {
+                assert!(!a.json);
+                assert!(a.self_test);
             }
             _ => panic!("Expected Doctor command"),
         }
 
-        // Test usage pacing with alert-above
+        // Test usage pacing with alert-above, on the hidden alias
         let parsed_usage = Cli::try_parse_from(["agwt", "usage", "--pacing", "--alert-above", "50.0"]).unwrap();
         match parsed_usage.command {
-            Commands::Usage { pacing, alert_above, .. } => {
-                assert!(pacing);
-                assert_eq!(alert_above, Some(50.0));
+            Commands::Usage(a) => {
+                assert!(a.pacing);
+                assert_eq!(a.alert_above, Some(50.0));
             }
             _ => panic!("Expected Usage command"),
         }

@@ -179,7 +179,7 @@ pub fn adapter_candidates() -> Vec<CompletionCandidate> {
         .collect()
 }
 
-fn fixed(values: &[(&str, &str)]) -> Vec<CompletionCandidate> {
+fn fixed(values: &'static [(&'static str, &'static str)]) -> Vec<CompletionCandidate> {
     values
         .iter()
         .map(|(value, help)| CompletionCandidate::new(*value).help(Some((*help).into())))

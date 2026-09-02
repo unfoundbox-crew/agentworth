@@ -552,8 +552,21 @@ mod tests {
             );
         }
 
-        let expected_tools = crate::mcp::AgentWorthMcpServer::tool_router().list_all().len();
+        // Every registered tool except the retired names, which are listed once in the
+        // old-spellings table instead of documented twice.
+        let expected_tools = crate::mcp::AgentWorthMcpServer::tool_router().list_all().len()
+            - crate::app::OLD_MCP_TOOL_NAMES.len();
         assert_eq!(doc.mcp.len(), expected_tools);
+        for (old, _) in crate::app::OLD_MCP_TOOL_NAMES {
+            assert!(
+                !doc.mcp.iter().any(|t| t.name == *old),
+                "retired tool `{old}` should not be in the reference"
+            );
+            assert!(
+                markdown.contains(&format!("| mcp | `{old}` |")),
+                "retired tool `{old}` should appear in the old-spellings table"
+            );
+        }
         for tool in &doc.mcp {
             assert!(markdown.contains(&format!("### `{}`", tool.name)));
         }
@@ -568,6 +581,7 @@ mod tests {
             version: "9.9.9".to_string(),
             generated_date: "2026-01-01".to_string(),
             global_flags: vec![],
+            old_spellings: vec![],
             cli: vec![CliCommandDoc {
                 path: "agentworth widget".to_string(),
                 about: "Turn a gear.".to_string(),
