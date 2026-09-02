@@ -9,18 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-09-02
+
 ### Added
 
 - **A grammar instead of a list.** Five nouns — `session`, `agent`, `repo`, `window`, `stats` — carry everything that acts on indexed data; `scan`, `serve`, `mcp`, `doctor`, `docs`, `config`, `version`, `update`, `completions` and `merge` stay top-level. Every pre-0.1.16 spelling still runs, hidden from `--help`, until v0.1.18 (#118).
 - New verbs: `archie agent show <adapter>`, `archie repo list`, `archie window list`, and `archie stats outcomes` — the verified-outcome rate, on the CLI at last (#118).
 - **`archie`**, the short name, shipped everywhere `agwt` shipped: a third binary, the npm bin map, `install.sh`, and the release tarball. `agwt` keeps working and is out of the docs (#118).
 - **Shell completions.** `archie completions <shell>` for bash, zsh, fish, powershell and elvish, plus live completion of session ids, repositories and models through `COMPLETE=<shell> archie`. One bounded read on a read-only connection: a missing or locked index offers nothing rather than blocking a Tab (#118).
+- **Archie, on four surfaces.** A terminal short form on the scan line (three lines, collapsing to `(*) archie` under 46 columns), a settings picker in the dashboard, a page at agentworth.dev/archie, and a branded 404 — driven by two new config keys (`archie.accessory`, `archie.colourway`) read and written through `GET`/`POST /api/config` (#114).
+- **The M3 redraw.** The muzzle folds into one closed head curve instead of a separate shape, and the light moves from a headlamp into a hand-held torch carried in a front paw — sleeping sets it on the ground, error drops it. The terminal form goes to three lines, nine columns (#119).
+- **A docs home at `/docs/`.** A card grid over Learn (7 guides), Reference, Specs (24), Research (2) and Changelog, plus a client-side search palette (Cmd/Ctrl-K) over a prebuilt index — no new dependency, no service (#117).
+- Two measured specs: **archie-bench**, a local leaderboard keyed on model x effort x repo and ranked by verified rate (#112), and **convergence**, on when a session stops making verified progress — measured over 3,046 real sessions, shipped as a token budget and a coverage warning rather than a stop switch, because the data didn't support one (#113).
 
 ### Changed
 
 - `blind-spots` is now `archie session list --unproven` — a filter, not a command of its own (#118).
 - Every show-style verb resolves a session identically: unique prefix, `--last`/`--current`, the picker on a TTY. An ambiguous prefix exits 2 with the candidates instead of guessing; `session cache` and `session bisect` gained all of this (#118).
 - MCP tools renamed to match the CLI (`sessions_find` → `session_list`, `session_get` → `session_show`, and eight more). Every old name stays registered and reaches the same handler until v0.1.18 (#118).
+
+### Fixed
+
+- The Codex adapter reads the fields Codex rollouts actually carry: model and effort from `turn_context`, tokens from the cumulative `total_token_usage` (including a restarted counter), and the real workspace from `session_meta.cwd` instead of the home directory. `PARSER_VERSION` 1 → 2, so a normal scan reparses every Codex session once (#116).
+- Model pricing now matches current models. Claude Sonnet 5/Opus 5/Fable 5.x, Sonnet/Opus 4.5-4.8, Haiku 4.5, Gemini 3.x, DeepSeek V4 and GLM 5.x/4.7 were silently priced at the Claude 3.5 Sonnet default rate card; `agentworth usage`'s dollar figures are now right for the models actually in use (#115).
+- The local API's CORS allowed any origin to read a person's whole session history through `/api/traces` and write their preferences through `/api/config`. It now passes only a page served from this machine (localhost, 127.0.0.1 or `[::1]`, any port). `GET /api/config` no longer returns `config_path`, which named the user's home directory for no reason a browser needed it (#114).
 
 ---
 
