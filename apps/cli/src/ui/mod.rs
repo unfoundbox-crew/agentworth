@@ -88,7 +88,7 @@ impl Ui {
 
     /// Resolve from the environment plus the two global flags.
     ///
-    /// `COLUMNS` wins over the ioctl so tests (and `COLUMNS=60 agentworth stats`) are
+    /// `COLUMNS` wins over the ioctl so tests (and `COLUMNS=60 archie stats`) are
     /// deterministic; NO_COLOR is honoured whatever its value, per no-color.org.
     pub fn detect(no_color_flag: bool, plain_flag: bool) -> Self {
         let term = console::Term::stdout();
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn header_fills_the_content_width() {
         let ui = Ui::new(80, ColorMode::None, false);
-        let head = ui.header("agentworth stats", "~/.agentworth/agentworth.db");
+        let head = ui.header("archie stats", "~/.agentworth/agentworth.db");
         for line in head.lines() {
             assert_eq!(display_width(line), 78);
         }

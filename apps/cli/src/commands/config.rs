@@ -1,6 +1,6 @@
 //! Persisted CLI configuration defaults for AgentWorth.
 //!
-//! Subcommand: `agentworth config get <key>` / `set <key> <value>` / `list`.
+//! Subcommand: `archie config get <key>` / `set <key> <value>` / `list`.
 //!
 //! Stores user-level defaults (output format, result limit, `usage` lookback period) in
 //! `config.toml` next to the SQLite index (`~/.agentworth/agentworth.db`, see
@@ -66,7 +66,7 @@ const VALID_COLOURWAYS: &[&str] = &["C1", "C2", "C3", "C4"];
 /// Canonicalize a `--period` value, accepting the single-letter aliases `d`/`w`/`m`/`y`
 /// alongside the full words. `None` means the input matches none of them -- the caller
 /// decides how to phrase the error (clap's own message for the flag, a config-specific one
-/// for `agentworth config set period`).
+/// for `archie config set period`).
 pub fn normalize_period(raw: &str) -> Option<&'static str> {
     match raw {
         "day" | "d" => Some("day"),
@@ -126,7 +126,7 @@ fn load_config_from(path: &Path) -> Result<CliConfig> {
 }
 
 /// Persist config to the default location. The local API's `POST /api/config` writes
-/// through here, so it lands in exactly the file `agentworth config set` writes.
+/// through here, so it lands in exactly the file `archie config set` writes.
 pub fn save_config(cfg: &CliConfig) -> Result<()> {
     save_config_to(&config_file_path()?, cfg)
 }
@@ -304,7 +304,7 @@ pub fn config_as_json(cfg: &CliConfig) -> serde_json::Value {
     })
 }
 
-/// Execute `agentworth config list`.
+/// Execute `archie config list`.
 pub fn run_config_list(json: bool) -> Result<()> {
     run_config_list_at(&config_file_path()?, json)
 }
@@ -334,7 +334,7 @@ fn print_kv(key: &str, value: Option<String>) {
     }
 }
 
-/// Execute `agentworth config get <key>`.
+/// Execute `archie config get <key>`.
 pub fn run_config_get(key: &str, json: bool) -> Result<()> {
     run_config_get_at(&config_file_path()?, key, json)
 }
@@ -357,7 +357,7 @@ fn run_config_get_at(path: &Path, key: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Execute `agentworth config set <key> <value>`.
+/// Execute `archie config set <key> <value>`.
 pub fn run_config_set(key: &str, value: &str, json: bool) -> Result<()> {
     run_config_set_at(&config_file_path()?, key, value, json)
 }

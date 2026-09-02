@@ -69,7 +69,7 @@ struct Cli {
     #[arg(
         long,
         global = true,
-        help = "Force text output even if persisted config defaults to JSON (see `agentworth config`)"
+        help = "Force text output even if persisted config defaults to JSON (see `archie config`)"
     )]
     no_json: bool,
 
@@ -131,7 +131,7 @@ pub const OLD_CLI_SPELLINGS: &[(&str, &str)] = &[
 ];
 
 /// Old MCP tool name -> the tool it became. Both names stay registered and dispatch to one
-/// handler (`apps/cli/src/mcp/server.rs`); `agentworth docs` leaves the old ones out of the
+/// handler (`apps/cli/src/mcp/server.rs`); `archie docs` leaves the old ones out of the
 /// generated reference.
 pub const OLD_MCP_TOOL_NAMES: &[(&str, &str)] = &[
     ("sessions_find", "session_list"),
@@ -210,7 +210,7 @@ enum Commands {
 
     /// Start the read-only MCP server over stdio, for a coding agent to query this machine's
     /// session index mid-session (see docs/specs/mcp-server.md). Register it once with
-    /// `claude mcp add agentworth --scope user -- agentworth mcp`.
+    /// `claude mcp add agentworth --scope user -- archie mcp`.
     Mcp,
 
     /// Check local environment, adapter discoveries, and SQLite database health
@@ -874,7 +874,7 @@ struct AsksArgs {
           add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
     session_id: Option<String>,
 
-    /// The same session, named with a flag. Kept because `agentworth asks --session <id>`
+    /// The same session, named with a flag. Kept because `archie session asks --session <id>`
     /// is the spelling that shipped in #97.
     #[arg(long, conflicts_with_all = ["current", "last"],
           add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
@@ -1281,7 +1281,7 @@ pub fn run() -> Result<()> {
     } else {
         EnvFilter::new("warn")
     };
-    // `agentworth mcp` speaks JSON-RPC over stdout -- any stray tracing line there would
+    // `archie mcp` speaks JSON-RPC over stdout -- any stray tracing line there would
     // corrupt the protocol stream for whatever client spawned this process (the same reason
     // every rmcp stdio example logs to stderr). Every other subcommand keeps the existing
     // stdout default.
@@ -1298,7 +1298,7 @@ pub fn run() -> Result<()> {
             .init();
     }
 
-    // Persisted user defaults (`~/.agentworth/config.toml`, see `agentworth config`). A
+    // Persisted user defaults (`~/.agentworth/config.toml`, see `archie config`). A
     // corrupt config file should not brick every command, so fall back to built-in
     // defaults with a warning rather than erroring out.
     let persisted_config = config::load_config().unwrap_or_else(|e| {
@@ -1313,7 +1313,7 @@ pub fn run() -> Result<()> {
     let ui = crate::ui::Ui::detect(cli.no_color, cli.plain);
     // `Ui` resolves --plain/--no-color/NO_COLOR once above; every raw `console::style(...)`
     // call across the older commands (the ones not yet rendering through `ui::views`) builds
-    // its own colour decision independently and never saw those flags, so `agentworth blunder
+    // its own colour decision independently and never saw those flags, so `archie session blunder
     // --plain` still printed ANSI codes. Forcing the global switch here to the same verdict
     // makes every `style()` call in the binary agree with `Ui`, immediately, without waiting
     // on each command's own redesign.
@@ -1644,7 +1644,7 @@ pub fn run() -> Result<()> {
 }
 
 /// Clap `value_parser` for `usage --period`: canonicalizes `d`/`w`/`m`/`y` to their full
-/// words via `config::normalize_period`, so `agentworth usage --period y` and `--period year`
+/// words via `config::normalize_period`, so `archie stats usage --period y` and `--period year`
 /// parse identically.
 fn parse_period_arg(s: &str) -> std::result::Result<String, String> {
     config::normalize_period(s).map(str::to_string).ok_or_else(|| {
@@ -1687,7 +1687,7 @@ fn parse_since_arg(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
     );
 }
 
-/// The full clap command tree for `Cli`, for `agentworth docs` to introspect. Not exposing
+/// The full clap command tree for `Cli`, for `archie docs` to introspect. Not exposing
 /// `Cli` itself keeps its construction (parsing argv) owned entirely by `run()` above; this
 /// is just the read-only `clap::Command` metadata `CommandFactory` derives for free.
 pub fn cli_command() -> clap::Command {
@@ -2090,12 +2090,12 @@ fn run_traces_command(
             "{}",
             crate::ui::views::error(
                 ui,
-                "agentworth traces",
+                "archie session list",
                 "No sessions found in index.",
                 "",
                 &[],
                 &[(
-                    "agentworth scan".to_string(),
+                    "archie scan".to_string(),
                     "discover and index agent histories".to_string()
                 )],
             )
@@ -2137,7 +2137,7 @@ fn build_traces_view(
         .collect();
     crate::ui::views::traces(
         ui,
-        &format!("agentworth traces --limit {}", limit),
+        &format!("archie session list --limit {}", limit),
         indexed,
         &view_rows,
     )
@@ -2202,7 +2202,7 @@ fn run_inspect_command(
         crate::ui::picker::Resolved::NotFound(input) => {
             if json {
                 anyhow::bail!(
-                    "Session '{}' not found in SQLite index. Try running 'agentworth scan' first.",
+                    "Session '{}' not found in SQLite index. Try running 'archie scan' first.",
                     input
                 );
             }
@@ -2749,17 +2749,17 @@ fn inspect_not_found(
 
     crate::ui::views::error(
         ui,
-        &format!("agentworth inspect {}", session_id),
+        &format!("archie session show {}", session_id),
         &format!("No indexed session starts with {}.", session_id),
         "Closest three:",
         &nearest,
         &[
             (
-                "agentworth traces --limit 20".to_string(),
+                "archie session list --limit 20".to_string(),
                 "list what is indexed".to_string(),
             ),
             (
-                "agentworth scan".to_string(),
+                "archie scan".to_string(),
                 "re-index, if it should be here".to_string(),
             ),
         ],
@@ -2783,7 +2783,7 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>, ui: &c
     if let Ok(st) = &storage_res {
         storage_healthy = true;
         // true: this is a raw index-health count ("total_indexed_sessions" under "storage"),
-        // matching `agentworth scan`'s own "Total Indexed... in SQLite index" promise -- not a
+        // matching `archie scan`'s own "Total Indexed... in SQLite index" promise -- not a
         // "real activity" metric.
         if let Ok(stats) = st.get_aggregate_stats(true) {
             total_indexed = stats.total_sessions;
@@ -3094,7 +3094,7 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
         }
     });
 
-    let mut command = format!("agentworth usage --period {period}");
+    let mut command = format!("archie stats usage --period {period}");
     if by != "adapter" {
         command.push_str(&format!(" --by {by}"));
     }
@@ -3122,12 +3122,12 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
 fn no_usage_records(ui: &crate::ui::Ui) -> String {
     crate::ui::views::error(
         ui,
-        "agentworth usage",
+        "archie stats usage",
         "No usage records in the index.",
         "",
         &[],
         &[(
-            "agentworth scan".to_string(),
+            "archie scan".to_string(),
             "index local sessions first".to_string(),
         )],
     )
@@ -3145,7 +3145,7 @@ fn build_pacing_view(
     let mut out = String::new();
 
     out.push_str(&ui.header(
-        &format!("agentworth usage --pacing --hours {}", hours),
+        &format!("archie window show --hours {}", hours),
         &format!(
             "{} {} {}",
             p.started_at.format("%Y-%m-%d %H:%M"),
@@ -3209,7 +3209,7 @@ fn build_pacing_view(
 
     let _ = views::RUNG_LABELS;
     out.push('\n');
-    out.push_str(&ui.next("agentworth usage --period day", "the same spend, by day"));
+    out.push_str(&ui.next("archie stats usage --period day", "the same spend, by day"));
     out
 }
 
@@ -3391,7 +3391,7 @@ mod tests {
     #[test]
     fn test_stats_reads_the_index_without_reparsing_every_transcript() {
         // Timing guard: `compute_verdict_breakdown` used to call `Scanner::load_trace` (a
-        // real disk read + adapter re-parse) for every session on every `agentworth stats`
+        // real disk read + adapter re-parse) for every session on every `archie stats`
         // invocation -- 17s measured against a 2,960-session index. It now reads
         // `sessions.primary_outcome` straight out of the index (`Storage::verdict_breakdown`),
         // so this must stay fast against 3,000 sessions.

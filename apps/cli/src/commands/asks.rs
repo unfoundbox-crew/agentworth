@@ -1,4 +1,4 @@
-//! `agentworth asks` — the questions-to-answers index for a session, rendered for a person.
+//! `archie session asks` — the questions-to-answers index for a session, rendered for a person.
 //!
 //! In a long session you ask a question, the answer lands several messages later among tool
 //! notifications, and you re-ask it because scrolling costs time and re-asking costs tokens.
@@ -162,7 +162,7 @@ fn resolve_and_load(
             })?
             .into_iter()
             .next()
-            .context("no sessions are indexed; run `agentworth scan` first")?;
+            .context("no sessions are indexed; run `archie scan` first")?;
         let (report, trace) = load_asks(storage, scanner, &newest.session_id, options)?;
         return Ok((report, trace, Resolution::NewestAnywhere));
     }
@@ -224,13 +224,13 @@ fn not_found(storage: &Storage, session_id: &str, ui: &Ui) -> String {
 
     crate::ui::views::error(
         ui,
-        &format!("agentworth asks {session_id}"),
+        &format!("archie session asks {session_id}"),
         &format!("No indexed session starts with {session_id}, and it isn't a file on disk either."),
         "Closest three:",
         &nearest,
         &[
-            ("agentworth asks".to_string(), "the newest session in this repo".to_string()),
-            ("agentworth scan".to_string(), "re-index, if it should be here".to_string()),
+            ("archie session asks".to_string(), "the newest session in this repo".to_string()),
+            ("archie scan".to_string(), "re-index, if it should be here".to_string()),
         ],
     )
 }
@@ -318,7 +318,7 @@ fn render_terminal(report: &AsksReport, ui: &Ui, resolution: &Resolution) -> Str
             skipped: &[],
             receipt,
             next: Some((
-                format!("agentworth inspect {}", short(&report.receipt.session_id)),
+                format!("archie session show {}", short(&report.receipt.session_id)),
                 "read the turns these questions and answers came from".to_string(),
             )),
         },
@@ -382,8 +382,8 @@ fn receipt_lines(report: &AsksReport) -> [String; 2] {
 
 fn command_line(report: &AsksReport, resolution: &Resolution) -> String {
     match resolution {
-        Resolution::RawPath => "agentworth asks --session <path>".to_string(),
-        _ => format!("agentworth asks {}", short(&report.receipt.session_id)),
+        Resolution::RawPath => "archie session asks --session <path>".to_string(),
+        _ => format!("archie session asks {}", short(&report.receipt.session_id)),
     }
 }
 

@@ -1,7 +1,7 @@
 //! Filesystem-event-driven live tail: watches the directories where adapters write session
 //! files with `notify` and fans changes out to a broadcast channel for SSE clients.
 //!
-//! This is deliberately independent of `agentworth watch` (`commands/watch.rs`), which polls
+//! This is deliberately independent of `archie session watch` (`commands/watch.rs`), which polls
 //! parsed traces on an interval to detect doom loops. That command answers "is this session
 //! going wrong"; this module answers "a session file just changed, right now" — real
 //! filesystem events, not a diff between two polls. They share no code on purpose.

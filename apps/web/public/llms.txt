@@ -32,13 +32,13 @@ cargo install agentworth
 11. OpenCode (~/.opencode/, ~/.local/share/opencode/)
 
 ## Core CLI Commands
-- `agentworth scan`: Discovers and incrementally indexes agent sessions into local SQLite.
-- `agentworth stats`: Displays machine-wide token totals, top models, top tools, and session counts.
-- `agentworth doctor`: Diagnoses system health, SQLite WAL status, and detected adapter roots.
-- `agentworth traces`: Filterable tabular session directory (`--limit`, `--adapter`, `--model`).
-- `agentworth inspect <id>`: Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs.
-- `agentworth serve`: Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`).
-- `agentworth export <id>`: Safe export to standard ATIF v1.0 with 13-rule offline privacy secret redaction (`--redact`).
+- `archie scan`: Discovers and incrementally indexes agent sessions into local SQLite.
+- `archie stats`: Displays machine-wide token totals, top models, top tools, and session counts.
+- `archie doctor`: Diagnoses system health, SQLite WAL status, and detected adapter roots.
+- `archie session list`: Filterable tabular session directory (`--limit`, `--adapter`, `--model`).
+- `archie session show <id>`: Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs.
+- `archie serve`: Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`).
+- `archie session export <id>`: Safe export to standard ATIF v1.0 with 13-rule offline privacy secret redaction (`--redact`).
 
 ## Privacy & Security Guarantees
 - 100% Local & Offline: No telemetry, no background network pings, zero telemetry uploads.

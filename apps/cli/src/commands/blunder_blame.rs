@@ -203,11 +203,11 @@ pub fn run_blunder_blame_command(
                         "{}",
                         crate::ui::views::error(
                             ui,
-                            "agentworth blunder-blame",
+                            "archie repo blunder-blame",
                             &format!("No indexed session found matching '{}'.", session_id),
                             "",
                             &[],
-                            &[("agentworth scan".to_string(), "index agent histories first".to_string())],
+                            &[("archie scan".to_string(), "index agent histories first".to_string())],
                         )
                     );
                 }
@@ -239,11 +239,11 @@ pub fn run_blunder_blame_command(
             "{}",
             crate::ui::views::error(
                 ui,
-                "agentworth blunder-blame",
+                "archie repo blunder-blame",
                 "No blunder exhibits found in the local index.",
                 "",
                 &[],
-                &[("agentworth scan".to_string(), "index agent histories first".to_string())],
+                &[("archie scan".to_string(), "index agent histories first".to_string())],
             )
         );
         return Ok(());

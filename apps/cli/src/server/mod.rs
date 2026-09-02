@@ -23,11 +23,11 @@ pub use static_files::*;
 /// Default port used by AgentWorth local server.
 pub const DEFAULT_PORT: u16 = 3000;
 
-/// The conventional build output location `agentworth serve` falls back to when no `--dist`
+/// The conventional build output location `archie serve` falls back to when no `--dist`
 /// flag is given, relative to the process's current directory.
 pub const DEFAULT_DIST_DIR: &str = "apps/dashboard/dist";
 
-/// Resolves the dist directory `agentworth serve` should serve the web UI from.
+/// Resolves the dist directory `archie serve` should serve the web UI from.
 ///
 /// An explicit `--dist` path is a user assertion, not a hint: if it doesn't exist, isn't a
 /// directory, or has no `index.html`, this fails loudly rather than silently falling back to

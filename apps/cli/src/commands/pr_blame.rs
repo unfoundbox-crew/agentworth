@@ -1,6 +1,6 @@
 //! PR Blame-Aware Overlay command for AgentWorth.
 //!
-//! Subcommand: `agentworth pr-blame [FILES...] [--json]`
+//! Subcommand: `archie repo pr-blame [FILES...] [--json]`
 //! Annotates PR or git diff file modifications with AI provenance:
 //! which AI session authored the file, models used, tokens invested, and outcome verdict.
 
@@ -116,7 +116,7 @@ pub fn annotate_pr_files(
     })
 }
 
-/// Execute the `agentworth pr-blame` subcommand.
+/// Execute the `archie repo pr-blame` subcommand.
 pub fn run_pr_blame_command(
     files: Vec<String>,
     json: bool,
@@ -149,7 +149,7 @@ pub fn run_pr_blame_command(
     };
 
     if target_files.is_empty() {
-        println!("No changed files detected. Provide paths: `agentworth pr-blame <path1> <path2>`");
+        println!("No changed files detected. Provide paths: `archie repo pr-blame <path1> <path2>`");
         return Ok(());
     }
 

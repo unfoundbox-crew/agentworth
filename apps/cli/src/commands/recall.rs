@@ -1,6 +1,6 @@
 //! Experience Recall command for AgentWorth.
 //!
-//! Subcommand: `agentworth recall "<query>" [--limit N] [--min-score F] [--json]`
+//! Subcommand: `archie session recall "<query>" [--limit N] [--min-score F] [--json]`
 //! Semantically searches prior agent trajectories and joins against session outcome & spend records,
 //! answering: "Have I solved this before, and did it actually work?"
 
@@ -107,7 +107,7 @@ pub fn recall_experience(
     })
 }
 
-/// Execute the `agentworth recall` subcommand.
+/// Execute the `archie session recall` subcommand.
 pub fn run_recall_command(
     query: &str,
     limit: usize,

@@ -1,6 +1,6 @@
 //! Merge subcommand for AgentWorth.
 //!
-//! Subcommand: `agentworth merge <source-db-path> [--json]`
+//! Subcommand: `archie merge <source-db-path> [--json]`
 //! Merges an external SQLite index database into the local database, deduping by `session_id`
 //! and preserving the most complete/recent session data.
 
@@ -128,7 +128,7 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
     // it is now one of `SESSION_CHILD_TABLES`, the merge loop below unconditionally runs a
     // `DELETE`/`INSERT` against it for every session, on both the target and (via `other_db.`)
     // the source connection -- which fails outright with "no such table" for anyone who has
-    // never run `agentworth search`/`recall` on either index. Forcing the vector store into
+    // never run `archie session search`/`recall` on either index. Forcing the vector store into
     // existence here keeps the table (and therefore the merge) present unconditionally.
     let target_storage = agentworth_storage::Storage::open_path(target_db_path)?;
     drop(target_storage.vector_store()?);
@@ -329,7 +329,7 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
     Ok(stats)
 }
 
-/// Execute the `agentworth merge` subcommand.
+/// Execute the `archie merge` subcommand.
 pub fn run_merge_command(
     source_db_path: PathBuf,
     json: bool,
@@ -691,7 +691,7 @@ mod tests {
         let storage = agentworth_storage::Storage::open_path(db.path()).unwrap();
         // `trajectory_chunks` is created lazily by the vector store, not by
         // `initialize_schema` -- force it into existence so this scan actually sees it, the
-        // way a real index does after its first `agentworth search`/`recall`.
+        // way a real index does after its first `archie session search`/`recall`.
         drop(storage.vector_store().unwrap());
         drop(storage);
 

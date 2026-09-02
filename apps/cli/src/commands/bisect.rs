@@ -1,6 +1,6 @@
 //! Session Bisect command for AgentWorth.
 //!
-//! Subcommand: `agentworth bisect <session-id> [--json]`
+//! Subcommand: `archie session bisect <session-id> [--json]`
 //! Walks a session's trajectory to pinpoint the exact turning point where the run turned negative
 //! (e.g. failing build after edit, file reversion, repeated errors, apology cascade).
 
@@ -157,7 +157,7 @@ fn reason_label(reason: &RegressionReason) -> &'static str {
     }
 }
 
-/// Execute the `agentworth bisect` subcommand.
+/// Execute the `archie session bisect` subcommand.
 pub fn run_bisect_command(
     session_id: Option<String>,
     last: bool,

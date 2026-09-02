@@ -89,7 +89,7 @@ pub fn resolve(storage: &Storage, ui: &Ui, json: bool, arg: &SessionArg) -> Resu
     if arg.wants_last() {
         return match resolve_last(storage)? {
             Some(id) => Ok(Resolved::Id(id)),
-            None => anyhow::bail!("no sessions are indexed; run `agentworth scan` first"),
+            None => anyhow::bail!("no sessions are indexed; run `archie scan` first"),
         };
     }
     if !is_tty() || json {
@@ -198,8 +198,8 @@ pub fn resolve_last(storage: &Storage) -> Result<Option<String>> {
 }
 
 /// A generic not-found screen for a command whose own `Resolved::NotFound` came back.
-/// `command_echo` is the header line (e.g. `agentworth export a1b2c3`); `hints` are the
-/// command-specific next steps shown before the standing `agentworth scan` one.
+/// `command_echo` is the header line (e.g. `archie session export a1b2c3`); `hints` are the
+/// command-specific next steps shown before the standing `archie scan` one.
 pub fn not_found(
     ui: &Ui,
     storage: &Storage,
@@ -223,7 +223,7 @@ pub fn not_found(
 
     let mut next = hints.to_vec();
     next.push((
-        "agentworth scan".to_string(),
+        "archie scan".to_string(),
         "re-index, if it should be here".to_string(),
     ));
 

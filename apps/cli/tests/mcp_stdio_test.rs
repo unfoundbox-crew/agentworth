@@ -104,3 +104,85 @@ async fn test_stdio_tools_list_and_sessions_find() {
     client.cancel().await.expect("client should shut down cleanly");
     server_handle.await.expect("server task should not panic");
 }
+
+/// The retired tool names still dispatch, and reach the same handler as the names that
+/// replaced them. A client registered against `sessions_find` must not break on a rename.
+#[tokio::test]
+async fn retired_tool_names_reach_the_same_handler() {
+    let storage = Storage::open_in_memory().expect("open in-memory storage");
+
+    let prov = Provenance::new(
+        "/Users/saurabh/code/unfoundbox/agentworth/sess-1.jsonl",
+        "claude_code",
+        100,
+        12345,
+        "fp_sess_1",
+    );
+    let mut trace = AgentWorthTrace::new("sess-1", "claude_code", prov, Utc::now());
+    trace.stats.total_events = 5;
+    trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+    storage.upsert_trace(&trace).expect("seed session");
+
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+    let (server_transport, client_transport) = tokio::io::duplex(8192);
+    let server_handle = tokio::spawn(async move {
+        server
+            .serve(server_transport)
+            .await
+            .expect("server should start serving")
+            .waiting()
+            .await
+            .expect("server should shut down cleanly");
+    });
+    let client = ()
+        .serve(client_transport)
+        .await
+        .expect("client should complete the MCP handshake");
+
+    let text_of = |name: &'static str| {
+        let client = &client;
+        async move {
+            let result = client
+                .call_tool(CallToolRequestParams::new(name).with_arguments(
+                    serde_json::json!({ "limit": 10 }).as_object().unwrap().clone(),
+                ))
+                .await
+                .unwrap_or_else(|e| panic!("tools/call {name} failed: {e}"));
+            assert_ne!(result.is_error, Some(true), "{name} returned an error result");
+            result
+                .content
+                .first()
+                .and_then(|c| c.as_text())
+                .map(|t| t.text.clone())
+                .unwrap_or_else(|| panic!("{name} carried no text content block"))
+        }
+    };
+
+    assert_eq!(
+        text_of("sessions_find").await,
+        text_of("session_list").await,
+        "the retired name and its replacement must return the same answer"
+    );
+
+    // The whole table, not just the one above: every retired name is still registered.
+    for (old, _new) in agentworth_cli::app::OLD_MCP_TOOL_NAMES {
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new(*old)
+                    .with_arguments(serde_json::json!({}).as_object().unwrap().clone()),
+            )
+            .await;
+        // Several tools have required parameters, so an invalid-params error is fine here;
+        // what must not happen is the tool being missing.
+        if let Err(e) = &result {
+            let message = e.to_string();
+            assert!(
+                !message.contains("not found") && !message.contains("Unknown tool"),
+                "retired tool `{old}` is no longer registered: {message}"
+            );
+        }
+    }
+
+    client.cancel().await.expect("client should shut down cleanly");
+    server_handle.await.expect("server task should not panic");
+}

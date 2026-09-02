@@ -1,4 +1,4 @@
-//! Typed parameter structs for every `agentworth mcp` tool. `schemars::JsonSchema` drives the
+//! Typed parameter structs for every `archie mcp` tool. `schemars::JsonSchema` drives the
 //! JSON Schema `rmcp`'s `#[tool]` macro publishes to MCP clients; `serde::Deserialize` drives
 //! decoding the client's actual call arguments.
 

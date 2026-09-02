@@ -88,7 +88,7 @@ pub fn run_search_command(
         if stats.total_chunks == 0 {
             println!(
                 "{}",
-                style("Tip: Run `agentworth scan` (or `agwt scan`) first to index local agent histories.").yellow()
+                style("Tip: Run `archie scan` (or `agwt scan`) first to index local agent histories.").yellow()
             );
         }
         println!();

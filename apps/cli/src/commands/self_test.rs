@@ -1,9 +1,9 @@
-//! `agentworth doctor --self-test`: runs Saurabh's real release workflow, in order,
+//! `archie doctor --self-test`: runs Saurabh's real release workflow, in order,
 //! against the real index and real sources on this machine, with no network, and times
 //! every step.
 //!
 //! Every step below invokes the *actual installed binary* (`std::env::current_exe()`)
-//! exactly the way a person types it -- `agentworth scan --json`, `agentworth stats
+//! exactly the way a person types it -- `archie scan --json`, `archie stats
 //! --json`, and so on -- rather than calling the underlying library functions directly.
 //! That's deliberate: this is a release smoke test standing in for a person clicking
 //! through the whole workflow by hand, so it should break the same way a person's
@@ -173,7 +173,7 @@ fn asks_subcommand_exists(exe: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Spawns `agentworth mcp` as a real child process on stdio and drives it as a genuine
+/// Spawns `archie mcp` as a real child process on stdio and drives it as a genuine
 /// MCP client would: `tools/list`, then `session_show` (capped at 500 events) against
 /// `session_id` if one was resolved. Returns a one-line receipt; never the tool results
 /// themselves.
@@ -187,11 +187,11 @@ async fn mcp_roundtrip(exe: &Path, db_path: Option<&Path>, session_id: Option<&s
     if let Some(p) = db_path {
         cmd.arg("--db-path").arg(p);
     }
-    let transport = TokioChildProcess::new(cmd).context("spawning `agentworth mcp`")?;
+    let transport = TokioChildProcess::new(cmd).context("spawning `archie mcp`")?;
     let client = ()
         .serve(transport)
         .await
-        .context("MCP initialize handshake with `agentworth mcp` failed")?;
+        .context("MCP initialize handshake with `archie mcp` failed")?;
 
     let tools = client
         .list_tools(Default::default())

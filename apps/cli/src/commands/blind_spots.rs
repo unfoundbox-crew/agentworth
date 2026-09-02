@@ -1,6 +1,6 @@
 //! CI Blind-Spot Report command for AgentWorth.
 //!
-//! Subcommand: `agentworth blind-spots [--limit N] [--json]`
+//! Subcommand: `archie session list --unproven [--limit N] [--json]`
 //! Generates a forensic report of sessions whose outcome claims never advanced past the
 //! bottom two rungs of the verification ladder (`DoneClaimed` / `ArtifactChanged`).
 
@@ -130,7 +130,7 @@ pub fn generate_blind_spots_report(
     })
 }
 
-/// Execute the `agentworth blind-spots` subcommand.
+/// Execute the `archie session list --unproven` subcommand.
 pub fn run_blind_spots_command(
     limit: usize,
     json: bool,

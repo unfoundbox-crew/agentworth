@@ -181,7 +181,7 @@ pub fn run_loose_ends_command(
                 skipped: &[],
                 receipt,
                 next: Some((
-                    format!("agentworth handoff {}", short(&report.receipt.session_id)),
+                    format!("archie session handoff {}", short(&report.receipt.session_id)),
                     "the whole handoff, not just this section".to_string(),
                 )),
             }
@@ -256,7 +256,7 @@ fn render_terminal(report: &HandoffReport, ui: &Ui) -> String {
 
     let cost = cost_line(report);
     let receipt = receipt_lines(report);
-    let command = format!("agentworth handoff {}", short(&report.receipt.session_id));
+    let command = format!("archie session handoff {}", short(&report.receipt.session_id));
     crate::ui::views::handoff(
         ui,
         &HandoffView {
@@ -272,7 +272,7 @@ fn render_terminal(report: &HandoffReport, ui: &Ui) -> String {
             skipped: &[],
             receipt,
             next: Some((
-                format!("agentworth inspect {}", short(&report.receipt.session_id)),
+                format!("archie session show {}", short(&report.receipt.session_id)),
                 "read the turns these lines came from".to_string(),
             )),
         },

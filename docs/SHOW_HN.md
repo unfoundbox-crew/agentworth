@@ -20,7 +20,7 @@ Every one of these tools writes extensive, non-standard JSONL transcripts into d
 - *Which agent session and prompt authored lines 45–90 of `src/main.rs`?*
 - *Did the agent actually pass the test suite, or did it just claim "Done!" before quitting?*
 
-We built **AgentWorth** (`agwt`) to solve this. It is an open-source, 100% offline native Rust engine that discovers, normalizes, and indexes your machine's AI coding history into a local SQLite database.
+We built **AgentWorth** (`archie`) to solve this. It is an open-source, 100% offline native Rust engine that discovers, normalizes, and indexes your machine's AI coding history into a local SQLite database.
 
 ### ⚡ 1-Line Quickstart
 
@@ -52,7 +52,7 @@ curl -fsSL https://agentworth.dev/install.sh | sh
 
 ### What You Get: The Flight Receipt
 
-When you run `agentworth stats` or inspect your sessions, AgentWorth generates an instant ASCII flight receipt:
+When you run `archie stats` or inspect your sessions, AgentWorth generates an instant ASCII flight receipt:
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -86,7 +86,7 @@ When you run `agentworth stats` or inspect your sessions, AgentWorth generates a
    - `[unflown]`: Unverified or speculative claims. Blending `flown` and `on paper` without explicit distinction is treated as a type error.
 4. **Outcome Evidence Ladder**: Agents frequently hallucinate success. We evaluate traces through an empirical hierarchy:
    `DoneClaimed < ArtifactChanged < TestOrBuildPassed < CommitObserved < CiOrDeploymentVerified`
-5. **AI Code Lineage (`agentworth blame <FILE>`)**: Like `git blame`, but traces code modifications back to the agent session, model, timestamp, and user prompt that authored them.
+5. **AI Code Lineage (`archie repo blame <FILE>`)**: Like `git blame`, but traces code modifications back to the agent session, model, timestamp, and user prompt that authored them.
 6. **Safe ATIF v1.0 Export**: Includes a deterministic 13-rule offline privacy scrubber that strips API keys (`sk-*`, `ghp_*`), `.env` secrets, absolute home directory paths, and org URLs before serializing to standard Agent Trajectory Interchange Format.
 7. **20 Native Streaming Adapters**: Claude Code, Cursor, Google Antigravity (`agy`), DeepSeek, Kimi, MiniMax, Qwen, Zhipu, Aider, Cline/Roo-Code, Windsurf, Manus, OpenAI Codex, Goose, Pi, Herdr, Hermes, OpenClaw, Grok, and OpenCode.
 
@@ -94,7 +94,7 @@ When you run `agentworth stats` or inspect your sessions, AgentWorth generates a
 
 ### Local Thermal Explorer UI
 
-If you prefer a visual interface, `agentworth serve --open` boots a local monochrome thermal-receipt explorer UI on `http://localhost:3000`:
+If you prefer a visual interface, `archie serve --open` boots a local monochrome thermal-receipt explorer UI on `http://localhost:3000`:
 - Interactive prompt, thought, tool-call, and diff archaeology
 - Rolling burn-rate charts & pacing monitors
 - Redaction previews and one-click ATIF exports

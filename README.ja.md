@@ -34,28 +34,28 @@ AgentWorthは、ローカルのドットファイルに蓄積されたAIエー�
 | インストール方法 | コマンド | 説明 |
 | :--- | :--- | :--- |
 | **単体インストールスクリプト** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | ネイティブバイナリを直接 `~/.local/bin` にインストールします。 |
-| **Cargo (Rustネイティブ)** | `cargo install agentworth-cli` | `agentworth` および `agwt` を `~/.cargo/bin` にビルドしてインストールします。 |
+| **Cargo (Rustネイティブ)** | `cargo install agentworth-cli` | `agentworth` と短縮名 `archie` を `~/.cargo/bin` にビルドしてインストールします。 |
 | **NPX (インストール不要)** | `npx agentworth stats` | インストールなしで即座に実行できます。 |
 
 ```bash
 # 1. ローカルのエージェント履歴をスキャンしてインデックスを作成
-agentworth scan
+archie scan
 
 # 2. マシン全体のトークン消費とモデル統計を表示
-agentworth stats
+archie stats
 
 # 3. トークン消費速度と5時間のローリングペーシングを監査
-agentworth usage --period day
-agentworth usage --pacing
+archie stats usage --period day
+archie window show
 
 # 4. コード行単位でAIの編集セッションを特定 (AI Blame)
-agentworth blame src/main.rs
+archie repo blame src/main.rs
 
 # 5. ローカルの対話型レシートエクスプローラーUIを起動
-agentworth serve --open
+archie serve --open
 ```
 
-> **ヒント:** すべてのコマンドで短縮エイリアス `agwt` を使用できます (例: `agwt stats`, `agwt blame`)。
+> **ヒント:** すべてのコマンドで短縮名 `archie` を使用できます (例: `archie stats`, `archie repo blame`)。以前の `agwt` も動作しますが、ドキュメントには載せていません。
 
 ---
 

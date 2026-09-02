@@ -34,28 +34,28 @@ AgentWorth 是一款采用本地优先架构的 Rust 原生工具，专门用于
 | 安装方式 | 执行命令 | 说明 |
 | :--- | :--- | :--- |
 | **一键安装脚本** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | 直接将预编译原生二进制文件安装至 `~/.local/bin`。 |
-| **Cargo (Rust 原生)** | `cargo install agentworth-cli` | 编译并安装 `agentworth` 与 `agwt` 至 `~/.cargo/bin`。 |
+| **Cargo (Rust 原生)** | `cargo install agentworth-cli` | 编译并安装 `agentworth` 与简称 `archie` 至 `~/.cargo/bin`。 |
 | **NPX (免安装即用)** | `npx agentworth stats` | 无需手动安装即可快速执行。 |
 
 ```bash
 # 1. 扫描并索引本机所有智能体历史日志
-agentworth scan
+archie scan
 
 # 2. 查看全局令牌消耗与模型分布统计
-agentworth stats
+archie stats
 
 # 3. 审计每日支出与 5 小时滑动窗口令牌消耗速率
-agentworth usage --period day
-agentworth usage --pacing
+archie stats usage --period day
+archie window show
 
 # 4. 按代码行追溯 AI 会话归属 (AI Blame)
-agentworth blame src/main.rs
+archie repo blame src/main.rs
 
 # 5. 启动本地交互式账单浏览器前端
-agentworth serve --open
+archie serve --open
 ```
 
-> **提示：** 你可以在所有命令中使用简写别名 `agwt`（例如：`agwt stats`、`agwt blame`）。
+> **提示：** 所有命令都可以使用简称 `archie`（例如：`archie stats`、`archie repo blame`）。旧的 `agwt` 仍然可用，但不再出现在文档里。
 
 ---
 

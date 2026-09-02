@@ -1,4 +1,4 @@
-//! `agentworth forgotten` — the decisions a session's compaction rounds dropped.
+//! `archie session forgotten` — the decisions a session's compaction rounds dropped.
 //!
 //! The same facts the `forgotten_context` MCP tool returns, rendered for a person. Redaction
 //! follows the CLI's own convention rather than the tool's: `--redact` is opt-in here, because
@@ -24,7 +24,7 @@ use crate::ui::{compact, Ui};
 const TERMINAL_ROWS: usize = 10;
 
 /// Resolves what the caller typed to one session, via the shared picker
-/// (`crate::ui::picker`). An exact id wins, then a unique prefix -- `agentworth inspect`
+/// (`crate::ui::picker`). An exact id wins, then a unique prefix -- `archie session show`
 /// (#76) made the prefix the normal way to name a session and this follows it. With
 /// nothing typed on a TTY, the picker takes over.
 fn resolve_session(storage: &Storage, ui: &Ui, json: bool, arg: &SessionArg) -> Result<String> {
@@ -136,7 +136,7 @@ fn render_terminal(report: &ForgottenReport, ui: &Ui) -> String {
 
     let cost = cost_line(report);
     let receipt = receipt_lines(report);
-    let command = format!("agentworth forgotten {}", short(&report.receipt.session_id));
+    let command = format!("archie session forgotten {}", short(&report.receipt.session_id));
 
     crate::ui::views::handoff(
         ui,
@@ -150,7 +150,7 @@ fn render_terminal(report: &ForgottenReport, ui: &Ui) -> String {
             skipped: &[],
             receipt,
             next: Some((
-                format!("agentworth inspect {}", short(&report.receipt.session_id)),
+                format!("archie session show {}", short(&report.receipt.session_id)),
                 "read the turns these sentences came from".to_string(),
             )),
         },

@@ -1,4 +1,4 @@
-//! `agentworth mcp`: the read-only MCP tool surface over stdio, sharing the same `Storage` and
+//! `archie mcp`: the read-only MCP tool surface over stdio, sharing the same `Storage` and
 //! `Scanner` wiring `apps/cli/src/server/routes.rs` builds for the HTTP API (see `AppState`
 //! there). Nothing here writes to the index or to original session logs -- every tool is a
 //! read-only wrapper around a `Storage`/`Scanner` call the HTTP surface already exposes.
@@ -58,7 +58,7 @@ const OUTCOME_RATE_DEFAULT_MIN_N: usize = 20;
 /// `session_list`.
 const CARRY_FORWARD_CEILING: usize = 10;
 
-/// The `agentworth mcp` tool server. Cheap to construct -- `Scanner::new` only builds the
+/// The `archie mcp` tool server. Cheap to construct -- `Scanner::new` only builds the
 /// adapter list, it does no I/O -- so a fresh instance per `run_mcp_server` call is fine.
 #[derive(Clone)]
 pub struct AgentWorthMcpServer {
@@ -178,13 +178,13 @@ impl AgentWorthMcpServer {
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "no indexed session for repo '{repo}' (this server's working directory); \
-                     pass session_id explicitly, or run `agentworth scan`"
+                     pass session_id explicitly, or run `archie scan`"
                 )
             })
     }
 }
 
-// `vis = "pub(crate)"`: `agentworth docs` (apps/cli/src/commands/docs.rs) calls
+// `vis = "pub(crate)"`: `archie docs` (apps/cli/src/commands/docs.rs) calls
 // `Self::tool_router().list_all()` from another module to read every tool's name,
 // description, and JSON schema without constructing a live server instance -- building a
 // `ToolRouter` doesn't touch `Storage`/`Scanner` at all, it only type-erases the handlers.
@@ -823,7 +823,7 @@ impl AgentWorthMcpServer {
     // They are listed rather than hidden: MCP has no unlisted-but-callable tool, and
     // rmcp's own `ToolRouter::disable_route` takes a tool out of `call` as well as out of
     // `list_all`. Naming the replacement in the first sentence of the description is what
-    // is available; `agentworth docs` leaves them out of the generated reference.
+    // is available; `archie docs` leaves them out of the generated reference.
     // -------------------------------------------------------------------------
 
     #[tool(
@@ -968,14 +968,14 @@ impl ServerHandler for AgentWorthMcpServer {
                  proved anything -- a list and a prompt, never a patch. Redacted \
                  output is the default \
                  everywhere event or file content is returned; include_raw is the only opt-in \
-                 to raw content, and it is per-call, never global. Run `agentworth scan` first \
+                 to raw content, and it is per-call, never global. Run `archie scan` first \
                  if the index looks stale -- this server never scans on its own."
                     .to_string(),
             )
     }
 }
 
-/// Runs the `agentworth mcp` stdio server until the parent process closes the pipe -- the same
+/// Runs the `archie mcp` stdio server until the parent process closes the pipe -- the same
 /// lifecycle every other stdio MCP server has. Logging must go to stderr, never stdout: stdout
 /// is the JSON-RPC wire, and even one stray line on it would corrupt the protocol stream for
 /// whatever client spawned this process. `main()` is responsible for pointing the global

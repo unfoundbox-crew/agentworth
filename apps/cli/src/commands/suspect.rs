@@ -119,7 +119,7 @@ pub struct SuspectReport {
     /// whose own repository does not match this one). Dropped, and said out loud.
     pub unanchored_blame_rows: usize,
     /// Distinct attributed sessions with no `session_risk` row — never examined for loops or
-    /// demoted claims. Re-run `agentworth scan` to fill these in.
+    /// demoted claims. Re-run `archie scan` to fill these in.
     pub sessions_with_unknown_risk: usize,
     pub suspect: Vec<SuspectCommit>,
     /// The copyable block. This is the deliverable: a prompt, not a patch.
@@ -619,18 +619,18 @@ fn truncate_subject(s: &str, max: usize) -> String {
 /// turned off within a day, and then it protects nothing — so this prints and exits 0, always,
 /// including when `agentworth` is not installed.
 pub const PRE_PUSH_HOOK: &str = r#"#!/bin/sh
-# agentworth suspect — a note on the way out, never a gate.
+# archie repo suspect — a note on the way out, never a gate.
 # Install: save as .git/hooks/pre-push and `chmod +x` it.
 #
 # Lists commits about to be pushed whose authoring session never proved anything.
 # It exits 0 no matter what it finds, and no matter whether agentworth is installed.
 
 command -v agentworth >/dev/null 2>&1 || exit 0
-agentworth suspect --repo . --quiet || true
+archie repo suspect --repo . --quiet || true
 exit 0
 "#;
 
-/// Everything `agentworth suspect` accepts from the command line, so the runner takes one
+/// Everything `archie repo suspect` accepts from the command line, so the runner takes one
 /// argument instead of nine positional ones a caller can transpose.
 #[derive(Debug, Default, Clone)]
 pub struct SuspectArgs {
@@ -645,7 +645,7 @@ pub struct SuspectArgs {
     pub quiet: bool,
 }
 
-/// Execute `agentworth suspect`.
+/// Execute `archie repo suspect`.
 pub fn run_suspect_command(
     args: SuspectArgs,
     db_path: Option<PathBuf>,

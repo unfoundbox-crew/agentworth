@@ -1,6 +1,6 @@
 //! Loop Sentinel real-time watchdog command for AgentWorth.
 //!
-//! Subcommand: `agentworth watch [--interval-secs S] [--poll-once] [--json]`
+//! Subcommand: `archie session watch [--interval-secs S] [--poll-once] [--json]`
 //! Tails active session history files and detects destructive doom loops:
 //! 1. 3+ identical consecutive tool calls with matching parameters
 //! 2. Rapid file edit-revert oscillations on the same file path
@@ -26,7 +26,7 @@ use agentworth_outcomes::loops::{
     DEFAULT_MAX_TOOL_REPEATS,
 };
 
-/// Execute the `agentworth watch` subcommand.
+/// Execute the `archie session watch` subcommand.
 pub fn run_watch_command(
     interval_secs: u64,
     poll_once: bool,
@@ -58,7 +58,7 @@ pub fn run_watch_command(
     loop {
         // Refresh the index so a still-growing transcript (changed mtime/fingerprint) gets
         // re-parsed on this poll -- this is what lets Watch see activity from the current turn,
-        // not just whatever was indexed by the last `agentworth scan`.
+        // not just whatever was indexed by the last `archie scan`.
         let _ = scanner.run_scan(&scan_opts, |_, _| {});
 
         let recent_sessions = storage.list_sessions_filtered(&SessionFilter {

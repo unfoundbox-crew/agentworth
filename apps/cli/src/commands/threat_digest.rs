@@ -1,6 +1,6 @@
 //! Threat Digest command for AgentWorth.
 //!
-//! Subcommand: `agentworth threat-digest [--limit N] [--min-severity <low|medium|high|critical>] [--json]`
+//! Subcommand: `archie session risk [--limit N] [--min-severity <low|medium|high|critical>] [--json]`
 //! Surfaces real secret/credential exposure risk across indexed sessions: which sessions
 //! leaked what, broken down by category and severity, so a human can prioritize rotating a
 //! key that actually leaked over ignoring routine noise (home paths, emails, private IPs).
@@ -36,7 +36,7 @@
 //! sequence number and kind -- e.g. "ShellCommand", "UserMessage" -- never the matched text)
 //! for every finding. It deliberately never reproduces the matched secret or even a redacted
 //! surrounding snippet: a location pointer is enough to go find and rotate the real thing in
-//! the original tool (or re-run `agentworth export --redact` on that session), and it removes
+//! the original tool (or re-run `archie session export --redact` on that session), and it removes
 //! any risk of a redaction-pipeline edge case leaking a fragment through the digest itself.
 
 use std::collections::BTreeMap;
@@ -238,7 +238,7 @@ pub struct ThreatDigestReport {
 /// additionally reveals per-event/location detail that `preview_redactions` collapses away.
 /// Provenance and metadata are included too, matching exactly what
 /// `Redactor::redact_trace`/`preview_redactions` themselves cover, so `session_report` here is
-/// never a subset of what `agentworth export --redact` would actually strip from this trace.
+/// never a subset of what `archie session export --redact` would actually strip from this trace.
 pub fn scan_trace_for_threats(
     redactor: &Redactor,
     trace: &AgentWorthTrace,
@@ -409,7 +409,7 @@ pub fn generate_threat_digest(
     })
 }
 
-/// Execute the `agentworth threat-digest` subcommand.
+/// Execute the `archie session risk` subcommand.
 pub fn run_threat_digest_command(
     limit: usize,
     min_severity: &str,

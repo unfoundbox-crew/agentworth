@@ -1,6 +1,6 @@
 //! Cache Hit-Rate Doctor command for AgentWorth.
 //!
-//! Subcommand: `agentworth cache-doctor <session-id> [--json]`
+//! Subcommand: `archie session cache <session-id> [--json]`
 //! Analyzes turn-by-turn prompt caching dynamics in a session, pinpointing the exact turn
 //! where cache efficiency deteriorated and identifying the root cause (model switch, new tool, payload blowout).
 
@@ -143,7 +143,7 @@ pub fn diagnose_cache_efficiency(trace: &AgentWorthTrace) -> CacheDoctorDiagnosi
     }
 }
 
-/// Execute the `agentworth cache-doctor` subcommand.
+/// Execute the `archie session cache` subcommand.
 pub fn run_cache_doctor_command(
     session_id: Option<String>,
     last: bool,
