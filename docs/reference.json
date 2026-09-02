@@ -1228,7 +1228,7 @@
           "name": "KEY",
           "positional": true,
           "required": true,
-          "help": "Config key: json, limit, or period",
+          "help": "Config key: json, limit, period, archie.accessory, or archie.colourway",
           "default": null,
           "possibleValues": []
         },
@@ -1250,7 +1250,7 @@
           "name": "KEY",
           "positional": true,
           "required": true,
-          "help": "Config key: json, limit, or period",
+          "help": "Config key: json, limit, period, archie.accessory, or archie.colourway",
           "default": null,
           "possibleValues": []
         },
@@ -1258,7 +1258,7 @@
           "name": "VALUE",
           "positional": true,
           "required": true,
-          "help": "Value to store (json: true/false, limit: a number, period: day/week/month)",
+          "help": "Value to store (json: true/false, limit: a number, period: day/week/month, archie.accessory: lamp/goggles/none, archie.colourway: C1/C2/C3/C4)",
           "default": null,
           "possibleValues": []
         },
@@ -1441,6 +1441,18 @@
       "method": "POST",
       "path": "/api/scan",
       "description": "Trigger a scanner background sync (body: paths, force)",
+      "queryParams": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/config",
+      "description": "Persisted CLI defaults from config.toml, every key present and unset ones null",
+      "queryParams": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/config",
+      "description": "Write a partial set of persisted CLI defaults (body: any of json, limit, period, archie.accessory, archie.colourway; null clears a key)",
       "queryParams": []
     },
     {

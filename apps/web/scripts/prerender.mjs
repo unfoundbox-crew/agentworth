@@ -277,6 +277,56 @@ pages.push({
   }),
 });
 
+// /archie/
+pages.push({
+  route: '/archie/',
+  file: 'archie/index.html',
+  head: head({
+    title: 'Archie — the AgentWorth mascot, and what he digs up',
+    description:
+      "Archie is the hound with the headlamp who reads the session logs your AI coding agents already left on disk. Try his kit and his four colourways, and see the three things he fetches: forgotten decisions, the last handoff, and the questions still open.",
+    canonical: `${SITE}/archie/`,
+    imageAlt: 'Archie, the AgentWorth mascot',
+    feeds: FEEDS,
+    jsonLd: [
+      {
+        '@context': 'https://schema.org',
+        '@graph': [
+          ORG,
+          {
+            '@type': 'AboutPage',
+            '@id': `${SITE}/archie/#page`,
+            url: `${SITE}/archie/`,
+            name: 'Archie',
+            about: { '@id': `${SITE}/#software` },
+            publisher: { '@id': `${SITE}/#org` },
+          },
+          crumbs([
+            { name: 'Home', url: `${SITE}/` },
+            { name: 'Archie', url: `${SITE}/archie/` },
+          ]),
+        ],
+      },
+    ],
+  }),
+});
+
+// The 404. Written to dist/404.html at the output root, which is where a static host
+// looks for the page it serves when nothing else matches. noindex, and out of the
+// sitemap: it is a real 404, not a page anyone should be sent to.
+pages.push({
+  route: '/404/',
+  file: '404.html',
+  head: head({
+    title: 'Not found — AgentWorth',
+    description: 'No page at that address. The reference lists every command, route and MCP tool.',
+    canonical: `${SITE}/404/`,
+  }).replace(
+    '<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />',
+    '<meta name="robots" content="noindex, follow" />'
+  ),
+});
+
 // /blog/
 pages.push({
   route: '/blog/',
@@ -452,6 +502,7 @@ const sitemapUrls = [
   { loc: `${SITE}/`, lastmod: newest(releases[0].date, latestPost) },
   { loc: `${SITE}/changelog/`, lastmod: releases[0].date },
   { loc: `${SITE}/docs/reference/`, lastmod: reference.generatedDate },
+  { loc: `${SITE}/archie/`, lastmod: releases[0].date },
   { loc: `${SITE}/blog/`, lastmod: latestPost },
   ...posts.map((p) => ({ loc: `${SITE}/blog/${p.slug}/`, lastmod: p.date })),
 ];
@@ -547,6 +598,7 @@ ${MCP_TOOLS.map(([n, d]) => `- \`${n}\`: ${d}`).join('\n')}
 - [Changelog](${SITE}/changelog/): every release with the pull request behind each line
 - [Releases RSS](${SITE}/changelog/rss.xml): the changelog as a feed
 - [Reference](${SITE}/docs/reference/): every CLI command, API route, and MCP tool, generated from the code
+- [Archie](${SITE}/archie/): the mascot, his kit and the four colourways
 - [Reference (markdown)](${SITE}/docs/reference.md): the same reference, plain text
 - [Blog](${SITE}/blog/): measurements from our own index
 - [Blog RSS](${SITE}/blog/rss.xml): the blog as a feed

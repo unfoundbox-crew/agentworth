@@ -375,7 +375,7 @@ Print the persisted value for one config key
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `KEY` | yes | Config key: json, limit, or period | - | - |
+| `KEY` | yes | Config key: json, limit, period, archie.accessory, or archie.colourway | - | - |
 | `--json` | no | Output as JSON | false | - |
 
 ### `agentworth config set`
@@ -384,8 +384,8 @@ Persist a default value for one config key
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `KEY` | yes | Config key: json, limit, or period | - | - |
-| `VALUE` | yes | Value to store (json: true/false, limit: a number, period: day/week/month) | - | - |
+| `KEY` | yes | Config key: json, limit, period, archie.accessory, or archie.colourway | - | - |
+| `VALUE` | yes | Value to store (json: true/false, limit: a number, period: day/week/month, archie.accessory: lamp/goggles/none, archie.colourway: C1/C2/C3/C4) | - | - |
 | `--json` | no | Output as JSON | false | - |
 
 ### `agentworth docs`
@@ -480,6 +480,14 @@ Server-Sent Events stream of live filesystem changes under watched adapter sessi
 ### `POST /api/scan`
 
 Trigger a scanner background sync (body: paths, force)
+
+### `GET /api/config`
+
+Persisted CLI defaults from config.toml, every key present and unset ones null
+
+### `POST /api/config`
+
+Write a partial set of persisted CLI defaults (body: any of json, limit, period, archie.accessory, archie.colourway; null clears a key)
 
 ### `POST /api/export/:id`
 

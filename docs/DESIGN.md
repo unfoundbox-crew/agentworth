@@ -78,7 +78,28 @@ Full inventory and usage rules are on the cards, not duplicated here — see the
 - **Two icon grids, never mixed on one screen**: the marketing set (20×20, round caps, `packages/ui/icons.tsx`) and the dashboard set (24×24, square caps, `apps/dashboard/src/shell/dsIcons.tsx`) are different constructions on purpose.
 - **Diagrams**: solid line = built, dashed accent line = proposed — the one convention that separates fact from plan, in both the CLI's ASCII output and the SVG diagrams used in docs and the blog.
 
+## Archie
+
+Settled 2026-09-02: the D2 hound with a headlamp. Poses, colourways, motion and the
+terminal short form live in `packages/ui/brand/archie/` — read that README before
+drawing him anywhere. Six rules from the placement board:
+
+- **Where he belongs**: the ⌘K empty state, the scan line, the 404, the dashboard's kit
+  picker, and `agentworth.dev/archie`. Nowhere else.
+- **Where he never goes**: the landing hero, the receipt, `--json` or `--quiet` output.
+  He is a state, not a texture.
+- **Once per screen** — two Archies are two states and one of them is lying. The one
+  exception is `agentworth.dev/archie`, where he is the subject rather than the
+  furniture and the page is the kit.
+- **He arrives bare.** The default accessory is `none` (Saurabh, 2026-09-02); the lamp
+  and the goggles are a switch, not how he shows up.
+- **C3 is the default** colourway and the only one that ships on the site. C4 is for
+  dense chrome, where he must not out-shout the data.
+- **Inline the SVG, never an `<img>`**: the colourways are CSS custom properties, and a
+  document's custom properties do not reach inside an image. `packages/ui/Archie.tsx`
+  is the React wrapper; the SVG files stay the only place the drawing exists.
+
 ## Open items
 
 - Categorical palette re-step (chart rule 2, above) — tracked here until it's fixed in `tokens.css`, which this bundle doesn't own.
-- Archie is undecided. `packages/ui/brand/archie-idle.svg` / `archie-dig.svg` exist as sketches; no colourway is chosen. No mascot art ships in `design-system/` until that's settled.
+- No Archie card in `design-system/` yet; the brand folder's README is the reference until there is one.

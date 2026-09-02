@@ -1,0 +1,10 @@
+# The shape ~/.agentworth/config.toml takes once someone has set defaults and picked
+# Archie's kit — scalars first, then the [archie] table, which is the order
+# `agentworth config set` writes and the only order TOML accepts.
+json = true
+limit = 25
+period = "week"
+
+[archie]
+accessory = "goggles"
+colourway = "C2"

@@ -448,40 +448,74 @@ pub fn lpad(s: &str, w: usize) -> String {
     format!("{}{}", s, " ".repeat(pad))
 }
 
-/// Archie, reduced to the glyphs every mono face actually has. `eyes` is the face's
-/// two-character middle: `▄ ▄` digging, `○ ○` done, `× ×` failed.
-pub fn archie(ui: &Ui, eyes: &str) -> [String; 3] {
-    if ui.ascii() {
-        [
-            "  _______".to_string(),
-            format!(" ( {} )", eyes),
-            "  '-+-+-'".to_string(),
-        ]
-    } else {
-        [
-            "▂▂▂▂▂▂▂".to_string(),
-            format!("( {} )", eyes),
-            "╰─┬─┬─╯".to_string(),
-        ]
-    }
+/// Archie's terminal short form: the drop ears, the low muzzle, and the lamp on the
+/// strap. Seven columns, three lines, pure ASCII — identical in both glyph sets,
+/// because a figure drawn out of box characters shears the moment a face is missing one.
+/// See `packages/ui/brand/archie/archie-tui.txt`.
+///
+/// `lamp` is the only thing that changes between states. Everything else is fixed: a
+/// figure that redraws every frame reads as noise in a scrolling log.
+pub fn archie(lamp: Lamp) -> [String; 3] {
+    [
+        format!(" ,-{}-. ", lamp.glyph()),
+        "( o o )".to_string(),
+        " '\\_/' ".to_string(),
+    ]
 }
 
-/// Archie's eyes, in the current glyph set: digging, done, failed.
-pub fn eyes(ui: &Ui, kind: EyeKind) -> String {
-    match (kind, ui.ascii()) {
-        (EyeKind::Digging, false) => "▄ ▄".to_string(),
-        (EyeKind::Digging, true) => "v v".to_string(),
-        (EyeKind::Done, false) => "○ ○".to_string(),
-        (EyeKind::Done, true) => "o o".to_string(),
-        (EyeKind::Failed, _) => "x x".to_string(),
-    }
+/// The one-line form: the ears and the lamp, three characters wide. The only form that
+/// fits a status bar, a spinner slot, or the right edge of a prompt.
+pub fn archie_inline(lamp: Lamp) -> String {
+    format!("({})", lamp.inline_glyph())
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum EyeKind {
-    Digging,
-    Done,
-    Failed,
+/// Narrower than this and the three-line block does not leave room for the label, the
+/// track and the count beside it, so the one-line form takes over.
+pub const ARCHIE_BLOCK_MIN_COLUMNS: usize = 46;
+
+/// The lamp is the state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lamp {
+    /// Idle, and the moment he finds something.
+    On,
+    /// Digging — the light is moving.
+    Sweeping,
+    /// Searched here, nothing.
+    Dim,
+    /// Error.
+    Off,
+}
+
+impl Lamp {
+    /// In the three-line block, where the strap has to keep its shape: `,-.-.`.
+    pub fn glyph(self) -> char {
+        match self {
+            Lamp::On => '*',
+            Lamp::Sweeping => 'o',
+            Lamp::Dim => '-',
+            Lamp::Off => '.',
+        }
+    }
+
+    /// In the one-line form, where an off lamp is drawn as the empty socket `( )`.
+    pub fn inline_glyph(self) -> char {
+        match self {
+            Lamp::Off => ' ',
+            other => other.glyph(),
+        }
+    }
+
+    /// The dig loop, as far as the lamp is concerned: held, sweeping, held, sweeping.
+    /// The board draws four frames, but only two lamp glyphs — the other half of each
+    /// frame is the ground line and the chips, which this figure does not carry.
+    /// Frame 0 is what a terminal that cannot repaint in place prints once.
+    pub fn dig_frame(frame: u64) -> Lamp {
+        if frame.is_multiple_of(2) {
+            Lamp::On
+        } else {
+            Lamp::Sweeping
+        }
+    }
 }
 
 #[cfg(test)]
@@ -533,6 +567,27 @@ mod tests {
         assert_eq!(ui.meter(5), "●●●●●");
         assert_eq!(ui.meter(9), "●●●●●");
         assert_eq!(plain(80).meter(2), "##...");
+    }
+
+    #[test]
+    fn archie_holds_seven_columns_in_every_state_and_both_glyph_sets() {
+        for lamp in [Lamp::On, Lamp::Sweeping, Lamp::Dim, Lamp::Off] {
+            for line in archie(lamp) {
+                assert_eq!(display_width(&line), 7, "{:?}: {:?}", lamp, line);
+            }
+            assert_eq!(display_width(&archie_inline(lamp)), 3);
+        }
+        // Only the lamp moves. The ears and the muzzle are fixed.
+        assert_eq!(archie(Lamp::On)[1], archie(Lamp::Off)[1]);
+        assert_eq!(archie(Lamp::On)[2], archie(Lamp::Off)[2]);
+    }
+
+    #[test]
+    fn the_dig_loop_alternates_held_and_sweeping_from_frame_one() {
+        assert_eq!(Lamp::dig_frame(0), Lamp::On);
+        assert_eq!(Lamp::dig_frame(1), Lamp::Sweeping);
+        assert_eq!(Lamp::dig_frame(2), Lamp::On);
+        assert_eq!(Lamp::dig_frame(3), Lamp::Sweeping);
     }
 
     #[test]
@@ -591,8 +646,11 @@ mod tests {
         sample.push_str(ui.arrow());
         sample.push_str(ui.dot());
         sample.push_str(&ui.titled_rule(40, "the evidence line"));
-        for part in archie(&ui, &eyes(&ui, EyeKind::Digging)) {
-            sample.push_str(&part);
+        for lamp in [Lamp::On, Lamp::Sweeping, Lamp::Dim, Lamp::Off] {
+            for part in archie(lamp) {
+                sample.push_str(&part);
+            }
+            sample.push_str(&archie_inline(lamp));
         }
         for c in sample.chars() {
             let ok = c.is_ascii()

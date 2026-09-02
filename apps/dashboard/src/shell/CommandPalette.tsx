@@ -3,6 +3,8 @@ import type { KeyboardEvent } from 'react';
 import { useTheme } from '@ui/useTheme';
 import type { Theme } from '@ui/useTheme';
 import type { RailViewId } from './Rail';
+import { Archie } from '@ui/Archie';
+import { useArchieSettings } from './archieKit';
 
 interface Command {
   id: string;
@@ -40,6 +42,7 @@ export function CommandPalette({
   onNavigateView,
 }: CommandPaletteProps) {
   const { theme, setTheme } = useTheme();
+  const archie = useArchieSettings();
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -199,7 +202,20 @@ export function CommandPalette({
           onKeyDown={handleKeyDown}
         />
         <ul className="palette-list">
-          {filtered.length === 0 && <li className="palette-empty">No matching commands.</li>}
+          {filtered.length === 0 && (
+            <li className="palette-empty">
+              <Archie
+                pose="front-sit"
+                size={44}
+                accessory={archie.accessory}
+                colourway="C4"
+                label=""
+              />
+              <span>
+                Nothing by that name. He is sitting here waiting; try a shorter word.
+              </span>
+            </li>
+          )}
           {filtered.map((cmd, i) => (
             <li
               key={cmd.id}

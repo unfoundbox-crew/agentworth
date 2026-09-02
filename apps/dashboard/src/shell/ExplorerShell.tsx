@@ -12,6 +12,7 @@ import { Wordmark } from '@ui/Wordmark';
 import { SessionList } from './SessionList';
 import { InspectorPane } from './InspectorPane';
 import { PaletteToggle } from './PaletteToggle';
+import { ArchieSettings } from './ArchieSettings';
 import { OverviewPane } from './OverviewPane';
 import { CoveragePane } from './CoveragePane';
 import { ArchaeologyPane } from './ArchaeologyPane';
@@ -139,6 +140,7 @@ export function ExplorerShell() {
           Live Tail
         </button>
         <PaletteToggle />
+        <ArchieSettings />
         <ThemeToggle />
         <button type="button" className="kbd-chip" onClick={openPalette} title="Open command palette">
           &#8984;K

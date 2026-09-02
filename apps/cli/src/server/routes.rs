@@ -27,8 +27,10 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tokio_stream::{Stream, StreamExt};
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
+
+use crate::app::config;
 
 use super::archaeology::{compute_archaeology_highlights, ArchaeologyHighlights};
 use super::live_tail::LiveTailEvent;
@@ -347,6 +349,20 @@ pub fn route_entries() -> Vec<RouteEntry> {
             handler: post(post_scan_handler),
         },
         RouteEntry {
+            method: "GET",
+            path: "/config",
+            description: "Persisted CLI defaults from config.toml, every key present and unset ones null",
+            query_params: &[],
+            handler: get(get_config_handler),
+        },
+        RouteEntry {
+            method: "POST",
+            path: "/config",
+            description: "Write a partial set of persisted CLI defaults (body: any of json, limit, period, archie.accessory, archie.colourway; null clears a key)",
+            query_params: &[],
+            handler: post(post_config_handler),
+        },
+        RouteEntry {
             method: "POST",
             path: "/export/:id",
             description: "Export a trace with optional redaction, in JSON or ATIF format (body: redact, format)",
@@ -356,10 +372,39 @@ pub fn route_entries() -> Vec<RouteEntry> {
     ]
 }
 
+/// Whether a browser `Origin` may talk to this server cross-origin.
+///
+/// The server binds to loopback and holds one person's whole session history, so `Any`
+/// was wrong: every page that person visits could read `/api/traces` and, since
+/// `/api/config`, write their preferences too. Only a page served from this machine
+/// gets through -- which still covers the dashboard's own origin and the Vite dev
+/// server on another port. Same-origin requests carry no `Origin` header at all and
+/// never reach this.
+fn is_local_origin(origin: &axum::http::HeaderValue) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    // `http://host` or `http://host:port`; https is not offered by this server and an
+    // https page reaching a loopback http API is not a case worth opening up for.
+    let Some(authority) = origin.strip_prefix("http://") else {
+        return false;
+    };
+    // Split a trailing `:port` off, and only that. A bare IPv6 literal is full of
+    // colons, but the text after its last one always ends in `]` -- so "everything
+    // after the last colon is digits" is what separates `[::1]:8080` (a port to strip)
+    // from `[::1]` (no port). An empty port cannot pass: `all` on nothing is true, so
+    // that is checked first.
+    let host = match authority.rsplit_once(':') {
+        Some((head, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => head,
+        _ => authority,
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
 /// Builds the complete Axum router with all API routes, CORS, tracing, and static fallback.
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::predicate(|origin, _| is_local_origin(origin)))
         .allow_methods(Any)
         .allow_headers(Any);
 
@@ -1199,6 +1244,80 @@ async fn post_scan_handler(
     })?;
 
     Ok(Json(summary))
+}
+
+/// GET /api/config -> the persisted CLI defaults, every key present and unset ones null.
+/// The config file's own path is not in the payload; see `config::config_as_json`.
+async fn get_config_handler(
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let cfg = config::load_config().map_err(config_read_error)?;
+    Ok(Json(config::config_as_json(&cfg)))
+}
+
+/// POST /api/config -> writes a partial set of keys into the same config.toml
+/// `agentworth config set` writes, through the same validation. Unknown keys are a 400
+/// rather than a silent no-op: this is the only write route that persists a preference,
+/// and a typo that appears to succeed is worse than one that fails.
+async fn post_config_handler(
+    // `Result<Json<_>, JsonRejection>` rather than a bare `Json<_>`: axum's own rejection
+    // is plain text, and every other route here answers a bad request with {"error": ...}.
+    // A client should not have to parse two shapes to find out what went wrong.
+    body: Result<Json<serde_json::Value>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let Json(body) = body.map_err(|e| bad_request(&e.body_text()))?;
+    let object = body
+        .as_object()
+        .ok_or_else(|| bad_request("body must be a JSON object of config keys"))?;
+
+    let mut cfg = config::load_config().map_err(config_read_error)?;
+
+    for (key, value) in object {
+        // GET used to carry config_path alongside the keys and no longer does. A client
+        // round-tripping an older payload should not have its own read called invalid,
+        // so the field is ignored rather than rejected.
+        if key == "config_path" {
+            continue;
+        }
+        if !config::config_keys().contains(&key.as_str()) {
+            return Err(bad_request(&format!(
+                "unknown config key {:?}. Valid keys: {}",
+                key,
+                config::config_keys().join(", ")
+            )));
+        }
+
+        let outcome = match value {
+            serde_json::Value::Null => config::clear_config_value(&mut cfg, key),
+            serde_json::Value::Bool(b) => config::apply_config_value(&mut cfg, key, &b.to_string()),
+            serde_json::Value::Number(n) => config::apply_config_value(&mut cfg, key, &n.to_string()),
+            serde_json::Value::String(s) => config::apply_config_value(&mut cfg, key, s),
+            _ => Err(anyhow::anyhow!(
+                "invalid value for {:?}: expected a string, number, boolean or null",
+                key
+            )),
+        };
+        outcome.map_err(|e| bad_request(&e.to_string()))?;
+    }
+
+    config::save_config(&cfg).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed to write config: {}", e) })),
+        )
+    })?;
+
+    Ok(Json(config::config_as_json(&cfg)))
+}
+
+fn config_read_error(e: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": format!("Failed to read config: {}", e) })),
+    )
+}
+
+fn bad_request(message: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": message })))
 }
 
 /// POST /api/export/:id -> exports trace with optional redaction in JSON or ATIF format

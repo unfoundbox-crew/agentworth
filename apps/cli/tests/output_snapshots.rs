@@ -86,26 +86,40 @@ fn session_id(db: &std::path::Path) -> String {
 }
 
 /// Every screen, in the form the tests iterate over.
-fn screens() -> Vec<(&'static str, Vec<&'static str>)> {
+///
+/// `scan` and `watch` are both given `root` — the fixture directory — explicitly. With
+/// no path either one falls back to the machine's own agent directories, so on a
+/// developer's laptop this list would read their real `~/.claude` history, and `scan`
+/// would index it into the shared test db.
+fn screens(root: &std::path::Path) -> Vec<(&'static str, Vec<String>)> {
+    let argv = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
     vec![
-        ("stats", vec!["stats"]),
-        ("traces", vec!["traces", "--limit", "5"]),
-        ("usage", vec!["usage", "--period", "day"]),
-        ("usage-by-model", vec!["usage", "--period", "day", "--by", "model"]),
-        ("usage-year-by-model", vec!["usage", "--period", "year", "--by", "model"]),
-        ("usage-all-by-repo", vec!["usage", "--period", "all", "--by", "repo"]),
-        ("usage-pacing", vec!["usage", "--pacing"]),
-        ("blame", vec!["blame", "crates/storage/src/vector.rs"]),
-        ("scan", vec!["scan"]),
-        ("doctor", vec!["doctor"]),
-        ("matrix", vec!["matrix"]),
-        ("audit", vec!["audit"]),
-        ("blind-spots", vec!["blind-spots"]),
-        ("threat-digest", vec!["threat-digest"]),
-        ("pr-blame", vec!["pr-blame", "crates/storage/src/vector.rs"]),
-        ("watch-once", vec!["watch", "--poll-once"]),
-        ("blunder", vec!["blunder"]),
-        ("blunder-blame", vec!["blunder-blame"]),
+        ("stats", argv(&["stats"])),
+        ("traces", argv(&["traces", "--limit", "5"])),
+        ("usage", argv(&["usage", "--period", "day"])),
+        ("usage-by-model", argv(&["usage", "--period", "day", "--by", "model"])),
+        ("usage-year-by-model", argv(&["usage", "--period", "year", "--by", "model"])),
+        ("usage-all-by-repo", argv(&["usage", "--period", "all", "--by", "repo"])),
+        ("usage-pacing", argv(&["usage", "--pacing"])),
+        ("blame", argv(&["blame", "crates/storage/src/vector.rs"])),
+        ("scan", vec!["scan".to_string(), root.display().to_string()]),
+        ("doctor", argv(&["doctor"])),
+        ("matrix", argv(&["matrix"])),
+        ("audit", argv(&["audit"])),
+        ("blind-spots", argv(&["blind-spots"])),
+        ("threat-digest", argv(&["threat-digest"])),
+        ("pr-blame", argv(&["pr-blame", "crates/storage/src/vector.rs"])),
+        (
+            "watch-once",
+            vec![
+                "watch".to_string(),
+                "--poll-once".to_string(),
+                "--paths".to_string(),
+                root.display().to_string(),
+            ],
+        ),
+        ("blunder", argv(&["blunder"])),
+        ("blunder-blame", argv(&["blunder-blame"])),
     ]
 }
 
@@ -117,8 +131,9 @@ fn is_allowed(c: char) -> bool {
 
 #[test]
 fn no_screen_wraps_at_80_or_120_columns() {
-    let (_t, db) = fixture();
-    for (name, args) in screens() {
+    let (t, db) = fixture();
+    for (name, args) in screens(t.path()) {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
         for columns in [80usize, 120] {
             let out = render(&db, &args, columns, false);
             assert!(!out.trim().is_empty(), "{} rendered nothing", name);
@@ -142,8 +157,9 @@ fn colour_never_moves_a_column() {
     // The whole point of the palette: awk and cut must work on the human output, not
     // only on --json. Stripping the escapes has to give back the plain rendering byte
     // for byte.
-    let (_t, db) = fixture();
-    for (name, args) in screens() {
+    let (t, db) = fixture();
+    for (name, args) in screens(t.path()) {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
         // `scan` reports elapsed-dependent counts on a second run; skip its re-render.
         // `watch-once` prints the wall-clock second it polled at, which can tick over
         // between the plain and coloured invocations below -- same class of flake.
@@ -173,8 +189,9 @@ fn colour_never_moves_a_column() {
 
 #[test]
 fn no_screen_ships_a_glyph_outside_the_allowed_set() {
-    let (_t, db) = fixture();
-    for (name, args) in screens() {
+    let (t, db) = fixture();
+    for (name, args) in screens(t.path()) {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let out = render(&db, &args, 80, false);
         for c in out.chars() {
             assert!(
@@ -338,6 +355,51 @@ fn plain_flag_matches_a_piped_stream() {
     let piped = render(&db, &["stats"], 80, false);
     let flagged = render(&db, &["stats", "--plain"], 80, false);
     assert_eq!(piped, flagged, "--plain is what a pipe already gets");
+}
+
+/// The approved terminal short form: three lines, seven columns, and only the lamp
+/// changes. A piped stream cannot repaint, so it gets frame 1 once — never a loop.
+#[test]
+fn the_scan_line_draws_archie_and_prints_one_frame_to_a_pipe() {
+    let (t, db) = fixture();
+    let root = t.path().display().to_string();
+    let out = render(&db, &["scan", &root], 80, false);
+
+    // At most two figures: the one dig frame, then the found frame the summary carries.
+    // A loop would put one per tick into the log, which is the failure this guards.
+    let ears = out.lines().filter(|l| l.contains("( o o )")).count();
+    assert!(
+        (1..=2).contains(&ears),
+        "expected the dig frame and the found frame, got {} figures:\n{}",
+        ears,
+        out
+    );
+    assert!(out.contains("'\\_/'"), "the low muzzle is missing:\n{}", out);
+    assert!(
+        out.contains(",-*-."),
+        "the lamp is missing from the strap:\n{}",
+        out
+    );
+}
+
+/// Under 46 columns the progress block does not leave room for the label and the track
+/// beside it, so the scan line collapses to the ears and the lamp. The summary that
+/// follows is a different screen and keeps its three lines.
+#[test]
+fn the_scan_line_collapses_to_one_line_in_a_narrow_window() {
+    let (t, db) = fixture();
+    let root = t.path().display().to_string();
+    let out = render(&db, &["scan", &root], 40, false);
+
+    let first = out.lines().find(|l| !l.trim().is_empty()).unwrap_or_default();
+    assert!(
+        first.trim_start().starts_with("(*) archie") || first.trim_start().starts_with("(o) archie"),
+        "the scan line should be the one-line form at 40 columns, got:\n{}",
+        out
+    );
+    for line in out.lines() {
+        assert!(console::measure_text_width(line) <= 40, "{}", line);
+    }
 }
 
 /// `suspect` needs a real git checkout, so it cannot ride the shared fixture's `screens()`

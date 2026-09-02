@@ -295,10 +295,18 @@
   color: var(--mv-faint);
 }
 
+/* Nothing matched. The one screen in the shell with room for a character, and he is
+   drawn quiet (C4) so he does not out-shout the search field above him. */
 .shell-root .palette-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 16px;
   color: var(--mv-faint);
   font-size: 12px;
+}
+.shell-root .palette-empty .archie-figure {
+  flex: none;
 }
 
 /* ---------- toast ---------- */
@@ -410,6 +418,104 @@
   color: var(--mv-accent);
   border-color: var(--mv-accent-border);
   background: var(--mv-accent-soft);
+}
+
+/* ---------- Archie's kit and colourway ---------- */
+.shell-root .archie-figure {
+  display: inline-flex;
+  line-height: 0;
+}
+.shell-root .archie-figure svg {
+  display: block;
+}
+
+.shell-root .archie-settings {
+  position: relative;
+  display: inline-flex;
+}
+.shell-root .archie-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: 264px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--mv-border);
+  border-radius: 10px;
+  background: var(--mv-ground);
+  box-shadow: 0 1px 2px rgba(17, 17, 19, 0.05), 0 18px 40px -22px rgba(17, 17, 19, 0.45);
+}
+.shell-root .archie-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.shell-root .archie-panel-stage {
+  display: flex;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--mv-surface);
+}
+.shell-root .archie-panel-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mv-ink);
+}
+.shell-root .archie-panel-sub {
+  margin: 2px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-faint);
+}
+.shell-root .archie-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.shell-root .archie-row-label {
+  width: 42px;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+.shell-root .archie-row-options {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.shell-root .archie-row-options button {
+  appearance: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 8px;
+  border: 1px solid var(--mv-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mv-muted);
+  cursor: pointer;
+  transition: color 140ms ease-out, border-color 140ms ease-out, background 140ms ease-out;
+}
+.shell-root .archie-row-options button:hover {
+  color: var(--mv-ink);
+  border-color: var(--mv-faint);
+}
+.shell-root .archie-row-options button[aria-pressed='true'] {
+  color: var(--mv-ink);
+  border-color: var(--mv-accent-border);
+  background: var(--mv-accent-soft);
+}
+.shell-root .archie-panel-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--mv-faint);
 }
 
 .shell-root .theme-toggle button {
