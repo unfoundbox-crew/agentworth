@@ -257,6 +257,31 @@ re-read events, zero limit events, and a payload estimate rather than a count.
 Enough to stop building re-read prevention first. Not enough to claim a cause of
 depletion, and the product must not say one.
 
+## Three layers, not one feature
+
+Not everything a detector finds is a feature. A join in a database is
+plumbing. What an agent can use before it acts is a tool. What a person
+needs is one line, only when he opens the receipt. Three layers, three
+audiences:
+
+| Layer | What | Who sees it |
+| :--- | :--- | :--- |
+| Detector | sibling linkage (child first-message hash to parent spawn prompt) plus the `(path, content hash)` and `(command, result hash)` joins; storage plus a scan pass | nobody; plumbing |
+| Agent surface | MCP `fanout_reads(parent_session)`, returning every key the children have already acquired, with payload sizes and receipts, full detail | the parent agent, before spawning or briefing the next child |
+| Human surface | one line in the per-window receipt: "N tokens acquired twice across M fan-outs", nothing else — no pane, no CLI screen beyond the receipt | Saurabh, only if he opens the receipt |
+
+The same split applies to the re-read, retry and churn detectors in A, B and C:
+
+| Layer | What | Who sees it |
+| :--- | :--- | :--- |
+| Detector | the exact-hash joins behind A, B and C | nobody; plumbing |
+| Agent surface | `repeat_check(kind, path?, range?, command?, cwd?, session?)` | the calling agent, before it re-reads, re-runs or re-investigates |
+| Human surface | one line in the per-window receipt | Saurabh, only if he opens the receipt |
+
+An agent can hold far more than a person needs — both MCP tools return full
+receipts: hashes, sizes, event sequence numbers. A person gets one line per
+category. Nothing here adds a screen.
+
 ## The Efficiency Receipt
 
 One per five-hour window. Four blocks, and the ladder sits beside the waste
@@ -265,10 +290,10 @@ rather than under it. This is a real window from the measurement above.
 ```text
 ┌───────────────────────────────────────────────────┐
 │ DIRECT INEFFICIENCY             101.3k tokens     │
-│   duplicate subagent reads       88.3k  (21 pairs)│
-│   post-compaction rehydration    12.8k  (2)       │
-│   duplicate subagent commands     0.3k  (1)       │
-│   exact re-reads, retries, churn  none            │
+│   88.3k tokens acquired twice across 21 fan-outs  │
+│   12.8k tokens rehydrated across 2 compactions    │
+│   0.3k tokens in 1 duplicate subagent command     │
+│   re-reads, retries, churn this window: none      │
 ├───────────────────────────────────────────────────┤
 │ CONTEXT EXPOSURE                19.7M token-turns │
 │ derived from local context — NOT provider quota   │
@@ -291,14 +316,18 @@ prints only the first number invites the wrong fix.
 Every number resolves to `session_id`, `event_seq`, the detector that fired, the
 label it assigned, and the source hash. A number with no receipt does not print.
 
-## The MCP tool
+## The MCP tools
+
+Two tools, both pull, both for the agent that calls them. Neither is a
+dashboard.
+
+### `repeat_check`
 
     repeat_check(kind, path?, range?, command?, cwd?, session?)
 
-Pull only. No hooks, no per-turn feed. A session calls it when it is about to
-re-read, re-run, or re-investigate — the way it already calls
-`forgotten_context` before planning. Three verdicts, one line each, plus a
-receipt:
+No hooks, no per-turn feed. A session calls it when it is about to re-read,
+re-run, or re-investigate — the way it already calls `forgotten_context`
+before planning. Four verdicts, one line each, plus a receipt:
 
     UNCHANGED — this path was read at e143 and nothing has written to it
     since → skip the re-read [8f2:e143→e211]
@@ -320,6 +349,20 @@ The answer is a verdict, one fact, one suggested action, and a receipt. Nothing
 longer. A tool that tells an agent to stop expanding its context, and expands it
 while doing so, has lost the argument.
 
+### `fanout_reads`
+
+    fanout_reads(parent_session)
+
+Called by the parent, not the child, before it spawns or briefs the next one.
+Returns every `(path, hash)` and `(command, hash)` a sibling in this fan-out
+has already acquired — payload size and receipt for each, full detail, because
+the caller is an agent and can use all of it. A parent that sees three siblings
+already loaded a spec can brief the fourth with a pointer instead of the file.
+
+`fanout_reads` looks forward, before a read exists to check; `SIBLING_HAS_IT`
+inside `repeat_check` looks backward, at one read about to repeat. Both cover
+the same category — they answer it at two different moments.
+
 ## Deliberately not built
 
 - **No quota estimate.** Not deferred — excluded, until a primary source
@@ -339,11 +382,13 @@ while doing so, has lost the argument.
 
 ## Sequencing
 
+Nothing here adds a dashboard pane.
+
 | Step | What | Why here |
 | :--- | :--- | :--- |
 | P0 | the four detectors offline, measured | done — and it moved the build order |
-| P1 | duplicate-subagent detector, receipts, `agentworth efficiency` | the largest measured category goes first |
-| P2 | `repeat_check`, with `SIBLING_HAS_IT` | pull-only prevention for the same category |
+| P1 | duplicate-subagent detector (plumbing), `fanout_reads` (agent surface), one receipt line via `agentworth efficiency` (human surface) | the largest measured category goes first |
+| P2 | `repeat_check` with `SIBLING_HAS_IT` (agent surface, all four detectors), the matching receipt lines (human surface) | pull-only prevention for the same categories |
 | P3 | exact re-read and rehydration detectors in Rust | small, but the cross-epoch cases are the expensive ones |
 | P4 | depletion frontier | blocked on observing any limit event at all |
 
