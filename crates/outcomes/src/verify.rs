@@ -729,6 +729,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         init_git_repo(dir.path());
         let hash = commit_file(dir.path(), "a.txt", "hi");
+        #[allow(clippy::string_slice, reason = "hash is a hex git commit hash, ASCII-only")]
         let short = &hash[..7];
 
         let mut outcomes = vec![(0usize, evidence(OutcomeKind::CommitObserved, 0.90))];

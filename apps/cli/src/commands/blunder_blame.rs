@@ -338,12 +338,12 @@ fn render_file_blunder_report(report: &FileBlunderReport) {
     println!();
 }
 
-fn truncate_middle(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+fn truncate_middle(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
         s.to_string()
     } else {
-        let keep = max_len.saturating_sub(3).max(1);
-        format!("...{}", &s[s.len() - keep..])
+        let keep = max_chars.saturating_sub(3).max(1);
+        format!("...{}", agentworth_schema::text::tail_chars(s, keep))
     }
 }
 

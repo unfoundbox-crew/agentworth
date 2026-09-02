@@ -237,6 +237,7 @@ fn the_error_screen_names_the_noun_and_the_way_out() {
 fn inspect_resolves_a_unique_prefix() {
     let (_t, db) = fixture();
     let full_id = session_id(&db);
+    #[allow(clippy::string_slice, reason = "full_id is an ASCII test fixture id (e.g. session_tested)")]
     let prefix = &full_id[..full_id.len() - 1];
 
     let out = render(&db, &["inspect", prefix, "--json"], 80, false);

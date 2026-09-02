@@ -159,8 +159,8 @@ pub fn run_recall_command(
         );
         println!(
             "│     Snippet: {:<49} │",
-            style(if r.snippet.len() > 46 {
-                format!("{}...", &r.snippet[..43])
+            style(if r.snippet.chars().count() > 46 {
+                format!("{}...", agentworth_schema::text::truncate_chars(&r.snippet, 43))
             } else {
                 r.snippet.clone()
             }).italic().dim()

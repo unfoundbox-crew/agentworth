@@ -276,11 +276,7 @@ fn plan(candidates: &[Candidate], budget: usize, base: usize) -> Vec<usize> {
 /// First eight characters of a UUID-shaped session id, which is what a human recognises it by.
 /// The full id is on the receipt line, so nothing is lost.
 fn short_id(session_id: &str) -> &str {
-    let cut = session_id
-        .char_indices()
-        .nth(8)
-        .map_or(session_id.len(), |(i, _)| i);
-    &session_id[..cut]
+    agentworth_schema::text::truncate_chars(session_id, 8)
 }
 
 fn when_range(report: &HandoffReport) -> String {
@@ -325,11 +321,10 @@ fn one_line(text: &str, max_chars: usize) -> String {
     if flat.chars().count() <= max_chars {
         return flat;
     }
-    let cut = flat
-        .char_indices()
-        .nth(max_chars.saturating_sub(1))
-        .map_or(flat.len(), |(i, _)| i);
-    format!("{}…", &flat[..cut])
+    format!(
+        "{}…",
+        agentworth_schema::text::truncate_chars(&flat, max_chars.saturating_sub(1))
+    )
 }
 
 fn thousands(n: u64) -> String {

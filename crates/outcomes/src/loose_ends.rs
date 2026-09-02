@@ -105,6 +105,10 @@ fn js_length(s: &str) -> usize {
 /// preceded by `.`/`!`/`?` is a delimiter (matching the first alternative, which is greedy over
 /// all whitespace including newlines), and otherwise a run of newlines is. Segments are trimmed
 /// and empties dropped, same as the `.map(trim).filter(Boolean)` that follows the split there.
+#[allow(
+    clippy::string_slice,
+    reason = "every cut point comes from char_indices() or text.len(), always char boundaries"
+)]
 pub fn split_sentences(text: &str) -> Vec<&str> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut out = Vec::new();

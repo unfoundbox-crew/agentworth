@@ -477,6 +477,10 @@ fn parse_zhipu_record(
 
             // Extract XML style <thought> or <thinking> tags if embedded in content
             if thinking.is_none() {
+                #[allow(
+                    clippy::string_slice,
+                    reason = "all offsets come from find() on ASCII tag literals, always char boundaries"
+                )]
                 if let Some(start) = content.find("<thinking>") {
                     if let Some(end) = content.find("</thinking>") {
                         let th = content[start + 10..end].trim().to_string();

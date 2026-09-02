@@ -406,6 +406,7 @@ pub fn evaluate_trace_for_blunder(
     let mut hasher = Sha256::new();
     hasher.update(trace.session_id.as_bytes());
     let hex_digest = hex::encode(hasher.finalize());
+    #[allow(clippy::string_slice, reason = "hex_digest is a hex sha256 digest, ASCII-only")]
     let session_hash = hex_digest[..16].to_string();
 
     Some(BlunderExhibit {
@@ -743,13 +744,8 @@ fn format_compact_tokens(n: u64) -> String {
     }
 }
 
-fn truncate_snippet(s: &str, max_len: usize) -> String {
-    let trimmed = s.trim();
-    if trimmed.len() <= max_len {
-        trimmed.to_string()
-    } else {
-        format!("{}...", &trimmed[..max_len - 3])
-    }
+fn truncate_snippet(s: &str, max_chars: usize) -> String {
+    agentworth_schema::text::preview(s, max_chars)
 }
 
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {

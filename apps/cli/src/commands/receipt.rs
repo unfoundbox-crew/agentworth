@@ -124,8 +124,12 @@ pub fn extract_flight_data(trace: &AgentWorthTrace, score: &TraceScore) -> Fligh
 
     // 1. Session ID & Adapter
     let session_id = trace.session_id.clone();
-    let short_session_id = if session_id.len() > 16 {
-        format!("{}...{}", &session_id[..8], &session_id[session_id.len() - 6..])
+    let short_session_id = if session_id.chars().count() > 16 {
+        format!(
+            "{}...{}",
+            agentworth_schema::text::truncate_chars(&session_id, 8),
+            agentworth_schema::text::tail_chars(&session_id, 6)
+        )
     } else {
         session_id.clone()
     };
@@ -428,6 +432,7 @@ pub fn render_terminal_receipt_with(
 pub fn render_svg_receipt(trace: &AgentWorthTrace, score: &TraceScore) -> String {
     let data = extract_flight_data(trace, score);
 
+    #[allow(clippy::string_slice, reason = "receipt_hash is a hex sha256 digest, ASCII-only")]
     let short_hash = if data.receipt_hash.len() > 32 {
         format!("sha256:{}...", &data.receipt_hash[..32])
     } else {
@@ -851,19 +856,25 @@ fn format_number(n: u64) -> String {
     }
 }
 
-fn truncate_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
+fn truncate_path(path: &str, max_chars: usize) -> String {
+    if path.chars().count() <= max_chars {
         path.to_string()
     } else {
-        format!("...{}", &path[path.len() - (max_len - 3)..])
+        format!(
+            "...{}",
+            agentworth_schema::text::tail_chars(path, max_chars.saturating_sub(3))
+        )
     }
 }
 
-fn truncate_string(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+fn truncate_string(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+        format!(
+            "{}...",
+            agentworth_schema::text::truncate_chars(s, max_chars.saturating_sub(3))
+        )
     }
 }
 

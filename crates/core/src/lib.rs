@@ -1329,4 +1329,65 @@ mod tests {
         );
         assert!(storage.get_session_by_id("virtual-stub-sess").unwrap().is_some());
     }
+
+    /// End-to-end regression for the `recovery.rs:571` panic: a real Claude Code transcript
+    /// whose Bash tool result carries a failure message packed with Hebrew, Arabic, CJK, an
+    /// emoji, and a combining mark. `compute_session_risk` (which runs `RecoveryDetector`
+    /// during every scan) used to byte-slice that text at a fixed offset and panic the moment
+    /// the cut landed inside one of these multi-byte characters. A full `scan` over this
+    /// fixture must complete and index the session instead of aborting mid-scan.
+    #[test]
+    fn test_scanner_survives_multibyte_failure_text_in_transcript() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        let mut temp = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        // "panic: " (7 ASCII bytes) + Hebrew 'ך' (2 bytes/char) puts byte offset 80 one byte
+        // into the 37th Hebrew character -- reproducing the crash's exact shape ("bytes
+        // 79..81"). Arabic, CJK, an emoji, and a combining mark are appended so every
+        // multi-byte width (2, 3, 4 bytes, plus a combining sequence) is represented.
+        let failure_text = format!(
+            "panic: {}{}{}🎉e\u{0301}",
+            "ך".repeat(150),
+            "خطأ في تشغيل الاختبار ".repeat(4),
+            "测试失败了".repeat(20)
+        );
+        let sample = format!(
+            r#"
+{{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"תקן את הבדיקה שנכשלה"}}
+{{"type":"assistant","timestamp":"2026-08-29T10:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{{"input_tokens":5000,"output_tokens":800,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"cargo test"}}}}]}}
+{{"type":"tool_result","timestamp":"2026-08-29T10:00:04Z","tool_use_id":"t1","content":"{failure_text}","is_error":false}}
+{{"type":"assistant","timestamp":"2026-08-29T10:00:06Z","model":"claude-3-5-sonnet-20241022","usage":{{"input_tokens":200,"output_tokens":30,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"tool_use","id":"t2","name":"Edit","input":{{"file_path":"crates/core/src/lib.rs","old_string":"a","new_string":"b"}}}}]}}
+{{"type":"tool_result","timestamp":"2026-08-29T10:00:07Z","tool_use_id":"t2","content":"File modified successfully","is_error":false}}
+{{"type":"assistant","timestamp":"2026-08-29T10:00:08Z","model":"claude-3-5-sonnet-20241022","usage":{{"input_tokens":200,"output_tokens":30,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"tool_use","id":"t3","name":"Bash","input":{{"command":"cargo test"}}}}]}}
+{{"type":"tool_result","timestamp":"2026-08-29T10:00:10Z","tool_use_id":"t3","content":"test result: ok. 8 passed; 0 failed","is_error":false}}
+"#
+        );
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: true,
+            ..Default::default()
+        };
+
+        // The assertion that matters is simply that this does not panic. Before the fix, the
+        // panic happened inside `compute_session_risk` while indexing this session, which
+        // `cargo test` reports as the test process aborting rather than a clean failure.
+        let summary = scanner
+            .run_scan(&options, |_, _| {})
+            .expect("scan must survive multibyte failure text without panicking");
+        assert_eq!(summary.scanned_sessions, 1);
+
+        let session = storage
+            .get_session_by_id(temp.path().file_stem().unwrap().to_string_lossy().as_ref())
+            .unwrap()
+            .expect("session must be indexed, not lost to a mid-scan panic");
+        assert!(
+            session.total_events >= 7,
+            "expected all 7 transcript lines to normalize into events, got {}",
+            session.total_events
+        );
+    }
 }

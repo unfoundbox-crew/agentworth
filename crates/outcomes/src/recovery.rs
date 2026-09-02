@@ -430,6 +430,10 @@ fn clean_extracted_path(raw: &str) -> Option<String> {
 
     // Verify it contains a plausible file extension
     if let Some(dot_idx) = clean.rfind('.') {
+        #[allow(
+            clippy::string_slice,
+            reason = "dot_idx is a byte offset from rfind('.'), always a char boundary"
+        )]
         let ext = &clean[dot_idx + 1..];
         if !ext.is_empty() && ext.len() <= 10 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Some(clean.to_string());
@@ -488,7 +492,13 @@ pub fn paths_match(path_a: &str, path_b: &str) -> bool {
 fn file_stem(filename: &str) -> String {
     let mut stem = filename;
     if let Some(idx) = stem.rfind('.') {
-        stem = &stem[..idx];
+        #[allow(
+            clippy::string_slice,
+            reason = "idx is a byte offset from rfind('.'), always a char boundary"
+        )]
+        {
+            stem = &stem[..idx];
+        }
     }
     if let Some(stripped) = stem
         .strip_suffix(".test")
@@ -565,10 +575,10 @@ fn is_test_command(cmd: &str) -> bool {
         || lower.contains("jest")
 }
 
-fn truncate_str(s: &str, max_len: usize) -> String {
+fn truncate_str(s: &str, max_chars: usize) -> String {
     let clean = s.lines().next().unwrap_or("").trim();
-    if clean.len() > max_len {
-        format!("{}...", &clean[..max_len])
+    if clean.chars().count() > max_chars {
+        format!("{}...", agentworth_schema::text::truncate_chars(clean, max_chars))
     } else {
         clean.to_string()
     }
