@@ -102,6 +102,7 @@ fn not_found(storage: &Storage, session_id: &str, ui: &Ui) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_forgotten_command(
     session_id: Option<String>,
     round: Option<u32>,
