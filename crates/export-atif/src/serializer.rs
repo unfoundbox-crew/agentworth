@@ -60,6 +60,7 @@ impl AtifTrajectory {
                         token_usage,
                         cost_usd,
                         latency_ms,
+                        ..
                     } => {
                         model_invocation = Some(AtifModelInvocation {
                             model: model.clone(),

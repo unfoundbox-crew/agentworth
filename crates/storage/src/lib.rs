@@ -666,6 +666,10 @@ impl Storage {
                 compaction_tokens_dropped INTEGER NOT NULL DEFAULT 0,
                 parser_version INTEGER NOT NULL DEFAULT 0,
                 backfilled_version INTEGER,
+                -- Reasoning-effort setting for the session: the modal value across its model
+                -- invocations (see `agentworth_schema::TraceStats::effort`). NULL means the
+                -- harness never declared one, which is every adapter except Codex today.
+                effort TEXT,
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
 
@@ -767,6 +771,13 @@ impl Storage {
             // regardless of what its own `parser_version` already says -- see `needs_backfill`.
             if !columns.contains(&"backfilled_version".to_string()) {
                 let _ = conn.execute("ALTER TABLE sessions ADD COLUMN backfilled_version INTEGER", []);
+            }
+            // NULL on every existing row, and it stays NULL until that session is reparsed:
+            // effort is read from the raw history, not derivable from anything already in the
+            // index. The adapter that supplies it bumped its `parser_version` in the same
+            // change, so a normal scan backfills Codex rows without `--force`.
+            if !columns.contains(&"effort".to_string()) {
+                let _ = conn.execute("ALTER TABLE sessions ADD COLUMN effort TEXT", []);
             }
         }
 
@@ -1179,9 +1190,10 @@ impl Storage {
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata, scanned_at,
                 primary_outcome, composite_score, prompt_preview,
-                compaction_count, compaction_tokens_dropped, parser_version, backfilled_version
+                compaction_count, compaction_tokens_dropped, parser_version, backfilled_version,
+                effort
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
             ON CONFLICT(session_id) DO UPDATE SET
                 adapter = excluded.adapter,
                 source_path = excluded.source_path,
@@ -1208,7 +1220,8 @@ impl Storage {
                 compaction_count = excluded.compaction_count,
                 compaction_tokens_dropped = excluded.compaction_tokens_dropped,
                 parser_version = excluded.parser_version,
-                backfilled_version = excluded.backfilled_version;
+                backfilled_version = excluded.backfilled_version,
+                effort = excluded.effort;
             "#,
             params![
                 trace.session_id,
@@ -1240,6 +1253,7 @@ impl Storage {
                 // Every upsert is a full reparse under `parser_version`, so it doubles as
                 // proof that a backfill pass ran at that version -- see `needs_backfill`.
                 parser_version,
+                trace.stats.effort,
             ],
         )?;
 
@@ -3684,6 +3698,62 @@ mod tests {
         assert_eq!(after_rescan[0].1, TokenUsage::new(900, 240, 200, 50));
     }
 
+    /// `sessions.effort` is the third axis `docs/specs/archie-bench.md` needs and the only
+    /// one no adapter used to fill. It is written from `TraceStats::effort`, which is the
+    /// modal per-invocation value, so a session that changed effort mid-run still lands in
+    /// exactly one bucket -- and a session whose harness never declared one stays NULL rather
+    /// than being bucketed as anything.
+    #[test]
+    fn test_session_effort_is_stored_as_the_modal_per_invocation_value() {
+        use agentworth_schema::NormalizedEvent;
+
+        let storage = Storage::open_in_memory().expect("open storage");
+        let start = Utc::now();
+
+        let push = |trace: &mut AgentWorthTrace, seq: u64, effort: Option<&str>| {
+            trace.events.push(NormalizedEvent::new(
+                seq,
+                start,
+                EventPayload::ModelInvocation {
+                    model: "gpt-5.6-sol".to_string(),
+                    token_usage: TokenUsage::new(10, 5, 0, 0),
+                    cost_usd: None,
+                    latency_ms: None,
+                    effort: effort.map(str::to_string),
+                },
+            ));
+        };
+
+        let prov = Provenance::new("/tmp/effort.jsonl", "codex", 10, 10, "fp_effort");
+        let mut mixed = AgentWorthTrace::new("sess_effort", "codex", prov, start);
+        push(&mut mixed, 1, Some("high"));
+        push(&mut mixed, 2, Some("low"));
+        push(&mut mixed, 3, Some("high"));
+        mixed.recalculate_stats();
+        assert_eq!(mixed.stats.effort.as_deref(), Some("high"));
+        storage.upsert_session(&mixed, None, None, 2).expect("upsert");
+
+        let prov = Provenance::new("/tmp/no-effort.jsonl", "claude_code", 10, 10, "fp_none");
+        let mut silent = AgentWorthTrace::new("sess_no_effort", "claude_code", prov, start);
+        push(&mut silent, 1, None);
+        silent.recalculate_stats();
+        storage
+            .upsert_session(&silent, None, None, 2)
+            .expect("upsert");
+
+        let conn = storage.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let read = |id: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT effort FROM sessions WHERE session_id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .expect("read effort")
+        };
+        assert_eq!(read("sess_effort").as_deref(), Some("high"));
+        assert_eq!(read("sess_no_effort"), None);
+    }
+
     #[test]
     fn test_find_sessions_for_blame() {
         use agentworth_schema::NormalizedEvent;
@@ -3713,6 +3783,7 @@ mod tests {
                 token_usage: TokenUsage::new(100, 20, 0, 0),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         ));
         trace.events.push(NormalizedEvent::new(
@@ -3778,6 +3849,7 @@ mod tests {
                 token_usage: TokenUsage::new(50, 10, 0, 0),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         ));
         trace.events.push(NormalizedEvent::new(

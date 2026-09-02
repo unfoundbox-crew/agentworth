@@ -144,11 +144,15 @@ impl Redactor {
                 token_usage,
                 cost_usd,
                 latency_ms,
+                effort,
             } => EventPayload::ModelInvocation {
                 model: self.redact_text_internal(model, report),
                 token_usage: *token_usage,
                 cost_usd: *cost_usd,
                 latency_ms: *latency_ms,
+                // Carried through unredacted: a reasoning-effort tier is a harness setting
+                // from a small closed set ("low", "high", ...), never user text or a path.
+                effort: effort.clone(),
             },
             EventPayload::ToolCall(tc) => EventPayload::ToolCall(ToolCall {
                 id: tc.id.clone(),

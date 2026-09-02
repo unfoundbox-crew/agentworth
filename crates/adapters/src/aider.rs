@@ -698,6 +698,7 @@ fn parse_aider_markdown(
                         token_usage: TokenUsage::new(input_tokens, output_tokens, 0, 0),
                         cost_usd: message_cost,
                         latency_ms: None,
+                        effort: None,
                     },
                 )
                 .with_raw_ref(format!("line:{}", raw_line_num)),
@@ -1059,6 +1060,7 @@ fn parse_aider_json_record(
                         ),
                         cost_usd,
                         latency_ms: None,
+                        effort: None,
                     },
                 )
                 .with_raw_ref(&raw_ref),

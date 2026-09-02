@@ -454,6 +454,7 @@ fn parse_deepseek_record(
                             .get("latency_ms")
                             .or_else(|| val.get("duration_ms"))
                             .and_then(|d| d.as_u64()),
+                        effort: None,
                     },
                 )
                 .with_raw_ref(&raw_ref),

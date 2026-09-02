@@ -449,6 +449,7 @@ fn parse_zhipu_record(
                             .or_else(|| val.get("duration_ms"))
                             .or_else(|| val.get("latency"))
                             .and_then(|d| d.as_u64()),
+                        effort: None,
                     },
                 )
                 .with_raw_ref(&raw_ref),

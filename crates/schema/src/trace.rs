@@ -21,6 +21,13 @@ pub struct TraceStats {
     pub per_model_token_usage: BTreeMap<String, TokenUsage>,
     pub tools_used: BTreeMap<String, usize>,
     pub duration_seconds: Option<f64>,
+    /// The session's reasoning-effort setting: the value carried by the most model
+    /// invocations in the session, ties broken by first appearance. A session-level
+    /// answer is a summary, not a fact -- Codex writes effort per turn and it changes
+    /// mid-session -- so the per-invocation value on `EventPayload::ModelInvocation`
+    /// stays the source of truth and this is the modal reduction of it.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// Number of times this session's context was compacted (summarized and replaced).
     /// 0 for the common case of a session that was never compacted.
     #[serde(default)]
@@ -80,6 +87,7 @@ impl AgentWorthTrace {
         let mut models = Vec::new();
         let mut tools = BTreeMap::new();
         let mut per_model_usage: BTreeMap<String, TokenUsage> = BTreeMap::new();
+        let mut effort_counts: Vec<(String, usize)> = Vec::new();
         let mut latest_ts = self.started_at;
 
         for event in &self.events {
@@ -100,13 +108,25 @@ impl AgentWorthTrace {
                     *tools.entry(tool_call.name.clone()).or_insert(0) += 1;
                 }
                 EventPayload::ModelInvocation {
-                    model, token_usage, ..
+                    model,
+                    token_usage,
+                    effort,
+                    ..
                 } => {
                     if !models.contains(model) {
                         models.push(model.clone());
                     }
                     stats.token_usage += *token_usage;
                     *per_model_usage.entry(model.clone()).or_default() += *token_usage;
+                    if let Some(effort) = effort.as_deref().map(str::trim).filter(|e| !e.is_empty())
+                    {
+                        // A Vec, not a map: insertion order is what breaks a tie by first
+                        // appearance, and the distinct-value count here is single digits.
+                        match effort_counts.iter_mut().find(|(v, _)| v == effort) {
+                            Some((_, n)) => *n += 1,
+                            None => effort_counts.push((effort.to_string(), 1)),
+                        }
+                    }
                 }
                 EventPayload::ModelSwitch(ms) => {
                     if !models.contains(&ms.to_model) {
@@ -138,6 +158,13 @@ impl AgentWorthTrace {
         stats.models_used = models;
         stats.tools_used = tools;
         stats.per_model_token_usage = per_model_usage;
+        // `min_by_key` (not `max_by_key`) because it keeps the FIRST of several equal keys
+        // while `max_by_key` keeps the last -- and first appearance is the documented
+        // tie-break for `TraceStats::effort`.
+        stats.effort = effort_counts
+            .into_iter()
+            .min_by_key(|(_, n)| std::cmp::Reverse(*n))
+            .map(|(value, _)| value);
         self.stats = stats;
     }
 }
@@ -170,6 +197,7 @@ mod tests {
                 token_usage: TokenUsage::new(100, 50, 10, 5),
                 cost_usd: None,
                 latency_ms: Some(1200),
+                effort: None,
             },
         ));
 
@@ -215,6 +243,7 @@ mod tests {
                 token_usage: TokenUsage::new(500, 100, 200, 50),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         ));
 
@@ -226,6 +255,7 @@ mod tests {
                 token_usage: TokenUsage::new(300, 60, 0, 0),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         ));
 
@@ -238,6 +268,7 @@ mod tests {
                 token_usage: TokenUsage::new(50, 10, 0, 0),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         ));
 
@@ -310,5 +341,44 @@ mod tests {
         assert_eq!(trace.stats.compaction_count, 4);
         assert_eq!(trace.stats.compaction_tokens_dropped, 3_326_486);
         assert_eq!(trace.stats.total_events, 4);
+    }
+
+    /// `TraceStats::effort` is the modal per-invocation value, and a tie goes to whichever
+    /// value appeared first -- a session that starts at one setting and is switched mid-run
+    /// should not be relabelled by the switch alone.
+    #[test]
+    fn test_trace_stats_effort_is_modal_with_first_appearance_winning_a_tie() {
+        let start = Utc::now();
+        let efforts = |values: &[Option<&str>]| {
+            let prov = Provenance::new("/test/effort.jsonl", "codex", 10, 10, "fp");
+            let mut trace = AgentWorthTrace::new("sess-effort", "codex", prov, start);
+            for (i, effort) in values.iter().enumerate() {
+                trace.events.push(NormalizedEvent::new(
+                    i as u64 + 1,
+                    start,
+                    EventPayload::ModelInvocation {
+                        model: "gpt-5.6-sol".to_string(),
+                        token_usage: TokenUsage::new(1, 1, 0, 0),
+                        cost_usd: None,
+                        latency_ms: None,
+                        effort: effort.map(str::to_string),
+                    },
+                ));
+            }
+            trace.recalculate_stats();
+            trace.stats.effort
+        };
+
+        assert_eq!(
+            efforts(&[Some("high"), Some("low"), Some("high")]).as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            efforts(&[Some("low"), Some("high")]).as_deref(),
+            Some("low"),
+            "a tie resolves to the value seen first"
+        );
+        // Blank and absent are the same thing: no declared effort, not an empty bucket.
+        assert_eq!(efforts(&[None, Some("  ")]), None);
     }
 }

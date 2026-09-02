@@ -713,6 +713,7 @@ fn parse_windsurf_record(
                         ),
                         cost_usd,
                         latency_ms: None,
+                        effort: None,
                     },
                 )
                 .with_raw_ref(&raw_ref),

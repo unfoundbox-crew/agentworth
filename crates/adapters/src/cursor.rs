@@ -549,6 +549,7 @@ fn parse_cursor_record(
                             .get("durationMs")
                             .or_else(|| val.get("latency_ms"))
                             .and_then(|d| d.as_u64()),
+                        effort: None,
                     },
                 )
                 .with_raw_ref(&raw_ref),

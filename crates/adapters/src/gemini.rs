@@ -504,6 +504,7 @@ fn parse_gemini_record(
                         token_usage: usage,
                         cost_usd: val.get("cost").and_then(|c| c.as_f64()),
                         latency_ms: val.get("latency_ms").and_then(|d| d.as_u64()),
+                        effort: None,
                     },
                 )
                 .with_raw_ref(&raw_ref),
