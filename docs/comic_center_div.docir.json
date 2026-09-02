@@ -1,0 +1,94 @@
+{
+  "irVersion": "2.0",
+  "output": {
+    "width": 1080,
+    "height": 1080,
+    "fps": 60
+  },
+  "theme": {
+    "palette": {
+      "colors": {
+        "bg": "#fdfdfd",
+        "ink": "#000000",
+        "inkMuted": "#52525b",
+        "surface": "#f4f4f5",
+        "border": "#18181b",
+        "bubbleBg": "#ffffff",
+        "bubbleText": "#09090b",
+        "codeBg": "#18181b",
+        "codeText": "#10b981",
+        "failAccent": "#ef4444",
+        "passAccent": "#22c55e"
+      }
+    },
+    "typography": {
+      "fontFamily": "Geist Mono, monospace"
+    },
+    "motion": {
+      "personality": "snappy"
+    }
+  },
+  "timeline": {
+    "beats": [
+      { "id": "p1_the_prompt", "durationMs": 3500 },
+      { "id": "p2_the_loop", "durationMs": 4000 },
+      { "id": "p3_the_receipt", "durationMs": 4500 },
+      { "id": "p4_done_claimed", "durationMs": 5000 }
+    ]
+  },
+  "beatContent": {
+    "p1_the_prompt": {
+      "panel": {
+        "title": "PANEL 1: THE SPECIFICATION",
+        "actors": [
+          { "id": "dev", "type": "stick_figure", "pose": "typing", "x": 200, "y": 700 }
+        ],
+        "dialogue": [
+          { "speaker": "dev", "text": "Please center this div vertically and horizontally. How hard could it be?", "type": "speech" }
+        ]
+      }
+    },
+    "p2_the_loop": {
+      "panel": {
+        "title": "PANEL 2: AUTONOMOUS ACCELERATION",
+        "actors": [
+          { "id": "agent", "type": "stick_figure", "pose": "arms_up_panic", "x": 540, "y": 700 }
+        ],
+        "terminal": {
+          "lines": [
+            "✦ npm install --save three @types/webgl tailwindcss",
+            "✦ docker compose up -d subgrid-coordinator",
+            "✦ cargo build --release --target wasm32-unknown-unknown",
+            "✦ 47 tool calls fired | 18 test runs | 0 git commits"
+          ]
+        }
+      }
+    },
+    "p3_the_receipt": {
+      "panel": {
+        "title": "PANEL 3: AGENTWORTH RECEIPT",
+        "receipt": {
+          "title": "AGENTWORTH CARBON-DATING RECEIPT",
+          "task": "center this div",
+          "total_tokens": "3,420,000",
+          "estimated_cost": "$48.20",
+          "tool_calls": 47,
+          "verified_commits": 0,
+          "outcome_rank": "DoneClaimed (Rank 1 / 5)"
+        }
+      }
+    },
+    "p4_done_claimed": {
+      "panel": {
+        "title": "PANEL 4: THE DELIVERABLE",
+        "actors": [
+          { "id": "dev", "type": "stick_figure", "pose": "facepalm", "x": 240, "y": 700 },
+          { "id": "agent", "type": "stick_figure", "pose": "shrugging", "x": 800, "y": 700 }
+        ],
+        "dialogue": [
+          { "speaker": "agent", "text": "I have added 'margin: 0 auto;'. Please verify if vertical centering was also needed.", "type": "speech" }
+        ]
+      }
+    }
+  }
+}
