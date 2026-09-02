@@ -145,7 +145,14 @@ pub(crate) fn verify_outcomes(
             // happened. `classify_command_string` (outcome.rs) scores these from the command
             // string alone, with no exit code available, so a claim sourced from a bare
             // ToolCall has no structural evidence it ever ran, let alone succeeded.
-            (EventPayload::ToolCall(tool), kind) if is_execution_claim(kind) => {
+            //
+            // `DoneClaimed` is in scope here too: the classifier now refuses to hand a
+            // test/CI rung to a command with no captured exit code and emits a "result
+            // unknown" `DoneClaimed` instead, and a *requested* command deserves less trust
+            // than an observed one whose exit code merely went unrecorded.
+            (EventPayload::ToolCall(tool), kind)
+                if is_execution_claim(kind) || kind == OutcomeKind::DoneClaimed =>
+            {
                 verify_bare_tool_call(evidence, tool, &real_successes);
             }
 

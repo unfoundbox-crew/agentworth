@@ -221,7 +221,7 @@ mod tests {
         let outcomes = detector.detect_outcomes(trace);
         let strongest = highest_outcome(&outcomes).map(|o| outcome_kind_name(o.kind));
         storage
-            .upsert_session(trace, strongest.as_deref(), None)
+            .upsert_session(trace, strongest.as_deref(), None, 1)
             .unwrap();
     }
 

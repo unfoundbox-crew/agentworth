@@ -29,6 +29,12 @@ impl Default for ClaudeCodeAdapter {
 }
 
 impl ClaudeCodeAdapter {
+    /// 2: #81 taught the parser to read `message.content` on Claude Code's real transcript
+    /// shape. Before that every session's tool results, shell exit codes, user-message count
+    /// and prompt preview were parsed from a shape the files don't use -- so every row indexed
+    /// by version 1 is wrong and has to be reparsed once, even though its bytes never changed.
+    pub const PARSER_VERSION: i64 = 2;
+
     pub fn new() -> Self {
         Self
     }
@@ -67,6 +73,10 @@ impl ClaudeCodeAdapter {
 impl AgentAdapter for ClaudeCodeAdapter {
     fn name(&self) -> &'static str {
         "claude_code"
+    }
+
+    fn parser_version(&self) -> i64 {
+        Self::PARSER_VERSION
     }
 
     fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {

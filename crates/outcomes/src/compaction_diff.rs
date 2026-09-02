@@ -363,7 +363,7 @@ pub fn diff_compaction_rounds(
 
     // Newest first: the most recent thing a session decided and forgot is the one most likely
     // to still matter.
-    forgotten.sort_by(|a, b| b.sequence.cmp(&a.sequence));
+    forgotten.sort_by_key(|f| std::cmp::Reverse(f.sequence));
 
     CompactionDiff {
         rounds: round_diffs,
