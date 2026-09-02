@@ -131,7 +131,7 @@ worth drawing.
 | D | `suspect-commits.md` | `suspect_commits` | absolute-path filtering, then a `session_risk` table |
 | E | `compaction-diff.md` — **built, #83** | `forgotten_context` | nothing left: the round boundaries are stored and backfilled |
 | F | `beliefs.md` | `claim_check` | D's absolute-path anchoring, which the same-file claims reuse |
-| G | `efficiency-receipts.md` | `repeat_check` | nothing — the P0 experiment is done and it picked the detector |
+| G | `efficiency-receipts.md` | `repeat_check`, `fanout_reads` | nothing — the P0 experiment is done and it picked the detector |
 
 ### Why that order
 
@@ -176,9 +176,11 @@ and the lookup inherits none of it.
 for.** Two weeks measured: exact re-reading is 0.5% of read payload, no-state
 retries are one case in 1,496 failures, and duplicate work across sibling
 subagents is 8.6 times larger than both — 416k tokens across 43 fan-outs, which
-nothing looking at one session at a time can see. The tool is `repeat_check`,
-and it answers "a sibling already has this" before it answers "you read this
-already". Nothing blocks it, but F is smaller and G's own experiment says the
+nothing looking at one session at a time can see. The detector is plumbing;
+the agent gets `fanout_reads` (full detail, called before it briefs the next
+child) and `repeat_check`'s `SIBLING_HAS_IT` verdict (called before one
+re-read); the person gets one line in the receipt, nothing more. Nothing
+blocks it, but F is smaller and G's own experiment says the
 urgency is lower than the question sounded.
 
 **E is last because it needs a new table and serves 4% of sessions.** It is
