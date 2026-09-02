@@ -88,21 +88,46 @@ impl Scanner {
                 )
             })?;
 
-        let source_path = std::path::PathBuf::from(&summary.source_path);
-        if !source_path.exists() {
-            anyhow::bail!(
-                "Source history file {:?} no longer exists on disk",
-                source_path
-            );
-        }
-
         let adapter = self
             .adapters
             .iter()
             .find(|a| a.name() == summary.adapter)
             .with_context(|| format!("No adapter registered for '{}'", summary.adapter))?;
 
-        let source = SessionSource::from_path(&source_path, adapter.name())?;
+        // Rebuild the exact `SessionSource` this session was last scanned with, from the
+        // index itself, rather than re-stat'ing `summary.source_path` on disk. A plain
+        // `std::fs::metadata` stat (what `SessionSource::from_path` does) only works for a
+        // source whose identity string is a real file path -- it always fails for a virtual
+        // source (e.g. opencode's `<repo>/.opencode/session-<id>.db::opencode-repo::<db_path>#<id>`
+        // identity, which never exists as a literal path even though the session is fully
+        // present in its backing SQLite store). `Storage::get_source_metadata` returns the
+        // (file_size, mtime, fingerprint) this same source was indexed with, straight from the
+        // `sources` table, keyed by the identical identity string -- no filesystem access needed.
+        let (file_size_bytes, mtime_epoch_secs, fingerprint) = self
+            .storage
+            .get_source_metadata(&summary.source_path)?
+            .with_context(|| {
+                format!(
+                    "Session '{}' has no indexed source record for {:?}",
+                    session_id, summary.source_path
+                )
+            })?;
+        let source = SessionSource {
+            path: std::path::PathBuf::from(&summary.source_path),
+            adapter_name: adapter.name().to_string(),
+            file_size_bytes,
+            mtime_epoch_secs,
+            fingerprint,
+        };
+
+        if !adapter.source_exists(&source) {
+            anyhow::bail!(
+                "Source history for session '{}' ({:?}) no longer exists",
+                session_id,
+                summary.source_path
+            );
+        }
+
         let parse_result = adapter.parse(&source)?;
         Ok(parse_result.trace)
     }
@@ -200,15 +225,18 @@ impl Scanner {
                         // produced by an older version of this adapter's parser. Reparse
                         // once rather than skipping forever.
                         let path_str = source.path.to_string_lossy();
-                        match self
-                            .storage
-                            .needs_backfill(&path_str, adapter.parser_version())
-                        {
-                            // In practice unreachable from this call site -- `source` came
-                            // from `adapter.enumerate()`, which only returns paths that exist
-                            // right now -- but `needs_backfill` is a general predicate, and a
-                            // merged row reached some other way must not be treated as a
-                            // normal reparse (there is nothing local to parse it from).
+                        match self.storage.needs_backfill(
+                            &path_str,
+                            adapter.parser_version(),
+                            adapter.source_exists(source),
+                        ) {
+                            // Reachable here whenever `adapter.source_exists(source)` says no
+                            // even though `source` came from this very `enumerate()` pass --
+                            // e.g. an opencode session whose backing `opencode.db` row was
+                            // deleted between enumeration and this check. Rare, but
+                            // `needs_backfill` is a general predicate and a merged row reached
+                            // some other way must not be treated as a normal reparse either
+                            // (there is nothing local to parse it from).
                             Ok(Some(BackfillReason::SourceUnavailable)) => {
                                 sources_unavailable += 1;
                                 continue;
@@ -1113,5 +1141,192 @@ mod tests {
         assert_eq!(session.primary_outcome.as_deref(), Some("commit_observed"));
         assert!(session.composite_score.is_some());
         assert!(session.composite_score.unwrap() > 0.0);
+    }
+
+    /// #91 fixed the opencode adapter's own repository resolution but left a sibling bug: any
+    /// adapter whose `SessionSource.path` is a virtual identity string (never a literal file on
+    /// disk, even though the session is fully present in its backing store) made `load_trace`'s
+    /// plain `source_path.exists()` gate bail on every single one of its sessions. This test
+    /// proves the general fix -- `AgentAdapter::source_exists` -- with a fake adapter rather
+    /// than opencode's SQLite specifics, so it isolates the core-layer behavior from any one
+    /// adapter's own locator format.
+    #[test]
+    fn test_load_trace_parses_a_session_with_a_virtual_nonexistent_source_path() {
+        use agentworth_adapter_sdk::{DetectionResult, ParseResult};
+        use agentworth_schema::{EventPayload, NormalizedEvent, Provenance};
+
+        struct FakeVirtualAdapter;
+
+        impl AgentAdapter for FakeVirtualAdapter {
+            fn name(&self) -> &'static str {
+                "fake_virtual"
+            }
+
+            // The whole point of this fixture: presence is defined by this override, not by
+            // the default `source.path.exists()`, which would always say "gone" for a virtual
+            // identity string.
+            fn source_exists(&self, _source: &SessionSource) -> bool {
+                true
+            }
+
+            fn detect(&self, _options: &ScanOptions) -> Result<DetectionResult> {
+                Ok(DetectionResult {
+                    adapter_name: self.name(),
+                    is_present: true,
+                    discovered_roots: vec![],
+                    confidence: 1.0,
+                })
+            }
+
+            fn enumerate(&self, _options: &ScanOptions) -> Result<Vec<SessionSource>> {
+                Ok(vec![])
+            }
+
+            fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
+                let provenance = Provenance::new(
+                    source.path.to_string_lossy().to_string(),
+                    self.name(),
+                    source.file_size_bytes,
+                    source.mtime_epoch_secs,
+                    &source.fingerprint,
+                );
+                let mut trace =
+                    AgentWorthTrace::new("virtual-sess", self.name(), provenance, Utc::now());
+                trace.events.push(NormalizedEvent::new(
+                    1,
+                    Utc::now(),
+                    EventPayload::UserMessage { content: "hi from a virtual source".to_string() },
+                ));
+                trace.events.push(NormalizedEvent::new(
+                    2,
+                    Utc::now(),
+                    EventPayload::AssistantMessage { content: "hello".to_string(), thinking: None },
+                ));
+                trace.recalculate_stats();
+                Ok(ParseResult { trace, malformed_lines: 0, warnings: vec![] })
+            }
+        }
+
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner = Scanner::with_adapters(vec![Box::new(FakeVirtualAdapter)], storage.clone());
+
+        // Modeled on opencode's own wrapped identity: a synthetic string that looks like a
+        // path but is never resolvable as one.
+        let virtual_path = "/repo/.fake/session-abc.db::fake-repo::/db/path.db#abc";
+        assert!(
+            !std::path::Path::new(virtual_path).exists(),
+            "fixture must actually be non-existent, or this test would pass for the wrong reason"
+        );
+
+        let source = SessionSource {
+            path: std::path::PathBuf::from(virtual_path),
+            adapter_name: "fake_virtual".to_string(),
+            file_size_bytes: 4096,
+            mtime_epoch_secs: 1_000,
+            fingerprint: "deadbeef".to_string(),
+        };
+        let parse_result = FakeVirtualAdapter.parse(&source).expect("parse fixture");
+        storage
+            .upsert_session(&parse_result.trace, None, None, 0)
+            .expect("seed virtual session");
+
+        let loaded = scanner
+            .load_trace("virtual-sess")
+            .expect("load_trace must resolve a virtual source via adapter.source_exists, not Path::exists");
+        assert_eq!(loaded.events.len(), 2);
+    }
+
+    /// The stub-pruning pass (`prune_stub_sessions`) decides survival by checking whether
+    /// `(adapter, source_path)` is still among the sources the adapter enumerates right now --
+    /// never by stat'ing the path -- so a thin (near-empty) session backed by a virtual,
+    /// never-a-real-file identity string must survive exactly like a thin session backed by a
+    /// real file would, as long as its adapter still enumerates it. This pins that behavior
+    /// down explicitly, since it is the one place a `Path::exists()` habit could most easily
+    /// have crept back in alongside the `load_trace` fix above.
+    #[test]
+    fn test_prune_stub_sessions_does_not_prune_a_virtual_source_still_enumerated() {
+        use agentworth_adapter_sdk::{DetectionResult, ParseResult};
+        use agentworth_schema::{EventPayload, NormalizedEvent, Provenance};
+
+        struct FakeVirtualStubAdapter;
+
+        impl AgentAdapter for FakeVirtualStubAdapter {
+            fn name(&self) -> &'static str {
+                "fake_virtual_stub"
+            }
+
+            fn source_exists(&self, _source: &SessionSource) -> bool {
+                true
+            }
+
+            fn detect(&self, _options: &ScanOptions) -> Result<DetectionResult> {
+                Ok(DetectionResult {
+                    adapter_name: self.name(),
+                    is_present: true,
+                    discovered_roots: vec![],
+                    confidence: 1.0,
+                })
+            }
+
+            fn enumerate(&self, _options: &ScanOptions) -> Result<Vec<SessionSource>> {
+                Ok(vec![SessionSource {
+                    path: std::path::PathBuf::from(
+                        "/repo/.fake/session-stub.db::fake-repo::/db/path.db#stub",
+                    ),
+                    adapter_name: self.name().to_string(),
+                    file_size_bytes: 4096,
+                    mtime_epoch_secs: 1_000,
+                    fingerprint: "stub-fp".to_string(),
+                }])
+            }
+
+            fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
+                let provenance = Provenance::new(
+                    source.path.to_string_lossy().to_string(),
+                    self.name(),
+                    source.file_size_bytes,
+                    source.mtime_epoch_secs,
+                    &source.fingerprint,
+                );
+                let mut trace = AgentWorthTrace::new(
+                    "virtual-stub-sess",
+                    self.name(),
+                    provenance,
+                    Utc::now(),
+                );
+                // Deliberately one event -- thin enough to qualify as a stub for pruning
+                // purposes (`is_near_empty_session`), which is exactly the shape that must
+                // still survive as long as the source stays enumerated.
+                trace.events.push(NormalizedEvent::new(
+                    1,
+                    Utc::now(),
+                    EventPayload::UserMessage { content: "hi".to_string() },
+                ));
+                trace.recalculate_stats();
+                Ok(ParseResult { trace, malformed_lines: 0, warnings: vec![] })
+            }
+        }
+
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(FakeVirtualStubAdapter)], storage.clone());
+
+        // include_stubs: true to get this one-event session actually indexed despite the
+        // default store-time skip -- pruning has nothing to act on otherwise.
+        let seed_options = ScanOptions { include_stubs: true, ..Default::default() };
+        let seed_summary = scanner.run_scan(&seed_options, |_, _| {}).expect("seed scan");
+        assert_eq!(seed_summary.total_indexed_sessions, 1);
+
+        // A full, unscoped, default (non-include_stubs) scan runs `prune_stub_sessions`. The
+        // session is thin, but its virtual source is still enumerated by the adapter -- it
+        // must survive, exactly as a thin session backed by a real file would.
+        let prune_summary = scanner
+            .run_scan(&ScanOptions::default(), |_, _| {})
+            .expect("prune scan");
+        assert_eq!(
+            prune_summary.stub_sessions_removed, 0,
+            "a still-enumerated virtual source must not be pruned as missing"
+        );
+        assert!(storage.get_session_by_id("virtual-stub-sess").unwrap().is_some());
     }
 }
