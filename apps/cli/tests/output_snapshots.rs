@@ -44,7 +44,16 @@ fn fixture() -> (TempDir, std::path::PathBuf) {
     (temp, db)
 }
 
-fn render(db: &std::path::Path, args: &[&str], columns: usize, color: bool) -> String {
+/// Render one command. `color` picks the palette; `unicode` picks the glyph set. The two
+/// are separate axes: the spec keeps Unicode under NO_COLOR and drops to ASCII only when
+/// stdout is not a terminal.
+fn render_with(
+    db: &std::path::Path,
+    args: &[&str],
+    columns: usize,
+    color: bool,
+    unicode: bool,
+) -> String {
     let mut cmd = Command::cargo_bin("agentworth").unwrap();
     cmd.arg("--db-path").arg(db);
     for a in args {
@@ -52,14 +61,28 @@ fn render(db: &std::path::Path, args: &[&str], columns: usize, color: bool) -> S
     }
     cmd.env("COLUMNS", columns.to_string())
         .env_remove("NO_COLOR")
-        .env_remove("COLORTERM");
-    if color {
+        .env_remove("COLORTERM")
+        .env_remove("CLICOLOR_FORCE");
+    // The test harness is never a TTY, so CLICOLOR_FORCE stands in for one.
+    if color || unicode {
         cmd.env("CLICOLOR_FORCE", "1");
-    } else {
-        cmd.env_remove("CLICOLOR_FORCE").env("NO_COLOR", "1");
+    }
+    if !color {
+        cmd.env("NO_COLOR", "1");
     }
     let out = cmd.assert().get_output().stdout.clone();
     String::from_utf8(out).unwrap()
+}
+
+/// The default: a piped stream, which is no colour and ASCII.
+fn render(db: &std::path::Path, args: &[&str], columns: usize, color: bool) -> String {
+    render_with(db, args, columns, color, color)
+}
+
+fn session_id(db: &std::path::Path) -> String {
+    let json = render(db, &["traces", "--json"], 80, false);
+    let v: serde_json::Value = serde_json::from_str(json.trim()).unwrap();
+    v[0]["session_id"].as_str().unwrap().to_string()
 }
 
 /// Every screen, in the form the tests iterate over.
@@ -77,7 +100,7 @@ fn screens() -> Vec<(&'static str, Vec<&'static str>)> {
 
 fn is_allowed(c: char) -> bool {
     c.is_ascii()
-        || matches!(c as u32, 0x2500..=0x257F | 0x2580..=0x259F)
+        || matches!(c as u32, 0x2500..=0x259F)
         || matches!(c, '●' | '○' | '·' | '—' | '→')
 }
 
@@ -115,8 +138,9 @@ fn colour_never_moves_a_column() {
             continue;
         }
         for columns in [80usize, 120] {
-            let plain = render(&db, &args, columns, false);
-            let colour = render(&db, &args, columns, true);
+            // Same glyph set on both arms, so only the palette differs.
+            let plain = render_with(&db, &args, columns, false, true);
+            let colour = render_with(&db, &args, columns, true, true);
             assert!(
                 colour.contains('\x1b'),
                 "{} at {} columns emitted no colour under CLICOLOR_FORCE",
@@ -154,14 +178,7 @@ fn no_screen_ships_a_glyph_outside_the_allowed_set() {
 #[test]
 fn the_receipt_holds_its_frame() {
     let (_t, db) = fixture();
-    let traces = render(&db, &["traces", "--limit", "5"], 80, false);
-    let id = traces
-        .lines()
-        .find(|l| l.trim_start().starts_with('#') || l.trim_start().starts_with('.'))
-        .and_then(|l| l.split_whitespace().nth(1))
-        .expect("a trace row with a session id")
-        .to_string();
-
+    let id = session_id(&db);
     let out = render(&db, &["receipt", &id], 80, false);
     let framed: Vec<&str> = out
         .lines()
@@ -243,7 +260,7 @@ fn traces_leads_with_a_five_cell_meter_and_ends_on_the_finding() {
 
     let meters: Vec<&str> = out
         .lines()
-        .filter_map(|l| l.trim_start().split_whitespace().next())
+        .filter_map(|l| l.split_whitespace().next())
         .filter(|t| t.len() == 5 && t.chars().all(|c| c == '#' || c == '.'))
         .collect();
     assert_eq!(meters.len(), 2, "one meter per row, five cells each");

@@ -25,7 +25,43 @@ fn fit(ui: &Ui, line: &str) -> String {
 /// Trailing spaces are invisible but they widen a line and dirty a diff, so no row keeps
 /// the padding that squared its last column.
 fn push(out: &mut String, ui: &Ui, line: String) {
-    let _ = writeln!(out, "{}", fit(ui, &line).trim_end());
+    let _ = writeln!(out, "{}", trim_row(&fit(ui, &line)));
+}
+
+/// `trim_end` cannot see padding that sits *inside* a colour span, before the reset — so a
+/// coloured row would keep trailing spaces a plain one dropped, and the two renderings
+/// would stop agreeing on column positions.
+fn trim_row(line: &str) -> String {
+    const RESET: &str = "\u{1b}[0m";
+    let mut s = line.trim_end_matches(' ').to_string();
+    while let Some(rest) = s.strip_suffix(RESET) {
+        let trimmed = rest.trim_end_matches(' ');
+        if trimmed.len() != rest.len() {
+            // Padding lived inside the span; keep the span, drop the padding.
+            s = format!("{}{}", trimmed, RESET);
+            s = s.trim_end_matches(' ').to_string();
+            continue;
+        }
+        // An empty span — a painted cell that trimmed away to nothing. Drop the whole
+        // span so the spaces before it can go too.
+        match strip_trailing_sgr(trimmed) {
+            Some(before) => s = before.trim_end_matches(' ').to_string(),
+            None => break,
+        }
+    }
+    s
+}
+
+/// Remove a trailing `ESC [ … m` sequence, if the string ends in one.
+fn strip_trailing_sgr(s: &str) -> Option<&str> {
+    let start = s.rfind("\u{1b}[")?;
+    let body = &s[start + 2..];
+    if body.ends_with('m') && body[..body.len() - 1].chars().all(|c| c.is_ascii_digit() || c == ';')
+    {
+        Some(&s[..start])
+    } else {
+        None
+    }
 }
 
 /// Strip the vendor prefix and the release date, which are the same on every row and so
@@ -196,14 +232,14 @@ pub fn stats(ui: &Ui, v: &StatsView<'_>) -> String {
         ui,
         format!(
             "  {}",
-            ui.paint(
-                Role::Label,
-                &format!(
+            ui.paint(Role::Label, &{
+                let total_label = format!("{} TOTAL", compact(total));
+                format!(
                     "{}{}",
-                    lpad("TOKENS", i.saturating_sub(display_width(&format!("{} TOTAL", compact(total))))),
-                    format!("{} TOTAL", compact(total))
+                    lpad("TOKENS", i.saturating_sub(display_width(&total_label))),
+                    total_label
                 )
-            )
+            })
         ),
     );
     push(
@@ -222,7 +258,7 @@ pub fn stats(ui: &Ui, v: &StatsView<'_>) -> String {
         ("output", v.output_tokens),
         ("input", v.input_tokens),
     ];
-    split.sort_by(|a, b| b.1.cmp(&a.1));
+    split.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     for (label, n) in split {
         let frac = if total > 0 { n as f64 / total as f64 } else { 0.0 };
         push(
@@ -354,7 +390,7 @@ pub fn traces(ui: &Ui, command: &str, indexed: usize, rows: &[TraceRow]) -> Stri
     const TOK: usize = 8;
     let fixed = EV + SCORE + DUR + TOK + 12;
     let rem = i.saturating_sub(fixed);
-    let sess = (rem / 3 + 3).min(14).max(4);
+    let sess = (rem / 3 + 3).clamp(4, 14);
     let adapter = rem.saturating_sub(sess) / 2;
     let model = rem.saturating_sub(sess + adapter);
 
@@ -418,8 +454,10 @@ pub fn traces(ui: &Ui, command: &str, indexed: usize, rows: &[TraceRow]) -> Stri
         .iter()
         .max_by_key(|r| r.rung)
         .or_else(|| rows.first());
+    // The SESSION column truncates, but this line must be runnable: `inspect` resolves an
+    // exact id, not a prefix, so the closing command carries the whole thing.
     let hint = pick
-        .map(|r| format!("agentworth inspect {}", truncate(&r.session_id, 14)))
+        .map(|r| format!("agentworth inspect {}", r.session_id))
         .unwrap_or_default();
 
     if display_width(&finding) + display_width(&hint) + 2 <= i {
@@ -764,7 +802,7 @@ pub fn blame(ui: &Ui, path: &str, rows: &[BlameRow]) -> String {
 pub fn scan_progress(ui: &Ui, frame: u64, what: &str, done: usize, total: usize) -> String {
     // The meter advances every frame; the face changes every second frame. Two rhythms,
     // so the block feels alive without either reading as a spinner.
-    let face = if frame % 2 == 0 {
+    let face = if frame.is_multiple_of(2) {
         eyes(ui, EyeKind::Digging)
     } else {
         eyes(ui, EyeKind::Done)

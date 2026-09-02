@@ -103,9 +103,7 @@ impl Ui {
         let no_color_env = std::env::var_os("NO_COLOR").is_some();
         let forced = matches!(std::env::var("CLICOLOR_FORCE").as_deref(), Ok(v) if v != "0");
 
-        let color = if plain_flag || no_color_flag || no_color_env {
-            ColorMode::None
-        } else if !is_tty && !forced {
+        let color = if plain_flag || no_color_flag || no_color_env || (!is_tty && !forced) {
             ColorMode::None
         } else if std::env::var("COLORTERM")
             .map(|v| v == "truecolor" || v == "24bit")
@@ -288,7 +286,7 @@ pub fn thousands(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -512,7 +510,7 @@ mod tests {
         }
         for c in sample.chars() {
             let ok = c.is_ascii()
-                || matches!(c as u32, 0x2500..=0x257F | 0x2580..=0x259F)
+                || matches!(c as u32, 0x2500..=0x259F)
                 || matches!(c, '●' | '○' | '·' | '—' | '→');
             assert!(ok, "glyph U+{:04X} ({}) is outside the allowed set", c as u32, c);
         }

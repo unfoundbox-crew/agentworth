@@ -177,7 +177,12 @@ fn test_cli_traces_list_and_filters() {
         .stdout(predicate::str::contains("EVIDENCE"))
         .stdout(predicate::str::contains("SCORE"))
         .stdout(predicate::str::contains("SESSION"))
-        .stdout(predicate::str::contains(&session_id))
+        // The column truncates, but the closing command carries the whole id, because
+        // `inspect` resolves an exact id and not a prefix.
+        .stdout(predicate::str::contains(format!(
+            "agentworth inspect {}",
+            session_id
+        )))
         .stdout(predicate::str::contains("claude_code"));
 
     // 2. List traces with --json
@@ -855,14 +860,15 @@ fn test_cli_receipt_command_ansi_svg_and_export() {
     receipt_term_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("AGENTWORTH FLIGHT RECEIPT"))
-        .stdout(predicate::str::contains("TYPED PROVENANCE:"))
-        .stdout(predicate::str::contains("FLOWN"))
-        .stdout(predicate::str::contains("COMPOSITE SCORE:"))
-        .stdout(predicate::str::contains("TOKEN USAGE & FINANCIALS:"))
-        .stdout(predicate::str::contains("APOLOGY TAX & REMORSE AUDIT:"))
-        .stdout(predicate::str::contains("AUTONOMOUS RESILIENCE & RECOVERY:"))
-        .stdout(predicate::str::contains("VERIFIED BY AGENTWORTH"));
+        // A till roll: what it was, what it did, what it cost, and last the evidence.
+        .stdout(predicate::str::contains("A G E N T W O R T H"))
+        .stdout(predicate::str::contains("FLIGHT RECEIPT"))
+        .stdout(predicate::str::contains("SESSION"))
+        .stdout(predicate::str::contains("TOTAL"))
+        .stdout(predicate::str::contains("EST. COST"))
+        .stdout(predicate::str::contains("EVIDENCE"))
+        .stdout(predicate::str::contains("rung "))
+        .stdout(predicate::str::contains("\\/"));
 
     // 2. Run receipt command with format svg
     let mut receipt_svg_cmd = Command::cargo_bin("agwt").unwrap();
@@ -933,8 +939,8 @@ fn test_cli_receipt_command_ansi_svg_and_export() {
     export_receipt_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("AGENTWORTH FLIGHT RECEIPT"))
-        .stdout(predicate::str::contains("TYPED PROVENANCE:"));
+        .stdout(predicate::str::contains("A G E N T W O R T H"))
+        .stdout(predicate::str::contains("FLIGHT RECEIPT"));
 
     // 6. Test export command with --format svg
     let mut export_svg_cmd = Command::cargo_bin("agwt").unwrap();
