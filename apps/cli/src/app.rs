@@ -6,7 +6,7 @@ use agentworth_core::{ScanSummary, Scanner};
 use agentworth_outcomes::evaluate_trace_outcomes;
 use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use console::style;
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
@@ -620,6 +620,22 @@ enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
+
+    /// Generate CLI, HTTP API, and MCP tool reference documentation from the code itself
+    /// (see docs/REFERENCE.md). Nothing here is hand-written prose: the CLI section walks
+    /// the clap command tree, the API section walks the axum route table, and the MCP
+    /// section walks the rmcp tool router -- so the reference cannot drift from the code.
+    Docs {
+        /// Output format when printing to stdout (ignored with --write, which always
+        /// writes both forms)
+        #[arg(long, default_value = "markdown", value_parser = ["markdown", "json"])]
+        format: String,
+
+        /// Write docs/REFERENCE.md and docs/reference.json (relative to the current
+        /// directory, which must be the repository root) instead of printing to stdout
+        #[arg(long)]
+        write: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -989,9 +1005,19 @@ pub fn run() -> Result<()> {
                 config::run_config_set(&key, &value, resolve_json(json))?
             }
         },
+        Commands::Docs { format, write } => {
+            crate::commands::docs::run_docs_command(&format, write)?;
+        }
     }
 
     Ok(())
+}
+
+/// The full clap command tree for `Cli`, for `agentworth docs` to introspect. Not exposing
+/// `Cli` itself keeps its construction (parsing argv) owned entirely by `run()` above; this
+/// is just the read-only `clap::Command` metadata `CommandFactory` derives for free.
+pub fn cli_command() -> clap::Command {
+    Cli::command()
 }
 
 fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {

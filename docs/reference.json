@@ -1,0 +1,1793 @@
+{
+  "version": "0.1.14",
+  "generatedDate": "2026-09-02",
+  "globalFlags": [
+    {
+      "name": "--verbose, -v",
+      "positional": false,
+      "required": false,
+      "help": "Enable verbose debug logging",
+      "default": "false",
+      "possibleValues": []
+    },
+    {
+      "name": "--db-path",
+      "positional": false,
+      "required": false,
+      "help": "Custom path for the local SQLite index database",
+      "default": null,
+      "possibleValues": []
+    },
+    {
+      "name": "--no-json",
+      "positional": false,
+      "required": false,
+      "help": "Force text output even if persisted config defaults to JSON (see `agentworth config`)",
+      "default": "false",
+      "possibleValues": []
+    },
+    {
+      "name": "--no-color",
+      "positional": false,
+      "required": false,
+      "help": "Disable colour. NO_COLOR in the environment does the same thing",
+      "default": "false",
+      "possibleValues": []
+    },
+    {
+      "name": "--plain",
+      "positional": false,
+      "required": false,
+      "help": "No colour and ASCII-only glyphs, at identical column positions",
+      "default": "false",
+      "possibleValues": []
+    }
+  ],
+  "cli": [
+    {
+      "path": "agentworth scan",
+      "about": "Scan and index agent histories from the local system",
+      "args": [
+        {
+          "name": "PATHS",
+          "positional": true,
+          "required": false,
+          "help": "Optional specific paths or directories to scan",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--force, -f",
+          "positional": false,
+          "required": false,
+          "help": "Force rescanning and re-indexing of unchanged source files",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--include-stubs",
+          "positional": false,
+          "required": false,
+          "help": "Keep storing/pruning near-empty stub sessions instead of filtering them out",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output scan results as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth stats",
+      "about": "Show machine-wide summary statistics of indexed traces",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output summary statistics as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth traces",
+      "about": "List indexed traces with optional filtering",
+      "args": [
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "Maximum number of traces to display (default 20, or persisted `config limit`)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--adapter, -a",
+          "positional": false,
+          "required": false,
+          "help": "Filter by adapter name (e.g. claude_code, codex, gemini, opencode)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--model, -m",
+          "positional": false,
+          "required": false,
+          "help": "Filter by model substring (e.g. sonnet, gpt-4o, gemini-2.5)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--all-stubs",
+          "positional": false,
+          "required": false,
+          "help": "Include 1-event session stubs in the listing",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output traces as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth matrix",
+      "about": "Display extraction capabilities and coverage matrix across all 20 agent adapters",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output matrix as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth inspect",
+      "about": "Inspect a specific trace session in detail with timeline visualization",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": true,
+          "help": "The session ID to inspect",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output raw trace structure as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth export",
+      "about": "Export a trace session safely in JSON or ATIF format",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": true,
+          "help": "The session ID to export",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--redact, -r",
+          "positional": false,
+          "required": false,
+          "help": "Apply redaction to mask secrets, API keys, tokens, emails, and home paths",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--format, -f",
+          "positional": false,
+          "required": false,
+          "help": "Export format: json (default), atif, receipt, or svg",
+          "default": "json",
+          "possibleValues": [
+            "json",
+            "atif",
+            "receipt",
+            "terminal",
+            "ansi",
+            "svg"
+          ]
+        },
+        {
+          "name": "--output, -o",
+          "positional": false,
+          "required": false,
+          "help": "Optional file path to write export output to (defaults to stdout)",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth receipt",
+      "about": "Generate and render an authentic ANSI or SVG Flight Receipt for a trace session",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": true,
+          "help": "The session ID to generate flight receipt for",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--format, -f",
+          "positional": false,
+          "required": false,
+          "help": "Output format: terminal (default), ansi, svg, receipt, or json",
+          "default": "terminal",
+          "possibleValues": [
+            "terminal",
+            "ansi",
+            "svg",
+            "receipt",
+            "json"
+          ]
+        },
+        {
+          "name": "--output, -o",
+          "positional": false,
+          "required": false,
+          "help": "Optional file path to write receipt or SVG output to (defaults to stdout)",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth search",
+      "about": "Semantic vector search across indexed trajectory turns with ASCII thermal receipts",
+      "args": [
+        {
+          "name": "QUERY",
+          "positional": true,
+          "required": true,
+          "help": "Search query (natural language or code snippet)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "Maximum number of results to return (default 10, or persisted `config limit`)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--min-score",
+          "positional": false,
+          "required": false,
+          "help": "Minimum similarity score threshold (0.0 to 1.0)",
+          "default": "0",
+          "possibleValues": []
+        },
+        {
+          "name": "--kind, -k",
+          "positional": false,
+          "required": false,
+          "help": "Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth audit",
+      "about": "Safety and threat audit detecting forbidden commands, leaked variables, sweeps, and fake claims",
+      "args": [
+        {
+          "name": "--safety",
+          "positional": false,
+          "required": false,
+          "help": "Restrict audit to safety and threat vectors only",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output audit results as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth blunder",
+      "about": "Discover top agent blunders, render thermal receipts, and export to the Hall of Blunders",
+      "args": [
+        {
+          "name": "--top, -t",
+          "positional": false,
+          "required": false,
+          "help": "Number of top blunder exhibits to retrieve and display (default: 5)",
+          "default": "5",
+          "possibleValues": []
+        },
+        {
+          "name": "--submit, -s",
+          "positional": false,
+          "required": false,
+          "help": "Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output blunder exhibits as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth serve",
+      "about": "Start the local API server and interactive explorer UI",
+      "args": [
+        {
+          "name": "--port, -p",
+          "positional": false,
+          "required": false,
+          "help": "Port to bind the server to",
+          "default": "3000",
+          "possibleValues": []
+        },
+        {
+          "name": "--open",
+          "positional": false,
+          "required": false,
+          "help": "Automatically open the Web UI in the default browser",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--dist",
+          "positional": false,
+          "required": false,
+          "help": "Optional path to custom web frontend dist directory",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth mcp",
+      "about": "Start the read-only MCP server over stdio, for a coding agent to query this machine's session index mid-session (see docs/specs/mcp-server.md). Register it once with `claude mcp add agentworth --scope user -- agentworth mcp`",
+      "args": []
+    },
+    {
+      "path": "agentworth usage",
+      "about": "View deep usage, pacing, and token expenditure rollups",
+      "args": [
+        {
+          "name": "--period, -p",
+          "positional": false,
+          "required": false,
+          "help": "Rollup period: day, week, or month (default day, or persisted `config period`)",
+          "default": null,
+          "possibleValues": [
+            "day",
+            "week",
+            "month"
+          ]
+        },
+        {
+          "name": "--pacing",
+          "positional": false,
+          "required": false,
+          "help": "Show 5-hour rolling pacing window (burn rate, active models, quota headroom)",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--hours",
+          "positional": false,
+          "required": false,
+          "help": "Pacing window duration in hours",
+          "default": "5",
+          "possibleValues": []
+        },
+        {
+          "name": "--alert-above",
+          "positional": false,
+          "required": false,
+          "help": "Alert and highlight if window spend exceeds this threshold in USD",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "Maximum number of rows to display (default 20, or persisted `config limit`)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--by-model",
+          "positional": false,
+          "required": false,
+          "help": "Group the rollup by model instead of adapter (e.g. how many tokens each of claude-opus-5 / claude-sonnet-5 / claude-fable-5 used)",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output usage data as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth blame",
+      "about": "Trace file modifications back to the AI agent session, model, and prompt that authored them",
+      "args": [
+        {
+          "name": "FILE_PATH",
+          "positional": true,
+          "required": true,
+          "help": "Target file path or pattern to search",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth handoff",
+      "about": "Hand a session over: what it promised and dropped, decided, changed, ran, and proved",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "Session to hand over. Defaults to the newest session indexed for this directory's repository, which is what `--last` also selects",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Hand over the newest session for this repository. The default when no ID is given",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--redact, -r",
+          "positional": false,
+          "required": false,
+          "help": "Mask secrets, paths, and this session's own repository name before printing",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--markdown",
+          "positional": false,
+          "required": false,
+          "help": "Emit the same markdown the `session_handoff` MCP tool returns",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--max-lines",
+          "positional": false,
+          "required": false,
+          "help": "Line budget for `--markdown` (default 60, ceiling 120)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the structured handoff as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth forgotten",
+      "about": "What compaction dropped: decisions this session made and its own summaries did not keep",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "Session to diff, by full ID or a unique prefix. Defaults to the newest session indexed for this directory's repository",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--round",
+          "positional": false,
+          "required": false,
+          "help": "One 1-based compaction round. Defaults to every round",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--class",
+          "positional": false,
+          "required": false,
+          "help": "Any of decision, rejected, reason. Repeatable. Defaults to all three",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--limit",
+          "positional": false,
+          "required": false,
+          "help": "How many statements to return, newest first (default 20, ceiling 200)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--redact, -r",
+          "positional": false,
+          "required": false,
+          "help": "Mask secrets, paths, and this session's own repository name before printing",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the structured diff as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth loose-ends",
+      "about": "The handoff's loose-ends section alone: what a session said it would do and did not",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "Session to check. Defaults to the newest session for this directory's repository",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Check the newest session for this repository. The default when no ID is given",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--redact, -r",
+          "positional": false,
+          "required": false,
+          "help": "Mask secrets, paths, and this session's own repository name before printing",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--prompt",
+          "positional": false,
+          "required": false,
+          "help": "Print the copyable prompt to hand to an agent that has the repository open",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the loose ends as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth doctor",
+      "about": "Check local environment, adapter discoveries, and SQLite database health",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output diagnostic report as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth version",
+      "about": "Print version details: binary version, npm install detection, and a live check for a newer release",
+      "args": [
+        {
+          "name": "--offline",
+          "positional": false,
+          "required": false,
+          "help": "Skip the live GitHub-releases update check (fully local, no network call)",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth update",
+      "about": "Check for a newer AgentWorth release and show exactly how to get it",
+      "args": [
+        {
+          "name": "--offline",
+          "positional": false,
+          "required": false,
+          "help": "Skip the live GitHub-releases check and just show install-method guidance",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth merge",
+      "about": "Merge another local SQLite index database into this index",
+      "args": [
+        {
+          "name": "SOURCE_DB",
+          "positional": true,
+          "required": true,
+          "help": "Path to the source SQLite database file to merge from",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth watch",
+      "about": "Watch active session transcripts and detect doom loops or file edit thrashing",
+      "args": [
+        {
+          "name": "--interval-secs, -i",
+          "positional": false,
+          "required": false,
+          "help": "Polling interval in seconds (default: 3)",
+          "default": "3",
+          "possibleValues": []
+        },
+        {
+          "name": "--poll-once",
+          "positional": false,
+          "required": false,
+          "help": "Run a single poll check and exit immediately",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output findings as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--paths, -p",
+          "positional": false,
+          "required": false,
+          "help": "Custom path directories to monitor",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth cache-doctor",
+      "about": "Diagnose turn-by-turn prompt caching dynamics and identify cache drop root causes",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": true,
+          "help": "Target session ID to inspect",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output findings as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth blind-spots",
+      "about": "List sessions whose completion claims were never independently corroborated by tests or CI",
+      "args": [
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "Maximum number of sessions to list (default 20, or persisted `config limit`)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth threat-digest",
+      "about": "Rank indexed sessions by real secret/credential exposure risk, by category and severity",
+      "args": [
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "Maximum number of sessions to show in the report (default 20, or persisted `config limit`) -- every indexed session is still scanned; this only trims the displayed list",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--min-severity",
+          "positional": false,
+          "required": false,
+          "help": "Only include sessions whose worst finding is at least this severity",
+          "default": "low",
+          "possibleValues": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth autopsy",
+      "about": "Surface recurring human correction and steering phrases across all sessions",
+      "args": [
+        {
+          "name": "--min-occurrences, -m",
+          "positional": false,
+          "required": false,
+          "help": "Minimum number of occurrences across sessions to report (default: 2)",
+          "default": "2",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth recall",
+      "about": "Semantically recall past solutions joined with outcome validation and cost",
+      "args": [
+        {
+          "name": "QUERY",
+          "positional": true,
+          "required": true,
+          "help": "Search query to match against previous trajectories",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "Maximum number of results to return (default 5, or persisted `config limit`)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--min-score",
+          "positional": false,
+          "required": false,
+          "help": "Minimum similarity score threshold (0.0 to 1.0)",
+          "default": "0",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth bisect",
+      "about": "Pinpoint the exact turning point where an agent session trajectory turned negative",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": true,
+          "help": "Session ID to bisect",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth pr-blame",
+      "about": "Annotate changed PR files with AI agent authoring provenance and outcome validation",
+      "args": [
+        {
+          "name": "FILES",
+          "positional": true,
+          "required": false,
+          "help": "List of files to check (if omitted, infers from git diff)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth blunder-blame",
+      "about": "Bridge AI Code Blame with the Hall of Blunders: trace a recorded blunder forward to the exact files it blame-attributes to, or a file's blame history backward to any recorded blunders in the sessions blamed for it",
+      "args": [
+        {
+          "name": "--file",
+          "positional": false,
+          "required": false,
+          "help": "Blame -> blunder direction: file path or pattern. Checks every session AI Code Blame attributes this file to for a recorded blunder",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--session",
+          "positional": false,
+          "required": false,
+          "help": "Blunder -> blame direction: one specific session ID. Resolves it to the files AI Code Blame attributes to that session",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--top, -t",
+          "positional": false,
+          "required": false,
+          "help": "In default mode (no --file or --session), number of top blunders to bridge",
+          "default": "5",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth suspect",
+      "about": "List commits on this branch whose authoring session never proved anything, so you know where to look twice before pushing. Prints a list and a prompt, never a patch",
+      "args": [
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Path to a git checkout. Defaults to the current directory",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--since",
+          "positional": false,
+          "required": false,
+          "help": "A date (RFC 3339 or YYYY-MM-DD) or a git ref to measure from. Defaults to the branch's upstream, then origin/main",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--branch",
+          "positional": false,
+          "required": false,
+          "help": "Branch to walk. Defaults to HEAD",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--base",
+          "positional": false,
+          "required": false,
+          "help": "Ref to diff against, if you want to name it separately from --since",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--window-hours",
+          "positional": false,
+          "required": false,
+          "help": "How long before a commit a session's file touch still counts as authoring it",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--hook",
+          "positional": false,
+          "required": false,
+          "help": "Print a ready-to-install pre-push hook and exit. The hook never blocks a push",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--quiet",
+          "positional": false,
+          "required": false,
+          "help": "Print only the copyable prompt, and only when something is suspect. What the hook runs",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the full report as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth config",
+      "about": "Get, set, or list persisted CLI defaults (~/.agentworth/config.toml)",
+      "args": []
+    },
+    {
+      "path": "agentworth config list",
+      "about": "List every persisted config key and its current value",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth config get",
+      "about": "Print the persisted value for one config key",
+      "args": [
+        {
+          "name": "KEY",
+          "positional": true,
+          "required": true,
+          "help": "Config key: json, limit, or period",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth config set",
+      "about": "Persist a default value for one config key",
+      "args": [
+        {
+          "name": "KEY",
+          "positional": true,
+          "required": true,
+          "help": "Config key: json, limit, or period",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "VALUE",
+          "positional": true,
+          "required": true,
+          "help": "Value to store (json: true/false, limit: a number, period: day/week/month)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "agentworth docs",
+      "about": "Generate CLI, HTTP API, and MCP tool reference documentation from the code itself (see docs/REFERENCE.md). Nothing here is hand-written prose: the CLI section walks the clap command tree, the API section walks the axum route table, and the MCP section walks the rmcp tool router -- so the reference cannot drift from the code",
+      "args": [
+        {
+          "name": "--format",
+          "positional": false,
+          "required": false,
+          "help": "Output format when printing to stdout (ignored with --write, which always writes both forms)",
+          "default": "markdown",
+          "possibleValues": [
+            "markdown",
+            "json"
+          ]
+        },
+        {
+          "name": "--write",
+          "positional": false,
+          "required": false,
+          "help": "Write docs/REFERENCE.md and docs/reference.json (relative to the current directory, which must be the repository root) instead of printing to stdout",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    }
+  ],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "description": "Machine-wide experience stats with outcome distributions and verification telemetry",
+      "queryParams": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/traces",
+      "description": "Filtered, paginated list of indexed sessions",
+      "queryParams": [
+        {
+          "name": "adapter",
+          "description": "Filter by adapter name"
+        },
+        {
+          "name": "model",
+          "description": "Filter by model substring"
+        },
+        {
+          "name": "search",
+          "description": "Full-text search across session content"
+        },
+        {
+          "name": "outcome",
+          "description": "Filter by primary outcome kind"
+        },
+        {
+          "name": "min_tokens",
+          "description": "Minimum total token count"
+        },
+        {
+          "name": "limit",
+          "description": "Maximum number of sessions to return (default 50)"
+        },
+        {
+          "name": "offset",
+          "description": "Number of sessions to skip"
+        },
+        {
+          "name": "order_by",
+          "description": "Sort order for the result list"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/traces/:id",
+      "description": "Full trace details: metadata, stats, 5-factor score, outcome evidence, timeline",
+      "queryParams": [
+        {
+          "name": "offset",
+          "description": "Number of events to skip (default 0)"
+        },
+        {
+          "name": "limit",
+          "description": "Maximum number of events to return (default: all)"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/traces/:id/events",
+      "description": "Just the paginated event slice for one trace",
+      "queryParams": [
+        {
+          "name": "offset",
+          "description": "Number of events to skip (default 0)"
+        },
+        {
+          "name": "limit",
+          "description": "Maximum number of events to return (default: all)"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/usage",
+      "description": "Daily, weekly, and monthly token usage rollups",
+      "queryParams": [
+        {
+          "name": "daily_limit",
+          "description": "Maximum number of daily rollup rows"
+        },
+        {
+          "name": "weekly_limit",
+          "description": "Maximum number of weekly rollup rows"
+        },
+        {
+          "name": "monthly_limit",
+          "description": "Maximum number of monthly rollup rows"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/pacing",
+      "description": "Rolling pacing window: burn velocity and cache hit ratio",
+      "queryParams": [
+        {
+          "name": "hours",
+          "description": "Pacing window duration in hours (default 5)"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/blame",
+      "description": "File change lineage matching session histories",
+      "queryParams": [
+        {
+          "name": "file",
+          "description": "Target file path or pattern"
+        },
+        {
+          "name": "path",
+          "description": "Alias for `file`"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/matrix",
+      "description": "Adapter extraction coverage and capabilities matrix",
+      "queryParams": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/archaeology",
+      "description": "Archaeology highlights across the whole index",
+      "queryParams": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/live-tail",
+      "description": "Server-Sent Events stream of live filesystem changes under watched adapter session directories",
+      "queryParams": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/scan",
+      "description": "Trigger a scanner background sync (body: paths, force)",
+      "queryParams": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/export/:id",
+      "description": "Export a trace with optional redaction, in JSON or ATIF format (body: redact, format)",
+      "queryParams": []
+    }
+  ],
+  "mcp": [
+    {
+      "name": "blame_find",
+      "description": "Find sessions whose recorded file modifications match a substring of file_path -- AI Code Blame, the same query /api/blame makes. Returned paths are redacted.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "file_path": {
+            "description": "Substring pattern matched against recorded file-modification paths.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "carry_forward",
+      "description": "The last N handoffs for one repository, newest first, so a session's first tool call can be \"what happened here recently\" and the answer is structured rather than a file it has to find and parse. `repo` is the same key session_handoff's receipt reports (e.g. `unfoundbox/agentworth`); a repo's worktrees all answer to one value. n defaults to 3, ceiling 10. Handoffs are listed, never merged -- merging two contradictory facts needs judgment about which is current, and that is not in the index. Redacted by default.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "include_raw": {
+            "default": false,
+            "description": "Same per-call raw opt-in `session_handoff` has, applied to every handoff returned.",
+            "type": "boolean"
+          },
+          "max_lines": {
+            "description": "Line budget for each rendered handoff. Defaults to 60, hard ceiling 120.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "n": {
+            "description": "How many handoffs to return, newest first. Defaults to 3, ceiling 10.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Repository/workspace key, as `sessions_find`'s `repo` and the handoff receipt report\nit (e.g. `unfoundbox/agentworth`). A repo's worktrees all answer to one value.",
+            "type": "string"
+          },
+          "since": {
+            "description": "RFC 3339 timestamp; only sessions started at or after this instant.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "repo"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "coverage_stats",
+      "description": "Machine-wide aggregate stats: total sessions/events, token usage, sessions by adapter, model/tool usage counts, and verified-outcome count -- the same population /api/stats reports. Pass include_matrix=true to also get the per-adapter detection/capability matrix (/api/matrix's equivalent), answering \"what does this machine even have\" without opening the dashboard.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "include_matrix": {
+            "default": false,
+            "description": "Also compute and include the per-adapter detection/capability matrix\n(`/api/matrix`'s equivalent). Defaults to false.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "forgotten_context",
+      "description": "The decisions this session's compaction rounds threw away, quoted verbatim with a receipt on each. Compaction replaces the conversation with a summary in the model's view while the full transcript stays on disk, so the dropped span and the summary that replaced it both exist and can be diffed. Measured on one real 8-round session (docs/specs/compaction-diff.md): 402 decision-shaped sentences went in and 28 came out -- conclusions survive at 15%, reasons at 1.7%, which is the shape that makes a session re-propose something it already rejected. Filter with round (1-based) and classes (decision, rejected, reason); limit defaults to 20, ceiling 200, and the totals describe the whole session regardless of it. Every statement carries its round, source sequence, and what the session did in the next few events, so a stated decision that was acted on can be told from one that was only claimed. Three answers are kept distinct and none is padded: never compacted, compacted with nothing decision-shaped dropped, and a real list. No model is involved -- three regexes return the sentence verbatim, because a paraphrase would make this a second summariser. Refuses if the raw session file is gone. Redacted by default; include_raw=true opts out, per call.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "classes": {
+            "description": "Any of `decision`, `rejected`, `reason`. Defaults to all three. An unknown name is an\nerror, not an ignored filter.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "include_raw": {
+            "default": false,
+            "description": "Return unredacted sentences, paths and evidence labels. Defaults to false -- everything\nthis tool returns is transcript text (docs/specs/mcp-server.md, \"What it must not\nexpose\").",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "How many statements to return, newest first. Defaults to 20, hard ceiling 200. The\ntotals in the response describe the whole session regardless of this.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "round": {
+            "description": "One 1-based compaction round. Defaults to every round.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "session_id": {
+            "description": "Session to diff. Defaults to the most recent indexed session for the repository this\nserver process is running in, which is what an agent asking \"what did I forget here\"\nmeans; pass one explicitly to reach any other session.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "outcome_rate",
+      "description": "Verified-outcome rate by model, adapter, or repo: of the sessions that claimed done, what share left evidence (a passed test/build or stronger), with the sample size next to every row. Groups under min_n (default 20) are suppressed and counted in suppressed_groups rather than shown; a group with sessions but zero detected outcomes comes back as rate: null with reason: \"no_outcome_detection\" instead of being suppressed -- those are different claims. Includes a receipt (db_path, counted_at, index_last_session_at, the non-stub predicate, and the session IDs behind each row) so the answer is checkable.",
+      "inputSchema": {
+        "$defs": {
+          "OutcomeRateGroupByParam": {
+            "description": "Mirrors `agentworth_storage::OutcomeRateGroupBy` with the same snake_case wire values -- a\nlocal copy for the same reason `SessionsOrderBy` is one (see its doc comment above).",
+            "enum": [
+              "model",
+              "adapter",
+              "repo"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "group_by": {
+            "$ref": "#/$defs/OutcomeRateGroupByParam"
+          },
+          "include_stubs": {
+            "default": null,
+            "description": "Include near-empty session stubs in the population. Defaults to false.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "min_n": {
+            "description": "Groups with fewer than this many claimed sessions are suppressed (counted in\n`suppressed_groups`) rather than returned as a row. Defaults to 20.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "since": {
+            "description": "RFC 3339 timestamp; only sessions started at or after this instant.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "description": "RFC 3339 timestamp; only sessions started at or before this instant.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "group_by"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pacing_window",
+      "description": "Rolling burn-rate window (default 5 hours): tokens/hour, active adapters and models, estimated cost, and cache hit ratio -- the same window /api/pacing computes. Answers \"what am I burning right now\".",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "hours": {
+            "description": "Rolling window size in hours; defaults to 5.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "session_get",
+      "description": "Get full detail for one session by ID: the trace, its 5-component TraceScore, outcome evidence, and recovery signals -- the same shape /api/traces/:id returns. Redacted by default (trace events, outcome summaries, and recovery summaries all pass through the redaction engine); pass include_raw=true for the unredacted trace. `trace.events` is paginated: events_offset (default 0) and events_limit (default 500, must be > 0) page through it, and the response's events_total says how many events the session actually has, so a large session is never returned in full by accident.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "events_limit": {
+            "default": null,
+            "description": "Max number of events to return. Defaults to `SESSION_GET_DEFAULT_EVENTS_LIMIT` (500) so\na call can never receive a session's full event list by accident; pass an explicit,\nlarger value to see more. Must be greater than 0.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "events_offset": {
+            "default": null,
+            "description": "Zero-based offset into the trace's events. Defaults to 0.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "include_raw": {
+            "default": false,
+            "description": "Return the unredacted trace, outcomes, and recoveries. Defaults to false -- redacted\noutput is the default for every tool that can carry event or file content (see\ndocs/specs/mcp-server.md, \"What it must not expose\").",
+            "type": "boolean"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "session_handoff",
+      "description": "The handoff for one session, written from rows rather than by a model: what it said it would do and never did, what it said it decided, which files changed, which commands ran and with what exit code, the outcome rung reached, and how often the context was compacted. Returns markdown under a line budget (max_lines, default 60, ceiling 120), the receipt every claim traces back to, and `gaps` -- the machine-readable list of what this session could not answer, which is never padded over. Open decisions, PR/CI state and environment traps are NOT in the index and the output says so. Defaults to the newest session for the repo this server runs in. Redacted by default; include_raw=true opts out, per call.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "include_loose_ends": {
+            "description": "Include the \"said it would, no evidence it did\" section. Defaults to true.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "include_raw": {
+            "default": false,
+            "description": "Return unredacted paths, commands and quoted sentences. Defaults to false -- redacted\nis the default for every tool that can carry event or file content\n(docs/specs/mcp-server.md, \"What it must not expose\").",
+            "type": "boolean"
+          },
+          "max_lines": {
+            "description": "Line budget for the rendered markdown. Defaults to 60, hard ceiling 120.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "session_id": {
+            "description": "Session to hand over. Defaults to the most recent indexed session for the repository\nthis server process is running in, which is what an agent asking \"what did I just do\nhere\" means; pass one explicitly to reach any other session or repo.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "sessions_find",
+      "description": "Find sessions by adapter, model, outcome, search text, date range, token floor, or derived repo/workspace name. `limit` is required with a hard ceiling of 200 -- there is no silent default, so state how many results you want. Returns summaries only (no event content); `source_path` is redacted.",
+      "inputSchema": {
+        "$defs": {
+          "SessionsOrderBy": {
+            "description": "Mirrors `agentworth_storage::SessionOrderBy` with the same snake_case wire values. A local\ncopy rather than deriving `schemars::JsonSchema` on the storage crate's own enum, since\n`agentworth-storage` has no reason to take on a `schemars` dependency for one MCP-only need.",
+            "enum": [
+              "started_at_desc",
+              "started_at_asc",
+              "tokens_desc",
+              "tokens_asc",
+              "events_desc",
+              "events_asc",
+              "duration_desc",
+              "score_desc",
+              "score_asc"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "adapter": {
+            "description": "Exact adapter name match (e.g. `claude_code`, `codex`, `gemini`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_date": {
+            "description": "RFC 3339 timestamp; only sessions started at or before this instant.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "include_stubs": {
+            "default": null,
+            "description": "Include near-empty session stubs (defaults to excluding them).",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Maximum rows to return. Required -- there is no silent default -- and capped at\n`SESSIONS_FIND_LIMIT_CEILING` (200).",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "min_tokens": {
+            "description": "Only sessions with at least this many total tokens.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "Substring match against the session's recorded models.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "offset": {
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "order_by": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SessionsOrderBy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sort order; defaults to `started_at_desc`."
+          },
+          "outcome": {
+            "description": "Exact match against the stored primary outcome, snake_case (e.g. `commit_observed`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Filter to sessions whose derived repository/workspace name matches exactly. Not a\nstored column -- computed per-row from `source_path` and post-filtered client-side,\nso combining this with `limit` may require over-fetching (see `truncated` in the\nresponse).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "search": {
+            "description": "Substring match across session ID, source path, models, and adapter.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_date": {
+            "description": "RFC 3339 timestamp; only sessions started at or after this instant.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "limit"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "suspect_commits",
+      "description": "Which commits on this branch came out of a session that never proved anything. Walks `git log` over the range, joins each commit's changed paths to indexed sessions that touched them within window_hours before it, and reports each session's risk signals: no_test_run (the session never got past artifact_changed), no_outcome_detected (the adapter extracted no outcome at all -- weaker), demoted_claim (verification contradicted a claim, with the event sequence), and loop (the sentinel caught repetition). Returns a list and a copyable prompt -- never a patch, a diff, or a PR: a trajectory says the session was going badly, not what the code does wrong. Two counts are load-bearing and must be reported to the user, not dropped: `unattributed` commits had no indexed session at all (unknown, not clean), and `unanchored_blame_rows` is evidence that could not be placed in any repository. Paths and session source paths are redacted.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "base": {
+            "description": "Ref to diff against. Defaults to the branch's own upstream, then `origin/main`, then\n`origin/master`, then the most recent `max_commits` commits.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branch": {
+            "description": "Branch to walk. Defaults to `HEAD`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_commits": {
+            "description": "Ceiling on commits walked. Defaults to 200, hard-capped at 1000.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Absolute path to a git checkout on this machine. Anything inside it works — the\nrepository root is resolved with `git rev-parse --show-toplevel`.",
+            "type": "string"
+          },
+          "since": {
+            "description": "RFC 3339 timestamp. Only consulted when `base` is absent.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window_hours": {
+            "description": "How long before a commit a session's file touch still counts as having authored it.\nDefaults to 24.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "repo"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "usage_summary",
+      "description": "Daily, weekly, or monthly usage rollups: session counts, token breakdown, estimated cost, and cache hit ratio, grouped by adapter -- the same rollups /api/usage returns for one period at a time.",
+      "inputSchema": {
+        "$defs": {
+          "UsagePeriodParam": {
+            "description": "Rollup period for the `usage_summary` tool, mirroring `Storage::get_daily_usage` /\n`get_weekly_usage` / `get_monthly_usage`.",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "limit": {
+            "description": "Row cap; defaults match the HTTP route's own per-period defaults (30 / 20 / 12).",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "period": {
+            "$ref": "#/$defs/UsagePeriodParam"
+          }
+        },
+        "required": [
+          "period"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}

@@ -92,6 +92,26 @@ export function parseChangelog() {
   return releases;
 }
 
+// ------------------------------------------------------------------ reference
+
+/**
+ * `docs/reference.json` and `docs/REFERENCE.md` are both written by `agentworth docs
+ * --write` (see `apps/cli/src/commands/docs.rs`) and committed like `CHANGELOG.md` is --
+ * this just reads the committed files, it never invokes cargo, so the site build has no
+ * Rust toolchain dependency.
+ */
+export function parseReference() {
+  const jsonPath = path.join(repoRoot, 'docs/reference.json');
+  if (!existsSync(jsonPath)) {
+    throw new Error(
+      'docs/reference.json missing -- run `cargo run -p agentworth-cli -- docs --write` from the repo root and commit the result'
+    );
+  }
+  const reference = JSON.parse(readFileSync(jsonPath, 'utf8'));
+  reference.markdown = readFileSync(path.join(repoRoot, 'docs/REFERENCE.md'), 'utf8');
+  return reference;
+}
+
 // --------------------------------------------------------------------- blog
 
 /** Front matter: `key: value` lines between `---` fences. `tags` takes a

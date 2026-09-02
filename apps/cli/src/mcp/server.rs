@@ -184,7 +184,11 @@ impl AgentWorthMcpServer {
     }
 }
 
-#[tool_router]
+// `vis = "pub(crate)"`: `agentworth docs` (apps/cli/src/commands/docs.rs) calls
+// `Self::tool_router().list_all()` from another module to read every tool's name,
+// description, and JSON schema without constructing a live server instance -- building a
+// `ToolRouter` doesn't touch `Storage`/`Scanner` at all, it only type-erases the handlers.
+#[tool_router(vis = "pub(crate)")]
 impl AgentWorthMcpServer {
     #[tool(
         description = "Find sessions by adapter, model, outcome, search text, date range, token \
