@@ -35,7 +35,6 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use agentworth_adapter_sdk::AgentAdapter;
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::json;

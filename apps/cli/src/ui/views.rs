@@ -3430,9 +3430,9 @@ pub struct SessionEventRow {
 pub struct SessionShowOutcome<'a> {
     pub rung: usize,
     pub label: &'a str,
-    pub confidence: f64,
+    pub confidence: f32,
     /// `(summary, confidence)` for the evidence behind the highest rung reached.
-    pub supporting: Vec<(String, f64)>,
+    pub supporting: Vec<(String, f32)>,
     /// `(kind, summary)` for everything below it.
     pub other_signals: Vec<(String, String)>,
     pub other_signal_total: usize,
