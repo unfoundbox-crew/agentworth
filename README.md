@@ -294,6 +294,64 @@ Every command accepts `--plain` (no colour, ASCII-only glyphs, same column posit
 
 `inspect`, `export`, `receipt`, `handoff`, and `forgotten` all take the session ID the same way, and it's always optional. Every one of them also takes `--last` (the newest session for this directory's repository, falling back to the newest session anywhere) and `--current` (an alias of `--last`); `blunder-blame` and `asks` take the same two flags for `--session`. Leave the ID off entirely on a terminal and a picker lists the newest sessions to choose from — type a number, type text to filter by ID, repo, adapter, or prompt, `m` for more, `q` to quit. Off a terminal, or with `--json`, the same list prints as JSON or a plain table and the command exits 2 with `pass a session id or prefix` — nothing is guessed for a script.
 
+### Where the spend went
+
+`archie stats ladder` is the one screen that answers "of everything I spent, how
+much of it bought something a test, a commit or a CI run can be pointed at."
+Captured at 80 columns from the test fixture — one session on every rung, so the
+whole ladder has something to say:
+
+```text
+$ archie stats ladder --period all --min-n 1
+
+archie stats ladder                                      all time - 6 sessions
+------------------------------------------------------------------------------
+
+  cost: API-equivalent at list prices; your account is on
+  default_claude_max_20x, so this is not what you paid
+
+  EVIDENCE LADDER                  SESS  SHARE MED TOK  $/SESS   SPEND  %SPEND
+  ----------------------------------------------------------------------------
+  ##### CI or deployment verified     1  16.7%  652.0K   $0.45
+  ####. commit observed               1  16.7%  652.0K   $0.45
+  ###.. test or build passed          1  16.7%  652.2K   $0.12
+  ---------------------------- the evidence line -----------------------------
+  ##... artifact changed              1  16.7%  652.0K   $0.12   $0.12    8.7%
+  #.... done claimed                  1  16.7%  652.0K   $0.12   $0.12    8.7%
+  ..... unflown                       1  16.7%  652.0K   $0.12   $0.12    8.7%
+  ----------------------------------------------------------------------------
+  BELOW THE LINE                      3  50.0%                   $0.36   26.1%
+
+  COST PER VERIFIED OUTCOME                                 by model - min n 1
+  ----------------------------------------------------------------------------
+  MODEL                                 N VERIFIED  MED TOK  STEPS  $/VERIFIED
+  ----------------------------------------------------------------------------
+  claude-3-5-haiku-20241022             3      33%   652.0K      1       $0.36
+  claude-3-5-sonnet-20241022            2     100%   652.0K      1       $0.45
+  claude-unknown                        1     100%      230      2       $0.00
+  ----------------------------------------------------------------------------
+
+  RECENT VERIFIED                                                      3 shown
+  ----------------------------------------------------------------------------
+  WHEN        REPO                  MODEL            EVIDENCE  TOKENS     COST
+  ----------------------------------------------------------------------------
+  08-27 10:00 tmp/ladder-fixture    3-5-haiku           ###..  652.2K    $0.12
+  08-26 10:00 tmp/ladder-fixture    3-5-sonnet          ####.  652.0K    $0.45
+  08-25 10:00 tmp/ladder-fixture    3-5-sonnet          #####  652.0K    $0.45
+  ----------------------------------------------------------------------------
+
+  26% of spend this period sits below the evidence line.
+  Next  archie session list --unproven   spend that bought nothing provable
+```
+
+(`--min-n 1` is only there because six sessions is a small fixture. The real
+floor is 20: below it a group's rate and cost render **blank**, never a zero and
+never a dash, and the row still carries its `n`.)
+
+The bottom row is *unflown* — no outcome evidence of any kind was found. It is
+not a failure. `OutcomeKind` has no failure value, so nothing on this screen is
+ever coloured as one.
+
 ---
 
 ## The cockpit

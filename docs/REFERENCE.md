@@ -65,6 +65,21 @@ Verified-outcome rate by model, adapter, or repo: of the sessions that claimed d
 | `--include-stubs` | no | Include 1-event session stubs in the population | false | - |
 | `--json` | no | Output as formatted JSON | false | - |
 
+### `archie stats ladder`
+
+The evidence ladder, what a verified outcome costs, and the newest sessions that left evidence -- one screen, ending on the share of spend that sits below the evidence line
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `--period, -p` | no | How far back the window reaches: day, week, month, year, or all. Single-letter aliases d/w/m/y also work. Default month (30 days), or persisted `config period`. Note this is a lookback, where `stats usage --period` is a rollup granularity | - | - |
+| `--by` | no | Group the cost-per-verified-outcome table by model (default), repo, adapter, or effort. Only Codex records an effort today, so `--by effort` counts what it can and names what it cannot | model | model, repo, adapter, effort |
+| `--repo` | no | Filter by repository or workspace substring (e.g. unfoundbox/agentworth) | - | - |
+| `--adapter, -a` | no | Filter by adapter name (e.g. claude_code, codex, gemini, opencode) | - | - |
+| `--model, -m` | no | Filter by model substring (e.g. sonnet, gpt-4o, gemini-2.5) | - | - |
+| `--min-n` | no | Blank a group's rate and cost below this many claimed sessions (default 20, the same floor `stats outcomes` applies) | - | - |
+| `--include-stubs` | no | Include 1-event session stubs in the population | false | - |
+| `--json` | no | Output all three blocks as formatted JSON | false | - |
+
 ### `archie session`
 
 Everything that acts on sessions: list them, read one, hand one over
@@ -1173,6 +1188,102 @@ Get full detail for one session by ID: the trace, its 5-component TraceScore, ou
   "required": [
     "session_id"
   ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `stats_ladder`
+
+The evidence ladder over a window, in three blocks: how many sessions reached each rung (rung 0 is unflown -- no outcome evidence at all, which is not a failure) with the API-equivalent spend that sits below the evidence line; what a verified outcome costs per model, repo, adapter or effort; and the newest sessions that got past the line. A group under the sample floor returns rate: null and cost_per_verified_usd: null rather than a number nothing supports. Every dollar is API-equivalent at list prices (cost_basis says so), never what the account was billed. Reads the index only -- no transcript is reparsed. See docs/specs/archie-bench.md.
+
+| Param | Required | Type | Description |
+|---|---|---|---|
+| `adapter` | no | string or null | Exact adapter name (`claude_code`, `codex`, `opencode`, ...). |
+| `by` | no | object | Axis for the cost-per-verified-outcome table. Defaults to `model`. |
+| `include_stubs` | no | boolean or null | Include near-empty session stubs in the population. Defaults to false. |
+| `min_n` | no | integer or null | A group with fewer than this many claimed sessions returns a null rate and a null<br>cost rather than a number nothing supports. Defaults to 20. |
+| `model` | no | string or null | Model substring (`sonnet`, `gpt-4o`, ...). |
+| `period` | no | string or null | Lookback window: `day`, `week`, `month`, `year` or `all`. Defaults to `month`<br>(30 days). This is how far back the window reaches, not a rollup granularity. |
+| `repo` | no | string or null | Repository or workspace substring, as `session_list`'s `repo` reports it. |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "$defs": {
+    "LadderGroupByParam": {
+      "description": "Mirrors `agentworth_storage::LadderGroupBy` with the same snake_case wire values -- a\nlocal copy for the same reason `OutcomeRateGroupByParam` is one.",
+      "oneOf": [
+        {
+          "enum": [
+            "model",
+            "repo",
+            "adapter"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "effort",
+          "description": "Only Codex records an effort today; sessions without one are counted and named, not\ngiven a made-up value.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "adapter": {
+      "description": "Exact adapter name (`claude_code`, `codex`, `opencode`, ...).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "by": {
+      "$ref": "#/$defs/LadderGroupByParam",
+      "description": "Axis for the cost-per-verified-outcome table. Defaults to `model`."
+    },
+    "include_stubs": {
+      "default": null,
+      "description": "Include near-empty session stubs in the population. Defaults to false.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "min_n": {
+      "description": "A group with fewer than this many claimed sessions returns a null rate and a null\ncost rather than a number nothing supports. Defaults to 20.",
+      "format": "uint",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "model": {
+      "description": "Model substring (`sonnet`, `gpt-4o`, ...).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "period": {
+      "description": "Lookback window: `day`, `week`, `month`, `year` or `all`. Defaults to `month`\n(30 days). This is how far back the window reaches, not a rollup granularity.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repo": {
+      "description": "Repository or workspace substring, as `session_list`'s `repo` reports it.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
   "type": "object"
 }
 ```

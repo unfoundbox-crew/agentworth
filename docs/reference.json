@@ -229,6 +229,81 @@
       ]
     },
     {
+      "path": "archie stats ladder",
+      "about": "The evidence ladder, what a verified outcome costs, and the newest sessions that left evidence -- one screen, ending on the share of spend that sits below the evidence line",
+      "args": [
+        {
+          "name": "--period, -p",
+          "positional": false,
+          "required": false,
+          "help": "How far back the window reaches: day, week, month, year, or all. Single-letter aliases d/w/m/y also work. Default month (30 days), or persisted `config period`. Note this is a lookback, where `stats usage --period` is a rollup granularity",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--by",
+          "positional": false,
+          "required": false,
+          "help": "Group the cost-per-verified-outcome table by model (default), repo, adapter, or effort. Only Codex records an effort today, so `--by effort` counts what it can and names what it cannot",
+          "default": "model",
+          "possibleValues": [
+            "model",
+            "repo",
+            "adapter",
+            "effort"
+          ]
+        },
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Filter by repository or workspace substring (e.g. unfoundbox/agentworth)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--adapter, -a",
+          "positional": false,
+          "required": false,
+          "help": "Filter by adapter name (e.g. claude_code, codex, gemini, opencode)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--model, -m",
+          "positional": false,
+          "required": false,
+          "help": "Filter by model substring (e.g. sonnet, gpt-4o, gemini-2.5)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--min-n",
+          "positional": false,
+          "required": false,
+          "help": "Blank a group's rate and cost below this many claimed sessions (default 20, the same floor `stats outcomes` applies)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--include-stubs",
+          "positional": false,
+          "required": false,
+          "help": "Include 1-event session stubs in the population",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output all three blocks as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "archie session",
       "about": "Everything that acts on sessions: list them, read one, hand one over",
       "args": []
@@ -2137,6 +2212,85 @@
         "required": [
           "session_id"
         ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "stats_ladder",
+      "description": "The evidence ladder over a window, in three blocks: how many sessions reached each rung (rung 0 is unflown -- no outcome evidence at all, which is not a failure) with the API-equivalent spend that sits below the evidence line; what a verified outcome costs per model, repo, adapter or effort; and the newest sessions that got past the line. A group under the sample floor returns rate: null and cost_per_verified_usd: null rather than a number nothing supports. Every dollar is API-equivalent at list prices (cost_basis says so), never what the account was billed. Reads the index only -- no transcript is reparsed. See docs/specs/archie-bench.md.",
+      "inputSchema": {
+        "$defs": {
+          "LadderGroupByParam": {
+            "description": "Mirrors `agentworth_storage::LadderGroupBy` with the same snake_case wire values -- a\nlocal copy for the same reason `OutcomeRateGroupByParam` is one.",
+            "oneOf": [
+              {
+                "enum": [
+                  "model",
+                  "repo",
+                  "adapter"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "effort",
+                "description": "Only Codex records an effort today; sessions without one are counted and named, not\ngiven a made-up value.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "adapter": {
+            "description": "Exact adapter name (`claude_code`, `codex`, `opencode`, ...).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "by": {
+            "$ref": "#/$defs/LadderGroupByParam",
+            "description": "Axis for the cost-per-verified-outcome table. Defaults to `model`."
+          },
+          "include_stubs": {
+            "default": null,
+            "description": "Include near-empty session stubs in the population. Defaults to false.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "min_n": {
+            "description": "A group with fewer than this many claimed sessions returns a null rate and a null\ncost rather than a number nothing supports. Defaults to 20.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "Model substring (`sonnet`, `gpt-4o`, ...).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "period": {
+            "description": "Lookback window: `day`, `week`, `month`, `year` or `all`. Defaults to `month`\n(30 days). This is how far back the window reaches, not a rollup granularity.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Repository or workspace substring, as `session_list`'s `repo` reports it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       }
     },
