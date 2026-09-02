@@ -83,6 +83,16 @@ pub(super) fn parse_rfc3339_opt(value: Option<&str>) -> Result<Option<DateTime<U
     }
 }
 
+/// Default cap on how many of a trace's events `session_get` returns when the caller doesn't
+/// say otherwise. A large real session's event list can run to tens of MB of JSON; without a
+/// default cap, a remote model asking for "the session" gets that in full by accident. 500 is
+/// generous enough to cover most sessions outright while forcing an explicit `events_limit` for
+/// the rest -- the same "no silent unbounded default" principle `SessionsFindParams::limit`
+/// already enforces, just with a permissive rather than a required value here since
+/// `session_get` (unlike `sessions_find`) is about one specific session the caller already
+/// knows they want.
+pub const SESSION_GET_DEFAULT_EVENTS_LIMIT: usize = 500;
+
 /// Parameters for the `session_get` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionGetParams {
@@ -92,6 +102,14 @@ pub struct SessionGetParams {
     /// docs/specs/mcp-server.md, "What it must not expose").
     #[serde(default)]
     pub include_raw: bool,
+    /// Zero-based offset into the trace's events. Defaults to 0.
+    #[serde(default)]
+    pub events_offset: Option<usize>,
+    /// Max number of events to return. Defaults to `SESSION_GET_DEFAULT_EVENTS_LIMIT` (500) so
+    /// a call can never receive a session's full event list by accident; pass an explicit,
+    /// larger value to see more. Must be greater than 0.
+    #[serde(default)]
+    pub events_limit: Option<usize>,
 }
 
 /// Parameters for the `blame_find` tool.

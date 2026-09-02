@@ -583,6 +583,37 @@ impl Storage {
         Ok(true) // New or modified -> needs scan
     }
 
+    /// Returns true if the indexed row(s) for `source_path` are missing a field that's
+    /// derived from the source content but wasn't computed by the code that produced this
+    /// row -- the shape left behind when a session was indexed before a feature like
+    /// `prompt_preview` (v0.1.10) existed. `should_scan_source` alone can't catch this: an
+    /// unchanged source is unchanged forever, so a row stuck in this state would otherwise
+    /// never get rescanned.
+    ///
+    /// Only checks `prompt_preview`. `compaction_count` and `compaction_tokens_dropped`
+    /// can't be used for this: their columns are `NOT NULL DEFAULT 0`, so the `ALTER TABLE`
+    /// that added them already stamped every pre-existing row with `0`, indistinguishable
+    /// from "genuinely never compacted" (see the caveat on `get_compaction_outcome_correlation`).
+    /// `source_mtime_epoch_secs` is joined from `sources.mtime`, which is written in the same
+    /// transaction as the session row, so it's never missing for a row that has a `sources`
+    /// entry at all. `prompt_preview` is the one column where "missing" is unambiguous: it's
+    /// nullable and every real user-initiated session has a non-empty first user message.
+    /// A caller that reparses on `true` here backfills all three anyway, since parsing is
+    /// all-or-nothing.
+    pub fn needs_backfill(&self, source_path: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt =
+            conn.prepare("SELECT prompt_preview FROM sessions WHERE source_path = ?1")?;
+        let mut rows = stmt.query(params![source_path])?;
+        while let Some(row) = rows.next()? {
+            let prompt_preview: Option<String> = row.get(0)?;
+            if prompt_preview.as_deref().unwrap_or("").trim().is_empty() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Returns `(session_id, adapter, source_path)` for every indexed session with zero
     /// recorded events and zero recorded tokens -- the shape left behind when a
     /// non-session file (config, cache, telemetry dump, ...) was accepted as a session by
@@ -2815,6 +2846,51 @@ mod tests {
         storage.upsert_trace(&trace_none).expect("upsert none");
         let none_summary = storage.get_session_by_id("none").unwrap().unwrap();
         assert_eq!(none_summary.prompt_preview, None);
+    }
+
+    /// `needs_backfill` is the predicate the scanner uses to reparse an unchanged source
+    /// whose row predates a derived-field extractor. It must say yes for a row with an
+    /// empty/missing `prompt_preview`, no for a row that already has one, and no for a
+    /// source_path with no row at all (a brand-new source is a normal scan, not a backfill).
+    #[test]
+    fn test_needs_backfill_predicate() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let start = Utc::now();
+
+        let prov_missing = Provenance::new("/path/missing.jsonl", "claude_code", 100, 100, "fp_missing");
+        let mut trace_missing = AgentWorthTrace::new("missing", "claude_code", prov_missing, start);
+        trace_missing.stats.total_events = 1;
+        trace_missing.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace_missing.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::AssistantMessage { content: "hi".to_string(), thinking: None },
+        ));
+        storage.upsert_trace(&trace_missing).expect("upsert missing");
+        assert!(
+            storage.needs_backfill("/path/missing.jsonl").unwrap(),
+            "a row with no prompt_preview needs backfill"
+        );
+
+        let prov_complete = Provenance::new("/path/complete.jsonl", "claude_code", 100, 100, "fp_complete");
+        let mut trace_complete = AgentWorthTrace::new("complete", "claude_code", prov_complete, start);
+        trace_complete.stats.total_events = 1;
+        trace_complete.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace_complete.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage { content: "already has a preview".to_string() },
+        ));
+        storage.upsert_trace(&trace_complete).expect("upsert complete");
+        assert!(
+            !storage.needs_backfill("/path/complete.jsonl").unwrap(),
+            "a row with a non-empty prompt_preview must not be re-flagged"
+        );
+
+        assert!(
+            !storage.needs_backfill("/path/never-indexed.jsonl").unwrap(),
+            "no existing row is a normal new-source scan, not a backfill"
+        );
     }
 
     /// Regression test for `source_mtime_epoch_secs`: exposes the existing `sources.mtime`

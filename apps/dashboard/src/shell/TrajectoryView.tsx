@@ -17,6 +17,12 @@ export interface TrajectoryViewProps {
   events: NormalizedEvent[] | null | undefined;
   /** Event ids marking a compaction boundary — drawn as ticks on the scrubber's rail. */
   compactionEventIds?: string[];
+  /** Total event count on the session, once the first page reports it — null
+   * until then, or forever against a server that doesn't paginate. */
+  eventsTotal?: number | null;
+  /** False while background pages are still loading; drives the header's
+   * progress readout instead of the plain event count. */
+  eventsComplete?: boolean;
 }
 
 /** The full event stream for a session: a bucketed shape strip, then one
@@ -24,7 +30,14 @@ export interface TrajectoryViewProps {
  * events), then the selected event's detail. This is deliberately the full
  * stream, not filtered to evidence-producing events — that filter needs a
  * backend outcome-mapping change landing separately. */
-export function TrajectoryView({ events, focused = false, onToggleFocus, compactionEventIds }: TrajectoryViewProps) {
+export function TrajectoryView({
+  events,
+  focused = false,
+  onToggleFocus,
+  compactionEventIds,
+  eventsTotal,
+  eventsComplete = true,
+}: TrajectoryViewProps) {
   const sorted = useMemo(() => {
     const list = events ?? [];
     return [...list].sort((a, b) => a.sequence - b.sequence);
@@ -72,9 +85,11 @@ export function TrajectoryView({ events, focused = false, onToggleFocus, compact
       <div className="traj-header">
         <span className="shell-section-title">Trajectory</span>
         <span className="traj-count">
-          {brushedIds
-            ? `${shown.length.toLocaleString()} of ${sorted.length.toLocaleString()} events`
-            : `${sorted.length.toLocaleString()} event${sorted.length === 1 ? '' : 's'}`}
+          {!eventsComplete && eventsTotal != null
+            ? `Loading ${sorted.length.toLocaleString()} of ${eventsTotal.toLocaleString()} events…`
+            : brushedIds
+              ? `${shown.length.toLocaleString()} of ${sorted.length.toLocaleString()} events`
+              : `${sorted.length.toLocaleString()} event${sorted.length === 1 ? '' : 's'}`}
         </span>
         {onToggleFocus && (
           <button

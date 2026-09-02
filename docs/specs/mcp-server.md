@@ -167,6 +167,27 @@ Wraps `Scanner::load_trace(&id)` plus `TraceScorer::score()`,
 | --- | --- | --- |
 | `session_id` | string, required | |
 | `include_raw` | boolean, optional, default **false** | see Redaction below — this is the one parameter this whole spec turns on |
+| `events_offset` | integer, optional, default 0 | zero-based offset into `trace.events` |
+| `events_limit` | integer, optional, default **500** | max events returned; must be > 0 (0 is rejected as invalid params) |
+
+**Implementation note (added when pagination shipped):** `trace.events` on
+a real session can run to tens of thousands of entries — tens of MB of
+JSON — and a remote model asking for "the session" with no further
+qualification used to get that in full. `events_limit` now defaults to
+500 rather than unbounded, so a call without these params can never
+return a session's whole event list by accident; pass a larger
+`events_limit` explicitly to see more. The response carries `events_total`
+(the session's real event count, independent of how many events this
+particular call returned) and `events_offset` (the offset actually
+applied), so a caller can tell "sliced" from "this session genuinely has
+few events" and knows how far there is left to page. Score, outcomes, and
+recoveries are always computed from the *full*, unsliced trace first —
+detection accuracy shouldn't depend on which page of events was
+requested — and only `trace.events` itself is sliced afterward (then
+redacted, unless `include_raw` is set). The same slicing helper
+(`paginate_events`, `apps/cli/src/server/routes.rs`) backs `GET
+/api/traces/:id`'s own `offset`/`limit` query params, so the two surfaces
+share one pagination contract.
 
 `score` is the five-component `TraceScore` (`crates/scoring/src/scorer.rs:38`:
 `outcome_score`, `verifiability_score`, `complexity_score`, `recovery_score`,
