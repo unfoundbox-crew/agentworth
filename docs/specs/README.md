@@ -25,6 +25,7 @@
 | `beliefs.md` | proposed, measured | — |
 | `efficiency-receipts.md` | proposed, measured | — |
 | `cli-grammar.md` | decided 2026-09-02, not built | — |
+| `archie-bench.md` | proposed, measured | — |
 
 Twenty specs sit beside this file. They are independent of each other but not of
 the backend, and two of them are worth less than they look until a bug lands
@@ -136,6 +137,7 @@ worth drawing.
 | G | `efficiency-receipts.md` | `repeat_check`, `fanout_reads` | nothing — the P0 experiment is done and it picked the detector |
 | H | `cli-grammar.md` | every tool renamed to match the CLI noun | the open CLI branches, which the rename would otherwise sit under |
 | I | `spacepilot-loop.md` | `--route`, `--resolve-entities`, `--summarize` (each a call to SpacePilot) | the contract, then `asks.md`'s tier 2 |
+| J | `archie-bench.md` | `stats_bench` | a pricing-table refresh, then B's shared rung ordering |
 
 ### Why that order
 
@@ -196,6 +198,20 @@ dispatch arm, and rebasing four branches onto it costs more than waiting.
 also the only one nothing else can do: 402 decision-shaped sentences went into
 one session's eight compaction rounds and 28 came out, with reasons surviving
 at 1.7%. Worth building, after the four cheaper things.
+
+**J comes after I because it is B's query with a second axis, and because the
+column it adds is the one nothing here can price yet.** `archie-bench.md`
+crosses model, effort and repo instead of taking one axis at a time, and on
+the current index that cross gives 41 groups clearing the n floor and covering
+87% of the sessions behind them. It sits after I for two reasons. Cost per
+verified outcome is API-equivalent until SpacePilot's `Measurement` carries a
+`run_id` and token counts, which is I's build item on the other side; and the
+pricing table matches 0.5% of this machine's model rows today, so the dollar
+column is one rate card applied to every model until that is refreshed. The
+effort axis is empty for the same kind of reason — Codex writes it in 447 of
+448 rollout files and the adapter reads none of them. Everything the bench
+needs is measurable; three of its four columns are waiting on somebody else's
+smaller fix.
 
 ## What none of these change
 
