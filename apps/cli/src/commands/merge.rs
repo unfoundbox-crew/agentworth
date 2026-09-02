@@ -18,7 +18,72 @@ pub struct MergeStats {
     pub sessions_skipped: usize,
     pub sources_merged: usize,
     pub files_merged: usize,
+    /// Rows copied across every OTHER per-session child table (`session_compaction`,
+    /// `session_risk`, `session_model_usage` -- see `SESSION_CHILD_TABLES`). Kept separate
+    /// from `files_merged` rather than folded into it so a caller can still see
+    /// `file_modifications` broken out on its own, matching the field's established meaning.
+    pub child_rows_merged: usize,
 }
+
+/// One per-session child table that must be carried across on every merge, alongside the
+/// `sessions` row it belongs to.
+///
+/// This is the single place a new such table must be registered. Forgetting to add a table
+/// here is exactly the bug this const exists to prevent (#84's finding 2: `merge` silently
+/// dropped `session_model_usage`, `session_risk`, and `session_compaction`, and nothing caught
+/// it) -- `test_session_child_tables_cover_every_session_id_foreign_key` in this module fails
+/// against `sqlite_master` if a table with a `session_id` column referencing `sessions` is
+/// added without a matching entry here.
+struct ChildTable {
+    name: &'static str,
+    /// Every column except an autoincrement surrogate key (`file_modifications.id`), in
+    /// declaration order -- both databases share the exact same `initialize_schema`, so this
+    /// order is guaranteed identical on both sides of the copy.
+    columns: &'static [&'static str],
+}
+
+const SESSION_CHILD_TABLES: &[ChildTable] = &[
+    ChildTable {
+        name: "file_modifications",
+        columns: &["session_id", "file_path", "action", "occurred_at", "model"],
+    },
+    ChildTable {
+        name: "session_compaction",
+        columns: &[
+            "session_id",
+            "round",
+            "start_seq",
+            "end_seq",
+            "summary_seq",
+            "tokens_before",
+            "summary_tokens",
+        ],
+    },
+    ChildTable {
+        name: "session_risk",
+        columns: &[
+            "session_id",
+            "demoted_claims",
+            "loop_alerts",
+            "unresolved_loops",
+            "recoveries",
+            "demoted_evidence",
+            "loop_evidence",
+            "computed_at",
+        ],
+    },
+    ChildTable {
+        name: "session_model_usage",
+        columns: &[
+            "session_id",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation_tokens",
+        ],
+    },
+];
 
 /// Merge an external SQLite index database located at `source_db_path` into `target_db_path`.
 pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> Result<MergeStats> {
@@ -187,25 +252,37 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
         }
     }
 
-    // 3. For every session whose copy just changed, replace its file_modifications wholesale
-    //    with the source's rows -- mirrors Storage::upsert_session's own "rewrite, don't diff"
-    //    approach, so re-running the same merge twice never duplicates rows.
+    // 3. For every session whose copy just changed, replace every per-session child table
+    //    wholesale with the source's rows -- mirrors Storage::upsert_session's own "rewrite,
+    //    don't diff" approach, so re-running the same merge twice never duplicates rows.
+    //    Loops over `SESSION_CHILD_TABLES` so a table added there is automatically carried;
+    //    previously only `file_modifications` was hardcoded here and `session_model_usage`,
+    //    `session_risk`, and `session_compaction` were silently dropped on every merge (#84).
     let mut files_merged = 0usize;
-    {
-        let mut delete_stmt =
-            tx.prepare("DELETE FROM file_modifications WHERE session_id = ?1;")?;
-        let mut copy_stmt = tx.prepare(
-            "INSERT INTO file_modifications (session_id, file_path, action, occurred_at, model)
-             SELECT session_id, file_path, action, occurred_at, model
-             FROM other_db.file_modifications
-             WHERE session_id = ?1;",
-        )?;
+    let mut child_rows_merged = 0usize;
+    for table in SESSION_CHILD_TABLES {
+        let column_list = table.columns.join(", ");
+        let delete_sql = format!("DELETE FROM {} WHERE session_id = ?1;", table.name);
+        let copy_sql = format!(
+            "INSERT INTO {table_name} ({column_list}) \
+             SELECT {column_list} FROM other_db.{table_name} WHERE session_id = ?1;",
+            table_name = table.name,
+            column_list = column_list
+        );
+        let mut delete_stmt = tx.prepare(&delete_sql)?;
+        let mut copy_stmt = tx.prepare(&copy_sql)?;
         for session_id in &sessions_to_refresh_files {
             delete_stmt.execute(rusqlite::params![session_id])?;
-            files_merged += copy_stmt.execute(rusqlite::params![session_id])?;
+            let copied = copy_stmt.execute(rusqlite::params![session_id])?;
+            if table.name == "file_modifications" {
+                files_merged += copied;
+            } else {
+                child_rows_merged += copied;
+            }
         }
     }
     stats.files_merged = files_merged;
+    stats.child_rows_merged = child_rows_merged;
 
     tx.commit()?;
 
@@ -269,6 +346,10 @@ pub fn run_merge_command(
     println!(
         "│ Files Merged:      {:<37} │",
         style(stats.files_merged).cyan()
+    );
+    println!(
+        "│ Child Rows Merged: {:<37} │",
+        style(stats.child_rows_merged).cyan()
     );
     println!(
         "{}",
@@ -453,5 +534,170 @@ mod tests {
             "an updated merged row (the source's more-complete copy) must carry its parser_version too"
         );
         assert_eq!(bv_shared, Some(5));
+    }
+
+    /// #84 finding 2: merge copied `sources`, `sessions`, and `file_modifications`, but
+    /// silently dropped `session_model_usage`, `session_risk`, and `session_compaction` for
+    /// every merged session. This drives one fixture session through all four per-session
+    /// child tables and asserts the merged target ends up with the same row count as the
+    /// source in each -- the exact regression check the finding asked for.
+    #[test]
+    fn test_merge_carries_every_session_child_table() {
+        let db1 = NamedTempFile::new().unwrap();
+        let db2 = NamedTempFile::new().unwrap();
+
+        // Target starts as a schema-only, empty index.
+        drop(agentworth_storage::Storage::open_path(db1.path()).unwrap());
+
+        {
+            let storage2 = agentworth_storage::Storage::open_path(db2.path()).unwrap();
+
+            use agentworth_schema::{
+                AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, Provenance,
+            };
+            use chrono::Utc;
+
+            let now = Utc::now();
+            let prov = Provenance::new("/tmp/child.jsonl", "claude_code", 100, 1000, "fp-child");
+            let mut trace = AgentWorthTrace::new("sess-child", "claude_code", prov, now);
+            trace.events.push(NormalizedEvent::new(
+                1,
+                now,
+                EventPayload::UserMessage {
+                    content: "start".to_string(),
+                },
+            ));
+            // ModelInvocation -> populates session_model_usage via upsert_trace.
+            trace.events.push(model_invocation_event(2, now));
+            // FileAction -> populates file_modifications via upsert_trace.
+            trace.events.push(NormalizedEvent::new(
+                3,
+                now,
+                EventPayload::FileAction {
+                    action: FileActionType::Edit,
+                    path: "src/lib.rs".to_string(),
+                    diff: None,
+                    lines_changed: Some(4),
+                },
+            ));
+            trace.recalculate_stats();
+            storage2.upsert_trace(&trace).unwrap();
+
+            // session_risk has its own write path (core's risk detector +
+            // Storage::upsert_session_risk), not something upsert_trace populates by itself.
+            storage2
+                .upsert_session_risk(&agentworth_storage::SessionRisk {
+                    session_id: "sess-child".to_string(),
+                    demoted_claims: 1,
+                    loop_alerts: 2,
+                    unresolved_loops: 0,
+                    recoveries: 1,
+                    demoted_evidence: Vec::new(),
+                    loop_evidence: Vec::new(),
+                    computed_at: Some(now),
+                })
+                .unwrap();
+        }
+
+        // session_compaction likewise has no convenient event-driven path here; write it
+        // directly -- it is still one of the four tables merge must carry.
+        {
+            let conn = Connection::open(db2.path()).unwrap();
+            conn.execute(
+                "INSERT INTO session_compaction \
+                 (session_id, round, start_seq, end_seq, summary_seq, tokens_before, summary_tokens) \
+                 VALUES ('sess-child', 1, 1, 10, 5, 1000, 200)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let stats = merge_sqlite_databases(db1.path(), db2.path()).unwrap();
+        assert_eq!(stats.sessions_inserted, 1);
+
+        let source_conn = Connection::open(db2.path()).unwrap();
+        let target_conn = Connection::open(db1.path()).unwrap();
+
+        let row_count = |conn: &Connection, table: &str| -> i64 {
+            conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE session_id = 'sess-child'"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+
+        for table in SESSION_CHILD_TABLES {
+            let source_count = row_count(&source_conn, table.name);
+            let target_count = row_count(&target_conn, table.name);
+            assert!(
+                source_count > 0,
+                "fixture did not populate '{}' -- test is not exercising this table",
+                table.name
+            );
+            assert_eq!(
+                target_count, source_count,
+                "merged index has {target_count} row(s) in '{}' for sess-child, source has {source_count}",
+                table.name
+            );
+        }
+    }
+
+    /// The registry itself must stay complete: any table with a foreign key into
+    /// `sessions(session_id)` has to be listed in `SESSION_CHILD_TABLES`, or a future table
+    /// added the way `session_risk`/`session_compaction`/`session_model_usage` were will repeat
+    /// #84's bug -- silently dropped by every merge, with nothing failing to say so.
+    #[test]
+    fn test_session_child_tables_cover_every_session_id_foreign_key() {
+        let db = NamedTempFile::new().unwrap();
+        drop(agentworth_storage::Storage::open_path(db.path()).unwrap());
+
+        let conn = Connection::open(db.path()).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+            .unwrap();
+        let table_names: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert!(!table_names.is_empty());
+
+        let registered: std::collections::HashSet<&str> =
+            SESSION_CHILD_TABLES.iter().map(|t| t.name).collect();
+
+        for table_name in &table_names {
+            if table_name == "sessions" || table_name == "sources" {
+                continue;
+            }
+            let mut fk_stmt = conn
+                .prepare(&format!("PRAGMA foreign_key_list({table_name})"))
+                .unwrap();
+            // Column 2 of `PRAGMA foreign_key_list` output is the referenced table name.
+            let references_sessions = fk_stmt
+                .query_map([], |row| row.get::<_, String>(2))
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|referenced| referenced == "sessions");
+
+            if references_sessions {
+                assert!(
+                    registered.contains(table_name.as_str()),
+                    "table '{table_name}' has a foreign key into sessions(session_id) but is \
+                     not listed in SESSION_CHILD_TABLES -- merge_sqlite_databases will silently \
+                     drop its rows for every merged session. Add it to SESSION_CHILD_TABLES.",
+                );
+            }
+        }
+
+        // And the reverse: every registered entry must name a real table, so a stale or
+        // renamed entry can't pass this test vacuously.
+        for table in SESSION_CHILD_TABLES {
+            assert!(
+                table_names.iter().any(|n| n == table.name),
+                "SESSION_CHILD_TABLES lists '{}' but no such table exists in the schema",
+                table.name
+            );
+        }
     }
 }

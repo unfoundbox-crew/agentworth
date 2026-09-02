@@ -1,9 +1,11 @@
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use agentworth_adapter_sdk::{
-    AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
+    compute_fast_fingerprint, AgentAdapter, DetectionResult, ParseResult, ScanOptions,
+    SessionSource,
 };
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
@@ -48,6 +50,145 @@ impl OpenCodeAdapter {
         roots.push(PathBuf::from(".opencode"));
         roots
     }
+}
+
+/// Separates a synthetic, repo-anchored path prefix from the real locator needed to actually
+/// read the session (a `db_path#session_id` pair for the SQLite store, or a real file path for
+/// the legacy JSON layout).
+///
+/// `extract_repository_or_workspace` (agentworth-schema) resolves a session's repository purely
+/// by pattern-matching `Provenance.source_path` -- it has no opencode-specific knowledge, and
+/// per the adapter/storage split, none should be added to it. OpenCode's own storage paths
+/// (`~/.local/share/opencode/opencode.db`, `~/.local/share/opencode/project/<mangled>/`) carry
+/// no repository information themselves -- worse, their `.local` segment matches that
+/// function's hidden-directory fallback rule and resolves to the *home directory*, not the
+/// repository (see `crates/storage/src/anchoring.rs::an_opencode_transcript_path_does_not_resolve_to_its_repo`,
+/// and #84). Since the real workspace directory *is* recoverable (from `session.directory` in
+/// the SQLite store, or from decoding the project directory's mangled slug in the legacy JSON
+/// layout), this adapter builds a source_path that looks like a real file living inside that
+/// resolved directory, with the real locator tucked behind this marker -- invisible to
+/// `extract_repository_or_workspace`'s substring/component rules (which only ever see a real
+/// '/'-delimited path up to the marker), but still recoverable in `parse()` for opening the
+/// actual session data. `SessionSource.path` and `Provenance.source_path` are always set to
+/// this exact same string (never diverged), because `Storage::should_scan_source` and
+/// `AgentWorthCore::prune_stub_sessions` both compare the enumerate-time `SessionSource.path`
+/// against the parse-time `Provenance.source_path` stored in the `sources`/`sessions` tables --
+/// a mismatch would make every opencode session look permanently "changed" (never cached) or,
+/// worse, make an already-indexed thin session look stale and get pruned on every scan.
+const OPENCODE_REPO_MARKER: &str = "::opencode-repo::";
+
+/// Wrap `real_locator` behind [`OPENCODE_REPO_MARKER`] so it resolves to `repo_dir` through
+/// `extract_repository_or_workspace`'s existing generic rules. `leaf` is an invented path
+/// segment (e.g. `.opencode/session-<id>.db`) appended under `repo_dir` -- it exists only so
+/// the hidden-directory-boundary rule has something to anchor on for a `repo_dir` that isn't
+/// itself under a recognized `/code/` or `/projects/-` root; without it, the fallback rule would
+/// keep scanning path components rightward into the marker's real-locator tail and match
+/// `opencode.db`'s own `.local` segment instead, reproducing the exact bug this exists to fix.
+/// Returns `real_locator` unchanged when `repo_dir` is unavailable, matching this adapter's
+/// pre-existing (buggy, but no worse) behavior.
+fn wrap_with_repo_marker(repo_dir: Option<&str>, leaf: &str, real_locator: &str) -> String {
+    match repo_dir.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(dir) => format!(
+            "{}/{leaf}{OPENCODE_REPO_MARKER}{real_locator}",
+            dir.trim_end_matches('/')
+        ),
+        None => real_locator.to_string(),
+    }
+}
+
+/// Recover the real locator from a possibly-wrapped source path. Absent the marker (older
+/// index rows, or a directory that could not be resolved), the whole string already is the
+/// real locator.
+fn strip_repo_marker(path_str: &str) -> &str {
+    match path_str.rfind(OPENCODE_REPO_MARKER) {
+        Some(idx) => &path_str[idx + OPENCODE_REPO_MARKER.len()..],
+        None => path_str,
+    }
+}
+
+/// Decode OpenCode's legacy JSON-session project directory slug into a real absolute path.
+///
+/// OpenCode's file-based session store nests sessions under
+/// `~/.local/share/opencode/project/<slug>/`, where `<slug>` mangles the real workspace path
+/// the same way Claude Code's own `projects/-Users-...` slug does: a leading `-` standing in
+/// for the root `/`, and every subsequent `/` replaced with `-` (see
+/// `agentworth_schema::extract_repository_or_workspace`'s rule 1, and the documented case in
+/// `crates/storage/src/anchoring.rs::an_opencode_transcript_path_does_not_resolve_to_its_repo`).
+/// A `--` suffix is pruned the same way Claude Code's worktree suffix is, in case OpenCode
+/// adopts the same convention for its own worktree sessions.
+///
+/// Not independently verified against a live OpenCode install on this machine -- the installed
+/// version here has fully migrated to the SQLite store (`opencode.db`), which carries the real
+/// directory directly (see [`OPENCODE_REPO_MARKER`]'s doc comment) and needs no decoding at
+/// all. This function covers hosts still on the older file-based layout, matching the slug
+/// format the pinned anchoring.rs test documents.
+fn decode_opencode_project_directory(path_str: &str) -> Option<String> {
+    let normalized = path_str.replace('\\', "/");
+    let idx = normalized.find("/project/-")?;
+    let after = &normalized[idx + "/project/-".len()..];
+    let full_slug = after.split('/').next().unwrap_or(after);
+    let base_slug = full_slug.split("--").next().unwrap_or(full_slug);
+    if base_slug.is_empty() {
+        return None;
+    }
+    Some(format!("/{}", base_slug.replace('-', "/")))
+}
+
+/// Build a `SessionSource` for a legacy JSON/JSONL session file, wrapping its identity path
+/// with the resolved repository directory (see [`wrap_with_repo_marker`]) when one can be
+/// decoded from the path. Metadata (size/mtime/fingerprint) is always computed from the real
+/// file on disk -- only the *identity* string embeds the synthetic prefix.
+fn build_opencode_file_source(path: &Path, adapter_name: &str) -> anyhow::Result<SessionSource> {
+    let metadata = std::fs::metadata(path)?;
+    let file_size_bytes = metadata.len();
+    let mtime_epoch_secs = metadata
+        .modified()?
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let fingerprint = compute_fast_fingerprint(path, file_size_bytes, mtime_epoch_secs)?;
+
+    let real_locator = path.to_string_lossy().to_string();
+    let repo_dir = decode_opencode_project_directory(&real_locator);
+    let identity = wrap_with_repo_marker(repo_dir.as_deref(), ".opencode-project-session", &real_locator);
+
+    Ok(SessionSource {
+        path: PathBuf::from(identity),
+        adapter_name: adapter_name.to_string(),
+        file_size_bytes,
+        mtime_epoch_secs,
+        fingerprint,
+    })
+}
+
+/// Every session row from the SQLite store, plus its resolved workspace directory when one is
+/// available. Tries progressively simpler queries so an older `opencode.db` schema (missing
+/// `directory`/`project_id`, or missing the `project` table entirely) degrades to "no directory
+/// known" instead of failing enumeration outright.
+fn query_opencode_sessions(conn: &Connection) -> Vec<(String, i64, i64, Option<String>)> {
+    const QUERIES: &[&str] = &[
+        "SELECT s.id, s.time_created, s.time_updated, \
+         COALESCE(NULLIF(s.directory, ''), p.worktree) \
+         FROM session s LEFT JOIN project p ON s.project_id = p.id",
+        "SELECT id, time_created, time_updated, NULLIF(directory, '') FROM session",
+        "SELECT id, time_created, time_updated, NULL FROM session",
+    ];
+
+    for query in QUERIES {
+        if let Ok(mut stmt) = conn.prepare(query) {
+            let rows = stmt.query_map([], |row| {
+                let id: String = row.get(0)?;
+                let time_created: i64 = row.get(1).unwrap_or(0);
+                let time_updated: i64 = row.get(2).unwrap_or(time_created);
+                let directory: Option<String> = row.get(3).unwrap_or(None);
+                Ok((id, time_created, time_updated, directory))
+            });
+            if let Ok(rows) = rows {
+                return rows.flatten().collect();
+            }
+        }
+    }
+    Vec::new()
 }
 
 impl AgentAdapter for OpenCodeAdapter {
@@ -122,7 +263,7 @@ impl AgentAdapter for OpenCodeAdapter {
                 if root.file_name().and_then(|n| n.to_str()) == Some("opencode.db") {
                     db_paths.push(root);
                 } else if is_candidate_opencode_file(&root) {
-                    if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                    if let Ok(source) = build_opencode_file_source(&root, self.name()) {
                         sources.push(source);
                     }
                 }
@@ -144,40 +285,31 @@ impl AgentAdapter for OpenCodeAdapter {
                 &db_path,
                 OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
             ) {
-                if let Ok(mut stmt) =
-                    conn.prepare("SELECT id, time_created, time_updated FROM session")
-                {
-                    let session_rows = stmt.query_map([], |row| {
-                        let id: String = row.get(0)?;
-                        let time_created: i64 = row.get(1).unwrap_or(0);
-                        let time_updated: i64 = row.get(2).unwrap_or(time_created);
-                        Ok((id, time_created, time_updated))
+                for (session_id, _created, updated, directory) in query_opencode_sessions(&conn) {
+                    let real_locator = format!("{}#{}", db_path.display(), session_id);
+                    let leaf = format!(".opencode/session-{session_id}.db");
+                    let virtual_path = PathBuf::from(wrap_with_repo_marker(
+                        directory.as_deref(),
+                        &leaf,
+                        &real_locator,
+                    ));
+                    let mtime_secs = if updated > 1_000_000_000_000 {
+                        updated / 1000
+                    } else {
+                        updated
+                    };
+                    let mut hasher = Sha256::new();
+                    hasher.update(session_id.as_bytes());
+                    hasher.update(updated.to_string().as_bytes());
+                    let fingerprint = hex::encode(hasher.finalize());
+
+                    sources.push(SessionSource {
+                        path: virtual_path,
+                        adapter_name: self.name().to_string(),
+                        file_size_bytes: 4096,
+                        mtime_epoch_secs: mtime_secs,
+                        fingerprint,
                     });
-
-                    if let Ok(rows) = session_rows {
-                        for row in rows.flatten() {
-                            let (session_id, _created, updated) = row;
-                            let virtual_path =
-                                PathBuf::from(format!("{}#{}", db_path.display(), session_id));
-                            let mtime_secs = if updated > 1_000_000_000_000 {
-                                updated / 1000
-                            } else {
-                                updated
-                            };
-                            let mut hasher = Sha256::new();
-                            hasher.update(session_id.as_bytes());
-                            hasher.update(updated.to_string().as_bytes());
-                            let fingerprint = hex::encode(hasher.finalize());
-
-                            sources.push(SessionSource {
-                                path: virtual_path,
-                                adapter_name: self.name().to_string(),
-                                file_size_bytes: 4096,
-                                mtime_epoch_secs: mtime_secs,
-                                fingerprint,
-                            });
-                        }
-                    }
                 }
             }
         }
@@ -193,7 +325,7 @@ impl AgentAdapter for OpenCodeAdapter {
             {
                 let path = entry.path();
                 if path.is_file() && is_candidate_opencode_file(path) {
-                    if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                    if let Ok(source) = build_opencode_file_source(path, self.name()) {
                         sources.push(source);
                     }
                 }
@@ -208,9 +340,19 @@ impl AgentAdapter for OpenCodeAdapter {
     }
 
     fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
-        let path_str = source.path.to_string_lossy();
-        if path_str.contains(".db#") {
-            let mut parts = path_str.splitn(2, '#');
+        // `source.path` (== the `Provenance.source_path` this function goes on to write) may be
+        // wrapped with a repo-anchored prefix (see `OPENCODE_REPO_MARKER`'s doc comment) so that
+        // repository resolution downstream sees a real workspace path. `real_locator` strips
+        // that back off to get at what this function actually needs to read: either a
+        // `db_path#session_id` pair or a real file path. The FULL (possibly wrapped) string is
+        // always what goes into `Provenance` and stays untouched -- it must match `source.path`
+        // exactly for `Storage::should_scan_source`/stub-pruning to keep working (see the same
+        // doc comment).
+        let full_path_str = source.path.to_string_lossy().to_string();
+        let real_locator = strip_repo_marker(&full_path_str);
+
+        if real_locator.contains(".db#") {
+            let mut parts = real_locator.splitn(2, '#');
             if let (Some(db_str), Some(session_id)) = (parts.next(), parts.next()) {
                 return parse_opencode_sqlite_session(
                     Path::new(db_str),
@@ -221,9 +363,10 @@ impl AgentAdapter for OpenCodeAdapter {
             }
         }
 
-        let session_id = derive_session_id(&source.path);
+        let real_path = Path::new(real_locator);
+        let session_id = derive_session_id(real_path);
         let provenance = Provenance::new(
-            source.path.to_string_lossy().to_string(),
+            full_path_str.clone(),
             self.name(),
             source.file_size_bytes,
             source.mtime_epoch_secs,
@@ -239,7 +382,7 @@ impl AgentAdapter for OpenCodeAdapter {
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
 
-        let file = File::open(&source.path)?;
+        let file = File::open(real_path)?;
         let mut reader = BufReader::new(file);
 
         let has_content = reader.get_ref().metadata()?.len() > 0;
@@ -1390,5 +1533,185 @@ mod tests {
                 .input_tokens,
             200
         );
+    }
+
+    /// #84 finding 1: a real, current-version `opencode.db` (verified against a live install --
+    /// see the PR description) carries the actual workspace path directly in
+    /// `session.directory`, but the adapter discarded it, so every opencode session resolved to
+    /// the user's home directory instead of the repository it worked in
+    /// (`crates/storage/src/anchoring.rs::an_opencode_transcript_path_does_not_resolve_to_its_repo`).
+    /// This fixture mirrors that real layout (a `session.directory` column joined against
+    /// `project.worktree`) and checks the repository resolves correctly when the directory sits
+    /// under a `/code/`-style root -- the common case on this machine.
+    #[test]
+    fn test_sqlite_session_directory_resolves_to_its_repo_under_code_root() {
+        use agentworth_schema::extract_repository_or_workspace;
+
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("opencode.db");
+        let conn = Connection::open(&db_path).unwrap();
+
+        conn.execute_batch(
+            "CREATE TABLE project (id TEXT, worktree TEXT);
+             CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER);
+             CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+             CREATE TABLE part (id TEXT, message_id TEXT, data TEXT);",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO project (id, worktree) VALUES ('proj-1', '/Users/saurabh/code/unfoundbox/agentworth')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, project_id, directory, time_created, time_updated) \
+             VALUES ('sess-1', 'proj-1', '/Users/saurabh/code/unfoundbox/agentworth', 1716000000, 1716000020)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES ('msg-1', 'sess-1', 1716000000, ?1)",
+            [r#"{"role":"user"}"#],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part (id, message_id, data) VALUES ('part-1', 'msg-1', ?1)",
+            [r#"{"type":"text","text":"hello from the real repo"}"#],
+        )
+        .unwrap();
+        drop(conn);
+
+        let adapter = OpenCodeAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![db_path],
+            ..Default::default()
+        };
+        let sources = adapter.enumerate(&options).unwrap();
+        assert_eq!(sources.len(), 1);
+
+        let result = adapter.parse(&sources[0]).expect("sqlite parse failed");
+        let identity = extract_repository_or_workspace(&result.trace.provenance.source_path);
+        assert_eq!(identity, "unfoundbox/agentworth");
+        assert_eq!(result.trace.stats.user_messages_count, 1);
+    }
+
+    /// Same real layout as above, but the session's directory does not sit under a
+    /// recognized `/code/` root (e.g. a checkout directly under the home directory). This is
+    /// the case that exercises the marker's hidden-directory-boundary fallback rather than the
+    /// `/code/` rule -- without a synthetic anchor segment, this case would fall through all the
+    /// way to matching `opencode.db`'s own `.local` path component and return the home
+    /// directory again, reproducing the original bug under a different trigger.
+    #[test]
+    fn test_sqlite_session_directory_resolves_to_its_repo_outside_code_root() {
+        use agentworth_schema::extract_repository_or_workspace;
+
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("opencode.db");
+        let conn = Connection::open(&db_path).unwrap();
+
+        conn.execute_batch(
+            "CREATE TABLE project (id TEXT, worktree TEXT);
+             CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER);
+             CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+             CREATE TABLE part (id TEXT, message_id TEXT, data TEXT);",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO project (id, worktree) VALUES ('proj-1', '/Users/foo/myrepo')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, project_id, directory, time_created, time_updated) \
+             VALUES ('sess-1', 'proj-1', '/Users/foo/myrepo', 1716000000, 1716000020)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let adapter = OpenCodeAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![db_path],
+            ..Default::default()
+        };
+        let sources = adapter.enumerate(&options).unwrap();
+        assert_eq!(sources.len(), 1);
+
+        let result = adapter.parse(&sources[0]).expect("sqlite parse failed");
+        let identity = extract_repository_or_workspace(&result.trace.provenance.source_path);
+        assert_eq!(identity, "foo/myrepo");
+    }
+
+    /// A session's `opencode.db` may predate the `directory`/`project_id` columns (or the
+    /// `project` table) entirely -- `query_opencode_sessions` must degrade to "no directory
+    /// known" rather than fail enumeration outright, and the resulting source_path must match
+    /// the adapter's pre-existing (unresolved, but not broken) behavior.
+    #[test]
+    fn test_sqlite_session_without_directory_column_still_enumerates() {
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("opencode.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (id TEXT, time_created INTEGER, time_updated INTEGER);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, time_created, time_updated) VALUES ('sess-1', 1716000000, 1716000020)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let adapter = OpenCodeAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![db_path.clone()],
+            ..Default::default()
+        };
+        let sources = adapter.enumerate(&options).unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            sources[0].path,
+            PathBuf::from(format!("{}#sess-1", db_path.display()))
+        );
+    }
+
+    /// #84 finding 1's other storage layout: OpenCode's legacy file-based session store nests
+    /// sessions under `~/.local/share/opencode/project/<mangled-slug>/`, documented (but left
+    /// unresolved) by `crates/storage/src/anchoring.rs::an_opencode_transcript_path_does_not_resolve_to_its_repo`.
+    /// Not independently verified against a live install here (this machine's OpenCode has
+    /// fully migrated to the SQLite store covered above), so this fixture mirrors that pinned
+    /// test's exact documented slug format.
+    #[test]
+    fn test_legacy_project_slug_file_resolves_to_its_real_repo() {
+        use agentworth_schema::extract_repository_or_workspace;
+
+        let temp = tempdir().unwrap();
+        let project_dir = temp
+            .path()
+            .join("opencode")
+            .join("project")
+            .join("-Users-dev-code-unfoundbox-agentworth");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let session_file = project_dir.join("s3.json");
+        std::fs::write(
+            &session_file,
+            r#"{"type":"user_message","timestamp":"2026-08-29T10:00:00Z","content":"hi from opencode"}"#,
+        )
+        .unwrap();
+
+        let adapter = OpenCodeAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            ..Default::default()
+        };
+        let sources = adapter.enumerate(&options).unwrap();
+        assert_eq!(sources.len(), 1);
+
+        let result = adapter.parse(&sources[0]).expect("legacy json parse failed");
+        let identity = extract_repository_or_workspace(&result.trace.provenance.source_path);
+        assert_eq!(identity, "unfoundbox/agentworth");
+        assert_eq!(result.trace.stats.user_messages_count, 1);
     }
 }
