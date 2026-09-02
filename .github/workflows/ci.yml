@@ -1,11 +1,17 @@
 name: CI
 
-# The repo had no Rust CI until now — only deploy-pages and the tag-triggered
-# release. Nothing compiled the workspace on a pull request, which is how the
-# binary shipped for months without the dashboard it was supposed to serve.
+# Path-aware: a docs-only PR shouldn't pay for a Rust build, and a Rust-only PR
+# shouldn't pay for the marketing site. rust-embed means the reverse doesn't
+# hold -- any dashboard (or shared packages/ui) change has to retest Rust too,
+# since the dashboard build is compiled into the binary.
 #
-# ubuntu-latest only, per the free-tier budget rule. macOS hosted runners bill
-# at 10x and are not worth it for a compile check.
+# push to main always runs the full set (no filtering) as a post-merge gate,
+# regardless of what changed in the merge commit.
+#
+# ubuntu-latest only for the build/lint jobs, per the free-tier budget rule.
+# The Rust test job also runs on macos-latest -- macOS hosted minutes are free
+# on this public repo, and the npm launcher shipped a macOS-only bug before
+# (v0.1.11) that ubuntu-only CI could not have caught.
 
 on:
   pull_request:
@@ -17,9 +23,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build workspace
+  changes:
+    name: Detect changed paths
     runs-on: ubuntu-latest
+    # On push to main this job's outputs are unused -- every downstream job
+    # short-circuits to "always run" instead of reading them. Still runs so
+    # the job graph stays uniform.
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+      web: ${{ steps.filter.outputs.web }}
+      launcher: ${{ steps.filter.outputs.launcher }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v4.0.3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'apps/cli/**'
+              - 'apps/dashboard/**'
+              - 'packages/ui/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+            dashboard:
+              - 'apps/dashboard/**'
+              - 'packages/ui/**'
+            web:
+              - 'apps/web/**'
+              - 'packages/ui/**'
+            launcher:
+              - 'packages/agentworth/**'
+
+  # No dedicated "docs_only" filter: docs-only is just the case where none of
+  # the build-triggering filters above matched. Computed here instead of via
+  # a paths-filter negation pattern, which is fragile for an "AND-NOT" of
+  # several independent categories.
+  docs-only:
+    name: Docs-only change
+    needs: changes
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.rust != 'true' &&
+      needs.changes.outputs.web != 'true' &&
+      needs.changes.outputs.launcher != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "docs only, nothing to build"
+
+  build-rust:
+    name: Build & test workspace
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,14 +97,10 @@ jobs:
           cache-dependency-path: 'apps/dashboard/package-lock.json'
 
       # Order matters: the dashboard is compiled into the binary via rust-embed,
-      # so it has to exist before cargo runs. This mirrors release.yml exactly —
+      # so it has to exist before cargo runs. This mirrors release.yml exactly --
       # if the order is wrong here, it is wrong there too.
       - name: Build dashboard
         working-directory: apps/dashboard
-        run: npm ci && npm run build
-
-      - name: Build marketing site
-        working-directory: apps/web
         run: npm ci && npm run build
 
       - name: Assert the dashboard will be embedded
@@ -55,6 +114,7 @@ jobs:
       # Proves the dashboard is actually inside the binary rather than merely
       # built next to it. This is the check whose absence let the bug ship.
       - name: Assert the dashboard is inside the binary
+        shell: bash
         run: |
           BIN=target/debug/agentworth
           grep -q "AgentWorth" "$BIN" \
@@ -63,15 +123,75 @@ jobs:
 
       # Must run after the dashboard build above — rust-embed needs
       # apps/dashboard/dist to exist, and apps/cli's static-file tests read
-      # from it directly. Nothing ran the test suite in CI before this, which
-      # is how a red test sat on main unnoticed.
+      # from it directly.
       - name: Run workspace tests
         run: cargo test --workspace
 
-      # The npm launcher (packages/agentworth) has its own test suite that nothing
-      # ran in CI -- a red launcher test (formatMissingBinaryMessage vs. stale
-      # brew/curl assertions) sat unnoticed on main for the same reason the Rust
-      # tests above did: nobody wired it in.
+  clippy:
+    name: Clippy
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'apps/dashboard/package-lock.json'
+
+      # clippy --all-targets compiles apps/cli, whose build.rs and rust-embed
+      # folder need a real dashboard/dist to exist -- same ordering constraint
+      # as the build job above.
+      - name: Build dashboard
+        working-directory: apps/dashboard
+        run: npm ci && npm run build
+
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build-web:
+    name: Build marketing site
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'apps/web/package-lock.json'
+
+      - name: Build marketing site
+        working-directory: apps/web
+        run: npm ci && npm run build
+
+  launcher-tests:
+    name: npm launcher tests
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.launcher == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'packages/agentworth/package-lock.json'
+
+      # The npm launcher (packages/agentworth) has its own test suite -- a red
+      # launcher test (formatMissingBinaryMessage vs. stale brew/curl assertions)
+      # sat unnoticed on main for a while because nothing ran it in CI before.
       - name: Run npm launcher tests
         working-directory: packages/agentworth
         run: npm ci && npm test

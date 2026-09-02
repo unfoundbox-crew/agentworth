@@ -969,10 +969,7 @@ mod tests {
     #[test]
     fn test_detect_and_enumerate_cline() {
         let mut temp_file = NamedTempFile::new().unwrap();
-        writeln!(
-            temp_file,
-            "{}",
-            r#"[
+        let content = r#"[
   {
     "ts": 1716000000000,
     "type": "say",
@@ -982,9 +979,8 @@ mod tests {
     "tokensOut": 250,
     "totalCost": 0.015
   }
-]"#
-        )
-        .unwrap();
+]"#;
+        writeln!(temp_file, "{}", content).unwrap();
 
         let adapter = ClineAdapter::new();
         let options = ScanOptions {
