@@ -1815,3 +1815,118 @@ pub fn handoff(ui: &Ui, v: &HandoffView<'_>) -> String {
 
     out
 }
+
+// -----------------------------------------------------------------------------
+// doctor --self-test
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfTestStatus {
+    Pass,
+    Slow,
+    Fail,
+    Skip,
+}
+
+impl SelfTestStatus {
+    fn label(self) -> &'static str {
+        match self {
+            SelfTestStatus::Pass => "PASS",
+            SelfTestStatus::Slow => "SLOW",
+            SelfTestStatus::Fail => "FAIL",
+            SelfTestStatus::Skip => "SKIP",
+        }
+    }
+
+    fn role(self) -> Role {
+        match self {
+            SelfTestStatus::Pass => Role::Verified,
+            SelfTestStatus::Slow => Role::Warn,
+            SelfTestStatus::Fail => Role::Error,
+            SelfTestStatus::Skip => Role::Unverified,
+        }
+    }
+}
+
+pub struct SelfTestStepView {
+    pub name: String,
+    pub status: SelfTestStatus,
+    pub elapsed_ms: u128,
+    pub receipt: String,
+}
+
+/// `340ms`, `1.2s` -- millisecond precision below one second, since most steps here
+/// finish well under it and `duration()`'s whole-second granularity would print `0s`
+/// for nearly every row.
+fn self_test_elapsed(ms: u128) -> String {
+    if ms >= 1000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        format!("{ms}ms")
+    }
+}
+
+pub fn self_test(
+    ui: &Ui,
+    version: &str,
+    steps: &[SelfTestStepView],
+    total_ms: u128,
+    ok: bool,
+) -> String {
+    let mut out = String::new();
+
+    out.push_str(&ui.header("agentworth doctor --self-test", &format!("v{}", version)));
+    out.push('\n');
+
+    section(&mut out, ui, "WORKFLOW", &format!("{} steps", steps.len()));
+
+    const STATUS: usize = 6;
+    const TIME: usize = 8;
+    let name_w = ui.inner().saturating_sub(STATUS + TIME + 6).max(10);
+
+    for s in steps {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}  {}  {}",
+                ui.paint(Role::Value, &lpad(&truncate(&s.name, name_w), name_w)),
+                ui.paint(s.status.role(), &lpad(s.status.label(), STATUS)),
+                ui.paint(Role::Label, &rpad(&self_test_elapsed(s.elapsed_ms), TIME)),
+            ),
+        );
+        if !s.receipt.is_empty() {
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "    {}",
+                    ui.paint(Role::Label, &truncate(&s.receipt, ui.inner().saturating_sub(4)))
+                ),
+            );
+        }
+    }
+    out.push('\n');
+
+    let (state, role) = if ok {
+        ("all steps passed", Role::Verified)
+    } else {
+        ("one or more steps failed", Role::Error)
+    };
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}  {}",
+            ui.paint(role, state),
+            ui.paint(Role::Label, &format!("({} total)", self_test_elapsed(total_ms))),
+        ),
+    );
+    out.push('\n');
+
+    out.push_str(&ui.next(
+        "agentworth doctor",
+        "the environment, storage, and adapter snapshot alone",
+    ));
+    out
+}

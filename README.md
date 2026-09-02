@@ -265,6 +265,7 @@ agentworth export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | `agentworth loose-ends [ID \| --last]` | The handoff's loose-ends section alone: what a session said it would do and didn't (`--prompt` prints a copyable brief). |
 | `agentworth suspect [OPTIONS]` | Lists commits on this branch whose authoring session never proved anything, so you know where to look twice before pushing (`--repo`, `--since`, `--json`). `--hook` prints a pre-push script that prints and never blocks. |
 | `agentworth doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
+| `agentworth doctor --self-test` | Runs the real workflow end to end — scan, stats, usage, traces, inspect, handoff, forgotten, an MCP round trip — against the real index on this machine, with no network. Prints pass/fail/slow and timing per step; exits non-zero if any step fails. |
 | `agentworth mcp` | Starts the read-only MCP server over stdio, so a coding agent can query this machine's session index mid-session (see below). |
 
 Every command accepts `--plain` (no colour, ASCII-only glyphs, same column positions as the colour output) and `--no-color`; setting `NO_COLOR` in the environment has the same effect as `--no-color`.

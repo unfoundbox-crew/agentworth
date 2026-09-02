@@ -58,8 +58,11 @@ rusqlite.workspace = true
 # The official Rust MCP SDK (modelcontextprotocol/rust-sdk), backing `agentworth mcp`
 # (docs/specs/mcp-server.md). Pinned to an exact version since it's still pre-1.0 (3.x line,
 # 2026-07-28 spec). Default features already include "server" and "macros"; "transport-io"
-# additionally pulls in the stdio() transport helper.
-rmcp = { version = "=3.2.0", features = ["transport-io"] }
+# backs the server's own stdio() transport. "client" and "transport-child-process" back
+# `agentworth doctor --self-test` (apps/cli/src/commands/self_test.rs), which spawns
+# `agentworth mcp` as a real child process and round-trips tools/list and session_get
+# against it the same way a coding agent's MCP client would.
+rmcp = { version = "=3.2.0", features = ["transport-io", "client", "transport-child-process"] }
 schemars = "1.0"
 
 [dev-dependencies]
@@ -67,7 +70,4 @@ tempfile.workspace = true
 assert_cmd = "2.0"
 predicates = "3.1"
 http-body-util = "0.1"
-# "client" is test-only: the production binary never acts as an MCP client, but the stdio
-# integration test in tests/mcp_stdio_test.rs drives AgentWorthMcpServer as a real rmcp peer.
-rmcp = { version = "=3.2.0", features = ["client"] }
 
