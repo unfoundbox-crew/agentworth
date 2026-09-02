@@ -75,16 +75,6 @@
   --stagger-step: 40ms;
 
   color-scheme: light;
-
-  /* Categorical series, lifted for dark ground — same hue order. */
-  --mv-cat-1: #8b9ee0;
-  --mv-cat-2: #dda86a;
-  --mv-cat-3: #6fbf95;
-  --mv-cat-4: #cd8ab2;
-  --mv-cat-5: #7bb9d2;
-  --mv-cat-6: #c3a45c;
-  --mv-cat-7: #a996dd;
-  --mv-cat-8: #b4b4bd;
 }
 
 @media (prefers-color-scheme: dark) {

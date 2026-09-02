@@ -2,7 +2,10 @@
 
 Status: built, PR #83 (2026-09-02). Measured 2026-09-02. Shipped as the
 `forgotten_context` MCP tool, `agentworth forgotten`, and the handoff's
-"Decided, then compacted away" section.
+"Decided, then compacted away" section. The shipped extractor's own count on
+that same session, from #83 (CHANGELOG 0.1.14): 405 decision-shaped sentences
+in, 28 out — current truth. The walkthrough below (402 in, 374 lost) is the
+spec's original measurement, earlier regex.
 
 Four things the build settled that this document left open:
 
@@ -93,6 +96,8 @@ Survival rate: decisions 15.4%, rejected alternatives 9.3%, **reasons 1.7%**.
 Counting distinct sentences rather than class matches, since one sentence can
 hit two patterns: **402 decision-shaped sentences went into the eight rounds
 and 28 came out. 374 the session decided something in and no longer has.**
+(Spec measurement, earlier regex — the shipped extractor counted 405 in, 28
+out on the same session; see CHANGELOG 0.1.14, current truth.)
 
 **The asymmetry is real and it is worse than stated.** 174 sentences explaining
 why something was done went into compaction. Three came out. A session that has
