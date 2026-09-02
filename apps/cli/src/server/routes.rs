@@ -7,12 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions};
-use agentworth_adapters::{
-    AiderAdapter, ClaudeCodeAdapter, ClineAdapter, CodexAdapter, CursorAdapter, DeepSeekAdapter,
-    GeminiAdapter, GooseAdapter, GrokAdapter, HerdrAdapter, HermesAdapter, KimiAdapter, ManusAdapter,
-    MiniMaxAdapter, OpenClawAdapter, OpenCodeAdapter, PiAdapter, QwenAdapter, WindsurfAdapter,
-    ZhipuAdapter,
-};
 use agentworth_core::Scanner;
 use agentworth_outcomes::{OutcomeDetector, RecoveryDetector};
 use agentworth_schema::{AgentWorthTrace, OutcomeEvidence};
@@ -99,6 +93,12 @@ pub struct AdapterMatrixItem {
     pub name: String,
     pub detected: bool,
     pub sessions_count: usize,
+    /// Every raw `sessions.adapter` value counted into `sessions_count` above. Usually
+    /// just `[adapter]`; an adapter that tags sessions under more than one product
+    /// identity (see `AgentAdapter::identity_names`, e.g. Gemini's "gemini" and
+    /// "antigravity") lists all of them here so their rows aren't silently absorbed
+    /// without a trace.
+    pub identities: Vec<String>,
     pub formats: Vec<String>,
     pub token_accounting: bool,
     pub cache_breakdown: bool,
@@ -493,310 +493,323 @@ async fn get_matrix_handler(
     Ok(Json(matrix_res))
 }
 
+/// Curated display metadata for the coverage matrix: a friendlier display name, the file
+/// formats a human recognizes, and hand-verified capability flags. This is presentation
+/// detail that doesn't belong on `AgentAdapter` itself, so it's kept here as a lookup keyed
+/// by `AgentAdapter::name()` rather than folded into the trait.
+struct AdapterDisplayMeta {
+    display_name: &'static str,
+    formats: &'static [&'static str],
+    token_accounting: bool,
+    cache_breakdown: bool,
+    tool_calls: bool,
+    file_actions: bool,
+    shell_commands: bool,
+    model_switches: bool,
+    thinking_blocks: bool,
+    error_recovery: bool,
+}
+
+/// Metadata for an adapter this table hasn't been updated for yet. A newly-registered
+/// adapter (`agentworth_adapters::all_adapters()`) still gets a row in the matrix with this
+/// fallback rather than being silently absent -- that silent absence, for a hand-copied
+/// adapter list instead of a lookup miss, was the root cause behind the "antigravity" rows
+/// vanishing from the matrix entirely. Capability flags fall back to `capabilities()`, which
+/// covers 4 of the 8 columns directly (token_accounting/tool_calls/shell_commands/
+/// thinking_blocks); the remaining 4 (cache_breakdown/file_actions/model_switches/
+/// error_recovery) default to the capability that most overlaps them (diffs, prompts, and
+/// `true`) since there's no dedicated flag for them yet.
+fn default_matrix_meta(adapter: &dyn AgentAdapter) -> AdapterDisplayMeta {
+    let caps = adapter.capabilities();
+    AdapterDisplayMeta {
+        display_name: adapter.name(),
+        formats: &[],
+        token_accounting: caps.tokens,
+        cache_breakdown: caps.tokens,
+        tool_calls: caps.tools,
+        file_actions: caps.diffs,
+        shell_commands: caps.shell,
+        model_switches: true,
+        thinking_blocks: caps.thinking,
+        error_recovery: true,
+    }
+}
+
+fn adapter_display_meta(adapter: &dyn AgentAdapter) -> AdapterDisplayMeta {
+    match adapter.name() {
+        "claude_code" => AdapterDisplayMeta {
+            display_name: "Claude Code",
+            formats: &["jsonl", "json"],
+            token_accounting: true,
+            cache_breakdown: true,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "codex" => AdapterDisplayMeta {
+            display_name: "Codex",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "gemini" => AdapterDisplayMeta {
+            display_name: "Gemini / Antigravity",
+            formats: &["jsonl", "json"],
+            token_accounting: true,
+            cache_breakdown: true,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "opencode" => AdapterDisplayMeta {
+            display_name: "OpenCode",
+            formats: &["jsonl", "db"],
+            token_accounting: true,
+            cache_breakdown: true,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "cursor" => AdapterDisplayMeta {
+            display_name: "Cursor Composer",
+            formats: &["jsonl", "vscdb"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "cline" => AdapterDisplayMeta {
+            display_name: "Cline",
+            formats: &["json"],
+            token_accounting: true,
+            cache_breakdown: true,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "windsurf" => AdapterDisplayMeta {
+            display_name: "Windsurf Cascade",
+            formats: &["json", "jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "aider" => AdapterDisplayMeta {
+            display_name: "Aider",
+            formats: &["chat.history.md", "jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: false,
+            error_recovery: true,
+        },
+        "deepseek" => AdapterDisplayMeta {
+            display_name: "DeepSeek Coder",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: true,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "grok" => AdapterDisplayMeta {
+            display_name: "Grok / xAI",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "kimi" => AdapterDisplayMeta {
+            display_name: "Kimi K1.5",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: true,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "minimax" => AdapterDisplayMeta {
+            display_name: "MiniMax",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "qwen" => AdapterDisplayMeta {
+            display_name: "Qwen / Alibaba",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: true,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "zhipu" => AdapterDisplayMeta {
+            display_name: "GLM / Zhipu",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "goose" => AdapterDisplayMeta {
+            display_name: "Goose",
+            formats: &["jsonl", "db"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "manus" => AdapterDisplayMeta {
+            display_name: "Manus",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "herdr" => AdapterDisplayMeta {
+            display_name: "Herdr",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "hermes" => AdapterDisplayMeta {
+            display_name: "Hermes Agent",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "openclaw" => AdapterDisplayMeta {
+            display_name: "OpenClaw",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        "pi" => AdapterDisplayMeta {
+            display_name: "Pi / Inflection",
+            formats: &["jsonl"],
+            token_accounting: true,
+            cache_breakdown: false,
+            tool_calls: true,
+            file_actions: true,
+            shell_commands: true,
+            model_switches: true,
+            thinking_blocks: true,
+            error_recovery: true,
+        },
+        _ => default_matrix_meta(adapter),
+    }
+}
+
 /// Compute capability and detection matrix across all registered adapters.
 ///
 /// `pub(crate)` rather than private: `apps/cli/src/mcp/server.rs`'s `coverage_stats` tool
 /// reuses this exact computation for its `include_matrix` option instead of duplicating the
 /// 20-adapter definition table.
+///
+/// Derives its adapter list from `agentworth_adapters::all_adapters()` -- the same registry
+/// `Scanner::new` uses -- instead of a hand-copied `Vec` here, so a newly-registered adapter
+/// automatically gets a row. `sessions_count` sums over every name in the adapter's
+/// `identity_names()`, not just its own `name()`: an adapter that files sessions under more
+/// than one product identity (Gemini's "gemini" vs. "antigravity") would otherwise have most
+/// of its rows silently excluded from its own matrix entry, because they're keyed in
+/// storage by the identity `parse()` assigned, not by the adapter struct's `name()`. This
+/// was measured against the real index: 785 sessions tagged "antigravity" were previously
+/// invisible to both `agentworth matrix` and `/api/matrix`.
 pub(crate) fn compute_adapter_matrix(storage: &Storage) -> AdapterMatrixResponse {
     // false: per-adapter `sessions_count` below should agree with what `/api/traces?adapter=X`
     // reports for the same adapter, which is stub-excluded by default.
     let stats = storage.get_aggregate_stats(false).unwrap_or_default();
     let scan_opts = ScanOptions::default();
 
-    #[allow(clippy::type_complexity)]
-    let adapter_defs: Vec<(
-        Box<dyn AgentAdapter>,
-        &'static str,
-        Vec<&'static str>,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-    )> = vec![
-        (
-            Box::new(ClaudeCodeAdapter::new()),
-            "Claude Code",
-            vec!["jsonl", "json"],
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(CodexAdapter::new()),
-            "Codex",
-            vec!["jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(GeminiAdapter::new()),
-            "Gemini / Antigravity",
-            vec!["jsonl", "json"],
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(OpenCodeAdapter::new()),
-            "OpenCode",
-            vec!["jsonl", "db"],
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(CursorAdapter::new()),
-            "Cursor Composer",
-            vec!["jsonl", "vscdb"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(ClineAdapter::new()),
-            "Cline",
-            vec!["json"],
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(WindsurfAdapter::new()),
-            "Windsurf Cascade",
-            vec!["json", "jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(AiderAdapter::new()),
-            "Aider",
-            vec!["chat.history.md", "jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            false,
-            true,
-        ),
-        (
-            Box::new(DeepSeekAdapter::new()),
-            "DeepSeek Coder",
-            vec!["jsonl"],
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(GrokAdapter::new()),
-            "Grok / xAI",
-            vec!["jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(KimiAdapter::new()),
-            "Kimi K1.5",
-            vec!["jsonl"],
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(MiniMaxAdapter::new()),
-            "MiniMax",
-            vec!["jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(QwenAdapter::new()),
-            "Qwen / Alibaba",
-            vec!["jsonl"],
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(ZhipuAdapter::new()),
-            "GLM / Zhipu",
-            vec!["jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(GooseAdapter::new()),
-            "Goose",
-            vec!["jsonl", "db"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(ManusAdapter::new()),
-            "Manus",
-            vec!["jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(HerdrAdapter::new()),
-            "Herdr",
-            vec!["jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(HermesAdapter::new()),
-            "Hermes Agent",
-            vec!["jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(OpenClawAdapter::new()),
-            "OpenClaw",
-            vec!["jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-        (
-            Box::new(PiAdapter::new()),
-            "Pi / Inflection",
-            vec!["jsonl"],
-            true,
-            false,
-            true,
-            true,
-            true,
-            true,
-            true,
-            true,
-        ),
-    ];
+    let adapter_impls = agentworth_adapters::all_adapters();
 
     let mut detected_count = 0;
     let mut adapters = Vec::new();
 
-    for (
-        adapter_impl,
-        display_name,
-        formats,
-        tok_acc,
-        cache_bd,
-        tool_c,
-        file_a,
-        shell_c,
-        model_sw,
-        thinking_b,
-        err_rec,
-    ) in adapter_defs
-    {
+    for adapter_impl in adapter_impls {
+        let meta = adapter_display_meta(adapter_impl.as_ref());
+
         let is_detected = adapter_impl
             .detect(&scan_opts)
             .map(|d| d.is_present)
@@ -804,26 +817,28 @@ pub(crate) fn compute_adapter_matrix(storage: &Storage) -> AdapterMatrixResponse
         if is_detected {
             detected_count += 1;
         }
-        let sess_count = stats
-            .sessions_by_adapter
-            .get(adapter_impl.name())
-            .copied()
-            .unwrap_or(0);
+
+        let identities = adapter_impl.identity_names();
+        let sess_count: usize = identities
+            .iter()
+            .map(|identity| stats.sessions_by_adapter.get(*identity).copied().unwrap_or(0))
+            .sum();
 
         adapters.push(AdapterMatrixItem {
             adapter: adapter_impl.name().to_string(),
-            name: display_name.to_string(),
+            name: meta.display_name.to_string(),
             detected: is_detected,
             sessions_count: sess_count,
-            formats: formats.into_iter().map(String::from).collect(),
-            token_accounting: tok_acc,
-            cache_breakdown: cache_bd,
-            tool_calls: tool_c,
-            file_actions: file_a,
-            shell_commands: shell_c,
-            model_switches: model_sw,
-            thinking_blocks: thinking_b,
-            error_recovery: err_rec,
+            identities: identities.into_iter().map(String::from).collect(),
+            formats: meta.formats.iter().map(|s| s.to_string()).collect(),
+            token_accounting: meta.token_accounting,
+            cache_breakdown: meta.cache_breakdown,
+            tool_calls: meta.tool_calls,
+            file_actions: meta.file_actions,
+            shell_commands: meta.shell_commands,
+            model_switches: meta.model_switches,
+            thinking_blocks: meta.thinking_blocks,
+            error_recovery: meta.error_recovery,
         });
     }
 
@@ -1199,5 +1214,96 @@ mod tests {
              a 'verified' outcome kind, or the verified/total ratio would mix two different \
              populations"
         );
+    }
+
+    /// Regression test for the "antigravity" join bug (docs/capability-matrix.md, #71):
+    /// `GeminiAdapter::parse` tags a subset of its sessions "antigravity" rather than
+    /// "gemini" (see `detect_product_identity`), but the matrix used to join
+    /// `stats.sessions_by_adapter` on `adapter.name()` alone ("gemini"), so every
+    /// "antigravity" row was silently absent from both the matrix and its session counts.
+    /// Seeds a fixture index with every adapter name the real index is known to carry,
+    /// including "antigravity", and asserts every one of them is accounted for in the
+    /// response: findable via some item's `identities`, and folded into that item's
+    /// `sessions_count` so no session is dropped.
+    #[tokio::test]
+    async fn test_compute_adapter_matrix_accounts_for_every_adapter_name_in_fixture() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Storage::open_path(tmp.path()).unwrap();
+        let start = Utc::now();
+
+        // (adapter name stored on the session row, how many sessions to seed under it)
+        let fixture: &[(&str, usize)] = &[
+            ("claude_code", 3),
+            ("codex", 2),
+            ("gemini", 4),
+            ("antigravity", 785), // the exact bug: this adapter name has no `AgentAdapter`
+                                  // whose `name()` equals it -- only `identity_names()` on
+                                  // the Gemini adapter should surface it.
+        ];
+
+        for (adapter_name, count) in fixture {
+            for i in 0..*count {
+                let prov = Provenance::new(
+                    format!("/test/matrix_fixture/{}_{}.jsonl", adapter_name, i),
+                    *adapter_name,
+                    10,
+                    100,
+                    format!("fp_{}_{}", adapter_name, i),
+                );
+                let mut trace = AgentWorthTrace::new(
+                    format!("sess-{}-{}", adapter_name, i),
+                    *adapter_name,
+                    prov,
+                    start + Duration::seconds(i as i64),
+                );
+                trace.stats.total_events = 2;
+                trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+                storage.upsert_trace(&trace).unwrap();
+            }
+        }
+
+        let matrix = compute_adapter_matrix(&storage);
+
+        for (adapter_name, count) in fixture {
+            let owning_item = matrix
+                .adapters
+                .iter()
+                .find(|item| item.identities.iter().any(|id| id == adapter_name))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "adapter name '{}' present in the fixture index has no matrix item \
+                         claiming it in `identities` -- it would be invisible to any consumer \
+                         of /api/matrix",
+                        adapter_name
+                    )
+                });
+
+            assert!(
+                owning_item.sessions_count >= *count,
+                "matrix item '{}' (identities: {:?}) has sessions_count {} but the fixture \
+                 seeded {} sessions under adapter name '{}' alone -- those rows were dropped \
+                 from the count",
+                owning_item.adapter,
+                owning_item.identities,
+                owning_item.sessions_count,
+                count,
+                adapter_name
+            );
+        }
+
+        // The defining case: "gemini" and "antigravity" are two identities of the same
+        // registered adapter, so they must land on the same matrix row and its
+        // sessions_count must be their sum (4 + 785), not just one or the other.
+        let gemini_item = matrix
+            .adapters
+            .iter()
+            .find(|item| item.adapter == "gemini")
+            .expect("gemini adapter must have a matrix row");
+        assert_eq!(
+            gemini_item.sessions_count, 4 + 785,
+            "gemini's matrix row must count both 'gemini' and 'antigravity' sessions"
+        );
+        assert!(gemini_item.identities.iter().any(|id| id == "gemini"));
+        assert!(gemini_item.identities.iter().any(|id| id == "antigravity"));
     }
 }
