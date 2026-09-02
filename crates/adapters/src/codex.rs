@@ -169,11 +169,9 @@ fn read_codex_workspace(path: &Path) -> Option<String> {
                     return Some(cwd.to_string());
                 }
             }
-            Some("turn_context") => {
-                if fallback.is_none() {
-                    fallback = cwd.map(str::to_string);
-                }
-            }
+            // `or_else`, so the first `turn_context` that names a cwd wins and a later one
+            // that does not cannot clear it.
+            Some("turn_context") => fallback = fallback.or_else(|| cwd.map(str::to_string)),
             _ => {}
         }
     }
