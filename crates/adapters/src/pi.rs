@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
+use crate::exit_status::backfill_shell_exit_codes;
 
 /// Adapter for discovering and normalizing Pi agent task sessions and step logs.
 pub struct PiAdapter;
@@ -231,6 +232,7 @@ impl AgentAdapter for PiAdapter {
                         trace.ended_at = Some(latest);
                     }
 
+                    backfill_shell_exit_codes(&mut trace.events);
                     trace.recalculate_stats();
 
                     return Ok(ParseResult {
@@ -277,6 +279,7 @@ impl AgentAdapter for PiAdapter {
             trace.ended_at = Some(latest);
         }
 
+        backfill_shell_exit_codes(&mut trace.events);
         trace.recalculate_stats();
 
         Ok(ParseResult {

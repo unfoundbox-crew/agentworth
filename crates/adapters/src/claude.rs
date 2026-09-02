@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::exit_status::backfill_shell_exit_codes_except;
 use crate::normalize_mcp_tool_name;
 
 /// Adapter for discovering and normalizing Claude Code sessions.
@@ -206,6 +208,8 @@ impl AgentAdapter for ClaudeCodeAdapter {
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
+        // Tool calls whose result describes something other than a finished command.
+        let mut unfinished_calls: HashSet<String> = HashSet::new();
 
         let file = File::open(&source.path)?;
         let mut reader = BufReader::new(file);
@@ -251,9 +255,12 @@ impl AgentAdapter for ClaudeCodeAdapter {
                             latest_ts = Some(timestamp);
                         }
 
+                        collect_unfinished_calls(item, &mut unfinished_calls);
                         let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
+
+                    backfill_shell_exit_codes_except(&mut trace.events, &unfinished_calls);
 
                     if let Some(earliest) = earliest_ts {
                         trace.started_at = earliest;
@@ -296,9 +303,12 @@ impl AgentAdapter for ClaudeCodeAdapter {
                     latest_ts = Some(timestamp);
                 }
 
+                collect_unfinished_calls(&val, &mut unfinished_calls);
                 let events = parse_claude_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
+
+            backfill_shell_exit_codes_except(&mut trace.events, &unfinished_calls);
         }
 
         if let Some(earliest) = earliest_ts {
@@ -315,6 +325,43 @@ impl AgentAdapter for ClaudeCodeAdapter {
             malformed_lines,
             warnings,
         })
+    }
+}
+
+/// Claude Code writes a `toolUseResult` sidecar next to each `tool_result` block. Two of its
+/// fields mean the result is not the command's verdict: `backgroundTaskId` (the tool returned as
+/// soon as the process was launched, and it is still running) and `interrupted` (the run was cut
+/// short). Both come back with `is_error: false`, so without this the success envelope would read
+/// as "exit 0" for a `cargo test` that has not finished — the exact over-trust this path exists
+/// to remove. Their tool-call ids are collected here and left at `exit_code: None`.
+fn collect_unfinished_calls(val: &Value, out: &mut HashSet<String>) {
+    let Some(sidecar) = val.get("toolUseResult").and_then(|v| v.as_object()) else {
+        return;
+    };
+    let unfinished = sidecar.contains_key("backgroundTaskId")
+        || sidecar.get("interrupted").and_then(|v| v.as_bool()) == Some(true);
+    if !unfinished {
+        return;
+    }
+
+    let Some(blocks) = val
+        .get("content")
+        .or_else(|| val.get("message").and_then(|m| m.get("content")))
+        .and_then(|c| c.as_array())
+    else {
+        return;
+    };
+    for block in blocks {
+        if block.get("type").and_then(|v| v.as_str()) != Some("tool_result") {
+            continue;
+        }
+        if let Some(id) = block
+            .get("tool_use_id")
+            .or_else(|| block.get("call_id"))
+            .and_then(|v| v.as_str())
+        {
+            out.insert(id.to_string());
+        }
     }
 }
 
@@ -514,7 +561,16 @@ fn parse_claude_record(
                 .and_then(|c| c.as_str())
             {
                 msg.to_string()
-            } else if let Some(arr) = val.get("content").and_then(|v| v.as_array()) {
+            } else if let Some(arr) = val
+                .get("content")
+                .or_else(|| val.get("message").and_then(|m| m.get("content")))
+                .and_then(|v| v.as_array())
+            {
+                // Real Claude Code JSONL nests the block list under `message.content`; only
+                // hand-written fixtures put it at the top level. Without the fallback this arm
+                // never ran on an actual session: every tool_result went unparsed, the record
+                // fell through to the `val.to_string()` branch below, and the whole raw JSON
+                // line was filed as a user message. The assistant arm already reads both.
                 let mut text_parts = Vec::new();
                 for block in arr {
                     let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -552,7 +608,12 @@ fn parse_claude_record(
                             .with_raw_ref(&raw_ref),
                         );
 
-                        if let Some(out_str) = output.as_str() {
+                        // Only a result the harness itself marked as a pass can carry a
+                        // pass outcome. A failing run's output routinely still contains
+                        // "PASSED" lines from the cases that did pass before the suite died.
+                        let out_text = crate::exit_status::result_text(&output);
+                        if !is_error && !out_text.is_empty() {
+                            let out_str = out_text.as_str();
                             if out_str.contains("test result: ok.")
                                 || out_str.contains("PASSED")
                                 || out_str.contains("100% tests passed")
@@ -1305,5 +1366,125 @@ mod tests {
         // 832179, or worse, summing 728522 + 832179 as if both were deltas) gives a
         // different, wrong number.
         assert_eq!(trace.stats.compaction_tokens_dropped, 1_560_701);
+    }
+
+    /// Every fixture below uses the record shape a real Claude Code transcript has: the block
+    /// list under `message.content`, and the `toolUseResult` sidecar beside it.
+    fn shell_exit_codes(sample: &str) -> Vec<(String, Option<i32>)> {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(sample.as_bytes()).unwrap();
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+        result
+            .trace
+            .events
+            .into_iter()
+            .filter_map(|e| match e.payload {
+                EventPayload::ShellCommand(c) => Some((c.command, c.exit_code)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_shell_exit_code_from_explicit_code_in_error_text() {
+        let sample = r#"
+{"type":"assistant","timestamp":"2026-08-29T10:00:00Z","message":{"content":[{"type":"tool_use","id":"toolu_a","name":"Bash","input":{"command":"cargo test"}}]}}
+{"type":"user","timestamp":"2026-08-29T10:00:09Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_a","is_error":true,"content":"Error: Exit code 101\ntest result: FAILED. 2 passed; 1 failed"}]},"toolUseResult":"Error: Exit code 101"}
+"#;
+        assert_eq!(
+            shell_exit_codes(sample),
+            vec![("cargo test".to_string(), Some(101))]
+        );
+    }
+
+    #[test]
+    fn test_shell_exit_code_from_is_error_alone() {
+        // A command the harness refused to run: flagged as an error, no number anywhere. It
+        // did not succeed, and that is the only thing rung 3 needs to know.
+        let sample = r#"
+{"type":"assistant","timestamp":"2026-08-29T10:00:00Z","message":{"content":[{"type":"tool_use","id":"toolu_b","name":"Bash","input":{"command":"cargo test --workspace"}}]}}
+{"type":"user","timestamp":"2026-08-29T10:00:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_b","is_error":true,"content":"Permission for this action was denied."}]},"toolUseResult":"Permission for this action was denied."}
+"#;
+        assert_eq!(
+            shell_exit_codes(sample),
+            vec![("cargo test --workspace".to_string(), Some(1))]
+        );
+    }
+
+    #[test]
+    fn test_shell_exit_code_zero_from_success_envelope() {
+        let sample = r#"
+{"type":"assistant","timestamp":"2026-08-29T10:00:00Z","message":{"content":[{"type":"tool_use","id":"toolu_c","name":"Bash","input":{"command":"cargo test"}}]}}
+{"type":"user","timestamp":"2026-08-29T10:00:20Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_c","is_error":false,"content":[{"type":"text","text":"test result: ok. 12 passed; 0 failed"}]}]},"toolUseResult":{"stdout":"test result: ok. 12 passed; 0 failed","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}
+"#;
+        assert_eq!(
+            shell_exit_codes(sample),
+            vec![("cargo test".to_string(), Some(0))]
+        );
+    }
+
+    #[test]
+    fn test_backgrounded_command_has_no_exit_code() {
+        // The result reports the launch, not the verdict — `is_error` is false while the suite
+        // is still running. Reading that as exit 0 is exactly the over-trust being removed.
+        let sample = r#"
+{"type":"assistant","timestamp":"2026-08-29T10:00:00Z","message":{"content":[{"type":"tool_use","id":"toolu_d","name":"Bash","input":{"command":"cargo test --workspace"}}]}}
+{"type":"user","timestamp":"2026-08-29T10:00:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_d","is_error":false,"content":"Command running in background with ID: bash_1"}]},"toolUseResult":{"stdout":"","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false,"backgroundTaskId":"bash_1"}}
+"#;
+        assert_eq!(
+            shell_exit_codes(sample),
+            vec![("cargo test --workspace".to_string(), None)]
+        );
+    }
+
+    #[test]
+    fn test_no_result_at_all_leaves_exit_code_unknown() {
+        let sample = r#"
+{"type":"assistant","timestamp":"2026-08-29T10:00:00Z","message":{"content":[{"type":"tool_use","id":"toolu_e","name":"Bash","input":{"command":"cargo build"}}]}}
+"#;
+        assert_eq!(
+            shell_exit_codes(sample),
+            vec![("cargo build".to_string(), None)]
+        );
+    }
+
+    #[test]
+    fn test_tool_results_nested_under_message_content_are_parsed() {
+        // Regression guard: the block list lives under `message.content` in every real
+        // transcript. When this arm only looked at a top-level `content`, the whole raw JSON
+        // line was filed as a user message and the tool result was never seen.
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","message":{"content":[{"type":"text","text":"run the tests"}]}}
+{"type":"assistant","timestamp":"2026-08-29T10:00:01Z","message":{"content":[{"type":"tool_use","id":"toolu_f","name":"Bash","input":{"command":"cargo test"}}]}}
+{"type":"user","timestamp":"2026-08-29T10:00:30Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_f","is_error":false,"content":"test result: ok. 3 passed; 0 failed"}]},"toolUseResult":{"stdout":"test result: ok. 3 passed; 0 failed","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}
+"#;
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(sample.as_bytes()).unwrap();
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let trace = adapter.parse(&source).expect("parse failed").trace;
+
+        let tool_results = trace
+            .events
+            .iter()
+            .filter(|e| matches!(e.payload, EventPayload::ToolResult(_)))
+            .count();
+        assert_eq!(tool_results, 1, "the nested tool_result must be parsed");
+
+        let user_messages: Vec<&str> = trace
+            .events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::UserMessage { content } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            user_messages,
+            vec!["run the tests"],
+            "a tool-result-only record is not a user message, and a real one is not raw JSON"
+        );
     }
 }

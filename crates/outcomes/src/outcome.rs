@@ -256,7 +256,17 @@ impl OutcomeDetector {
             });
         }
 
-        // 3. Test or build execution
+        // 3. Test or build execution.
+        //
+        // "Tests passed" means the run exited 0. It does not mean a test command was typed.
+        // Without a real exit code this rung used to fire at 0.70 on the command string alone,
+        // which is the trust-the-claim failure AgentWorth exists to catch: `cargo test` that
+        // died on a compile error reads identically to `cargo test` that went green.
+        //
+        // `verify.rs` already draws this line for a bare `ToolCall` (it demands some real
+        // `ShellCommand` with `exit_code == Some(0)` before it will confirm one). This makes
+        // the classifier agree with it up front, so both ends of the pipeline mean the same
+        // thing by rung 3.
         if is_test_or_build_command(&trimmed) {
             // If output is present, verify no failures
             if let Some(out) = output {
@@ -265,11 +275,21 @@ impl OutcomeDetector {
                 }
             }
 
-            let conf = if exit_code == Some(0) { 0.85 } else { 0.70 };
+            if exit_code != Some(0) {
+                return Some(OutcomeEvidence {
+                    kind: OutcomeKind::DoneClaimed,
+                    summary: format!(
+                        "Test or build command ran, result unknown (no exit code captured): '{}'",
+                        cmd_str
+                    ),
+                    confidence: 0.35,
+                });
+            }
+
             return Some(OutcomeEvidence {
                 kind: OutcomeKind::TestOrBuildPassed,
-                summary: format!("Test or build suite executed: '{}'", cmd_str),
-                confidence: conf,
+                summary: format!("Test or build suite exited 0: '{}'", cmd_str),
+                confidence: 0.85,
             });
         }
 

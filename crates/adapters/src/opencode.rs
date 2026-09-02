@@ -17,6 +17,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
+use crate::exit_status::backfill_shell_exit_codes;
 use crate::normalize_mcp_tool_name;
 
 /// Adapter for discovering and normalizing OpenCode agent session histories.
@@ -293,6 +294,7 @@ impl AgentAdapter for OpenCodeAdapter {
                         trace.ended_at = Some(latest);
                     }
 
+                    backfill_shell_exit_codes(&mut trace.events);
                     trace.recalculate_stats();
 
                     return Ok(ParseResult {
@@ -339,6 +341,7 @@ impl AgentAdapter for OpenCodeAdapter {
             trace.ended_at = Some(latest);
         }
 
+        backfill_shell_exit_codes(&mut trace.events);
         trace.recalculate_stats();
 
         Ok(ParseResult {
@@ -669,6 +672,7 @@ fn parse_opencode_sqlite_session(
         trace.ended_at = Some(latest);
     }
 
+    backfill_shell_exit_codes(&mut trace.events);
     trace.recalculate_stats();
 
     Ok(ParseResult {
