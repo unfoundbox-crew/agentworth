@@ -87,9 +87,12 @@ fn ci_tool_call_confirmed_by_a_real_result_keeps_its_rank() {
         !ci_outcomes.is_empty(),
         "a really-confirmed CI claim must keep its rank"
     );
+    // The rung is earned by the command that really exited 0, not by the request beside it:
+    // the classifier no longer hands rung 5 to a command string with no captured exit code.
     assert!(
-        ci_outcomes.iter().any(|o| o.summary.contains("confirmed")),
-        "the confirmed tool-call-sourced claim should be tagged as such"
+        ci_outcomes.iter().any(|o| o.summary.contains("exited 0")),
+        "the surviving CI evidence must be the one with a real exit code: {:?}",
+        ci_outcomes
     );
 
     let strongest = detector.strongest_outcome(&outcomes).unwrap();

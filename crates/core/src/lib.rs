@@ -7,7 +7,7 @@ use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
 use agentworth_outcomes::{outcome_kind_name, OutcomeHierarchyDetector};
 use agentworth_schema::AgentWorthTrace;
 use agentworth_scoring::TraceScorer;
-use agentworth_storage::{is_near_empty_session, AggregateStats, Storage};
+use agentworth_storage::{is_near_empty_session, AggregateStats, BackfillReason, Storage};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
@@ -22,6 +22,10 @@ pub struct ScanSummary {
     /// from the source content (e.g. `prompt_preview`, added in v0.1.10 after these rows
     /// were first indexed). See `Storage::needs_backfill`.
     pub backfilled_sessions: usize,
+    /// Unchanged-source rows reparsed because the adapter's `parser_version` has moved past
+    /// the version stored on the row -- the parse output itself changed, so the indexed
+    /// answer is stale even though the file is not. See `AgentAdapter::parser_version`.
+    pub reparsed_sessions: usize,
     pub errors_encountered: usize,
     pub total_indexed_sessions: usize,
     pub aggregate_stats: AggregateStats,
@@ -168,25 +172,30 @@ impl Scanner {
         let mut scanned_sessions = 0;
         let mut skipped_unchanged = 0;
         let mut backfilled_sessions = 0;
+        let mut reparsed_sessions = 0;
         let mut errors_encountered = 0;
 
         for (idx, (adapter_idx, source)) in all_sources.iter().enumerate() {
             let adapter = &self.adapters[*adapter_idx];
             on_progress(idx + 1, total);
 
-            let mut is_backfill = false;
+            let mut backfill_reason = None;
             if !options.force {
                 match self.storage.should_scan_source(source) {
                     Ok(false) => {
                         // Unchanged content, but the indexed row may predate a
-                        // derived-field extractor (e.g. prompt_preview). Reparse once
-                        // to backfill rather than skipping forever.
+                        // derived-field extractor (e.g. prompt_preview), or have been
+                        // produced by an older version of this adapter's parser. Reparse
+                        // once rather than skipping forever.
                         let path_str = source.path.to_string_lossy();
-                        match self.storage.needs_backfill(&path_str) {
-                            Ok(true) => {
-                                is_backfill = true;
+                        match self
+                            .storage
+                            .needs_backfill(&path_str, adapter.parser_version())
+                        {
+                            Ok(Some(reason)) => {
+                                backfill_reason = Some(reason);
                             }
-                            Ok(false) => {
+                            Ok(None) => {
                                 skipped_unchanged += 1;
                                 continue;
                             }
@@ -216,7 +225,7 @@ impl Scanner {
                     // permanent zero-activity stub, regardless of `include_stubs`: this
                     // isn't a thin-but-real session, it's not a session at all.
                     if parse_result.trace.events.is_empty() {
-                        if is_backfill {
+                        if backfill_reason.is_some() {
                             // The row still has no derivable prompt_preview (no user
                             // message in this source), so it will be retried next scan
                             // too -- see the doc comment on `needs_backfill`.
@@ -243,6 +252,13 @@ impl Scanner {
                         continue;
                     }
 
+                    // Every session that gets stored gets both passes, unconditionally --
+                    // there is no path here that indexes a row without running outcome
+                    // detection and scoring over it. A NULL `primary_outcome` therefore means
+                    // "the detector found no outcome evidence in this trace", never "this
+                    // session was never looked at"; a NULL `composite_score` can only be a row
+                    // written by something other than a scan, and `needs_backfill` now pulls
+                    // any such row back through here on the next scan.
                     let outcome_detector = OutcomeHierarchyDetector::new();
                     let outcomes = outcome_detector.detect_outcomes(&parse_result.trace);
                     let strongest = outcome_detector.strongest_outcome(&outcomes);
@@ -256,13 +272,16 @@ impl Scanner {
                         &parse_result.trace,
                         primary_outcome_str.as_deref(),
                         Some(composite_score),
+                        adapter.parser_version(),
                     ) {
                         error!("Failed storing trace for {:?}: {}", source.path, e);
                         errors_encountered += 1;
-                    } else if is_backfill {
-                        backfilled_sessions += 1;
                     } else {
-                        scanned_sessions += 1;
+                        match backfill_reason {
+                            Some(BackfillReason::StaleParserVersion) => reparsed_sessions += 1,
+                            Some(BackfillReason::MissingDerivedField) => backfilled_sessions += 1,
+                            None => scanned_sessions += 1,
+                        }
                     }
                 }
                 Err(e) => {
@@ -306,6 +325,7 @@ impl Scanner {
             scanned_sessions,
             skipped_unchanged,
             backfilled_sessions,
+            reparsed_sessions,
             errors_encountered,
             total_indexed_sessions,
             aggregate_stats,
@@ -455,7 +475,7 @@ mod tests {
             "deadbeef",
         );
         let stale_trace = AgentWorthTrace::new("stale-stub", "claude_code", stale_provenance, Utc::now());
-        storage.upsert_session(&stale_trace, None, None).expect("seed stale stub");
+        storage.upsert_session(&stale_trace, None, None, 0).expect("seed stale stub");
 
         // Stale, but one event / zero tokens rather than fully empty -- must still be
         // caught by the broadened predicate, not just the original zero-only check.
@@ -474,7 +494,7 @@ mod tests {
         );
         stale_one_event_trace.stats.total_events = 1;
         storage
-            .upsert_session(&stale_one_event_trace, None, None)
+            .upsert_session(&stale_one_event_trace, None, None, 0)
             .expect("seed stale one-event stub");
 
         let live_provenance = Provenance::new(
@@ -485,7 +505,7 @@ mod tests {
             "deadbeef",
         );
         let live_trace = AgentWorthTrace::new("live-stub", "claude_code", live_provenance, Utc::now());
-        storage.upsert_session(&live_trace, None, None).expect("seed live stub");
+        storage.upsert_session(&live_trace, None, None, 0).expect("seed live stub");
 
         assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 3);
 
@@ -598,7 +618,7 @@ mod tests {
         let mut stale_trace = AgentWorthTrace::new(&session_id, "claude_code", provenance, Utc::now());
         stale_trace.stats.total_events = 2;
         stale_trace.stats.token_usage = TokenUsage::new(100, 50, 0, 0);
-        storage.upsert_session(&stale_trace, None, None).expect("seed stale row");
+        storage.upsert_session(&stale_trace, None, None, 0).expect("seed stale row");
 
         let seeded = storage.get_session_by_id(&session_id).unwrap().unwrap();
         assert!(
@@ -617,7 +637,11 @@ mod tests {
         let summary = scanner.run_scan(&options, |_, _| {}).expect("backfill scan");
         assert_eq!(summary.scanned_sessions, 0, "not a fresh/changed source");
         assert_eq!(summary.skipped_unchanged, 0, "must not be silently skipped forever");
-        assert_eq!(summary.backfilled_sessions, 1);
+        assert_eq!(
+            summary.backfilled_sessions + summary.reparsed_sessions,
+            1,
+            "the row must be reparsed once, for one of the two reasons"
+        );
 
         let backfilled = storage.get_session_by_id(&session_id).unwrap().unwrap();
         assert_eq!(backfilled.prompt_preview.as_deref(), Some("fix the flaky test"));
@@ -627,6 +651,129 @@ mod tests {
         let summary2 = scanner.run_scan(&options, |_, _| {}).expect("steady-state scan");
         assert_eq!(summary2.scanned_sessions, 0);
         assert_eq!(summary2.backfilled_sessions, 0, "a complete row must not be rescanned");
+        assert_eq!(summary2.reparsed_sessions, 0, "a current-version row must not be rescanned");
+        assert_eq!(summary2.skipped_unchanged, 1);
+    }
+
+    /// The 8,816-NULL-outcome finding, end to end: a row indexed without a score must be
+    /// pulled back through the scanner on the next plain scan -- no `--force` -- and come out
+    /// with both a score and a detected outcome. Then it must go quiet.
+    #[test]
+    fn test_scanner_rescores_an_unscored_row_without_force() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        let mut temp = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Run tests and commit"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":300,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git commit -m 'feat: complete task'"}}]}
+{"type":"tool_result","timestamp":"2026-08-29T10:00:07Z","tool_use_id":"t1","content":"[main 1a2b3c4] feat: complete task\n 2 files changed","is_error":false}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+        let session_id = temp.path().file_stem().unwrap().to_string_lossy().to_string();
+
+        // Seed the exact shape found in the real index: provenance matching the file on disk
+        // (so `should_scan_source` says "unchanged"), no outcome, no score.
+        let source = SessionSource::from_path(temp.path(), "claude_code").expect("source");
+        let provenance = Provenance::new(
+            source.path.to_string_lossy().to_string(),
+            "claude_code",
+            source.file_size_bytes,
+            source.mtime_epoch_secs,
+            &source.fingerprint,
+        );
+        let mut unscored = AgentWorthTrace::new(&session_id, "claude_code", provenance, Utc::now());
+        unscored.stats.total_events = 3;
+        unscored.stats.token_usage = agentworth_schema::TokenUsage::new(300, 100, 0, 0);
+        unscored.events.push(agentworth_schema::NormalizedEvent::new(
+            1,
+            Utc::now(),
+            agentworth_schema::EventPayload::UserMessage {
+                content: "Run tests and commit".to_string(),
+            },
+        ));
+        storage
+            .upsert_session(&unscored, None, None, ClaudeCodeAdapter::PARSER_VERSION)
+            .expect("seed unscored row");
+
+        let seeded = storage.get_session_by_id(&session_id).unwrap().unwrap();
+        assert!(seeded.composite_score.is_none(), "must start unscored");
+
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+            ..Default::default()
+        };
+        let summary = scanner.run_scan(&options, |_, _| {}).expect("rescoring scan");
+        assert_eq!(summary.skipped_unchanged, 0, "an unscored row must not be skipped");
+        assert_eq!(summary.backfilled_sessions, 1);
+
+        let scored = storage.get_session_by_id(&session_id).unwrap().unwrap();
+        assert!(scored.composite_score.is_some(), "the rescan must score it");
+        assert_eq!(scored.primary_outcome.as_deref(), Some("commit_observed"));
+
+        let summary2 = scanner.run_scan(&options, |_, _| {}).expect("steady-state scan");
+        assert_eq!(summary2.skipped_unchanged, 1, "one pass is enough");
+        assert_eq!(summary2.backfilled_sessions, 0);
+    }
+
+    /// A parser-version bump reaches sessions an incremental scan would otherwise skip
+    /// forever, and reports them separately from a missing-field backfill.
+    #[test]
+    fn test_scanner_reparses_rows_left_by_an_older_parser_version() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        let mut temp = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"fix the flaky test"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Done"}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+        let session_id = temp.path().file_stem().unwrap().to_string_lossy().to_string();
+
+        let source = SessionSource::from_path(temp.path(), "claude_code").expect("source");
+        let provenance = Provenance::new(
+            source.path.to_string_lossy().to_string(),
+            "claude_code",
+            source.file_size_bytes,
+            source.mtime_epoch_secs,
+            &source.fingerprint,
+        );
+        let mut old_row = AgentWorthTrace::new(&session_id, "claude_code", provenance, Utc::now());
+        old_row.stats.total_events = 2;
+        old_row.stats.token_usage = agentworth_schema::TokenUsage::new(100, 50, 0, 0);
+        old_row.events.push(agentworth_schema::NormalizedEvent::new(
+            1,
+            Utc::now(),
+            agentworth_schema::EventPayload::UserMessage {
+                content: "fix the flaky test".to_string(),
+            },
+        ));
+        // Complete in every other way -- only the parser version is behind.
+        storage
+            .upsert_session(
+                &old_row,
+                Some("done_claimed"),
+                Some(0.4),
+                ClaudeCodeAdapter::PARSER_VERSION - 1,
+            )
+            .expect("seed old-parser row");
+
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+            ..Default::default()
+        };
+        let summary = scanner.run_scan(&options, |_, _| {}).expect("reparse scan");
+        assert_eq!(summary.skipped_unchanged, 0, "a stale parse must not be skipped");
+        assert_eq!(summary.reparsed_sessions, 1);
+        assert_eq!(summary.backfilled_sessions, 0, "this is a version bump, not a missing field");
+
+        let summary2 = scanner.run_scan(&options, |_, _| {}).expect("steady-state scan");
+        assert_eq!(summary2.reparsed_sessions, 0, "one reparse per bump, not one per scan");
         assert_eq!(summary2.skipped_unchanged, 1);
     }
 

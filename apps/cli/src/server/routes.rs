@@ -1244,7 +1244,7 @@ mod tests {
             let mut trace = AgentWorthTrace::new(id, "claude_code", prov, start);
             trace.stats.total_events = events as usize;
             trace.stats.token_usage = TokenUsage::new(tokens, 0, 0, 0);
-            storage.upsert_session(&trace, outcome, outcome.map(|_| 0.9)).unwrap();
+            storage.upsert_session(&trace, outcome, outcome.map(|_| 0.9), 1).unwrap();
         }
 
         // Five real sessions, two of them verified.
@@ -1273,7 +1273,7 @@ mod tests {
             trace.stats.total_events = 10;
             trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
             let outcome = real_outcomes[i as usize];
-            storage.upsert_session(&trace, outcome, outcome.map(|_| 0.8)).unwrap();
+            storage.upsert_session(&trace, outcome, outcome.map(|_| 0.8), 1).unwrap();
         }
 
         let storage = Arc::new(storage);

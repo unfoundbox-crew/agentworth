@@ -121,6 +121,11 @@ trait AgentAdapter {
 
 Exact signatures may evolve; separation of responsibilities should not.
 
+Bump the adapter's `PARSER_VERSION` whenever the parse output changes for files that already
+parse — new or corrected fields, different normalization, changed token accounting. An
+incremental scan skips unchanged bytes, so without the bump the index keeps serving what the
+old parser produced until someone runs `--force`.
+
 ## Canonical model
 
 Use `AgentWorthTrace` internally.

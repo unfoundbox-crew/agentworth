@@ -409,7 +409,7 @@ fn seed_claimed_session(
     trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
     trace.stats.models_used = models.iter().map(|m| m.to_string()).collect();
     storage
-        .upsert_session(&trace, primary_outcome, None)
+        .upsert_session(&trace, primary_outcome, None, 1)
         .expect("seed claimed session");
 }
 

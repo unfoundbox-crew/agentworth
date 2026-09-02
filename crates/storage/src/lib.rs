@@ -61,6 +61,17 @@ pub struct AggregateStats {
 /// `total_events`) is allowed to make that call.
 const NON_STUB_SQL_PREDICATE: &str = "total_events > 1 AND total_tokens > 0";
 
+/// Why an unchanged source has to be reparsed anyway. See `Storage::needs_backfill`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackfillReason {
+    /// The row is missing a value the current code derives from the source content
+    /// (`prompt_preview`, `composite_score`) -- it was indexed before that value existed.
+    MissingDerivedField,
+    /// The adapter's parse output has changed since this row was written, so what is indexed
+    /// is what an older, wronger parser produced from bytes that never changed.
+    StaleParserVersion,
+}
+
 /// SQL predicate identifying a session as too near-empty to keep indexed at all, independent
 /// of token telemetry -- 0 or 1 normalized events total. This is the scanner's own, narrower
 /// bar for whether to store/prune a row (see `Storage::stub_sessions` and
@@ -431,6 +442,7 @@ impl Storage {
                 prompt_preview TEXT,
                 compaction_count INTEGER NOT NULL DEFAULT 0,
                 compaction_tokens_dropped INTEGER NOT NULL DEFAULT 0,
+                parser_version INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
 
@@ -495,6 +507,14 @@ impl Storage {
             if !columns.contains(&"compaction_tokens_dropped".to_string()) {
                 let _ = conn.execute(
                     "ALTER TABLE sessions ADD COLUMN compaction_tokens_dropped INTEGER NOT NULL DEFAULT 0",
+                    [],
+                );
+            }
+            // 0, not 1: a row that predates this column was written by an unknown parser, so
+            // it must sort below every adapter's current version and get reparsed once.
+            if !columns.contains(&"parser_version".to_string()) {
+                let _ = conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0",
                     [],
                 );
             }
@@ -665,28 +685,54 @@ impl Storage {
     /// caveat on `get_compaction_outcome_correlation`). Only a *non-zero* count is evidence.
     /// `source_mtime_epoch_secs` is joined from `sources.mtime`, which is written in the same
     /// transaction as the session row, so it's never missing for a row that has a `sources`
-    /// entry at all. A caller that reparses on `true` here backfills everything anyway, since
-    /// parsing is all-or-nothing.
-    pub fn needs_backfill(&self, source_path: &str) -> Result<bool> {
+    /// entry at all. A caller that reparses here backfills everything anyway, since parsing
+    /// is all-or-nothing.
+    ///
+    /// Two further triggers, both of which also terminate on their own:
+    ///
+    /// - `composite_score IS NULL` -- the row was written without ever being scored. Scoring
+    ///   always yields a number (`clamp01` maps even NaN to 0.0), so a rescored row is never
+    ///   NULL again and this fires at most once per row. Deliberately *not* keyed on
+    ///   `primary_outcome IS NULL`: a NULL outcome is the correct, permanent answer for a
+    ///   session that produced no outcome evidence at all, so reparsing on it would rescan
+    ///   thousands of rows on every single scan, forever.
+    /// - `parser_version < current_parser_version` -- the adapter has since changed what it
+    ///   extracts from a file of this shape, so the stored row is stale even though its bytes
+    ///   are not. This is what re-derives outcomes and scores after a parse fix (#81) without
+    ///   `--force`. The reparse writes the current version, so it also fires at most once.
+    pub fn needs_backfill(
+        &self,
+        source_path: &str,
+        current_parser_version: i64,
+    ) -> Result<Option<BackfillReason>> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn.prepare(
             "SELECT s.prompt_preview, s.compaction_count,
-                    (SELECT COUNT(*) FROM session_compaction c WHERE c.session_id = s.session_id)
+                    (SELECT COUNT(*) FROM session_compaction c WHERE c.session_id = s.session_id),
+                    s.composite_score, s.parser_version
              FROM sessions s WHERE s.source_path = ?1",
         )?;
         let mut rows = stmt.query(params![source_path])?;
         while let Some(row) = rows.next()? {
+            let parser_version: i64 = row.get(4)?;
+            if parser_version < current_parser_version {
+                return Ok(Some(BackfillReason::StaleParserVersion));
+            }
             let prompt_preview: Option<String> = row.get(0)?;
             if prompt_preview.as_deref().unwrap_or("").trim().is_empty() {
-                return Ok(true);
+                return Ok(Some(BackfillReason::MissingDerivedField));
+            }
+            let composite_score: Option<f64> = row.get(3)?;
+            if composite_score.is_none() {
+                return Ok(Some(BackfillReason::MissingDerivedField));
             }
             let compaction_count: i64 = row.get(1)?;
             let stored_rounds: i64 = row.get(2)?;
             if compaction_count > 0 && stored_rounds == 0 {
-                return Ok(true);
+                return Ok(Some(BackfillReason::MissingDerivedField));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// Returns `(session_id, adapter, source_path)` for every indexed session that fails
@@ -732,11 +778,16 @@ impl Storage {
     }
 
     /// Upsert an indexed session into the database atomically with verdict and score.
+    ///
+    /// `parser_version` is the producing adapter's `AgentAdapter::parser_version()`. It is
+    /// what lets a later scan tell a row parsed by today's code from one parsed by an older,
+    /// wronger version of it -- see `needs_backfill`.
     pub fn upsert_session(
         &self,
         trace: &AgentWorthTrace,
         primary_outcome: Option<&str>,
         composite_score: Option<f64>,
+        parser_version: i64,
     ) -> Result<()> {
         let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let tx = conn.transaction()?;
@@ -794,9 +845,9 @@ impl Storage {
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata, scanned_at,
                 primary_outcome, composite_score, prompt_preview,
-                compaction_count, compaction_tokens_dropped
+                compaction_count, compaction_tokens_dropped, parser_version
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
             ON CONFLICT(session_id) DO UPDATE SET
                 adapter = excluded.adapter,
                 source_path = excluded.source_path,
@@ -821,7 +872,8 @@ impl Storage {
                 composite_score = excluded.composite_score,
                 prompt_preview = excluded.prompt_preview,
                 compaction_count = excluded.compaction_count,
-                compaction_tokens_dropped = excluded.compaction_tokens_dropped;
+                compaction_tokens_dropped = excluded.compaction_tokens_dropped,
+                parser_version = excluded.parser_version;
             "#,
             params![
                 trace.session_id,
@@ -849,6 +901,7 @@ impl Storage {
                 prompt_preview,
                 trace.stats.compaction_count as i64,
                 trace.stats.compaction_tokens_dropped as i64,
+                parser_version,
             ],
         )?;
 
@@ -974,9 +1027,11 @@ impl Storage {
         Ok(out)
     }
 
-    /// Upsert an indexed trace into the database atomically.
+    /// Upsert an indexed trace into the database atomically, with no verdict, no score, and
+    /// no parser version. A row written this way always reads as needing a backfill -- which
+    /// is correct: nothing about it came from a scan.
     pub fn upsert_trace(&self, trace: &AgentWorthTrace) -> Result<()> {
-        self.upsert_session(trace, None, None)
+        self.upsert_session(trace, None, None, 0)
     }
 
     /// Retrieve summary statistics across the whole indexed database.
@@ -2803,7 +2858,7 @@ mod tests {
         trace.stats.token_usage = TokenUsage::new(1000, 200, 0, 0);
 
         storage
-            .upsert_session(&trace, Some("commit_observed"), Some(0.88))
+            .upsert_session(&trace, Some("commit_observed"), Some(0.88), 1)
             .expect("upsert session");
 
         let loaded = storage
@@ -2843,7 +2898,7 @@ mod tests {
             trace.stats.total_events = 5;
             trace.stats.token_usage = TokenUsage::new(tokens, 100, 0, 0);
             storage
-                .upsert_session(&trace, outcome, Some(score))
+                .upsert_session(&trace, outcome, Some(score), 1)
                 .expect("upsert");
         }
 
@@ -2944,7 +2999,7 @@ mod tests {
             trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
             trace.stats.compaction_count = compactions;
             storage
-                .upsert_session(&trace, outcome, Some(0.5))
+                .upsert_session(&trace, outcome, Some(0.5), 1)
                 .expect("seed row");
         }
 
@@ -3002,7 +3057,7 @@ mod tests {
             trace.stats.total_events = 5;
             trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
             storage
-                .upsert_session(&trace, Some(outcome), Some(0.5))
+                .upsert_session(&trace, Some(outcome), Some(0.5), 1)
                 .expect("seed legacy row");
         }
 
@@ -3011,7 +3066,7 @@ mod tests {
         already_fixed.stats.total_events = 5;
         already_fixed.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
         storage
-            .upsert_session(&already_fixed, Some("commit_observed"), Some(0.9))
+            .upsert_session(&already_fixed, Some("commit_observed"), Some(0.9), 1)
             .expect("seed already-migrated row");
 
         let prov_unscored = Provenance::new("/path/unscored.jsonl", "claude_code", 100, 100, "fp_unscored");
@@ -3019,7 +3074,7 @@ mod tests {
         unscored.stats.total_events = 5;
         unscored.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
         storage
-            .upsert_session(&unscored, None, None)
+            .upsert_session(&unscored, None, None, 1)
             .expect("seed unscored row");
 
         // Sanity check: the fixture really does carry the old, broken encoding before migration.
@@ -3168,6 +3223,30 @@ mod tests {
         assert_eq!(none_summary.prompt_preview, None);
     }
 
+    /// Seeds one row with a user message (so `prompt_preview` is derivable) at the given
+    /// score and parser version.
+    fn seed_backfill_row(
+        storage: &Storage,
+        id: &str,
+        path: &str,
+        composite_score: Option<f64>,
+        parser_version: i64,
+    ) {
+        let start = Utc::now();
+        let prov = Provenance::new(path, "claude_code", 100, 100, "fp");
+        let mut trace = AgentWorthTrace::new(id, "claude_code", prov, start);
+        trace.stats.total_events = 1;
+        trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage { content: "already has a preview".to_string() },
+        ));
+        storage
+            .upsert_session(&trace, Some("done_claimed"), composite_score, parser_version)
+            .expect("seed row");
+    }
+
     /// `needs_backfill` is the predicate the scanner uses to reparse an unchanged source
     /// whose row predates a derived-field extractor. It must say yes for a row with an
     /// empty/missing `prompt_preview`, no for a row that already has one, and no for a
@@ -3186,29 +3265,25 @@ mod tests {
             start,
             EventPayload::AssistantMessage { content: "hi".to_string(), thinking: None },
         ));
-        storage.upsert_trace(&trace_missing).expect("upsert missing");
-        assert!(
-            storage.needs_backfill("/path/missing.jsonl").unwrap(),
+        storage
+            .upsert_session(&trace_missing, None, Some(0.4), 1)
+            .expect("upsert missing");
+        assert_eq!(
+            storage.needs_backfill("/path/missing.jsonl", 1).unwrap(),
+            Some(BackfillReason::MissingDerivedField),
             "a row with no prompt_preview needs backfill"
         );
 
-        let prov_complete = Provenance::new("/path/complete.jsonl", "claude_code", 100, 100, "fp_complete");
-        let mut trace_complete = AgentWorthTrace::new("complete", "claude_code", prov_complete, start);
-        trace_complete.stats.total_events = 1;
-        trace_complete.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
-        trace_complete.events.push(NormalizedEvent::new(
-            1,
-            start,
-            EventPayload::UserMessage { content: "already has a preview".to_string() },
-        ));
-        storage.upsert_trace(&trace_complete).expect("upsert complete");
-        assert!(
-            !storage.needs_backfill("/path/complete.jsonl").unwrap(),
+        seed_backfill_row(&storage, "complete", "/path/complete.jsonl", Some(0.5), 1);
+        assert_eq!(
+            storage.needs_backfill("/path/complete.jsonl", 1).unwrap(),
+            None,
             "a row with a non-empty prompt_preview must not be re-flagged"
         );
 
-        assert!(
-            !storage.needs_backfill("/path/never-indexed.jsonl").unwrap(),
+        assert_eq!(
+            storage.needs_backfill("/path/never-indexed.jsonl", 1).unwrap(),
+            None,
             "no existing row is a normal new-source scan, not a backfill"
         );
     }
@@ -3287,10 +3362,15 @@ mod tests {
     fn test_needs_backfill_flags_a_compacted_session_with_no_round_rows_once() {
         let storage = Storage::open_in_memory().expect("open storage");
         let trace = compacted_trace("sess_backfill", "/path/backfill.jsonl");
-        storage.upsert_trace(&trace).expect("upsert");
+        // Written the way a scan writes it -- scored, and stamped with the parser version --
+        // so the only thing this test can trip is the round-boundary condition.
+        storage
+            .upsert_session(&trace, None, Some(0.5), 1)
+            .expect("upsert");
 
-        assert!(
-            !storage.needs_backfill("/path/backfill.jsonl").unwrap(),
+        assert_eq!(
+            storage.needs_backfill("/path/backfill.jsonl", 1).unwrap(),
+            None,
             "a freshly written row has its rounds already"
         );
 
@@ -3303,15 +3383,120 @@ mod tests {
             )
             .expect("drop round rows");
         }
-        assert!(
-            storage.needs_backfill("/path/backfill.jsonl").unwrap(),
+        assert_eq!(
+            storage.needs_backfill("/path/backfill.jsonl", 1).unwrap(),
+            Some(BackfillReason::MissingDerivedField),
             "compaction_count > 0 with no round rows is a row that predates the table"
         );
 
-        storage.upsert_trace(&trace).expect("reparse");
-        assert!(
-            !storage.needs_backfill("/path/backfill.jsonl").unwrap(),
+        storage
+            .upsert_session(&trace, None, Some(0.5), 1)
+            .expect("reparse");
+        assert_eq!(
+            storage.needs_backfill("/path/backfill.jsonl", 1).unwrap(),
+            None,
             "the reparse must settle it -- this predicate fires at most once per session"
+        );
+    }
+
+    /// The 8,816-NULL-outcome finding: a row that was indexed without ever being scored has
+    /// to come back through the scanner once, without `--force`. Scoring always produces a
+    /// number, so the flag clears on that one pass and the row is not rescanned forever.
+    #[test]
+    fn test_needs_backfill_flags_an_unscored_row_once() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        seed_backfill_row(&storage, "unscored", "/path/unscored.jsonl", None, 1);
+        assert_eq!(
+            storage.needs_backfill("/path/unscored.jsonl", 1).unwrap(),
+            Some(BackfillReason::MissingDerivedField),
+            "a row with a NULL composite_score was never scored and must be rescanned"
+        );
+
+        seed_backfill_row(&storage, "unscored", "/path/unscored.jsonl", Some(0.0), 1);
+        assert_eq!(
+            storage.needs_backfill("/path/unscored.jsonl", 1).unwrap(),
+            None,
+            "a score of 0.0 is still a score -- rescanning must stop after one pass"
+        );
+    }
+
+    /// A NULL `primary_outcome` is the correct, permanent answer for a trace with no outcome
+    /// evidence in it. It must never trigger a backfill on its own, or every scan would
+    /// reparse thousands of rows forever.
+    #[test]
+    fn test_null_primary_outcome_alone_does_not_trigger_backfill() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let start = Utc::now();
+        let prov = Provenance::new("/path/no-outcome.jsonl", "claude_code", 100, 100, "fp_no");
+        let mut trace = AgentWorthTrace::new("no-outcome", "claude_code", prov, start);
+        trace.stats.total_events = 2;
+        trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage { content: "what does this do?".to_string() },
+        ));
+        storage
+            .upsert_session(&trace, None, Some(0.12), 1)
+            .expect("seed scored row with no outcome");
+
+        assert_eq!(
+            storage.needs_backfill("/path/no-outcome.jsonl", 1).unwrap(),
+            None,
+            "no outcome evidence is a real answer, not a missing field"
+        );
+    }
+
+    /// A parse fix changes what an unchanged file yields, so the stored row is stale even
+    /// though its bytes are not. Bumping the adapter's parser version has to pull it back
+    /// through the scanner exactly once.
+    #[test]
+    fn test_needs_backfill_flags_a_stale_parser_version_once() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        seed_backfill_row(&storage, "v1row", "/path/v1.jsonl", Some(0.7), 1);
+        assert_eq!(
+            storage.needs_backfill("/path/v1.jsonl", 1).unwrap(),
+            None,
+            "a row at the adapter's current version is up to date"
+        );
+        assert_eq!(
+            storage.needs_backfill("/path/v1.jsonl", 2).unwrap(),
+            Some(BackfillReason::StaleParserVersion),
+            "the adapter now parses this file differently, so the row is stale"
+        );
+
+        seed_backfill_row(&storage, "v1row", "/path/v1.jsonl", Some(0.7), 2);
+        assert_eq!(
+            storage.needs_backfill("/path/v1.jsonl", 2).unwrap(),
+            None,
+            "the reparse recorded the new version, so it must not repeat"
+        );
+    }
+
+    /// Every row written before this column existed reads as version 0, below every
+    /// adapter's version 1 -- so an index built by an older binary reparses itself once
+    /// rather than serving stale parses forever.
+    #[test]
+    fn test_rows_predating_the_parser_version_column_are_stale() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let start = Utc::now();
+        let prov = Provenance::new("/path/legacy.jsonl", "claude_code", 100, 100, "fp_legacy");
+        let mut trace = AgentWorthTrace::new("legacy", "claude_code", prov, start);
+        trace.stats.total_events = 2;
+        trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage { content: "a real prompt".to_string() },
+        ));
+        // upsert_trace is the pre-scan seeding path: no verdict, no score, no version.
+        storage.upsert_trace(&trace).expect("seed legacy row");
+
+        assert_eq!(
+            storage.needs_backfill("/path/legacy.jsonl", 1).unwrap(),
+            Some(BackfillReason::StaleParserVersion)
         );
     }
 
@@ -3409,7 +3594,7 @@ mod tests {
         stub_verified.stats.total_events = 5;
         stub_verified.stats.token_usage = TokenUsage::new(0, 0, 0, 0);
         storage
-            .upsert_session(&stub_verified, Some("commit_observed"), Some(0.9))
+            .upsert_session(&stub_verified, Some("commit_observed"), Some(0.9), 1)
             .expect("upsert stub_verified");
 
         // Three real sessions across two adapters, one carrying a verified outcome.
@@ -3424,7 +3609,7 @@ mod tests {
             trace.stats.total_events = 10;
             trace.stats.token_usage = TokenUsage::new(1000, 200, 0, 0);
             storage
-                .upsert_session(&trace, outcome, Some(0.5))
+                .upsert_session(&trace, outcome, Some(0.5), 1)
                 .expect("upsert real session");
         }
 
@@ -3568,7 +3753,7 @@ mod tests {
         trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
         trace.stats.models_used = models.iter().map(|m| m.to_string()).collect();
         storage
-            .upsert_session(&trace, primary_outcome, None)
+            .upsert_session(&trace, primary_outcome, None, 1)
             .expect("seed outcome session");
     }
 
