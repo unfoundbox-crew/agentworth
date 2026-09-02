@@ -541,9 +541,14 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
 /// finished, and summing those is the obvious way to total a session -- but it is wrong. Over
 /// 425 real rollout files that carry token events, summing `last_token_usage` matches the
 /// final `total_token_usage` in 339 and overshoots it in 86: Codex re-emits a turn's counts
-/// more than once. `total_token_usage` is monotonic in 447 of 448 files, so this adapter
-/// tracks it and attributes each event the *delta* since the previous one. The deltas then
-/// sum to exactly the session's real total, and no turn is counted twice.
+/// more than once. So this adapter tracks `total_token_usage` and attributes each event the
+/// *delta* since the previous one. The deltas then sum to exactly the session's real total,
+/// and no turn is counted twice.
+///
+/// The counter is monotonic in 447 of 448 files. In the one that is not, it restarts four
+/// times mid-session, and at each restart `total_token_usage` equals that event's own
+/// `last_token_usage` -- the signature of a fresh running total, not of a corrupt one. See
+/// [`Self::advance`] for how a restart is counted.
 #[derive(Default, Clone, Copy)]
 struct CodexCumulativeTokens {
     input: u64,
@@ -571,21 +576,42 @@ impl CodexCumulativeTokens {
     /// the whole prompt with the cached part inside it, and reasoning tokens are already
     /// inside `output_tokens`. Cache reads are therefore subtracted out of input rather than
     /// added alongside it, and `reasoning_output_tokens` is deliberately not read at all:
-    /// OpenAI bills it as output and adding it again would double-count. `saturating_sub`
-    /// throughout so the one file whose counters are not monotonic yields a zero delta
-    /// instead of wrapping.
+    /// OpenAI bills it as output and adding it again would double-count.
+    ///
+    /// Every counter goes through [`Self::advance`], so a restarted counter contributes its
+    /// new value in full rather than nothing.
     fn delta_since(self, prev: Self) -> TokenUsage {
-        let input = self.input.saturating_sub(prev.input);
-        let cached = self.cached.saturating_sub(prev.cached);
+        let input = Self::advance(self.input, prev.input);
+        let cached = Self::advance(self.cached, prev.cached);
         TokenUsage::new(
             input.saturating_sub(cached),
-            self.output.saturating_sub(prev.output),
+            Self::advance(self.output, prev.output),
             cached,
             // Never observed non-zero in any of the 36,334 records measured, so whether it
             // nests inside `input_tokens` the way `cached_input_tokens` does is unverified.
             // Carried through as its own bucket rather than guessed at.
-            self.cache_write.saturating_sub(prev.cache_write),
+            Self::advance(self.cache_write, prev.cache_write),
         )
+    }
+
+    /// What one counter added between two `token_count` events.
+    ///
+    /// Normally that is `current - previous`. A *decrease* means Codex restarted the running
+    /// total -- a resumed thread begins its own -- and then `current` is not a delta at all,
+    /// it is the whole of the new total so far. Counting it as zero would drop that value and
+    /// every value up to the next event: a file reading 1000 -> 100 -> 600 spent 1600, not
+    /// 1500, and a restart on the last event would lose the entire tail. So a decrease is
+    /// attributed in full. Applied per counter, not to the session total, so a restart that
+    /// touches one field and not another is still counted field by field.
+    ///
+    /// Measured on the one non-monotonic file here: four restarts, five segments, 106,218,334
+    /// tokens under this rule against 105,540,401 under the old zero-delta one.
+    fn advance(current: u64, previous: u64) -> u64 {
+        if current < previous {
+            current
+        } else {
+            current.saturating_sub(previous)
+        }
     }
 }
 

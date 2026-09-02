@@ -8,7 +8,7 @@ should plan against. Nine of them have ever produced a row here, two produce
 tokens, two produce outcomes, and one produces everything.
 
 Every count on this page is from the index as it stood on 2026-09-02. The Codex
-adapter was fixed after that snapshot (#114) and its rows are stale until a
+adapter was fixed after that snapshot (#116) and its rows are stale until a
 rescan reparses them; the Codex entries below say so where it matters. Nothing
 else here has been re-measured since.
 
@@ -86,7 +86,7 @@ Three separate failures in one table:
 
 1. **`codex` claims tokens and produces one row with any.** 1,156 sessions,
    874 of them with real event counts, one with a token total. Cause found and
-   fixed in #114: the parser read a top-level `usage`/`model` that Codex
+   fixed in #116: the parser read a top-level `usage`/`model` that Codex
    rollouts do not have. Every field sits under `payload`, keyed by a top-level
    `type` — `turn_context` carries `model` and `effort`, `event_msg` /
    `token_count` carries the counters, `session_meta` carries `cwd`. Measured
@@ -158,7 +158,7 @@ One line each, from what the index shows, not from what the adapter claims.
 | claude_code | **Full.** Events, tools, shell, tokens, files, outcomes. Everything else in this product is really built on this one. |
 | opencode | **Deep, undersold.** Tokens and outcomes both real; blame paths are relative, which breaks file attribution. |
 | antigravity | **Events and tools, no tokens.** 48 outcomes from 353 tool-bearing sessions. Not in the capability table under this name. |
-| codex | **Tokens, model, effort and repo since #114; tools and outcomes still missing.** The 874 rows counted above predate the fix and read as events-only until a rescan. The adapter now reads `session_meta.cwd` for the repository (the rollout path is under `~/.codex` and used to bucket every session into the home directory), `turn_context.model` and `turn_context.effort` per turn, and the `token_count` events' cumulative counters. Tool calls, prompts and outcomes are still unread: they live in `response_item` and `event_msg`/`item_completed` records nothing parses yet. |
+| codex | **Tokens, model, effort and repo since #116; tools and outcomes still missing.** The 874 rows counted above predate the fix and read as events-only until a rescan. The adapter now reads `session_meta.cwd` for the repository (the rollout path is under `~/.codex` and used to bucket every session into the home directory), `turn_context.model` and `turn_context.effort` per turn, and the `token_count` events' cumulative counters. Tool calls, prompts and outcomes are still unread: they live in `response_item` and `event_msg`/`item_completed` records nothing parses yet. |
 | gemini | **Events and tools, nothing scored.** 44 real sessions, zero tokens, zero outcomes. |
 | grok | **Events only, thin.** 34 sessions with events, one tool call across all of them. |
 | pi | **Events only.** 37 real sessions, no tools. |

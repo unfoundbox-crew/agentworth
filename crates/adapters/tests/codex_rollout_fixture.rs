@@ -4,6 +4,10 @@
 //! the record envelopes and the four fields the format actually holds -- `session_meta.cwd`,
 //! `turn_context.model`, `turn_context.effort`, and the `token_count` counters. Every number
 //! in it is invented; the shapes are copied from files under `~/.codex/sessions`.
+//!
+//! Its ten records hold three traps on purpose: a repeated `token_count` (line 4) that must
+//! contribute nothing, a reviewer sub-thread turn that must keep its own tokens, and a
+//! restarted cumulative counter (line 9) that must contribute its new total in full.
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
 use agentworth_adapters::CodexAdapter;
@@ -123,7 +127,7 @@ fn codex_model_and_effort_come_from_turn_context() {
         "the reviewer sub-thread is a real model that really spent tokens; which one counts \
          as the session's model is a question for the query side"
     );
-    // `high` on two turns, `low` on one.
+    // `high` on four invocations, `low` on one.
     assert_eq!(trace.stats.effort.as_deref(), Some("high"));
 
     let invocations = model_invocations(&trace);
@@ -136,15 +140,16 @@ fn codex_model_and_effort_come_from_turn_context() {
             ("gpt-5.6-sol", Some("high")),
             ("codex-auto-review", Some("low")),
             ("gpt-5.6-sol", Some("high")),
+            ("gpt-5.6-sol", Some("high")),
+            ("gpt-5.6-sol", Some("high")),
         ]
     );
 }
 
 /// Codex re-emits a turn's `last_token_usage` more than once (86 of 425 real rollout files
 /// that carry token events overshoot their own cumulative total when you sum it). The
-/// adapter reads the monotonic `total_token_usage` and attributes deltas, so the repeated
-/// record on line 4 of the fixture contributes nothing and the session total lands on
-/// exactly what the last record says it is.
+/// adapter reads `total_token_usage` and attributes deltas, so the repeated record on line 4
+/// of the fixture contributes nothing.
 #[test]
 fn codex_tokens_are_deltas_of_the_cumulative_counter_not_a_sum_of_per_turn_counts() {
     let temp = staged_codex_home();
@@ -153,13 +158,10 @@ fn codex_tokens_are_deltas_of_the_cumulative_counter_not_a_sum_of_per_turn_count
 
     let usage = trace.stats.token_usage;
     // Cached input nests inside Codex's `input_tokens`; AgentWorth keeps the two disjoint.
-    assert_eq!(usage.input_tokens, 1_100);
-    assert_eq!(usage.output_tokens, 350);
-    assert_eq!(usage.cache_read_tokens, 700);
+    assert_eq!(usage.input_tokens, 1_550);
+    assert_eq!(usage.output_tokens, 510);
+    assert_eq!(usage.cache_read_tokens, 950);
     assert_eq!(usage.cache_creation_tokens, 0);
-    // The fixture's final `total_token_usage.total_tokens`. Summing `last_token_usage`
-    // instead would give 2,800.
-    assert_eq!(usage.total(), 2_150);
 
     assert_eq!(
         model_invocations(&trace)
@@ -170,18 +172,49 @@ fn codex_tokens_are_deltas_of_the_cumulative_counter_not_a_sum_of_per_turn_count
             TokenUsage::new(600, 200, 400, 0),
             TokenUsage::new(300, 100, 200, 0),
             TokenUsage::new(200, 50, 100, 0),
+            // Line 9 restarts the counter, so its new total is the whole of this event.
+            TokenUsage::new(250, 90, 150, 0),
+            TokenUsage::new(200, 70, 100, 0),
         ],
         "the repeated token_count must contribute a zero delta and emit no event"
     );
 
     assert_eq!(
         trace.stats.per_model_token_usage.get("gpt-5.6-sol"),
-        Some(&TokenUsage::new(800, 250, 500, 0))
+        Some(&TokenUsage::new(1_250, 410, 750, 0))
     );
     assert_eq!(
         trace.stats.per_model_token_usage.get("codex-auto-review"),
         Some(&TokenUsage::new(300, 100, 200, 0))
     );
+}
+
+/// A `total_token_usage` that *decreases* is Codex restarting its running total, not a
+/// corrupt counter: on the one non-monotonic file on the development machine it restarts four
+/// times and each restart's `total_token_usage` equals that event's own `last_token_usage`.
+/// So the new value is attributed in full, and a session's tokens are the sum of its
+/// segments' final totals. Treating the decrease as a zero delta instead would drop the first
+/// post-restart value, and a restart on the last event would drop the whole tail.
+#[test]
+fn codex_a_restarted_cumulative_counter_contributes_its_new_total_in_full() {
+    let temp = staged_codex_home();
+    let source = enumerate_fixture(&temp);
+    let trace = CodexAdapter::new().parse(&source).expect("parse").trace;
+
+    // The two segments' own final `total_token_usage.total_tokens`.
+    const SEGMENT_FINALS: [u64; 2] = [2_150, 860];
+    assert_eq!(
+        trace.stats.token_usage.total(),
+        SEGMENT_FINALS.iter().sum::<u64>(),
+        "a session's tokens are the sum of its segments (summing last_token_usage: 4,210)"
+    );
+
+    // The restart is attributed as its own event, not folded into a neighbour.
+    let restart = model_invocations(&trace)
+        .into_iter()
+        .nth(3)
+        .expect("fourth invocation");
+    assert_eq!(restart.1.total(), 490);
 }
 
 /// Reading these fields is a change to what an unchanged file yields, which is exactly the
