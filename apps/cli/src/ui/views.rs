@@ -105,10 +105,29 @@ pub fn severity_tag(severity: &str) -> String {
 /// Word-wrap `text` to `max_width` columns. Splits on whitespace only, so it never cuts a
 /// word (and, unlike a byte-offset slice, never cuts a multi-byte char either).
 fn wrap(text: &str, max_width: usize) -> Vec<String> {
+    let max_width = max_width.max(1);
     let mut lines = Vec::new();
     for paragraph in text.lines() {
         let mut current = String::new();
         for word in paragraph.split_whitespace() {
+            // A single token wider than the line -- a release URL, a long path, a base64
+            // blob -- has no whitespace to break on. Split it across lines rather than
+            // leave it for the caller's width clamp, which would cut it: a link printed
+            // half-way is a dead link, and worse than a wrapped one.
+            if display_width(word) > max_width {
+                if !current.is_empty() {
+                    lines.push(std::mem::take(&mut current));
+                }
+                let mut chunk = String::new();
+                for c in word.chars() {
+                    if display_width(&chunk) + 1 > max_width {
+                        lines.push(std::mem::take(&mut chunk));
+                    }
+                    chunk.push(c);
+                }
+                current = chunk;
+                continue;
+            }
             if display_width(&current) + display_width(word) + 1 > max_width && !current.is_empty() {
                 lines.push(std::mem::take(&mut current));
             }
@@ -3402,5 +3421,623 @@ pub fn stats_outcomes(ui: &Ui, v: &StatsOutcomesView<'_>) -> String {
         "archie session list --unproven",
         "the sessions with nothing behind the claim",
     ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// session show
+// -----------------------------------------------------------------------------
+
+/// One event on the timeline, already flattened by the caller. `views` stays free of the
+/// `EventPayload` enum so a new payload variant is a change in one place, not two.
+pub struct SessionEventRow {
+    /// `[003]`, already zero-padded.
+    pub sequence: String,
+    /// `HH:MM:SS`.
+    pub time: String,
+    /// `USER`, `TOOL CALL`, ... -- uppercase, no punctuation.
+    pub kind: String,
+    /// The one-line summary that sits beside `kind`. May be empty.
+    pub headline: String,
+    /// Indented body. Long lines wrap rather than truncate: this is transcript content,
+    /// and a cut one reads as if the session said something it did not.
+    pub body: Vec<String>,
+    /// Painted like an error rather than ordinary content.
+    pub is_error: bool,
+}
+
+pub struct SessionShowOutcome<'a> {
+    pub rung: usize,
+    pub label: &'a str,
+    pub confidence: f32,
+    /// `(summary, confidence)` for the evidence behind the highest rung reached.
+    pub supporting: Vec<(String, f32)>,
+    /// `(kind, summary)` for everything below it.
+    pub other_signals: Vec<(String, String)>,
+    pub other_signal_total: usize,
+}
+
+pub struct SessionShowView<'a> {
+    pub session_id: &'a str,
+    pub adapter: &'a str,
+    pub started_at: &'a str,
+    pub ended_at: Option<String>,
+    pub duration_seconds: Option<f64>,
+    pub composite_score: f64,
+    pub total_events: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub total_tokens: u64,
+    pub models_used: Vec<String>,
+    pub tools_used: Vec<(String, usize)>,
+    pub source_path: &'a str,
+    pub outcome: Option<SessionShowOutcome<'a>>,
+    pub events: Vec<SessionEventRow>,
+}
+
+/// Three sections in this order -- SESSION, OUTCOME, TIMELINE. The order is load-bearing:
+/// the cockpit drills from the summary into the outcome into the turn that produced it.
+pub fn session_show(ui: &Ui, v: &SessionShowView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(&format!("archie session show {}", v.session_id), v.adapter));
+    out.push('\n');
+
+    section(&mut out, ui, "SESSION", v.started_at);
+    let w = ui.width();
+    push(&mut out, ui, ui.leaders("  events", &thousands(v.total_events as u64), w, Role::Value));
+    if let Some(secs) = v.duration_seconds {
+        push(&mut out, ui, ui.leaders("  duration", &duration(secs), w, Role::Value));
+    }
+    if let Some(ref ended) = v.ended_at {
+        push(&mut out, ui, ui.leaders("  ended", ended, w, Role::Value));
+    }
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  score", &format!("{:.1} / 100", v.composite_score * 100.0), w, Role::Value),
+    );
+    push(&mut out, ui, ui.leaders("  tokens", &compact(v.total_tokens), w, Role::Emphasis));
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "    in / out / cache",
+            &format!(
+                "{} / {} / {}",
+                compact(v.input_tokens),
+                compact(v.output_tokens),
+                compact(v.cache_read_tokens)
+            ),
+            w,
+            Role::Label,
+        ),
+    );
+    if !v.models_used.is_empty() {
+        let models: Vec<String> = v.models_used.iter().map(|m| short_model(m)).collect();
+        push(&mut out, ui, ui.leaders("  models", &models.join(", "), w, Role::Value));
+    }
+    if !v.tools_used.is_empty() {
+        let tools = v
+            .tools_used
+            .iter()
+            .map(|(k, n)| format!("{}({})", k, n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        push(&mut out, ui, ui.leaders("  tools", &tools, w, Role::Value));
+    }
+    push(&mut out, ui, ui.leaders("  source", &shorten_home(v.source_path), w, Role::Unverified));
+    out.push('\n');
+
+    let wrap_width = ui.inner().saturating_sub(4);
+    match &v.outcome {
+        Some(o) => {
+            section(&mut out, ui, "OUTCOME", &format!("rung {}", o.rung));
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}  {}   {}",
+                    ui.paint(rung_role(o.rung), &ui.meter(o.rung)),
+                    ui.paint(Role::Emphasis, o.label),
+                    ui.paint(Role::Label, &format!("confidence {:.0}%", o.confidence * 100.0))
+                ),
+            );
+            for (summary, confidence) in &o.supporting {
+                let text = format!("{} ({:.0}%)", summary, confidence * 100.0);
+                for (i, line) in wrap(&text, wrap_width).into_iter().enumerate() {
+                    let lead = if i == 0 { ui.dot() } else { " " };
+                    push(&mut out, ui, format!("    {} {}", lead, ui.paint(Role::Value, &line)));
+                }
+            }
+            if o.other_signal_total > 0 {
+                push(
+                    &mut out,
+                    ui,
+                    format!(
+                        "  {}",
+                        ui.paint(
+                            Role::Label,
+                            &format!("precursor signals ({})", o.other_signal_total)
+                        )
+                    ),
+                );
+                for (kind, summary) in &o.other_signals {
+                    let text = format!("[{}] {}", kind, summary);
+                    for (i, line) in wrap(&text, wrap_width).into_iter().enumerate() {
+                        let lead = if i == 0 { ui.dot() } else { " " };
+                        push(
+                            &mut out,
+                            ui,
+                            format!("    {} {}", lead, ui.paint(Role::Unverified, &line)),
+                        );
+                    }
+                }
+            }
+        }
+        None => {
+            section(&mut out, ui, "OUTCOME", "rung 0");
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}  {}",
+                    ui.paint(rung_role(0), &ui.meter(0)),
+                    ui.paint(Role::Unverified, RUNG_LABELS[0])
+                ),
+            );
+        }
+    }
+    out.push('\n');
+
+    section(&mut out, ui, "TIMELINE", &format!("{} events", thousands(v.events.len() as u64)));
+    for ev in &v.events {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {} {}  {} {}",
+                ui.paint(Role::Unverified, &ev.sequence),
+                ui.paint(Role::Unverified, &ev.time),
+                ui.paint(Role::Emphasis, &ev.kind),
+                ui.paint(Role::Label, &ev.headline)
+            ),
+        );
+        let body_role = if ev.is_error { Role::Error } else { Role::Value };
+        for raw in &ev.body {
+            for line in wrap(raw, wrap_width) {
+                push(&mut out, ui, format!("    {}", ui.paint(body_role, &line)));
+            }
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next(
+        &format!("archie session export {} --redact", v.session_id),
+        "the whole trace with secrets stripped",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// session autopsy
+// -----------------------------------------------------------------------------
+
+pub struct AutopsyClusterRow<'a> {
+    pub phrase: &'a str,
+    pub sample: &'a str,
+    pub occurrences: usize,
+    pub spend_usd: f64,
+}
+
+pub struct AutopsyView<'a> {
+    pub prompts_analyzed: usize,
+    pub min_occurrences: usize,
+    pub total_spend_usd: f64,
+    pub clusters: Vec<AutopsyClusterRow<'a>>,
+}
+
+pub fn autopsy(ui: &Ui, v: &AutopsyView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(
+        "archie session autopsy",
+        &format!("min {} sessions", v.min_occurrences),
+    ));
+    out.push('\n');
+
+    let w = ui.width();
+    section(&mut out, ui, "FRICTION", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  prompts read", &thousands(v.prompts_analyzed as u64), w, Role::Value),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  recurring corrections", &v.clusters.len().to_string(), w, Role::Warn),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  spend on repeats", &format!("${:.2}", v.total_spend_usd), w, Role::Emphasis),
+    );
+    out.push('\n');
+
+    if v.clusters.is_empty() {
+        section(&mut out, ui, "CORRECTIONS", "");
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Verified,
+                    &format!(
+                        "No phrase was repeated across {} or more sessions.",
+                        v.min_occurrences
+                    )
+                )
+            ),
+        );
+        out.push('\n');
+        out.push_str(&ui.next("archie scan", "pick up anything new since the last index"));
+        return out;
+    }
+
+    section(&mut out, ui, "CORRECTIONS", &thousands(v.clusters.len() as u64));
+    let max_spend = v.clusters.iter().map(|c| c.spend_usd).fold(0.0f64, f64::max);
+    let wrap_width = ui.inner().saturating_sub(6);
+    for (i, c) in v.clusters.iter().enumerate() {
+        let fraction = if max_spend > 0.0 { c.spend_usd / max_spend } else { 0.0 };
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  #{:02}  {}  {}",
+                i + 1,
+                ui.paint(Role::Warn, &ui.bar(fraction, 12)),
+                ui.paint(
+                    Role::Emphasis,
+                    &format!("{} sessions   ${:.2}", c.occurrences, c.spend_usd)
+                )
+            ),
+        );
+        for line in wrap(c.sample, wrap_width) {
+            push(&mut out, ui, format!("      {}", ui.paint(Role::Label, &line)));
+        }
+        push(
+            &mut out,
+            ui,
+            format!("      {}", ui.paint(Role::Unverified, &truncate(c.phrase, wrap_width))),
+        );
+        out.push('\n');
+    }
+    out.push_str(&ui.next("archie session search \"<phrase>\"", "the turns where you said it"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// session recall
+// -----------------------------------------------------------------------------
+
+pub struct RecallRow<'a> {
+    pub session_id: &'a str,
+    pub adapter: &'a str,
+    pub outcome: &'a str,
+    pub rung: usize,
+    pub spend_usd: f64,
+    pub similarity: f32,
+    pub chunk_kind: &'a str,
+    pub snippet: &'a str,
+}
+
+pub struct RecallView<'a> {
+    pub query: &'a str,
+    pub rows: Vec<RecallRow<'a>>,
+}
+
+pub fn recall(ui: &Ui, v: &RecallView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(
+        &format!("archie session recall \"{}\"", v.query),
+        &format!("{} match(es)", v.rows.len()),
+    ));
+    out.push('\n');
+
+    if v.rows.is_empty() {
+        section(&mut out, ui, "MATCHES", "");
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Unverified, "No prior trajectory matched this query.")),
+        );
+        out.push('\n');
+        out.push_str(&ui.next(
+            "archie session search \"<query>\"",
+            "index anything not yet embedded",
+        ));
+        return out;
+    }
+
+    section(&mut out, ui, "MATCHES", &thousands(v.rows.len() as u64));
+    let w = ui.width();
+    let wrap_width = ui.inner().saturating_sub(6);
+    for (i, r) in v.rows.iter().enumerate() {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  #{:02}  {}  {}   {}",
+                i + 1,
+                ui.paint(rung_role(r.rung), &ui.meter(r.rung)),
+                ui.paint(Role::Emphasis, &format!("{:.1}%", r.similarity * 100.0)),
+                ui.paint(rung_role(r.rung), r.outcome)
+            ),
+        );
+        push(&mut out, ui, ui.leaders("      session", r.session_id, w, Role::Value));
+        push(
+            &mut out,
+            ui,
+            ui.leaders(
+                "      adapter / chunk",
+                &format!("{} {} {}", r.adapter, ui.dot(), r.chunk_kind),
+                w,
+                Role::Label,
+            ),
+        );
+        push(&mut out, ui, ui.leaders("      spend", &format!("${:.2}", r.spend_usd), w, Role::Value));
+        for line in wrap(r.snippet, wrap_width).into_iter().take(4) {
+            push(&mut out, ui, format!("      {}", ui.paint(Role::Unverified, &line)));
+        }
+        out.push('\n');
+    }
+    out.push_str(&ui.next("archie session show <session-id>", "the whole run behind a match"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// session search
+// -----------------------------------------------------------------------------
+
+pub struct SearchRow<'a> {
+    pub session_id: &'a str,
+    pub adapter: &'a str,
+    pub model: &'a str,
+    pub project: &'a str,
+    pub started_at: &'a str,
+    pub kind: &'a str,
+    pub turn: &'a str,
+    pub total_tokens: u64,
+    pub score: f32,
+    pub snippet: &'a str,
+}
+
+pub struct SearchView<'a> {
+    pub query: &'a str,
+    pub engine: &'a str,
+    pub indexed_chunks: usize,
+    pub still_pending: usize,
+    pub rows: Vec<SearchRow<'a>>,
+}
+
+pub fn search(ui: &Ui, v: &SearchView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(
+        &format!("archie session search \"{}\"", v.query),
+        &format!("{} turn(s)", v.rows.len()),
+    ));
+    out.push('\n');
+
+    let w = ui.width();
+    section(&mut out, ui, "INDEX", "");
+    push(&mut out, ui, ui.leaders("  engine", v.engine, w, Role::Value));
+    if v.indexed_chunks > 0 {
+        push(
+            &mut out,
+            ui,
+            ui.leaders(
+                "  chunks embedded this run",
+                &thousands(v.indexed_chunks as u64),
+                w,
+                Role::Value,
+            ),
+        );
+    }
+    if v.still_pending > 0 {
+        push(
+            &mut out,
+            ui,
+            ui.leaders(
+                "  sessions not yet searchable",
+                &thousands(v.still_pending as u64),
+                w,
+                Role::Warn,
+            ),
+        );
+    }
+    out.push('\n');
+
+    if v.rows.is_empty() {
+        section(&mut out, ui, "MATCHES", "");
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Unverified, "No turn matched this query.")),
+        );
+        out.push('\n');
+        out.push_str(&ui.next("archie scan", "index anything this machine has not read yet"));
+        return out;
+    }
+
+    section(&mut out, ui, "MATCHES", &thousands(v.rows.len() as u64));
+    let wrap_width = ui.inner().saturating_sub(6);
+    for (i, r) in v.rows.iter().enumerate() {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  #{:02}  {}  {}   {}",
+                i + 1,
+                ui.paint(Role::Verified, &ui.bar(r.score.clamp(0.0, 1.0) as f64, 12)),
+                ui.paint(Role::Emphasis, &format!("{:.1}%", r.score * 100.0)),
+                ui.paint(Role::Label, r.kind)
+            ),
+        );
+        push(&mut out, ui, ui.leaders("      session", r.session_id, w, Role::Value));
+        push(
+            &mut out,
+            ui,
+            ui.leaders(
+                "      adapter / model",
+                &format!("{} {} {}", r.adapter, ui.dot(), short_model(r.model)),
+                w,
+                Role::Label,
+            ),
+        );
+        push(
+            &mut out,
+            ui,
+            ui.leaders(
+                "      project / turn",
+                &format!("{} {} {}", r.project, ui.dot(), r.turn),
+                w,
+                Role::Label,
+            ),
+        );
+        push(
+            &mut out,
+            ui,
+            ui.leaders(
+                "      started / tokens",
+                &format!("{} {} {}", r.started_at, ui.dot(), compact(r.total_tokens)),
+                w,
+                Role::Label,
+            ),
+        );
+        for line in wrap(r.snippet, wrap_width).into_iter().take(6) {
+            push(&mut out, ui, format!("      {}", ui.paint(Role::Unverified, &line)));
+        }
+        out.push('\n');
+    }
+    out.push_str(&ui.next(
+        "archie session show <session-id>",
+        "the whole run behind a matched turn",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// config list
+// -----------------------------------------------------------------------------
+
+pub struct ConfigListView<'a> {
+    pub config_path: &'a str,
+    /// `(key, value)`; `None` is "not set".
+    pub entries: Vec<(&'a str, Option<String>)>,
+}
+
+pub fn config_list(ui: &Ui, v: &ConfigListView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header("archie config list", &shorten_home(v.config_path)));
+    out.push('\n');
+    section(&mut out, ui, "DEFAULTS", "");
+    let w = ui.width();
+    for (key, value) in &v.entries {
+        match value {
+            Some(val) => push(&mut out, ui, ui.leaders(&format!("  {}", key), val, w, Role::Value)),
+            None => push(
+                &mut out,
+                ui,
+                ui.leaders(&format!("  {}", key), "not set", w, Role::Unverified),
+            ),
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next("archie config set <key> <value>", "make one of these the default"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// version / update
+// -----------------------------------------------------------------------------
+
+pub struct VersionView<'a> {
+    pub version: &'a str,
+    /// The name this process was actually invoked as (`archie`, `agentworth`, `agwt`).
+    pub invoked_as: &'a str,
+    pub index_path: &'a str,
+    pub installed_via: &'a str,
+    pub update_line: &'a str,
+    pub update_role: Role,
+    /// `(adapter name, parser version)`, in the order the scanner registers them.
+    pub parsers: Vec<(&'a str, i64)>,
+}
+
+pub fn version(ui: &Ui, v: &VersionView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header("archie version", v.version));
+    out.push('\n');
+    let w = ui.width();
+    section(&mut out, ui, "BUILD", "");
+    push(&mut out, ui, ui.leaders("  version", v.version, w, Role::Emphasis));
+    push(&mut out, ui, ui.leaders("  invoked as", v.invoked_as, w, Role::Value));
+    push(&mut out, ui, ui.leaders("  index", &shorten_home(v.index_path), w, Role::Value));
+    push(&mut out, ui, ui.leaders("  installed via", v.installed_via, w, Role::Value));
+    push(&mut out, ui, ui.leaders("  update check", v.update_line, w, v.update_role));
+    out.push('\n');
+    section(&mut out, ui, "PARSERS", "");
+    for (name, parser_version) in &v.parsers {
+        push(
+            &mut out,
+            ui,
+            ui.leaders(&format!("  {}", name), &format!("v{}", parser_version), w, Role::Value),
+        );
+    }
+    out.push('\n');
+    out.push_str(&ui.next("archie update", "how to get the newer build, if there is one"));
+    out
+}
+
+pub struct UpdateView<'a> {
+    pub version: &'a str,
+    pub headline: &'a str,
+    pub headline_role: Role,
+    /// `(channel, the exact line to run or open)`. Empty when nothing is available.
+    pub advice: Vec<(&'a str, String)>,
+}
+
+/// `update` prints and exits. It never runs npm, cargo, or a package manager on the user's
+/// behalf: an npm-managed binary is npm's to replace, and every other install path has no
+/// one safe self-replace strategy this process could pick from inside itself.
+pub fn update(ui: &Ui, v: &UpdateView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header("archie update", v.version));
+    out.push('\n');
+    section(&mut out, ui, "STATUS", "");
+    for line in wrap(v.headline, ui.inner().saturating_sub(2)) {
+        push(&mut out, ui, format!("  {}", ui.paint(v.headline_role, &line)));
+    }
+    out.push('\n');
+
+    if v.advice.is_empty() {
+        out.push_str(&ui.next("archie version", "what this build is and where its index lives"));
+        return out;
+    }
+
+    section(&mut out, ui, "HOW TO UPDATE", "");
+    // Never a `leaders` row. That line cuts its value to whatever the label leaves, and a
+    // release URL already exceeds it: at MAX_CONTENT the budget under "  download" is 65
+    // columns, and `.../releases/tag/v0.1.17` is 66 -- so from the next two-digit patch
+    // release onward, the one actionable line on this screen would print as a dead link.
+    // The payload gets its own full-width line, hard-wrapped, so every character survives.
+    let payload_width = ui.inner().saturating_sub(2);
+    for (channel, line) in &v.advice {
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Label, channel)));
+        for wrapped in wrap(line, payload_width) {
+            push(&mut out, ui, format!("    {}", ui.paint(Role::Emphasis, &wrapped)));
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next("archie version", "what this build is and where its index lives"));
     out
 }

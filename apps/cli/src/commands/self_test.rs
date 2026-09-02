@@ -39,6 +39,20 @@ const DEFAULT_BUDGET: Duration = Duration::from_secs(1);
 /// timing.
 const COMPACTED_SESSION_SEARCH_WINDOW: usize = 2000;
 
+/// Confines the `scan` step to one root, for the test suite.
+///
+/// The real command's `scan` step takes no path, which is the point: it is a release smoke
+/// test of the whole workflow, and the workflow starts by discovering this machine's own
+/// agent directories. That made `apps/cli/tests/doctor_self_test.rs` unrunnable on a
+/// developer machine: the test hands the binary a fixture `--db-path`, but the self-test's
+/// own `scan` then indexed the developer's entire real `$HOME` history into that fixture db,
+/// so the `forgotten` step found a genuinely compacted session and passed where the test
+/// asserts `skip`. Found on lenovo.
+///
+/// Set this to a directory and the `scan` step scans only that. Unset -- which is every real
+/// invocation -- and nothing changes.
+const SCAN_ROOT_ENV: &str = "AGENTWORTH_SELF_TEST_SCAN_ROOT";
+
 struct Step {
     name: &'static str,
     status: SelfTestStatus,
@@ -235,11 +249,16 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
     let overall_start = Instant::now();
     let mut steps: Vec<Step> = Vec::new();
 
+    let scan_root = std::env::var(SCAN_ROOT_ENV).ok();
+    let scan_args: Vec<&str> = match scan_root.as_deref() {
+        Some(root) => vec!["scan", root, "--json"],
+        None => vec!["scan", "--json"],
+    };
     steps.push(run_step(
         &exe,
         db_path_ref,
         "scan",
-        &["scan", "--json"],
+        &scan_args,
         SCAN_BUDGET,
         |v| {
             let scanned = v.get("scanned_sessions").and_then(Value::as_u64).unwrap_or(0);

@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentworth_cli::server::{
-    create_router, AppState, LiveTailChangeKind, LiveTailEvent, LIVE_TAIL_CHANNEL_CAPACITY,
+    create_router, embedded_dashboard_is_built, AppState, LiveTailChangeKind, LiveTailEvent,
+    LIVE_TAIL_CHANNEL_CAPACITY,
 };
 use agentworth_core::Scanner;
 use agentworth_schema::{
@@ -692,21 +693,38 @@ async fn test_api_static_file_serving_and_spa_fallback() {
     // receipts" text would pass even against the stub, and would also fail
     // against the real dashboard since that copy is rendered client-side by
     // React, not present in the served HTML shell.
-    let (app, _, _) = setup_test_app(None);
+    //
+    // On a fresh clone nothing is embedded at all (apps/dashboard/dist does not exist until
+    // `npm run build` has run), and every route serves the hand-written FALLBACK_HTML stub
+    // instead. That is a build state, not a regression, so this half skips loudly rather
+    // than failing. CI builds the dashboard before the Rust suite, so there it always runs.
+    if embedded_dashboard_is_built() {
+        let (app, _, _) = setup_test_app(None);
 
-    // Root GET /
-    let (status, html) = request_raw(app.clone(), "GET", "/").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("<title>AgentWorth</title>"));
-    assert!(
-        html.contains("/assets/"),
-        "expected a hashed Vite bundle reference, got: {html}"
-    );
+        // Root GET /
+        let (status, html) = request_raw(app.clone(), "GET", "/").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("<title>AgentWorth</title>"));
+        assert!(
+            html.contains("/assets/"),
+            "expected a hashed Vite bundle reference, got: {html}"
+        );
 
-    // SPA client-side route GET /traces/sess_123
-    let (status, html) = request_raw(app, "GET", "/traces/sess_123").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("<title>AgentWorth</title>"));
+        // SPA client-side route GET /traces/sess_123
+        let (status, html) = request_raw(app, "GET", "/traces/sess_123").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("<title>AgentWorth</title>"));
+    } else {
+        // stderr, not stdout: libtest shows a skipped test's stderr on `--nocapture` and in
+        // the failure output, and a skip nobody can see is indistinguishable from a pass.
+        eprintln!(
+            "SKIP: the embedded-asset half of test_api_static_file_serving_and_spa_fallback \
+             did not run, because apps/dashboard/dist was absent at compile time so \
+             rust_embed embedded nothing and every route serves the FALLBACK_HTML stub. \
+             Run `npm --prefix apps/dashboard run build` and rebuild to cover it. CI builds \
+             the dashboard first, so it always runs there. The custom-dist half below ran."
+        );
+    }
 
     // 2. Custom dist_dir serving
     let temp_dist = TempDir::new().unwrap();

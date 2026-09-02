@@ -25,8 +25,37 @@ fn test_version_command_offline_text_includes_real_crate_version() {
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains(format!("agentworth {CRATE_VERSION}")))
+        .stdout(predicate::str::contains(CRATE_VERSION))
         .stdout(predicate::str::contains("skipped"));
+}
+
+/// One block: what this build is, the name it was invoked as, where its index lives, and
+/// every adapter's parser version -- the four things a bug report has to carry.
+#[test]
+fn test_version_command_names_the_binary_the_index_and_the_parsers() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut cmd = Command::cargo_bin("agentworth").unwrap();
+    // A relative `--db-path` from inside the temp dir, deliberately short. An absolute one
+    // under a macOS TMPDIR (`/var/folders/<hash>/T/.tmpXXXXXX/index.db`) runs about 68
+    // columns against this row's 68-column budget, so the assertion below would sit exactly
+    // on the truncation boundary and flake by machine.
+    cmd.current_dir(temp.path());
+    cmd.arg("--db-path").arg("idx.db").arg("version").arg("--offline");
+    cmd.env_remove("AGENTWORTH_LAUNCHER_ACTIVE");
+    cmd.env_remove("AGENTWORTH_NPM_VERSION");
+    cmd.env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"));
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("version"))
+        .stdout(predicate::str::contains(CRATE_VERSION))
+        // The name this process answered to, not a hardcoded product name.
+        .stdout(predicate::str::contains("invoked as"))
+        .stdout(predicate::str::contains("agentworth"))
+        // The explicit --db-path, echoed back whole.
+        .stdout(predicate::str::contains("idx.db"))
+        .stdout(predicate::str::contains("PARSERS"))
+        .stdout(predicate::str::contains("claude_code"));
 }
 
 #[test]
@@ -91,8 +120,12 @@ fn test_update_command_offline_text_and_json() {
     text_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains(format!("agentworth {CRATE_VERSION}")))
-        .stdout(predicate::str::contains("skipped"));
+        .stdout(predicate::str::contains(CRATE_VERSION))
+        .stdout(predicate::str::contains("skipped"))
+        // `update` advises and exits. Nothing here runs a package manager -- and with
+        // nothing to update, it does not even print an install line.
+        .stdout(predicate::str::contains("npm install").not())
+        .stdout(predicate::str::contains("cargo install").not());
 
     let mut json_cmd = Command::cargo_bin("agentworth").unwrap();
     json_cmd.arg("update").arg("--offline").arg("--json");

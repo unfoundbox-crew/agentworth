@@ -574,6 +574,50 @@ mod tests {
         }
     }
 
+    /// `docs --write` is a CI gate: the step regenerates both files and fails on a diff. Two
+    /// builds of the same tree must therefore agree byte for byte. Everything in the render
+    /// walks an ordered structure (clap's tree, the route table, the tool router), so the
+    /// only clock in it is `generated_date`, which the CI step strips from both sides before
+    /// diffing. This pins the rest.
+    #[test]
+    fn the_reference_renders_byte_identically_twice() {
+        let first = build_reference_doc();
+        let second = build_reference_doc();
+        assert_eq!(
+            render_markdown(&first),
+            render_markdown(&second),
+            "docs --write markdown is not deterministic"
+        );
+        assert_eq!(
+            serde_json::to_string_pretty(&first).unwrap(),
+            serde_json::to_string_pretty(&second).unwrap(),
+            "docs --write JSON is not deterministic"
+        );
+    }
+
+    /// A retired spelling appears exactly once in the reference: as a row in the
+    /// old-spellings table. Never as a command heading of its own -- documenting it twice
+    /// would teach the name the CLI is trying to retire.
+    #[test]
+    fn a_hidden_alias_appears_only_in_the_old_spellings_table() {
+        let doc = build_reference_doc();
+        let markdown = render_markdown(&doc);
+        for (old, _) in crate::app::OLD_CLI_SPELLINGS {
+            assert!(
+                !markdown.contains(&format!("### `archie {old}`\n")),
+                "retired command `{old}` has a heading of its own in the reference"
+            );
+            assert!(
+                !doc.cli.iter().any(|c| c.path == format!("archie {old}")),
+                "retired command `{old}` is in the reference's CLI list"
+            );
+            assert!(
+                markdown.contains(&format!("| cli | `{old}` |")),
+                "retired command `{old}` is missing from the old-spellings table"
+            );
+        }
+    }
+
     /// Snapshot of one section's rendering, on hand-built fixtures rather than the live CLI/
     /// API/MCP surfaces -- this should only ever change when someone deliberately changes
     /// `render_markdown`'s output shape, not every time a subcommand is added.

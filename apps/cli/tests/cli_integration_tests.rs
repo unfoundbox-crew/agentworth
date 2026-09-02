@@ -258,18 +258,21 @@ fn test_cli_inspect_command() {
         .arg("inspect")
         .arg(&session_id);
 
+    // The three sections `views::session_show` draws, in the order the cockpit drills
+    // through them: SESSION, OUTCOME, TIMELINE.
     inspect_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("AgentWorth Session Trace:"))
         .stdout(predicate::str::contains(&session_id))
-        .stdout(predicate::str::contains("Highest Outcome Reached:"))
-        .stdout(predicate::str::contains("Rung 3 - Test or Build Passed"))
-        .stdout(predicate::str::contains("Supporting Evidence:"))
-        .stdout(predicate::str::contains("USER PROMPT"))
-        .stdout(predicate::str::contains("ASSISTANT THINKING"))
-        .stdout(predicate::str::contains("TOOL CALL: FileEdit"))
-        .stdout(predicate::str::contains("TOOL CALL: Bash"));
+        .stdout(predicate::str::contains("SESSION"))
+        .stdout(predicate::str::contains("OUTCOME"))
+        .stdout(predicate::str::contains("rung 3"))
+        .stdout(predicate::str::contains("tests passed"))
+        .stdout(predicate::str::contains("TIMELINE"))
+        .stdout(predicate::str::contains("USER"))
+        .stdout(predicate::str::contains("thinking:"))
+        .stdout(predicate::str::contains("TOOL CALL FileEdit"))
+        .stdout(predicate::str::contains("TOOL CALL Bash"));
 
     // 2. Inspect with --json
     let mut inspect_json_cmd = Command::cargo_bin("agentworth").unwrap();
@@ -394,7 +397,7 @@ fn test_cli_search_command_ascii_and_json() {
         .assert()
         .success();
 
-    // 1. Search (ASCII Thermal Receipt card view)
+    // 1. Search, rendered through the ui module.
     let mut search_cmd = Command::cargo_bin("agwt").unwrap();
     search_cmd
         .arg("--db-path")
@@ -405,8 +408,8 @@ fn test_cli_search_command_ascii_and_json() {
     search_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("Semantic Latent Vector Search"))
-        .stdout(predicate::str::contains("MATCH:"))
+        .stdout(predicate::str::contains("archie session search"))
+        .stdout(predicate::str::contains("MATCHES"))
         .stdout(predicate::str::contains(&session_id))
         .stdout(predicate::str::contains("claude_code"));
 

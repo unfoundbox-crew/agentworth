@@ -384,6 +384,14 @@ fn content_type_for(path: &str) -> &'static str {
     }
 }
 
+/// Whether the real built dashboard is compiled into this binary, as opposed to nothing at
+/// all (a fresh clone with no `npm run build` in apps/dashboard, which makes every route
+/// serve `FALLBACK_HTML`). CI builds the dashboard first, so there it is always true; a
+/// test that asserts on the real React shell has to skip rather than fail when it is not.
+pub fn embedded_dashboard_is_built() -> bool {
+    DashboardAssets::get("index.html").is_some()
+}
+
 fn embedded_response(path: &str) -> Option<Response<Body>> {
     let asset = DashboardAssets::get(path)?;
     let mime = content_type_for(path);

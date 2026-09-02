@@ -12,8 +12,10 @@ use agentworth_core::Scanner;
 use agentworth_schema::EventPayload;
 use agentworth_storage::{estimate_total_cost_from_per_model_usage, SessionFilter, Storage};
 use anyhow::Result;
-use console::style;
 use serde::{Deserialize, Serialize};
+
+use crate::ui::views::{self, AutopsyClusterRow, AutopsyView};
+use crate::ui::Ui;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptCorrectionCluster {
@@ -96,6 +98,14 @@ pub fn perform_prompt_autopsy(
     let mut total_user_msgs = 0usize;
 
     for summary in &sessions {
+        // The index already knows this session has no user turn, so it cannot carry a
+        // correction phrase -- reading and reparsing its transcript to discover that is
+        // pure waste. This is the only prefilter the index supports: no table holds
+        // per-turn message text, so a session that *does* have user turns still has to be
+        // parsed from disk to see what they say.
+        if summary.total_events == 0 {
+            continue;
+        }
         let trace = match scanner.load_trace(&summary.session_id) {
             Ok(t) => t,
             // Source file no longer on disk, or unreadable -- skip, don't fail the whole report.
@@ -158,69 +168,48 @@ pub fn run_autopsy_command(
     min_occurrences: usize,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &Ui,
 ) -> Result<()> {
     let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
         None => Storage::open_default()?,
     });
 
-    let report = perform_prompt_autopsy(&storage, min_occurrences)?;
+    // The slowest command in the CLI on a real index, and until now it ran in silence.
+    // It cannot be moved onto the index: no table holds per-turn message text, so finding
+    // a repeated human correction means reading the transcripts.
+    let report = crate::ui::with_status(ui, "reading prompts across every session", || {
+        perform_prompt_autopsy(&storage, min_occurrences)
+    })?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    println!();
-    println!(
-        "{}",
-        style("┌─ 🔬 AgentWorth Prompt Autopsy: Recurring Human Corrections ┐").bold().cyan()
-    );
-    println!(
-        "│ User Prompts Analyzed: {:<39} │",
-        style(report.total_user_messages_analyzed).bold()
-    );
-    println!(
-        "│ Recurring Friction Clusters: {:<33} │",
-        style(report.recurring_correction_count).bold().yellow()
-    );
-    println!(
-        "│ Friction Token Burn:   {:<39} │",
-        style(format!("${:.2} USD", report.total_recurrent_spend_usd)).bold().magenta()
-    );
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────┤").bold()
-    );
+    let clusters: Vec<AutopsyClusterRow<'_>> = report
+        .clusters
+        .iter()
+        .map(|c| AutopsyClusterRow {
+            phrase: &c.normalized_phrase,
+            sample: &c.sample_raw_prompt,
+            occurrences: c.occurrences,
+            spend_usd: c.estimated_cost_usd,
+        })
+        .collect();
 
-    if report.clusters.is_empty() {
-        println!("│ ✓ No recurring friction or correction phrases detected.    │");
-    } else {
-        println!("│ Top Repeated Developer Steering Phrases:                   │");
-        for (i, c) in report.clusters.iter().enumerate() {
-            println!(
-                "│ [{}] \"{:<38}\" │",
-                i + 1,
-                style(if c.sample_raw_prompt.chars().count() > 38 {
-                    format!("{}...", agentworth_schema::text::truncate_chars(&c.sample_raw_prompt, 35))
-                } else {
-                    c.sample_raw_prompt.clone()
-                }).bold().yellow()
-            );
-            println!(
-                "│     Frequency: {:<14} Spend Burn: ${:<17.2} │",
-                format!("{} sessions", c.occurrences),
-                c.estimated_cost_usd
-            );
-        }
-    }
-
-    println!(
+    print!(
         "{}",
-        style("└────────────────────────────────────────────────────────────┘").bold()
+        views::autopsy(
+            ui,
+            &AutopsyView {
+                prompts_analyzed: report.total_user_messages_analyzed,
+                min_occurrences,
+                total_spend_usd: report.total_recurrent_spend_usd,
+                clusters,
+            }
+        )
     );
-    println!();
-
     Ok(())
 }
 

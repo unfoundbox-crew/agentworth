@@ -7,7 +7,6 @@ use agentworth_outcomes::evaluate_trace_outcomes;
 use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
-use console::style;
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
@@ -1487,6 +1486,7 @@ pub fn run() -> Result<()> {
                 a.kind,
                 resolve_json(a.json),
                 cli.db_path,
+                &ui,
             )?;
         }
         Action::Session(SessionCommand::Audit(a)) => {
@@ -1587,11 +1587,18 @@ pub fn run() -> Result<()> {
             )?;
         }
         Action::Session(SessionCommand::Autopsy(a)) => {
-            autopsy::run_autopsy_command(a.min_occurrences, resolve_json(a.json), cli.db_path)?;
+            autopsy::run_autopsy_command(a.min_occurrences, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Session(SessionCommand::Recall(a)) => {
             let limit = config::resolve_limit(a.limit, persisted_config.limit, 5);
-            recall::run_recall_command(&a.query, limit, a.min_score, resolve_json(a.json), cli.db_path)?;
+            recall::run_recall_command(
+                &a.query,
+                limit,
+                a.min_score,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
         }
         Action::Agent(AgentCommand::List(a)) => {
             run_matrix_command(resolve_json(a.json), cli.db_path, &ui)?;
@@ -1659,10 +1666,16 @@ pub fn run() -> Result<()> {
             }
         }
         Action::Version(a) => {
-            version_info::run_version_command(resolve_json(a.json), a.offline)?;
+            version_info::run_version_command(
+                resolve_json(a.json),
+                a.offline,
+                cli.db_path,
+                &invoked_binary_name(),
+                &ui,
+            )?;
         }
         Action::Update(a) => {
-            version_info::run_update_command(resolve_json(a.json), a.offline)?;
+            version_info::run_update_command(resolve_json(a.json), a.offline, &ui)?;
         }
         Action::Completions(a) => {
             let mut cmd = Cli::command();
@@ -1674,10 +1687,12 @@ pub fn run() -> Result<()> {
             );
         }
         Action::Config(action) => match action {
-            ConfigAction::List { json } => config::run_config_list(resolve_json(json))?,
-            ConfigAction::Get { key, json } => config::run_config_get(&key, resolve_json(json))?,
+            ConfigAction::List { json } => config::run_config_list(resolve_json(json), &ui)?,
+            ConfigAction::Get { key, json } => {
+                config::run_config_get(&key, resolve_json(json), &ui)?
+            }
             ConfigAction::Set { key, value, json } => {
-                config::run_config_set(&key, &value, resolve_json(json))?
+                config::run_config_set(&key, &value, resolve_json(json), &ui)?
             }
         },
         Action::Docs(a) => {
@@ -2237,22 +2252,8 @@ fn outcome_rung(kind: Option<agentworth_schema::OutcomeKind>) -> usize {
     }
 }
 
-fn format_duration(seconds: f64) -> String {
-    if seconds >= 3600.0 {
-        let hrs = (seconds / 3600.0).floor();
-        let mins = ((seconds % 3600.0) / 60.0).floor();
-        format!("{}h {}m", hrs, mins)
-    } else if seconds >= 60.0 {
-        let mins = (seconds / 60.0).floor();
-        let secs = (seconds % 60.0).floor();
-        format!("{}m {:02}s", mins, secs)
-    } else {
-        format!("{:.1}s", seconds)
-    }
-}
-
 // -----------------------------------------------------------------------------
-// Command: Inspect
+// Command: Session show
 // -----------------------------------------------------------------------------
 
 fn run_inspect_command(
@@ -2288,448 +2289,213 @@ fn run_inspect_command(
     if json {
         println!("{}", serde_json::to_string_pretty(&trace)?);
     } else {
-        print_inspect_view(&trace);
+        print!("{}", inspect_view(&trace, ui));
     }
 
     Ok(())
+}
+
+/// One event, flattened to the rows `views::session_show` draws. Kept here rather than in
+/// `views` so a new `EventPayload` variant is a change in one file.
+fn session_event_row(ev: &agentworth_schema::NormalizedEvent) -> crate::ui::views::SessionEventRow {
+    use agentworth_schema::EventPayload;
+
+    let sequence = format!("[{:03}]", ev.sequence);
+    let time = ev.timestamp.format("%H:%M:%S").to_string();
+    let lines = |s: &str| s.lines().map(str::to_string).collect::<Vec<_>>();
+
+    let (kind, headline, body, is_error) = match &ev.payload {
+        EventPayload::UserMessage { content } => {
+            ("USER".to_string(), String::new(), lines(content), false)
+        }
+        EventPayload::AssistantMessage { content, thinking } => {
+            let mut body = Vec::new();
+            if let Some(th) = thinking {
+                body.push("thinking:".to_string());
+                body.extend(lines(th));
+            }
+            body.extend(lines(content));
+            ("ASSISTANT".to_string(), String::new(), body, false)
+        }
+        EventPayload::ModelInvocation { model, token_usage, cost_usd, latency_ms, .. } => {
+            let mut headline = format!(
+                "{}   {} in / {} out",
+                crate::ui::views::short_model(model),
+                crate::ui::thousands(token_usage.input_tokens),
+                crate::ui::thousands(token_usage.output_tokens)
+            );
+            if let Some(c) = cost_usd {
+                headline.push_str(&format!("   ${:.4}", c));
+            }
+            if let Some(ms) = latency_ms {
+                headline.push_str(&format!("   {}ms", ms));
+            }
+            ("MODEL".to_string(), headline, Vec::new(), false)
+        }
+        EventPayload::ModelSwitch(ms) => {
+            let headline = format!(
+                "{} -> {}",
+                ms.from_model.as_deref().unwrap_or("auto"),
+                ms.to_model
+            );
+            let body = ms
+                .reason
+                .as_ref()
+                .map(|r| vec![format!("reason: {}", r)])
+                .unwrap_or_default();
+            ("MODEL SWITCH".to_string(), headline, body, false)
+        }
+        EventPayload::ToolCall(tc) => {
+            let args = serde_json::to_string_pretty(&tc.arguments).unwrap_or_default();
+            ("TOOL CALL".to_string(), tc.name.clone(), lines(&args), false)
+        }
+        EventPayload::ToolResult(tr) => {
+            let name = tr.name.as_deref().unwrap_or("tool");
+            let status = if tr.is_error { "[ERROR]" } else { "[OK]" };
+            let out_str = match tr.output.as_str() {
+                Some(s) => s.to_string(),
+                None => serde_json::to_string_pretty(&tr.output).unwrap_or_default(),
+            };
+            let total = out_str.lines().count();
+            let mut body: Vec<String> = out_str.lines().take(15).map(str::to_string).collect();
+            if total > 15 {
+                body.push(format!("... {} more lines", total - 15));
+            }
+            (
+                "TOOL RESULT".to_string(),
+                format!("{} {}", name, status),
+                body,
+                tr.is_error,
+            )
+        }
+        EventPayload::ShellCommand(sc) => {
+            let mut body = Vec::new();
+            if let Some(ref cwd) = sc.cwd {
+                body.push(format!("cwd: {}", cwd));
+            }
+            if let Some(code) = sc.exit_code {
+                body.push(format!("exit: {}", code));
+            }
+            ("SHELL".to_string(), sc.command.clone(), body, false)
+        }
+        EventPayload::FileAction { path, action, lines_changed, .. } => {
+            let body = lines_changed
+                .map(|n| vec![format!("lines changed: {}", n)])
+                .unwrap_or_default();
+            (
+                "FILE".to_string(),
+                format!("{:?} {}", action, path),
+                body,
+                false,
+            )
+        }
+        EventPayload::OutcomeEvidence(oe) => (
+            "OUTCOME".to_string(),
+            format!("{:?} ({:.0}%)", oe.kind, oe.confidence * 100.0),
+            lines(&oe.summary),
+            false,
+        ),
+        EventPayload::Error { message, is_recovered } => (
+            "ERROR".to_string(),
+            format!("recovered: {}", is_recovered),
+            lines(message),
+            true,
+        ),
+        EventPayload::HumanIntervention(hi) => {
+            let body = hi
+                .details
+                .as_ref()
+                .map(|d| lines(d))
+                .unwrap_or_default();
+            ("INTERVENTION".to_string(), hi.action.clone(), body, false)
+        }
+        EventPayload::Compaction(c) => {
+            let mut headline = format!("trigger={}", c.trigger);
+            if let (Some(pre), Some(post)) = (c.pre_tokens, c.post_tokens) {
+                headline.push_str(&format!("   {} -> {} tokens", pre, post));
+            }
+            let mut body = Vec::new();
+            if let Some(dropped) = c.dropped_tokens {
+                body.push(format!("dropped: {} tokens", dropped));
+            }
+            if let Some(ms) = c.duration_ms {
+                body.push(format!("duration: {}ms", ms));
+            }
+            ("COMPACTION".to_string(), headline, body, false)
+        }
+        EventPayload::Custom { kind, data } => (
+            "CUSTOM".to_string(),
+            kind.clone(),
+            lines(&data.to_string()),
+            false,
+        ),
+    };
+
+    crate::ui::views::SessionEventRow { sequence, time, kind, headline, body, is_error }
 }
 
 /// The `archie session show` screen, as a string.
 ///
 /// One rendering, two readers: the command prints it, and the cockpit's session screen
 /// shows it in a viewport. Nothing here is TUI-only, which is the spec's binding rule.
-pub(crate) fn inspect_view(trace: &agentworth_schema::AgentWorthTrace) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::new();
+///
+/// It takes a `Ui` because the screen is width- and colour-aware now, like every other
+/// tab the cockpit draws -- `Tab::Show` was the only one not passing `&self.ui`, which is
+/// exactly what let the old box art sit at a hardcoded 80 columns.
+pub(crate) fn inspect_view(
+    trace: &agentworth_schema::AgentWorthTrace,
+    ui: &crate::ui::Ui,
+) -> String {
     let scorer = agentworth_scoring::TraceScorer::default();
     let score = scorer.score(trace);
     let outcomes = evaluate_trace_outcomes(trace);
 
-    out.push('\n');
-    let _ = writeln!(
-        out,
-        "{}",
-        style("╔════════════════════════════════════════════════════════════════════════════════╗")
-            .bold()
-    );
-    let _ = writeln!(
-        out,
-        "║ {:<78} ║",
-        style(format!("AgentWorth Session Trace: {}", trace.session_id))
-            .bold()
-            .cyan()
-    );
-    let _ = writeln!(
-        out,
-        "{}",
-        style("╠════════════════════════════════════════════════════════════════════════════════╣")
-            .bold()
-    );
-    let _ = writeln!(
-        out,
-        "║ Adapter:     {:<20} Started:    {:<30} ║",
-        style(&trace.adapter).green().bold(),
-        trace.started_at.to_rfc3339()
-    );
-    if let Some(ended) = trace.ended_at {
-        let _ = writeln!(
-        out,
-            "║ Duration:    {:<20} Ended:      {:<30} ║",
-            trace
-                .stats
-                .duration_seconds
-                .map(format_duration)
-                .unwrap_or_else(|| "-".to_string()),
-            ended.to_rfc3339()
-        );
-    }
-    let _ = writeln!(
-        out,
-        "║ Score:       {:<20} Events:     {:<30} ║",
-        style(format!("{:.1} / 100", score.composite_score * 100.0))
-            .bold()
-            .yellow(),
-        trace.stats.total_events
-    );
+    let strongest = agentworth_outcomes::highest_outcome(&outcomes);
+    let outcome = strongest.map(|s| {
+        let rung = outcome_rung(Some(s.kind));
+        let supporting: Vec<(String, f32)> = outcomes
+            .iter()
+            .filter(|o| o.kind == s.kind)
+            .map(|o| (o.summary.clone(), o.confidence))
+            .collect();
+        let others: Vec<&_> = outcomes.iter().filter(|o| o.kind != s.kind).collect();
+        crate::ui::views::SessionShowOutcome {
+            rung,
+            label: crate::ui::views::RUNG_LABELS[rung.min(5)],
+            confidence: s.confidence,
+            supporting,
+            other_signals: others
+                .iter()
+                .take(3)
+                .map(|o| (format!("{:?}", o.kind), o.summary.clone()))
+                .collect(),
+            other_signal_total: others.len(),
+        }
+    });
 
     let tokens = &trace.stats.token_usage;
-    let _ = writeln!(
-        out,
-        "║ Tokens:      {:<20} Breakdown: {:<30} ║",
-        style(format_number(tokens.total())).bold().magenta(),
-        format!(
-            "{} in / {} out / {} cache",
-            format_number(tokens.input_tokens),
-            format_number(tokens.output_tokens),
-            format_number(tokens.cache_read_tokens)
-        )
-    );
-
-    if !trace.stats.models_used.is_empty() {
-        let _ = writeln!(
-        out,
-            "║ Models:      {:<66} ║",
-            style(trace.stats.models_used.join(", ")).green()
-        );
-    }
-
-    if !trace.stats.tools_used.is_empty() {
-        let tools_str = trace
-            .stats
-            .tools_used
-            .iter()
-            .map(|(k, v)| format!("{}({})", k, v))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let display = if tools_str.chars().count() > 66 {
-            format!("{}...", agentworth_schema::text::truncate_chars(&tools_str, 63))
-        } else {
-            tools_str
-        };
-        let _ = writeln!(out, "║ Tools:       {:<66} ║", style(display).yellow());
-    }
-
-    if let Some(strongest) = agentworth_outcomes::highest_outcome(&outcomes) {
-        let (rung_num, rung_label) = match strongest.kind {
-            agentworth_schema::OutcomeKind::CiOrDeploymentVerified => (5, "CI or Deployment Verified"),
-            agentworth_schema::OutcomeKind::CommitObserved => (4, "Commit Observed"),
-            agentworth_schema::OutcomeKind::TestOrBuildPassed => (3, "Test or Build Passed"),
-            agentworth_schema::OutcomeKind::ArtifactChanged => (2, "Artifact Changed"),
-            agentworth_schema::OutcomeKind::DoneClaimed => (1, "Done Claimed"),
-        };
-
-        let _ = writeln!(
-        out,
-            "{}",
-            style("╠════════════════════════════════════════════════════════════════════════════════╣").bold()
-        );
-        let _ = writeln!(
-        out,
-            "║ Highest Outcome Reached: {:<53} ║",
-            style(format!("Rung {} - {} (Confidence: {:.0}%)", rung_num, rung_label, strongest.confidence * 100.0)).bold().green()
-        );
-        let _ = writeln!(
-        out,
-            "║ Supporting Evidence:                                                           ║"
-        );
-
-        let supporting: Vec<_> = outcomes.iter().filter(|o| o.kind == strongest.kind).collect();
-        for ev in &supporting {
-            let summary_display = if ev.summary.chars().count() > 64 {
-                format!("{}...", agentworth_schema::text::truncate_chars(&ev.summary, 61))
-            } else {
-                ev.summary.clone()
-            };
-            let _ = writeln!(
-        out,
-                "║   • {:<72} ║",
-                style(format!("{} (conf: {:.0}%)", summary_display, ev.confidence * 100.0)).cyan()
-            );
-        }
-
-        let other_signals: Vec<_> = outcomes.iter().filter(|o| o.kind != strongest.kind).collect();
-        if !other_signals.is_empty() {
-            let _ = writeln!(
-        out,
-                "║ Precursor / Secondary Evidence Signals ({}):                                   ║",
-                other_signals.len()
-            );
-            for ev in other_signals.iter().take(3) {
-                let summary_display = if ev.summary.chars().count() > 48 {
-                    format!("{}...", agentworth_schema::text::truncate_chars(&ev.summary, 45))
-                } else {
-                    ev.summary.clone()
-                };
-                let _ = writeln!(
-        out,
-                    "║   - [{:<20}] {:<48} ║",
-                    format!("{:?}", ev.kind),
-                    style(summary_display).dim()
-                );
-            }
-        }
-    }
-
-    let _ = writeln!(
-        out,
-        "║ Source:      {:<66} ║",
-        style(&trace.provenance.source_path).dim()
-    );
-    let _ = writeln!(
-        out,
-        "{}",
-        style("╚════════════════════════════════════════════════════════════════════════════════╝")
-            .bold()
-    );
-    out.push('\n');
-
-    let _ = writeln!(
-        out,
-        "{}",
-        style("─ Session Timeline ─────────────────────────────────────────────────────────────")
-            .bold()
-    );
-
-    for ev in &trace.events {
-        let ts = ev.timestamp.format("%H:%M:%S").to_string();
-        let seq = format!("[{:03}]", ev.sequence);
-
-        match &ev.payload {
-            agentworth_schema::EventPayload::UserMessage { content } => {
-                let _ = writeln!(
-        out,
-                    "{} {} 👤 {}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("USER PROMPT").bold().blue()
-                );
-                for line in content.lines() {
-                    let _ = writeln!(out, "   │ {}", line);
-                }
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::AssistantMessage { content, thinking } => {
-                if let Some(th) = thinking {
-                    let _ = writeln!(
-        out,
-                        "{} {} 🧠 {}",
-                        style(&seq).dim(),
-                        style(&ts).dim(),
-                        style("ASSISTANT THINKING").dim().cyan()
-                    );
-                    for line in th.lines() {
-                        let _ = writeln!(out, "   │ {}", style(line).dim());
-                    }
-                    let _ = writeln!(out, "   │");
-                }
-                if !content.is_empty() {
-                    let _ = writeln!(
-        out,
-                        "{} {} 💬 {}",
-                        style(&seq).dim(),
-                        style(&ts).dim(),
-                        style("ASSISTANT").bold().green()
-                    );
-                    for line in content.lines() {
-                        let _ = writeln!(out, "   │ {}", line);
-                    }
-                    let _ = writeln!(out, "   │");
-                }
-            }
-            agentworth_schema::EventPayload::ModelInvocation {
-                model,
-                token_usage,
-                cost_usd,
-                latency_ms,
-                ..
-            } => {
-                let cost_str = cost_usd
-                    .map(|c| format!(" (${:.4})", c))
-                    .unwrap_or_default();
-                let latency_str = latency_ms.map(|l| format!(" {}ms", l)).unwrap_or_default();
-                let _ = writeln!(
-        out,
-                    "{} {} 🤖 {} {}{}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style(format!("MODEL ({})", model)).magenta().bold(),
-                    style(format!(
-                        "Tokens: {} in, {} out{}",
-                        token_usage.input_tokens, token_usage.output_tokens, cost_str
-                    ))
-                    .dim(),
-                    style(latency_str).dim()
-                );
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::ModelSwitch(ms) => {
-                let from_str = ms.from_model.as_deref().unwrap_or("auto");
-                let _ = writeln!(
-        out,
-                    "{} {} 🔀 {} {} -> {}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("MODEL SWITCH:").magenta().bold(),
-                    style(from_str).dim(),
-                    style(&ms.to_model).magenta().bold()
-                );
-                if let Some(ref reason) = ms.reason {
-                    let _ = writeln!(out, "   │ reason: {}", style(reason).dim());
-                }
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::ToolCall(tc) => {
-                let _ = writeln!(
-        out,
-                    "{} {} ⚡ {} {}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("TOOL CALL:").bold().yellow(),
-                    style(&tc.name).yellow().bold()
-                );
-                let args_str = serde_json::to_string_pretty(&tc.arguments).unwrap_or_default();
-                for line in args_str.lines() {
-                    let _ = writeln!(out, "   │ {}", style(line).dim());
-                }
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::ToolResult(tr) => {
-                let status = if tr.is_error {
-                    style("[ERROR]").red().bold()
-                } else {
-                    style("[OK]").green().bold()
-                };
-                let name = tr.name.as_deref().unwrap_or("Tool");
-                let _ = writeln!(
-        out,
-                    "{} {} 📥 {} {} {}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("TOOL RESULT:").bold().yellow(),
-                    style(name).yellow(),
-                    status
-                );
-                let out_str = if let Some(s) = tr.output.as_str() {
-                    s.to_string()
-                } else {
-                    serde_json::to_string_pretty(&tr.output).unwrap_or_default()
-                };
-                for line in out_str.lines().take(15) {
-                    let _ = writeln!(out, "   │ {}", style(line).dim());
-                }
-                if out_str.lines().count() > 15 {
-                    let _ = writeln!(out, "   │ {}", style("... (truncated output)").dim().italic());
-                }
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::ShellCommand(sc) => {
-                let _ = writeln!(
-        out,
-                    "{} {} 💻 {} {}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("SHELL COMMAND:").bold().cyan(),
-                    style(&sc.command).cyan().bold()
-                );
-                if let Some(ref cwd) = sc.cwd {
-                    let _ = writeln!(out, "   │ cwd: {}", style(cwd).dim());
-                }
-                if let Some(code) = sc.exit_code {
-                    let _ = writeln!(out, "   │ exit: {}", code);
-                }
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::FileAction {
-                path,
-                action,
-                lines_changed,
-                ..
-            } => {
-                let _ = writeln!(
-        out,
-                    "{} {} 📝 {} {:?} {}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("FILE ACTION:").bold().magenta(),
-                    action,
-                    style(path).bold()
-                );
-                if let Some(lines) = lines_changed {
-                    let _ = writeln!(out, "   │ lines changed: {}", lines);
-                }
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::OutcomeEvidence(oe) => {
-                let _ = writeln!(
-        out,
-                    "{} {} 🏆 {} {:?} (confidence: {:.0}%)",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("OUTCOME EVIDENCE:").bold().green(),
-                    oe.kind,
-                    oe.confidence * 100.0
-                );
-                let _ = writeln!(out, "   │ {}", style(&oe.summary).green());
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::Error {
-                message,
-                is_recovered,
-            } => {
-                let _ = writeln!(
-        out,
-                    "{} {} ⚠️  {} (recovered: {})",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("ERROR:").bold().red(),
-                    is_recovered
-                );
-                let _ = writeln!(out, "   │ {}", style(message).red());
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::HumanIntervention(hi) => {
-                let _ = writeln!(
-        out,
-                    "{} {} 🛑 {} {}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("HUMAN INTERVENTION:").bold().red(),
-                    hi.action
-                );
-                if let Some(ref details) = hi.details {
-                    let _ = writeln!(out, "   │ details: {}", details);
-                }
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::Compaction(c) => {
-                let tokens_str = match (c.pre_tokens, c.post_tokens) {
-                    (Some(pre), Some(post)) => format!(" {} -> {} tokens", pre, post),
-                    _ => String::new(),
-                };
-                let _ = writeln!(
-        out,
-                    "{} {} 🗜️  {} trigger={}{}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("COMPACTION:").bold().cyan(),
-                    style(&c.trigger).cyan().bold(),
-                    style(tokens_str).dim()
-                );
-                if let Some(dropped) = c.dropped_tokens {
-                    let _ = writeln!(out, "   │ dropped: {} tokens", dropped);
-                }
-                if let Some(duration) = c.duration_ms {
-                    let _ = writeln!(out, "   │ duration: {}ms", duration);
-                }
-                let _ = writeln!(out, "   │");
-            }
-            agentworth_schema::EventPayload::Custom { kind, data } => {
-                let _ = writeln!(
-        out,
-                    "{} {} 📦 {} {}",
-                    style(&seq).dim(),
-                    style(&ts).dim(),
-                    style("CUSTOM EVENT:").dim(),
-                    kind
-                );
-                let _ = writeln!(out, "   │ {}", data);
-                let _ = writeln!(out, "   │");
-            }
-        }
-    }
-    let _ = writeln!(
-        out,
-        "{}",
-        style("────────────────────────────────────────────────────────────────────────────────")
-            .bold()
-    );
-    out.push('\n');
-    out
+    let started_at = trace.started_at.to_rfc3339();
+    let view = crate::ui::views::SessionShowView {
+        session_id: &trace.session_id,
+        adapter: &trace.adapter,
+        started_at: &started_at,
+        ended_at: trace.ended_at.map(|e| e.to_rfc3339()),
+        duration_seconds: trace.stats.duration_seconds,
+        composite_score: score.composite_score,
+        total_events: trace.stats.total_events,
+        input_tokens: tokens.input_tokens,
+        output_tokens: tokens.output_tokens,
+        cache_read_tokens: tokens.cache_read_tokens,
+        total_tokens: tokens.total(),
+        models_used: trace.stats.models_used.clone(),
+        tools_used: trace.stats.tools_used.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+        source_path: &trace.provenance.source_path,
+        outcome,
+        events: trace.events.iter().map(session_event_row).collect(),
+    };
+    crate::ui::views::session_show(ui, &view)
 }
 
-fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
-    print!("{}", inspect_view(trace));
-}
 
 // -----------------------------------------------------------------------------
 // Command: Export
@@ -2806,17 +2572,8 @@ fn run_export_command(
     Ok(())
 }
 
-fn format_number(n: u64) -> String {
-    if n >= 1_000_000_000 {
-        format!("{:.1}B", n as f64 / 1_000_000_000.0)
-    } else if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
-}
+// `format_number` lived here as a second copy of `ui::compact`; `session show` was its
+// last caller and now renders through the ui module like every other screen.
 
 fn print_scan_summary(summary: &ScanSummary, ui: &crate::ui::Ui) {
     let view = crate::ui::views::ScanView {
@@ -4552,7 +4309,7 @@ impl crate::ui::cockpit::Screens for CockpitScreens {
         use crate::ui::cockpit::Tab;
         let trace = self.trace_for(id)?;
         match tab {
-            Tab::Show => Ok(inspect_view(&trace)),
+            Tab::Show => Ok(inspect_view(&trace, &self.ui)),
             Tab::Handoff => handoff_command::view_for(&self.storage, &self.ui, &trace),
             Tab::Asks => asks_command::view_for(&self.storage, &self.ui, &trace),
             Tab::Forgotten => forgotten_command::view_for(&self.storage, &self.ui, &trace),

@@ -14,6 +14,13 @@ use std::fs::{self, File};
 use std::io::Write;
 use tempfile::{tempdir, TempDir};
 
+/// Confines the self-test's own `scan` step to the fixture root (see `SCAN_ROOT_ENV` in
+/// `apps/cli/src/commands/self_test.rs`). Without it the step scans this machine's real
+/// agent directories into the fixture `--db-path`, and on a developer machine with real
+/// history the `forgotten` step below then finds a genuinely compacted session and passes
+/// where this test requires a skip.
+const SCAN_ROOT_ENV: &str = "AGENTWORTH_SELF_TEST_SCAN_ROOT";
+
 /// One short session mixing English, Japanese, and Russian content -- enough to exercise
 /// the self-test's JSON round trip on non-ASCII text without depending on another PR's
 /// fixture. No compaction round: `forgotten` is expected to report `skip` here, and that
@@ -45,6 +52,9 @@ fn fixture() -> (TempDir, std::path::PathBuf) {
         .unwrap()
         .arg("--db-path")
         .arg(&db)
+        // Never the developer's own `~/.agentworth/config.toml`: a persisted `json = true`
+        // there would turn every text assertion below into a JSON payload.
+        .env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"))
         .arg("scan")
         .arg(temp.path())
         .arg("--json")
@@ -56,7 +66,7 @@ fn fixture() -> (TempDir, std::path::PathBuf) {
 
 #[test]
 fn self_test_runs_clean_against_a_small_fixture_index() {
-    let (_temp, db) = fixture();
+    let (temp, db) = fixture();
 
     let assert = Command::cargo_bin("agentworth")
         .unwrap()
@@ -64,6 +74,8 @@ fn self_test_runs_clean_against_a_small_fixture_index() {
         .arg(&db)
         .arg("doctor")
         .arg("--self-test")
+        .env(SCAN_ROOT_ENV, temp.path())
+        .env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"))
         .arg("--json")
         .assert()
         .success();
@@ -112,7 +124,7 @@ fn self_test_runs_clean_against_a_small_fixture_index() {
 
 #[test]
 fn self_test_human_output_stays_on_the_grid() {
-    let (_temp, db) = fixture();
+    let (temp, db) = fixture();
 
     let assert = Command::cargo_bin("agentworth")
         .unwrap()
@@ -120,6 +132,8 @@ fn self_test_human_output_stays_on_the_grid() {
         .arg(&db)
         .arg("doctor")
         .arg("--self-test")
+        .env(SCAN_ROOT_ENV, temp.path())
+        .env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"))
         .env("COLUMNS", "80")
         .env("NO_COLOR", "1")
         .assert()
