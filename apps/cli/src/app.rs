@@ -732,7 +732,7 @@ pub fn run() -> Result<()> {
         }
         Commands::Inspect { session_id, json } => {
             let json = resolve_json(json);
-            if let Err(e) = run_inspect_command(&session_id, json, cli.db_path.clone()) {
+            if let Err(e) = run_inspect_command(&session_id, json, cli.db_path.clone(), &ui) {
                 if json {
                     return Err(e);
                 }
@@ -1112,48 +1112,24 @@ struct VerdictBreakdown {
     real_verified_rate: f64,
 }
 
+/// Reads the verdict-rung counts straight from the index (`Storage::verdict_breakdown`) rather
+/// than reparsing every transcript on disk -- the old version here called `Scanner::load_trace`
+/// and re-ran outcome detection per session, which took 17s against a 2,960-session index.
+/// Every non-stub scanned session already carries a trustworthy `primary_outcome` (#85/#81),
+/// so the storage-layer aggregate query answers the same question.
 fn compute_verdict_breakdown(storage: &Arc<Storage>, total_sessions: usize) -> VerdictBreakdown {
-    let mut breakdown = VerdictBreakdown::default();
-    let scanner = Scanner::new(storage.clone());
+    let counts = storage.verdict_breakdown().unwrap_or_default();
 
-    if let Ok(sessions) = storage.list_sessions_filtered(&SessionFilter {
-        limit: None,
-        ..Default::default()
-    }) {
-        for s in sessions {
-            let mut detected_rung = None;
-            if let Ok(trace) = scanner.load_trace(&s.session_id) {
-                let outcomes = evaluate_trace_outcomes(&trace);
-                if let Some(strongest) = agentworth_outcomes::highest_outcome(&outcomes) {
-                    detected_rung = Some(strongest.kind);
-                }
-            }
-
-            match detected_rung {
-                Some(agentworth_schema::OutcomeKind::CiOrDeploymentVerified) => {
-                    breakdown.ci_or_deployment_verified += 1;
-                    breakdown.real_verified_tasks += 1;
-                }
-                Some(agentworth_schema::OutcomeKind::CommitObserved) => {
-                    breakdown.commit_observed += 1;
-                    breakdown.real_verified_tasks += 1;
-                }
-                Some(agentworth_schema::OutcomeKind::TestOrBuildPassed) => {
-                    breakdown.test_or_build_passed += 1;
-                    breakdown.real_verified_tasks += 1;
-                }
-                Some(agentworth_schema::OutcomeKind::ArtifactChanged) => {
-                    breakdown.artifact_changed += 1;
-                }
-                Some(agentworth_schema::OutcomeKind::DoneClaimed) => {
-                    breakdown.done_claimed += 1;
-                }
-                None => {
-                    breakdown.unverified += 1;
-                }
-            }
-        }
-    }
+    let mut breakdown = VerdictBreakdown {
+        ci_or_deployment_verified: counts.ci_or_deployment_verified,
+        commit_observed: counts.commit_observed,
+        test_or_build_passed: counts.test_or_build_passed,
+        artifact_changed: counts.artifact_changed,
+        done_claimed: counts.done_claimed,
+        unverified: counts.unverified,
+        real_verified_tasks: counts.real_verified_tasks,
+        real_verified_rate: 0.0,
+    };
 
     if total_sessions > 0 {
         breakdown.real_verified_rate =
@@ -1452,12 +1428,17 @@ fn format_duration(seconds: f64) -> String {
 // Command: Inspect
 // -----------------------------------------------------------------------------
 
-fn run_inspect_command(session_id: &str, json: bool, db_path: Option<PathBuf>) -> Result<()> {
+fn run_inspect_command(
+    session_id: &str,
+    json: bool,
+    db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
+) -> Result<()> {
     let storage = open_storage(db_path)?;
     let scanner = Scanner::new(storage.clone());
 
     let resolved_id = resolve_inspect_session_id(&storage, session_id)?;
-    let trace = scanner.load_trace(&resolved_id)?;
+    let trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(&resolved_id))?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&trace)?);
@@ -2642,6 +2623,81 @@ mod tests {
             scanned, SESSION_COUNT as usize,
             "compute_verdict_breakdown must scan every session, not silently cap at 50"
         );
+    }
+
+    #[test]
+    fn test_stats_reads_the_index_without_reparsing_every_transcript() {
+        // Timing guard: `compute_verdict_breakdown` used to call `Scanner::load_trace` (a
+        // real disk read + adapter re-parse) for every session on every `agentworth stats`
+        // invocation -- 17s measured against a 2,960-session index. It now reads
+        // `sessions.primary_outcome` straight out of the index (`Storage::verdict_breakdown`),
+        // so this must stay fast against 3,000 sessions.
+        //
+        // Every source_path below is nonexistent, so if a reparse ever creeps back in here,
+        // `Scanner::load_trace` fails loudly on the missing file rather than this test
+        // silently passing anyway.
+        // In-memory, not `NamedTempFile` + `open_path`: seeding 3,000 rows through real
+        // per-call transactions is dominated by disk fsync otherwise, which would make this
+        // guard's own setup slower than the 2s budget it's checking `compute_verdict_breakdown`
+        // against (`test_discover_blunders_surfaces_blunder_beyond_old_5000_cap` in
+        // apps/cli/src/commands/blunder.rs seeds 5,000 rows the same way for the same reason).
+        let storage = Storage::open_in_memory().unwrap();
+        let start = Utc::now();
+
+        const SESSION_COUNT: i64 = 3000;
+        let outcomes = [
+            Some("ci_or_deployment_verified"),
+            Some("commit_observed"),
+            Some("test_or_build_passed"),
+            Some("artifact_changed"),
+            Some("done_claimed"),
+            None,
+        ];
+        for i in 0..SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/nonexistent/verdict_timing_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_timing_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-timing-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage
+                .upsert_session(&trace, outcomes[(i % 6) as usize], Some(0.5), 1)
+                .unwrap();
+        }
+
+        let storage = Arc::new(storage);
+        let total_sessions = storage.get_aggregate_stats(false).unwrap().total_sessions;
+        assert_eq!(total_sessions, SESSION_COUNT as usize);
+
+        let started = std::time::Instant::now();
+        let breakdown = compute_verdict_breakdown(&storage, total_sessions);
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "compute_verdict_breakdown took {:?} against {} sessions -- it must read the \
+             index, not reparse every transcript",
+            elapsed,
+            SESSION_COUNT
+        );
+
+        // 3000 sessions split evenly across the 6 buckets above -- 500 each.
+        assert_eq!(breakdown.ci_or_deployment_verified, 500);
+        assert_eq!(breakdown.commit_observed, 500);
+        assert_eq!(breakdown.test_or_build_passed, 500);
+        assert_eq!(breakdown.artifact_changed, 500);
+        assert_eq!(breakdown.done_claimed, 500);
+        assert_eq!(breakdown.unverified, 500);
+        assert_eq!(breakdown.real_verified_tasks, 1500);
     }
 
     #[test]
