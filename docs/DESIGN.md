@@ -80,9 +80,12 @@ Full inventory and usage rules are on the cards, not duplicated here — see the
 
 ## Archie
 
-Settled 2026-09-02: the D2 hound with a headlamp. Poses, colourways, motion and the
-terminal short form live in `packages/ui/brand/archie/` — read that README before
-drawing him anywhere. Six rules from the placement board:
+Settled 2026-09-02: the D2 hound, redrawn the same day as **M3** — the jaw is merged
+into the head outline, so the head is one round shape with a nose dot near the bottom,
+and the light is a torch he carries in a front paw rather than a lamp strapped to his
+head. Poses, colourways, motion and the terminal short form live in
+`packages/ui/brand/archie/` — read that README before drawing him anywhere. Eight rules
+from the placement board:
 
 - **Where he belongs**: the ⌘K empty state, the scan line, the 404, the dashboard's kit
   picker, and `agentworth.dev/archie`. Nowhere else.
@@ -92,7 +95,15 @@ drawing him anywhere. Six rules from the placement board:
   exception is `agentworth.dev/archie`, where he is the subject rather than the
   furniture and the page is the kit.
 - **He arrives bare.** The default accessory is `none` (Saurabh, 2026-09-02); the lamp
-  and the goggles are a switch, not how he shows up.
+  and the goggles are optional costumes inside `#accessory`, not how he shows up. The
+  torch is not one of them — it lives in `#base`, in his paw, in every pose.
+- **Under 40px he swaps to the lit dot.** The torch is unreadable at that size, so the
+  SVG root takes `data-size="small"`: the torch hides, a lit disc and halo show at the
+  paw, and the nose grows so it cannot read as an open mouth. `Archie.tsx` sets it from
+  the `size` prop; anything rendering the files directly sets it itself.
+- **The terminal form is nine columns, not seven** — `,---.` / `( o o )` / `-*  '._.'`,
+  with the torch glyph at the paw as the state. Cost, accepted on purpose: the beam dash
+  sits in front of it, so "nothing" prints `--` and "off" prints `-.`.
 - **C3 is the default** colourway and the only one that ships on the site. C4 is for
   dense chrome, where he must not out-shout the data.
 - **Inline the SVG, never an `<img>`**: the colourways are CSS custom properties, and a
@@ -102,4 +113,3 @@ drawing him anywhere. Six rules from the placement board:
 ## Open items
 
 - Categorical palette re-step (chart rule 2, above) — tracked here until it's fixed in `tokens.css`, which this bundle doesn't own.
-- No Archie card in `design-system/` yet; the brand folder's README is the reference until there is one.

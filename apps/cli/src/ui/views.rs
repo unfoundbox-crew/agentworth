@@ -1191,7 +1191,7 @@ pub fn scan_progress(ui: &Ui, frame: u64, what: &str, done: usize, total: usize)
     }
 
     let art = archie(lamp);
-    let bar_w = ui.inner().saturating_sub(38).clamp(8, 40);
+    let bar_w = ui.inner().saturating_sub(40).clamp(8, 40);
 
     push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &art[0])));
     push(
@@ -1201,7 +1201,7 @@ pub fn scan_progress(ui: &Ui, frame: u64, what: &str, done: usize, total: usize)
             "  {}   {}  {}",
             ui.paint(Role::Value, &art[1]),
             ui.paint(Role::Label, "scanning"),
-            ui.paint(Role::Label, &truncate(what, ui.inner().saturating_sub(24)))
+            ui.paint(Role::Label, &truncate(what, ui.inner().saturating_sub(26)))
         ),
     );
     push(

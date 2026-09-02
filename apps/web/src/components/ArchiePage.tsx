@@ -53,9 +53,9 @@ const COLOURWAY_NAMES: Record<ArchieColourway, string> = {
 /** Exactly the block the CLI prints, so the page cannot claim a shape the binary
  *  does not draw. Kept in sync by hand with packages/ui/brand/archie/archie-tui.txt. */
 const TERMINAL_BLOCK = `┌─ archie ────────────────────────────────────────────────────────────────────────────── digging ──┐
-│  ,-*-.   ~/.claude/projects            ──────────────────────·······  68%                        │
+│  ,---.   ~/.claude/projects            ──────────────────────·······  68%                        │
 │ ( o o )  1,204 sessions · 38 repos     last dig 2m ago                                           │
-│  '\\_/'   ● 902 verified  ○ 14 off      3 asks still unanswered                                   │
+│-*  '._.' ● 902 verified  ○ 14 off      3 asks still unanswered                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
  (*) archie  scanning  ──────────────────·······  68%  1,204 sessions`;
@@ -111,13 +111,19 @@ const KitSwitch: React.FC<{
       <p className="ar-try-note">
         One drawing. The kit is <code>data-accessory</code> on the SVG and the colourway is
         a <code>.archie-c1</code>&hellip;<code>.archie-c4</code> class on any ancestor, so
-        neither is ever a second file to keep in sync. He arrives bare; the head gear is a
-        switch. C3 is the default colourway and the only one that ships on this site.
+        neither is ever a second file to keep in sync. He arrives bare, carrying the torch
+        in a front paw; the head gear is a costume you switch on. C3 is the default
+        colourway and the only one that ships on this site.
+      </p>
+      <p className="ar-try-note">
+        Under 40px the torch stops being a drawing and becomes a smudge, so the SVG takes{" "}
+        <code>data-size=&quot;small&quot;</code> and swaps it for a lit dot at the paw.{" "}
+        <code>Archie.tsx</code> sets that for you from the size you ask for.
       </p>
       <p className="ar-try-note">
         <code>agentworth config set archie.colourway C4</code> stores a choice for the
         surfaces that draw him: the local dashboard, and anything else rendering the SVG.
-        The terminal form does not read it — there the lamp glyph <em>is</em> the state, so
+        The terminal form does not read it — there the torch glyph <em>is</em> the state, so
         it is fixed.
       </p>
     </div>

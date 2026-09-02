@@ -3,7 +3,7 @@ import { SiteHeader, SiteFooter } from "./SiteChrome";
 import { Archie } from "@ui/Archie";
 
 /**
- * The 404. Lamp off, ears flat: the page is missing, he looked, that is all.
+ * The 404. Torch dropped, ears flat: the page is missing, he looked, that is all.
  *
  * Pre-rendered to `dist/404.html` rather than to a route directory — a static host
  * serves that file for paths that match nothing, and a path that matches nothing is
@@ -45,7 +45,7 @@ export const NotFoundPage: React.FC = () => {
               </p>
             </div>
             <div className="ar-hero-figure">
-              <Archie pose="error" size={200} label="Archie, lamp off, having found nothing" />
+              <Archie pose="error" size={200} label="Archie, torch down, having found nothing" />
             </div>
           </section>
         </div>

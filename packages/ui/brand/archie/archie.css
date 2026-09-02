@@ -109,9 +109,9 @@
 }
 
 @keyframes archie-dig-beam {          /* the sweep — this is what he sees with */
-  0%,   100% { transform: rotate(0deg);  opacity: 1; }
-  33.3%      { transform: rotate(-9deg); opacity: 1; }
-  66.6%      { transform: rotate(6deg);  opacity: 0.75; }
+  0%,   100% { transform: rotate(0deg);    opacity: 1; }
+  33.3%      { transform: rotate(-4.5deg); opacity: 1; }
+  66.6%      { transform: rotate(3deg);    opacity: 0.75; }
 }
 
 @keyframes archie-dig-chips {         /* fly out, fade, reset — never travel back */
@@ -123,8 +123,11 @@
 
 .archie-dig .archie-base      { animation: archie-dig-body var(--motion-loop-dig) var(--ease-out) infinite;
                          transform-origin: 30% 70%; }
+/* The origin is the paw, not the head: the torch is hand-held now, and a sweep
+   pivoted where the headlamp used to sit swings the beam through his own legs.
+   The angles are halved with it — a wrist has less travel than a neck. */
 .archie-dig .archie-beam { animation: archie-dig-beam var(--motion-loop-dig) var(--ease-out) infinite;
-                         transform-origin: 30% 30%; }
+                         transform-origin: 24% 85%; }
 .archie-dig .archie-chip { animation: archie-dig-chips var(--motion-loop-dig) linear infinite; }
 .archie-dig .archie-chip:nth-of-type(2) { animation-delay: -340ms; }
 .archie-dig .archie-chip:nth-of-type(3) { animation-delay: -700ms; }
@@ -172,9 +175,12 @@
   from { opacity: 0; transform: translateY(10px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0)    scale(1); }
 }
+/* `fill-box` so each lens scales about itself. The default reference box for an
+   SVG element is the whole 48-unit viewBox, which would swing the lens across
+   the drawing instead of swelling it in place. */
 .archie-found .archie-beam,
 .archie-found .archie-lens { animation: archie-found-lamp var(--motion-slow) var(--ease-out) both;
-                           transform-origin: center; }
+                           transform-box: fill-box; transform-origin: center; }
 .archie-found .archie-receipt { animation: archie-found-receipt var(--motion-slow) var(--ease-spring) 120ms both; }
 
 /* ── the error beat ───────────────────────────────────────────────────────

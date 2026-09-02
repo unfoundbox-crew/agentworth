@@ -357,8 +357,8 @@ fn plain_flag_matches_a_piped_stream() {
     assert_eq!(piped, flagged, "--plain is what a pipe already gets");
 }
 
-/// The approved terminal short form: three lines, seven columns, and only the lamp
-/// changes. A piped stream cannot repaint, so it gets frame 1 once — never a loop.
+/// The approved terminal short form: three lines, nine columns, and only the torch
+/// glyph changes. A piped stream cannot repaint, so it gets frame 1 once — never a loop.
 #[test]
 fn the_scan_line_draws_archie_and_prints_one_frame_to_a_pipe() {
     let (t, db) = fixture();
@@ -374,15 +374,16 @@ fn the_scan_line_draws_archie_and_prints_one_frame_to_a_pipe() {
         ears,
         out
     );
-    assert!(out.contains("'\\_/'"), "the low muzzle is missing:\n{}", out);
+    assert!(out.contains("'._.'"), "the merged jaw is missing:\n{}", out);
     assert!(
-        out.contains(",-*-."),
-        "the lamp is missing from the strap:\n{}",
+        out.contains("-*  '._.'"),
+        "the torch is missing from the paw:\n{}",
         out
     );
+    assert!(out.contains(",---."), "the crown is missing:\n{}", out);
 }
 
-/// Under 46 columns the progress block does not leave room for the label and the track
+/// Under 48 columns the progress block does not leave room for the label and the track
 /// beside it, so the scan line collapses to the ears and the lamp. The summary that
 /// follows is a different screen and keeps its three lines.
 #[test]
