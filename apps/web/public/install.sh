@@ -58,13 +58,15 @@ say() { # lamp label rest
   printf ' (%s) archie  %-11s  %s\n' "$1" "$2" "$3"
 }
 
+# The error beat: the torch goes out, one line prints, nothing moves after it.
 err() {
-  printf ' ( ) archie  %s\n' "$*" >&2
+  say ' ' error "$*" >&2
   exit 1
 }
 
+# Searched here, nothing. Not a failure -- the install carries on.
 warn() {
-  printf ' (-) archie  %s\n' "$*" >&2
+  say '-' skipped "$*" >&2
 }
 
 repeat() { # string count
@@ -264,11 +266,11 @@ if curl -fsSL -A "$UA" -o "$tmpdir/${asset}.sha256" "$checksum_url" 2>/dev/null;
       [ "$expected" = "$actual" ] || err "checksum mismatch for $asset"
       say '*' verifying "sha256 matches"
     else
-      warn "no sha256sum or shasum on this machine, skipping verification"
+      warn "checksum: no sha256sum or shasum on this machine"
     fi
   )
 else
-  warn "no checksum asset published for $tag, skipping verification"
+  warn "checksum: none published for $tag"
 fi
 
 # -----------------------------------------------------------------------------
@@ -295,7 +297,7 @@ for bin in agentworth archie agwt; do
     chmod +x "$INSTALL_DIR/$bin"
     if [ -z "$installed" ]; then installed="$bin"; else installed="$installed, $bin"; fi
   else
-    warn "$bin not found in archive"
+    warn "$bin is not in the archive"
   fi
 done
 
