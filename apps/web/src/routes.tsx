@@ -1,6 +1,7 @@
 import React from "react";
 import { LandingPage } from "./components/LandingPage";
 import { ChangelogPage } from "./components/ChangelogPage";
+import { ReferencePage } from "./components/ReferencePage";
 import { BlogIndexPage } from "./components/BlogIndexPage";
 import { BlogPostPage } from "./components/BlogPostPage";
 import { posts } from "./content";
@@ -14,6 +15,7 @@ export interface Route {
 export const routes: Route[] = [
   { path: "/", element: <LandingPage /> },
   { path: "/changelog/", element: <ChangelogPage /> },
+  { path: "/docs/reference/", element: <ReferencePage /> },
   { path: "/blog/", element: <BlogIndexPage /> },
   ...posts.map((post) => ({
     path: `/blog/${post.slug}/`,

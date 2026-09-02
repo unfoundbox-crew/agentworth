@@ -510,6 +510,69 @@
 }
 
 /* =========================================================================
+   Reference (/docs/reference/) — reuses .rel-layout/.rel-rail/.prose from the
+   changelog wholesale; this only adds the bits specific to a generated API
+   reference: a method badge, spacing between the rail's three groups, and
+   the collapsible JSON-schema block.
+   ========================================================================= */
+.ref-group + .ref-group {
+  margin-top: 3em;
+}
+.ref-group > h2 {
+  margin: 0 0 4px;
+  font-size: 1.6em;
+  letter-spacing: -0.025em;
+  color: var(--mv-ink);
+}
+.ref-group-lede {
+  margin: 0 0 1.6em;
+  color: var(--mv-muted);
+}
+.ref-item {
+  padding: 1.6em 0;
+  border-bottom: 1px solid var(--mv-border);
+}
+.ref-item:last-child {
+  border-bottom: 0;
+}
+.ref-item h3 {
+  margin-top: 0;
+}
+.ref-method {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.62em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--mv-accent);
+  background: var(--mv-accent-soft);
+  border: 1px solid var(--mv-accent-border);
+  border-radius: 5px;
+  padding: 2px 6px;
+  vertical-align: middle;
+}
+.ref-schema summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--mv-muted);
+  margin-bottom: 10px;
+}
+.ref-schema summary:hover {
+  color: var(--mv-ink);
+}
+.ref-schema[open] summary {
+  margin-bottom: 12px;
+}
+.ref-rail {
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+.ref-rail .rail-head:not(:first-child) {
+  margin-top: 20px;
+}
+
+/* =========================================================================
    Blog
    ========================================================================= */
 .post-list {
