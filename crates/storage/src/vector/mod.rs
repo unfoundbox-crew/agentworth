@@ -94,8 +94,10 @@ pub fn f32_slice_to_bytes(vec: &[f32]) -> Vec<u8> {
 /// Deserialize raw little-endian bytes from SQLite BLOB storage into a Vec<f32>.
 pub fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
     bytes
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| f32::from_le_bytes(*chunk))
         .collect()
 }
 

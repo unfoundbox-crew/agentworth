@@ -223,12 +223,19 @@ impl Ui {
     // -- lines ----------------------------------------------------------------
 
     /// The screen head: the command echoed at column 0, its context right-aligned.
+    ///
+    /// The command always prints in full (that is the point of "echoed at column 0") --
+    /// when the two don't both fit, `right` (a path or similar variable-length context)
+    /// gives up the space instead. This used to truncate `command` first, which could
+    /// erase it entirely for a long `right`; a `--db-path` under macOS's system temp dir
+    /// (`/var/folders/<hash>/T/...`) is long enough to hit that in practice.
     pub fn header(&self, command: &str, right: &str) -> String {
         let mut out = String::new();
-        let command = truncate(command, self.width.saturating_sub(display_width(right) + 1));
+        let command = truncate(command, self.width);
+        let right = truncate(right, self.width.saturating_sub(display_width(&command) + 1));
         let gap = self
             .width
-            .saturating_sub(display_width(&command) + display_width(right));
+            .saturating_sub(display_width(&command) + display_width(&right));
         let line = if right.is_empty() {
             self.paint(Role::Emphasis, &command)
         } else {
@@ -236,7 +243,7 @@ impl Ui {
                 "{}{}{}",
                 self.paint(Role::Emphasis, &command),
                 " ".repeat(gap.max(1)),
-                self.paint(Role::Label, right)
+                self.paint(Role::Label, &right)
             )
         };
         let _ = writeln!(out, "{}", line);

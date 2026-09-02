@@ -751,12 +751,9 @@ mod tests {
     #[test]
     fn test_detect_and_enumerate_windsurf() {
         let mut temp_file = NamedTempFile::new().unwrap();
-        writeln!(
-            temp_file,
-            "{}",
-            r#"{"role":"user","content":"Build an API server in Rust","timestamp":"2024-05-18T10:00:00Z"}"#
-        )
-        .unwrap();
+        let content =
+            r#"{"role":"user","content":"Build an API server in Rust","timestamp":"2024-05-18T10:00:00Z"}"#;
+        writeln!(temp_file, "{}", content).unwrap();
 
         let adapter = WindsurfAdapter::new();
         let options = ScanOptions {
