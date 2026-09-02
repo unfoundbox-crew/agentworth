@@ -1,2 +1,6 @@
 .vercel
 .env*
+
+# Written by scripts/gen-content.mjs at build time
+src/content.generated.json
+dist-ssr

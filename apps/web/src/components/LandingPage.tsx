@@ -1,13 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ThemeToggle } from "@ui/ThemeToggle";
-import { BrandMark } from "@ui/BrandMark";
-import { Wordmark } from "@ui/Wordmark";
-import { IconCheck, IconCopy, IconGithub } from "@ui/icons";
+import { IconCheck, IconCopy } from "@ui/icons";
 import { trackEvent } from "../analytics";
-
-const SCAN_CMD = "npx -y agentworth scan";
-const CURL_CMD = "curl -fsSL https://agentworth.dev/install.sh | sh";
-const REPO = "https://github.com/unfoundbox-crew/agentworth";
+import { SiteHeader, SiteFooter, SCAN_CMD, CURL_CMD } from "./SiteChrome";
 
 /**
  * The outcome distribution from one real machine.
@@ -99,26 +93,7 @@ export const LandingPage: React.FC = () => {
         Skip to content
       </a>
 
-      <header className="wrap">
-        <nav className="nav">
-          <a className="mark" href="/">
-            <BrandMark size={20} />
-            <Wordmark height={13} />
-          </a>
-          <div className="nav-right">
-            <a
-              className="nav-link"
-              href={REPO}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <IconGithub size={14} />
-              <span>GitHub</span>
-            </a>
-            <ThemeToggle />
-          </div>
-        </nav>
-      </header>
+      <SiteHeader />
 
       <main id="main" ref={main}>
         <section className="hero">
@@ -264,14 +239,7 @@ export const LandingPage: React.FC = () => {
         </section>
       </main>
 
-      <footer className="wrap">
-        <div className="foot">
-          <span>Apache-2.0 &middot; native Rust &middot; nothing uploaded</span>
-          <a href={REPO} target="_blank" rel="noreferrer">
-            github.com/unfoundbox-crew/agentworth
-          </a>
-        </div>
-      </footer>
+      <SiteFooter />
     </>
   );
 };

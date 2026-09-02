@@ -1,0 +1,625 @@
+/* =========================================================================
+   Changelog and blog.
+
+   Same instrument grammar as the landing page: monospace for anything
+   measured, hairlines instead of boxes, tabular numerals, and --mv-accent
+   kept scarce — here it marks the latest release, a hovered version, and
+   links inside prose. Nothing on these pages animates; they are read.
+   ========================================================================= */
+
+/* The nav gained two links, which is one item too many for a 375px screen.
+   The GitHub wordmark goes first — its icon still carries the meaning. */
+.nav-link[aria-current="page"] {
+  color: var(--mv-ink);
+}
+.mark .wordmark {
+  display: inline-flex;
+}
+@media (max-width: 620px) {
+  .nav-right {
+    gap: 2px;
+  }
+  .nav-link {
+    padding: 6px 6px;
+    font-size: 11.5px;
+  }
+  /* The brand mark carries the identity on its own at this width; the
+     wordmark and the GitHub label are what the row can afford to lose. */
+  .mark .wordmark,
+  .nav-link .nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 26px 0 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--mv-faint);
+}
+.crumbs a {
+  color: var(--mv-muted);
+  text-decoration: none;
+}
+.crumbs a:hover {
+  color: var(--mv-ink);
+}
+.crumbs [aria-current="page"] {
+  color: var(--mv-ink);
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-head {
+  padding: clamp(30px, 4.5vw, 56px) 0 clamp(28px, 4vw, 44px);
+  border-bottom: 1px solid var(--mv-border);
+}
+.page-head h1 {
+  font-size: clamp(2rem, 1.3rem + 2.9vw, 3.4rem);
+  line-height: 1.02;
+  letter-spacing: -0.032em;
+  font-weight: 700;
+  color: var(--mv-ink);
+  margin: 0 0 22px;
+  max-width: 19ch;
+  text-wrap: balance;
+}
+.page-head .lede {
+  margin-bottom: 0;
+  max-width: 62ch;
+}
+
+.page-head .lede a,
+.prose a,
+.post-desc a {
+  color: var(--mv-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--mv-accent-border);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  transition: text-decoration-color var(--motion-fast) var(--ease-out);
+}
+.page-head .lede a:hover,
+.prose a:hover,
+.post-desc a:hover {
+  text-decoration-color: var(--mv-accent);
+}
+
+/* Downloads — a measurement, so monospace and always with its window ----- */
+.dl-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 44px;
+  margin: 30px 0 0;
+  padding: 18px 0 0;
+  border-top: 1px solid var(--mv-border);
+}
+.dl-stats > div {
+  min-width: 0;
+}
+.dl-stats dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  margin: 0 0 5px;
+}
+.dl-stats dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-muted);
+}
+.dl-stats dd b {
+  color: var(--mv-ink);
+  font-size: 17px;
+  font-weight: 600;
+  margin-right: 6px;
+}
+.dl-stats dd span {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--mv-faint);
+}
+
+/* Layout: releases beside a sticky rail ---------------------------------- */
+.rel-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: clamp(36px, 5vw, 72px);
+  align-items: start;
+  padding-top: clamp(30px, 4vw, 48px);
+}
+@media (max-width: 940px) {
+  .rel-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 40px;
+  }
+}
+
+.rel {
+  padding: 34px 0;
+  border-bottom: 1px solid var(--mv-border);
+  scroll-margin-top: 24px;
+}
+.rel:last-child {
+  border-bottom: 0;
+}
+.rel-latest {
+  padding-top: 0;
+}
+
+.rel-head {
+  margin-bottom: 22px;
+}
+.rel-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 8px;
+  font-size: 0;
+}
+.rel .ver {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-ink);
+  text-decoration: none;
+}
+.rel-latest .ver {
+  font-size: clamp(28px, 1.4rem + 1.3vw, 36px);
+}
+.rel .ver:hover {
+  color: var(--mv-accent);
+}
+
+.tag-latest {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-accent);
+  background: var(--mv-accent-soft);
+  border: 1px solid var(--mv-accent-border);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+.rel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+}
+.rel-meta a {
+  color: var(--mv-muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--mv-border);
+}
+.rel-meta a:hover {
+  color: var(--mv-ink);
+  border-bottom-color: var(--mv-accent);
+}
+
+.rel-section + .rel-section {
+  margin-top: 26px;
+}
+.rel-section h3 {
+  margin: 0 0 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  font-weight: 500;
+}
+
+/* The version rail ------------------------------------------------------ */
+.rel-rail {
+  position: sticky;
+  top: 24px;
+  border-left: 1px solid var(--mv-border);
+  padding-left: 20px;
+}
+@media (max-width: 940px) {
+  .rel-rail {
+    position: static;
+    border-left: 0;
+    border-top: 1px solid var(--mv-border);
+    padding: 24px 0 0;
+  }
+}
+.rail-head,
+.rail-foot {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  margin: 0 0 12px;
+}
+.rail-foot {
+  margin: 14px 0 0;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.rail-foot a {
+  color: var(--mv-accent);
+  text-decoration: none;
+}
+.rail-foot a:hover {
+  text-decoration: underline;
+}
+.rel-rail ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+}
+.rel-rail a {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px 5px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  border-radius: 5px;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.rel-rail a:hover {
+  background: var(--mv-surface);
+  padding-left: 8px;
+}
+.rail-v {
+  color: var(--mv-ink);
+}
+.rail-d {
+  color: var(--mv-faint);
+  font-size: 11px;
+}
+@media (max-width: 940px) {
+  .rel-rail ol {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 2px 16px;
+  }
+}
+
+/* =========================================================================
+   Prose — changelog bodies and post bodies share one measure and rhythm.
+   ========================================================================= */
+.prose {
+  font-size: 16px;
+  line-height: 1.68;
+  color: var(--mv-text);
+  max-width: 68ch;
+}
+.prose > *:first-child {
+  margin-top: 0;
+}
+.prose > *:last-child {
+  margin-bottom: 0;
+}
+.prose p {
+  margin: 0 0 1.1em;
+}
+.prose ul,
+.prose ol {
+  margin: 0 0 1.1em;
+  padding-left: 1.15em;
+}
+.prose li {
+  margin-bottom: 0.62em;
+  padding-left: 0.15em;
+}
+.prose li::marker {
+  color: var(--mv-faint);
+}
+.prose strong,
+.prose b {
+  color: var(--mv-ink);
+  font-weight: 600;
+}
+.prose em {
+  font-style: italic;
+}
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.87em;
+  color: var(--mv-ink);
+  background: var(--mv-surface);
+  border-radius: 4px;
+  padding: 1.5px 5px;
+  overflow-wrap: anywhere;
+}
+.prose pre {
+  margin: 0 0 1.3em;
+  padding: 16px 18px;
+  background: var(--mv-surface);
+  border: 1px solid var(--mv-border);
+  border-radius: 10px;
+  overflow-x: auto;
+  line-height: 1.6;
+}
+.prose pre code {
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--mv-text);
+}
+.prose blockquote {
+  margin: 0 0 1.3em;
+  padding: 2px 0 2px 20px;
+  border-left: 2px solid var(--mv-accent-border);
+  color: var(--mv-muted);
+}
+.prose blockquote p:last-child {
+  margin-bottom: 0;
+}
+.prose h2,
+.prose h3 {
+  color: var(--mv-ink);
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  scroll-margin-top: 24px;
+}
+.prose h2 {
+  margin: 2em 0 0.7em;
+  font-size: 1.42em;
+  font-weight: 650;
+}
+.prose h3 {
+  margin: 1.7em 0 0.6em;
+  font-size: 1.12em;
+  font-weight: 600;
+}
+.prose hr {
+  margin: 2.2em 0;
+  border: 0;
+  border-top: 1px solid var(--mv-border);
+}
+/* A wide table scrolls inside its own box; the page never scrolls sideways. */
+.prose table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  margin: 0 0 1.3em;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.prose th,
+.prose td {
+  padding: 8px 14px 8px 0;
+  border-bottom: 1px solid var(--mv-border);
+  text-align: left;
+  vertical-align: top;
+}
+.prose th {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  font-weight: 500;
+  white-space: nowrap;
+}
+/* Markdown column alignment arrives as an align attribute. Honour it — the
+   measured columns in these posts are right-aligned on purpose. */
+.prose th[align="right"],
+.prose td[align="right"] {
+  text-align: right;
+}
+.prose th[align="center"],
+.prose td[align="center"] {
+  text-align: center;
+}
+.prose td:not([align="left"]) {
+  font-variant-numeric: tabular-nums;
+}
+
+/* PR references, wherever they appear ----------------------------------- */
+.prose a.pr {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--mv-muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--mv-border);
+  white-space: nowrap;
+}
+.prose a.pr:hover {
+  color: var(--mv-accent);
+  border-bottom-color: var(--mv-accent);
+}
+
+/* =========================================================================
+   Blog
+   ========================================================================= */
+.post-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.post-list li {
+  border-bottom: 1px solid var(--mv-border);
+}
+.post-list li:last-child {
+  border-bottom: 0;
+}
+.post-list article {
+  padding: clamp(26px, 3.4vw, 40px) 0;
+  max-width: 66ch;
+}
+.post-list h2 {
+  margin: 0 0 10px;
+  font-size: clamp(1.35rem, 1.1rem + 1.05vw, 1.85rem);
+  line-height: 1.18;
+  letter-spacing: -0.024em;
+  font-weight: 650;
+  text-wrap: balance;
+}
+.post-list h2 a {
+  color: var(--mv-ink);
+  text-decoration: none;
+}
+.post-list h2 a:hover {
+  color: var(--mv-accent);
+}
+.post-desc {
+  margin: 0;
+  font-size: 15.5px;
+  line-height: 1.62;
+  color: var(--mv-muted);
+}
+.post-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 11px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: var(--mv-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 14px 0 0;
+}
+.tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mv-muted);
+  background: var(--mv-surface);
+  border: 1px solid var(--mv-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.post {
+  padding: clamp(30px, 4.5vw, 54px) 0 0;
+}
+.post-head {
+  padding-bottom: 30px;
+  border-bottom: 1px solid var(--mv-border);
+  margin-bottom: 34px;
+}
+.post-head h1 {
+  font-size: clamp(2rem, 1.35rem + 2.7vw, 3.15rem);
+  line-height: 1.05;
+  letter-spacing: -0.032em;
+  font-weight: 700;
+  color: var(--mv-ink);
+  margin: 0 0 20px;
+  max-width: 21ch;
+  text-wrap: balance;
+}
+.post-head .lede {
+  margin: 0;
+  max-width: 60ch;
+}
+
+.post-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 44px 0 0;
+  padding: 26px 0 clamp(40px, 6vw, 72px);
+  border-top: 1px solid var(--mv-border);
+}
+@media (max-width: 680px) {
+  .post-nav {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.pn {
+  display: block;
+  padding: 16px 18px;
+  border: 1px solid var(--mv-border);
+  border-radius: 11px;
+  text-decoration: none;
+  transition: border-color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+.pn:hover {
+  border-color: var(--mv-accent-border);
+  background: var(--mv-accent-soft);
+}
+.pn.older {
+  text-align: right;
+}
+.pn span {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+  margin-bottom: 6px;
+}
+.pn b {
+  font-size: 15px;
+  font-weight: 550;
+  line-height: 1.35;
+  color: var(--mv-ink);
+}
+
+/* =========================================================================
+   Shared tail
+   ========================================================================= */
+.close-band {
+  padding: clamp(48px, 6.5vw, 88px) 0 clamp(40px, 5vw, 60px);
+  border-top: 1px solid var(--mv-border);
+  text-align: center;
+}
+.close-band h2 {
+  margin: 0 auto 24px;
+  font-size: clamp(1.6rem, 1.2rem + 1.9vw, 2.5rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  color: var(--mv-ink);
+  max-width: 17ch;
+  text-wrap: balance;
+}
+.close-band .install {
+  margin-inline: auto;
+}
+.install-static code {
+  justify-content: center;
+}
+
+.foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
