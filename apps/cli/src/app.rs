@@ -1678,6 +1678,7 @@ fn print_scan_summary(summary: &ScanSummary, ui: &crate::ui::Ui) {
         skipped: summary.skipped_unchanged,
         errors: summary.errors_encountered,
         total_indexed: summary.total_indexed_sessions,
+        pruned: summary.stub_sessions_removed,
         total_tokens: summary.aggregate_stats.token_usage.total(),
         adapters: ranked(&summary.aggregate_stats.sessions_by_adapter, 5),
     };

@@ -29,7 +29,10 @@ impl CodexAdapter {
         Self
     }
 
-    /// Candidate directory paths for Codex on the host machine.
+    /// Candidate directory paths for Codex on the host machine, used for presence
+    /// detection only. Broader than `session_roots()`: bare `~/.codex` also holds
+    /// plugin caches and, via `~/.codex/worktrees/...`, entire cloned repos (complete
+    /// with their own `node_modules`) that are not Codex session data.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
@@ -40,6 +43,34 @@ impl CodexAdapter {
         }
         roots.push(PathBuf::from(".codex"));
         roots
+    }
+
+    /// Directories that actually hold Codex session transcripts, used for the default
+    /// (unscoped) `enumerate()` walk.
+    pub fn session_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(base_dirs) = BaseDirs::new() {
+            let home = base_dirs.home_dir();
+            roots.push(home.join(".codex").join("sessions"));
+            roots.push(home.join(".codex").join("archived_sessions"));
+        }
+        roots
+    }
+}
+
+/// Skip directories that are never Codex session data but can appear under a Codex
+/// root: cloned repos under `~/.codex/worktrees/<hash>/<repo>/...` carry their own
+/// `node_modules`, `.git`, and build output, none of which is session data.
+fn should_skip_codex_dir(entry: &walkdir::DirEntry) -> bool {
+    if entry.file_type().is_dir() {
+        let name = entry.file_name().to_string_lossy();
+        name == ".git"
+            || name == "node_modules"
+            || name == "target"
+            || name == "dist"
+            || name == ".venv"
+    } else {
+        false
     }
 }
 
@@ -123,7 +154,11 @@ impl AgentAdapter for CodexAdapter {
                         }
                     }
                 } else if custom.is_dir() {
-                    for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .into_iter()
+                        .filter_entry(|e| !should_skip_codex_dir(e))
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         if path.is_file() && is_candidate_codex_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
@@ -134,7 +169,7 @@ impl AgentAdapter for CodexAdapter {
                 }
             }
         } else {
-            for root in self.candidate_roots() {
+            for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_codex_file(&root) {
                         if let Ok(source) = SessionSource::from_path(&root, self.name()) {
@@ -142,7 +177,11 @@ impl AgentAdapter for CodexAdapter {
                         }
                     }
                 } else if root.is_dir() {
-                    for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(&root)
+                        .into_iter()
+                        .filter_entry(|e| !should_skip_codex_dir(e))
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         if path.is_file() && is_candidate_codex_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
@@ -253,8 +292,12 @@ fn is_candidate_codex_file(path: &Path) -> bool {
     {
         return false;
     }
-    path.extension()
-        .is_some_and(|ext| ext == "jsonl" || ext == "json")
+    // Real Codex session transcripts are named `rollout-<timestamp>-<uuid>.jsonl` under
+    // `sessions/` or `archived_sessions/`. Requiring that prefix (rather than just "path
+    // contains codex") is what keeps this out of `~/.codex/worktrees/<hash>/<repo>/...`,
+    // which holds complete cloned repos -- package.json, tsconfig.json, and vendored
+    // node_modules included -- that happen to sit under a path containing "codex".
+    filename.starts_with("rollout-") && filename.ends_with(".jsonl")
 }
 
 fn derive_session_id(path: &Path) -> String {
@@ -781,7 +824,7 @@ mod tests {
         let codex_dir = temp.path().join(".codex").join("sessions");
         std::fs::create_dir_all(&codex_dir).unwrap();
 
-        let session_file = codex_dir.join("session_001.jsonl");
+        let session_file = codex_dir.join("rollout-2026-01-01T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl");
         let mut f = File::create(&session_file).unwrap();
         writeln!(f, "{{\"role\":\"user\",\"content\":\"test\"}}").unwrap();
 
@@ -797,5 +840,44 @@ mod tests {
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
         assert_eq!(enumerated[0].adapter_name, "codex");
+    }
+
+    /// Regression test for the "worktrees full of node_modules" bug: a cloned repo under
+    /// `~/.codex/worktrees/<hash>/<repo>/...` sits on a path containing "codex", so the
+    /// old `contains("codex")`-only filter accepted every `.json` file inside it,
+    /// including vendored `node_modules`. Requiring the `rollout-*.jsonl` name shape
+    /// rejects all of it regardless of directory.
+    #[test]
+    fn test_enumerate_codex_skips_worktree_and_node_modules_junk() {
+        let temp = tempdir().unwrap();
+        let worktree_dir = temp
+            .path()
+            .join(".codex")
+            .join("worktrees")
+            .join("7bc9")
+            .join("vibelaunch")
+            .join("node_modules")
+            .join("protobufjs");
+        std::fs::create_dir_all(&worktree_dir).unwrap();
+        File::create(worktree_dir.join("package.json")).unwrap();
+
+        let sessions_dir = temp.path().join(".codex").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        File::create(sessions_dir.join("config.json")).unwrap();
+        let mut real = File::create(
+            sessions_dir.join("rollout-2026-01-01T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl"),
+        )
+        .unwrap();
+        writeln!(real, "{{\"role\":\"user\",\"content\":\"test\"}}").unwrap();
+
+        let adapter = CodexAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+        };
+
+        let enumerated = adapter.enumerate(&options).unwrap();
+        assert_eq!(enumerated.len(), 1, "only the rollout-*.jsonl file should be enumerated");
+        assert!(enumerated[0].path.to_string_lossy().ends_with(".jsonl"));
     }
 }

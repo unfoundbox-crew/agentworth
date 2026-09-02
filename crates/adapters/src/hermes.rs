@@ -29,7 +29,10 @@ impl HermesAdapter {
         Self
     }
 
-    /// Candidate directory paths for Hermes on the host machine.
+    /// Candidate directory paths for Hermes on the host machine, used for presence
+    /// detection only. Broader than `session_roots()`: bare `~/.hermes` can also hold a
+    /// full dev checkout of the Hermes agent itself (`hermes-agent/node_modules/...`),
+    /// which is not session data.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
@@ -43,6 +46,33 @@ impl HermesAdapter {
         roots.push(PathBuf::from(".hermes").join("sessions"));
         roots.push(PathBuf::from(".hermes").join("turns"));
         roots
+    }
+
+    /// Directories that actually hold Hermes session/turn data, used for the default
+    /// (unscoped) `enumerate()` walk.
+    pub fn session_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(base_dirs) = BaseDirs::new() {
+            let home = base_dirs.home_dir();
+            roots.push(home.join(".hermes").join("sessions"));
+            roots.push(home.join(".hermes").join("turns"));
+        }
+        roots
+    }
+}
+
+/// Skip directories that are never Hermes session data but can appear under `~/.hermes`
+/// when it doubles as a dev checkout of the agent itself.
+fn should_skip_hermes_dir(entry: &walkdir::DirEntry) -> bool {
+    if entry.file_type().is_dir() {
+        let name = entry.file_name().to_string_lossy();
+        name == ".git"
+            || name == "node_modules"
+            || name == "target"
+            || name == "dist"
+            || name == ".venv"
+    } else {
+        false
     }
 }
 
@@ -114,7 +144,11 @@ impl AgentAdapter for HermesAdapter {
                         }
                     }
                 } else if custom.is_dir() {
-                    for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .into_iter()
+                        .filter_entry(|e| !should_skip_hermes_dir(e))
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         if path.is_file() && is_candidate_hermes_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
@@ -125,7 +159,7 @@ impl AgentAdapter for HermesAdapter {
                 }
             }
         } else {
-            for root in self.candidate_roots() {
+            for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_hermes_file(&root) {
                         if let Ok(source) = SessionSource::from_path(&root, self.name()) {
@@ -133,7 +167,11 @@ impl AgentAdapter for HermesAdapter {
                         }
                     }
                 } else if root.is_dir() {
-                    for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(&root)
+                        .into_iter()
+                        .filter_entry(|e| !should_skip_hermes_dir(e))
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         if path.is_file() && is_candidate_hermes_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
@@ -292,6 +330,14 @@ fn is_candidate_hermes_file(path: &Path) -> bool {
         || lower == "auth.json"
         || lower == "package.json"
     {
+        return false;
+    }
+    // `~/.hermes/sessions/request_dump_<id>_<ts>.json` is a failed-HTTP-request debug
+    // dump (reason: "max_retries_exhausted", full request/response incl. auth headers),
+    // written by Hermes' own retry logic -- not a conversation transcript, despite living
+    // in the "sessions" directory. Measured: every file in `sessions/` on a real machine
+    // matched this prefix and none were real turns.
+    if lower.starts_with("request_dump") {
         return false;
     }
     path.extension()
@@ -750,6 +796,39 @@ mod tests {
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
         assert_eq!(enumerated[0].adapter_name, "hermes");
+    }
+
+    /// Regression test: `sessions/request_dump_*.json` is a failed-HTTP-request debug
+    /// dump, not a chat turn, even though it lives in the "sessions" directory. A
+    /// `node_modules` tree under a dev checkout at bare `~/.hermes` must also be skipped.
+    #[test]
+    fn test_enumerate_hermes_skips_request_dumps_and_node_modules_junk() {
+        let temp = tempdir().unwrap();
+
+        let sessions_dir = temp.path().join(".hermes").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        File::create(sessions_dir.join("request_dump_20260709_140807_c7de2a_20260709_141026_110730.json")).unwrap();
+        let mut real = File::create(sessions_dir.join("session_001.jsonl")).unwrap();
+        writeln!(real, "{{\"role\":\"user\",\"content\":\"Write function\"}}").unwrap();
+
+        let vendored_dir = temp
+            .path()
+            .join(".hermes")
+            .join("hermes-agent")
+            .join("node_modules")
+            .join("spdx-license-ids");
+        std::fs::create_dir_all(&vendored_dir).unwrap();
+        File::create(vendored_dir.join("index.json")).unwrap();
+
+        let adapter = HermesAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+        };
+
+        let enumerated = adapter.enumerate(&options).unwrap();
+        assert_eq!(enumerated.len(), 1, "only the real turn file should be enumerated");
+        assert!(enumerated[0].path.to_string_lossy().ends_with("session_001.jsonl"));
     }
 
     #[test]

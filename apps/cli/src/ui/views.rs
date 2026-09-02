@@ -850,6 +850,7 @@ pub struct ScanView {
     pub skipped: usize,
     pub errors: usize,
     pub total_indexed: usize,
+    pub pruned: usize,
     pub total_tokens: u64,
     pub adapters: Vec<(String, usize)>,
 }
@@ -883,11 +884,16 @@ pub fn scan_summary(ui: &Ui, v: &ScanView) -> String {
             ui.paint(
                 Role::Label,
                 &format!(
-                    "{} new, {} unchanged, {} error{}",
+                    "{} new, {} unchanged, {} error{}{}",
                     thousands(v.scanned as u64),
                     thousands(v.skipped as u64),
                     v.errors,
-                    if v.errors == 1 { "" } else { "s" }
+                    if v.errors == 1 { "" } else { "s" },
+                    if v.pruned > 0 {
+                        format!(", {} stale removed", thousands(v.pruned as u64))
+                    } else {
+                        String::new()
+                    }
                 )
             )
         ),

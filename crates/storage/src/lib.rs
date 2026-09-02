@@ -497,6 +497,40 @@ impl Storage {
         Ok(true) // New or modified -> needs scan
     }
 
+    /// Returns `(session_id, adapter, source_path)` for every indexed session with zero
+    /// recorded events and zero recorded tokens -- the shape left behind when a
+    /// non-session file (config, cache, telemetry dump, ...) was accepted as a session by
+    /// a since-tightened adapter. Used by the scanner to prune stubs whose source no
+    /// longer passes the adapter's current detection.
+    pub fn zero_activity_sessions(&self) -> Result<Vec<(String, String, String)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT session_id, adapter, source_path FROM sessions WHERE total_events = 0 AND total_tokens = 0",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Permanently removes one session and its child rows (file modifications, per-model
+    /// usage, and its `sources` fingerprint entry). Intended for pruning zero-activity
+    /// stub sessions -- callers are responsible for deciding a row is safe to delete.
+    pub fn delete_session(&self, session_id: &str, source_path: &str) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM file_modifications WHERE session_id = ?1", params![session_id])?;
+        tx.execute("DELETE FROM session_model_usage WHERE session_id = ?1", params![session_id])?;
+        tx.execute("DELETE FROM sessions WHERE session_id = ?1", params![session_id])?;
+        tx.execute("DELETE FROM sources WHERE source_path = ?1", params![source_path])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Upsert an indexed session into the database atomically with verdict and score.
     pub fn upsert_session(
         &self,

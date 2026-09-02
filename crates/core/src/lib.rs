@@ -1,5 +1,6 @@
 //! Core orchestration engine for discovering, scanning, normalizing, and indexing agent traces.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
@@ -26,6 +27,10 @@ pub struct ScanSummary {
     pub errors_encountered: usize,
     pub total_indexed_sessions: usize,
     pub aggregate_stats: AggregateStats,
+    /// Previously-indexed sessions with zero events and zero tokens whose source no
+    /// longer passes any registered adapter's current detection, removed during this
+    /// scan. Only computed on a full (unscoped) scan -- see `run_scan`.
+    pub stub_sessions_removed: usize,
 }
 
 /// Scanner orchestrator that coordinates adapters, parsing, and SQLite storage.
@@ -110,6 +115,36 @@ impl Scanner {
         Ok(parse_result.trace)
     }
 
+    /// Deletes indexed sessions with zero events and zero tokens whose `(adapter,
+    /// source_path)` is not in `valid_sources` -- i.e. sessions no adapter's current
+    /// detection would produce again. Returns the number removed; individual delete
+    /// failures are logged and skipped rather than aborting the pass.
+    fn prune_zero_activity_stubs(&self, valid_sources: &HashSet<(&str, String)>) -> usize {
+        let mut removed = 0;
+        match self.storage.zero_activity_sessions() {
+            Ok(stubs) => {
+                for (session_id, adapter_name, source_path) in stubs {
+                    let key = (adapter_name.as_str(), source_path.clone());
+                    if valid_sources.contains(&key) {
+                        continue;
+                    }
+                    match self.storage.delete_session(&session_id, &source_path) {
+                        Ok(()) => removed += 1,
+                        Err(e) => warn!("Failed deleting stub session {}: {}", session_id, e),
+                    }
+                }
+                if removed > 0 {
+                    tracing::info!(
+                        "Removed {} zero-activity stub session(s) whose source no longer passes detection",
+                        removed
+                    );
+                }
+            }
+            Err(e) => warn!("Failed listing zero-activity sessions for cleanup: {}", e),
+        }
+        removed
+    }
+
     /// Run full scan process according to options.
     pub fn run_scan<F>(&self, options: &ScanOptions, mut on_progress: F) -> Result<ScanSummary>
     where
@@ -172,6 +207,15 @@ impl Scanner {
             // Parse session
             match adapter.parse(source) {
                 Ok(parse_result) => {
+                    // A file that normalizes to zero events is not a session -- most
+                    // often a non-session file an adapter's discovery still let through
+                    // (config, cache, telemetry). Skip storing it rather than indexing a
+                    // permanent zero-activity stub; see `zero_activity_sessions` for the
+                    // matching cleanup of rows already stored under looser past detection.
+                    if parse_result.trace.events.is_empty() {
+                        continue;
+                    }
+
                     let outcome_detector = OutcomeHierarchyDetector::new();
                     let outcomes = outcome_detector.detect_outcomes(&parse_result.trace);
                     let strongest = outcome_detector.strongest_outcome(&outcomes);
@@ -199,6 +243,27 @@ impl Scanner {
             }
         }
 
+        // Prune zero-activity stub sessions (config files, telemetry dumps, ... that an
+        // adapter's discovery previously accepted) whose source no longer passes any
+        // registered adapter's current detection. Only run on a full, unscoped scan:
+        // `all_sources` is the complete set of currently-valid sources in that case, so
+        // "not in it" reliably means "detection no longer accepts this file" rather than
+        // "outside today's narrower --path scope."
+        let stub_sessions_removed = if options.custom_paths.is_empty() {
+            let valid_sources: HashSet<(&str, String)> = all_sources
+                .iter()
+                .map(|(adapter_idx, source)| {
+                    (
+                        self.adapters[*adapter_idx].name(),
+                        source.path.to_string_lossy().to_string(),
+                    )
+                })
+                .collect();
+            self.prune_zero_activity_stubs(&valid_sources)
+        } else {
+            0
+        };
+
         // `true`: this summary's own "Total Indexed" / "N total in index" labels (main.rs,
         // static_files.rs) promise a raw count of everything in the SQLite index, stubs
         // included -- not a "real activity" count. See get_aggregate_stats's doc comment.
@@ -212,6 +277,7 @@ impl Scanner {
             errors_encountered,
             total_indexed_sessions,
             aggregate_stats,
+            stub_sessions_removed,
         })
     }
 }
@@ -219,7 +285,83 @@ impl Scanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentworth_schema::Provenance;
+    use chrono::Utc;
     use std::io::Write;
+
+    /// A file that discovery still lets through but which normalizes to zero events
+    /// (here: empty content) must not be stored as a session at all -- the scanner should
+    /// skip it rather than index a permanent zero-activity stub. This is the parse-time
+    /// backstop behind the "reject non-session rows" fix; adapter-level discovery
+    /// tightening is the primary fix, this is defense in depth for whatever still slips
+    /// through.
+    #[test]
+    fn test_scanner_does_not_store_zero_event_session() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        let temp = tempfile::Builder::new()
+            .suffix(".jsonl")
+            .tempfile()
+            .unwrap();
+        // Deliberately empty: zero bytes -> zero normalized events.
+
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+        };
+
+        let summary = scanner.run_scan(&options, |_, _| {}).expect("scan run");
+
+        assert_eq!(summary.discovered_sources, 1);
+        assert_eq!(summary.scanned_sessions, 0, "a zero-event file must not count as scanned");
+        assert_eq!(summary.total_indexed_sessions, 0, "a zero-event file must not be stored");
+    }
+
+    /// Item-4 cleanup: a zero-activity row left over from before an adapter's discovery
+    /// was tightened (or whose source file was simply deleted) should be pruned once its
+    /// `(adapter, source_path)` no longer appears among currently-valid sources. A row
+    /// still backed by a currently-valid source must survive.
+    #[test]
+    fn test_prune_zero_activity_stubs_removes_only_undetectable_rows() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        let stale_provenance = Provenance::new(
+            "/tmp/agentworth-test-stub/config.json".to_string(),
+            "claude_code",
+            12,
+            0,
+            "deadbeef",
+        );
+        let stale_trace = AgentWorthTrace::new("stale-stub", "claude_code", stale_provenance, Utc::now());
+        storage.upsert_session(&stale_trace, None, None).expect("seed stale stub");
+
+        let live_provenance = Provenance::new(
+            "/tmp/agentworth-test-stub/still-valid.jsonl".to_string(),
+            "claude_code",
+            12,
+            0,
+            "deadbeef",
+        );
+        let live_trace = AgentWorthTrace::new("live-stub", "claude_code", live_provenance, Utc::now());
+        storage.upsert_session(&live_trace, None, None).expect("seed live stub");
+
+        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 2);
+
+        let mut valid_sources = HashSet::new();
+        valid_sources.insert(("claude_code", "/tmp/agentworth-test-stub/still-valid.jsonl".to_string()));
+
+        let removed = scanner.prune_zero_activity_stubs(&valid_sources);
+
+        assert_eq!(removed, 1);
+        let remaining = storage.get_aggregate_stats(true).unwrap();
+        assert_eq!(remaining.total_sessions, 1);
+        assert!(storage.get_session_by_id("live-stub").unwrap().is_some());
+        assert!(storage.get_session_by_id("stale-stub").unwrap().is_none());
+    }
 
     #[test]
     fn test_scanner_end_to_end_with_in_memory_storage() {
