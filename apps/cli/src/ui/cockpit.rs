@@ -497,22 +497,34 @@ pub fn tab_bar(ui: &Ui, tab: Tab, session_id: &str) -> String {
 
 /// Where a list view's selectable rows sit among its rendered lines.
 ///
-/// Every table in `views.rs` draws the same way: a header, a blank, a column head, a rule,
-/// then exactly one line per row. So the rows begin one line after the first rule, and run
-/// for as many lines as there are rows. Finding the rule rather than counting header lines
-/// is what keeps this from breaking when a header gains a line;
-/// `row_span_lands_on_the_session_ids` in the tests below is what keeps it honest if a
-/// table ever stops drawing that way.
+/// Every table in `views.rs` draws the same way: a screen header and its rule, a blank, a
+/// column head, a second rule, then exactly one line per row. So the rows are the first
+/// run of `rows` lines after a rule that are all non-blank and none of them another rule
+/// — which the screen header's own rule fails on (a blank follows it) and the column
+/// head's rule passes. Matching on that shape rather than counting header lines is what
+/// keeps this working when a header gains a line;
+/// `row_span_lands_on_the_session_ids` below is what catches it if a table ever stops
+/// drawing this way.
 pub fn row_span(lines: &[String], rows: usize) -> Option<(usize, usize)> {
     if rows == 0 {
         return None;
     }
-    let first_rule = lines.iter().position(|l| is_rule(l))?;
-    let start = first_rule + 1;
-    if start + rows > lines.len() {
-        return None;
+    for (i, line) in lines.iter().enumerate() {
+        if !is_rule(line) {
+            continue;
+        }
+        let start = i + 1;
+        let Some(block) = lines.get(start..start + rows) else {
+            continue;
+        };
+        if block
+            .iter()
+            .all(|l| !l.trim().is_empty() && !is_rule(l))
+        {
+            return Some((start, rows));
+        }
     }
-    Some((start, rows))
+    None
 }
 
 /// A rule is the indented run of `─` (or `-` in the ASCII set) that `Ui::rule_of` draws,
@@ -1071,12 +1083,47 @@ mod tests {
         let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
         let (start, n) = row_span(&lines, rows.len()).expect("no row span");
         assert_eq!(n, 3);
+        // Not the screen header's own rule, which is the first one on the screen.
+        assert!(start > 2, "the span landed on the header, at line {start}");
         for (i, r) in rows.iter().enumerate() {
             let head: String = r.session_id.chars().take(4).collect();
             assert!(
                 lines[start + i].contains(&head),
                 "row {} is not on line {}: {:?}",
                 i,
+                start + i,
+                lines[start + i]
+            );
+        }
+    }
+
+    /// The other list screen, drawn by a different view function: the shape has to hold
+    /// for both, or the cursor sits on a rule somewhere.
+    #[test]
+    fn row_span_lands_on_the_repository_names() {
+        let ui = Ui::new(80, ColorMode::None, true);
+        let names = ["motionvector", "agentworth", "spacepilot"];
+        let rows: Vec<crate::ui::views::RepoListRow<'_>> = names
+            .iter()
+            .map(|repo| crate::ui::views::RepoListRow {
+                repo,
+                sessions: 12,
+            })
+            .collect();
+        let text = crate::ui::views::repo_list(
+            &ui,
+            &crate::ui::views::RepoListView {
+                total_repos: 3,
+                total_sessions: 36,
+                rows: &rows,
+            },
+        );
+        let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+        let (start, _) = row_span(&lines, rows.len()).expect("no row span");
+        for (i, name) in names.iter().enumerate() {
+            assert!(
+                lines[start + i].contains(name),
+                "row {i} is not on line {}: {:?}",
                 start + i,
                 lines[start + i]
             );
