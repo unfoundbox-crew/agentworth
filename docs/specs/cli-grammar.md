@@ -1,6 +1,7 @@
 # CLI grammar, completions, and the cockpit
 
-Status: decided 2026-09-02, not built.
+Status: sections 1, 2 and 4(1) built 2026-09-02 in #118. Section 3 (the cockpit) and
+section 4(3) (`window receipt`) are not built.
 
 Thirty-two top-level commands is a list, not a grammar. Nobody can guess
 `blind-spots` or `cache-doctor` from having used `handoff`. The fix is
@@ -188,17 +189,25 @@ efficiency detector produces it.
 
 ## 5. Open questions
 
-- Where does `blunder-blame` live? It runs in two directions — file to
-  blunder, session to files — so neither `repo` nor `session` is clearly
-  right. Mapped to `repo` here because its trusted direction is
-  file-first.
+Four of these had to be answered to build #118. What was decided, and what is still open:
+
+| Question | Answered in #118 |
+| :--- | :--- |
+| Where does `blunder-blame` live? | `repo blunder-blame`, as mapped above. File-first is its trusted direction. |
+| Should an `index` noun exist? | Still open. `merge` stayed top-level and `--db-path` stayed global. |
+| Two releases of hidden MCP aliases, or one? | Two, the same as the CLI aliases — one removal date (`v0.1.18`) is easier to keep than two. But they are **not hidden**: MCP has no unlisted-but-callable tool, and rmcp's `disable_route` takes a tool out of `call` as well as out of `list_all`. The old names stay listed, each described as a deprecated alias, and are left out of the generated reference. |
+| Should a bare `agwt` open the cockpit? | Untouched — the cockpit is not built. |
+| Is 100 ms per Tab real? | Now measured, but only against a fixture index of a dozen sessions (`apps/cli/tests/completion_budget.rs`). Nothing has been timed against a few thousand. |
+
+### Still open
+
 - Should an `index` noun exist (`index merge`, `index path`, `index
   prune`)? That would take `merge` off the top level and give `--db-path`
   a home.
-- Two releases of hidden MCP aliases, or one? A registered MCP client is
-  edited by hand, far less often than a shell history is.
-- Should `agwt` alone open the cockpit in its first release, or should it
-  need `agwt tui` until the TUI has been used for a week? A bare `agwt`
+- Should `archie` alone open the cockpit in its first release, or should it
+  need `archie tui` until the TUI has been used for a week? A bare `archie`
   that suddenly takes over the terminal is a surprise.
-- The 100 ms Tab budget is a target, not a measurement. Nothing has been
-  timed against an index of a few thousand sessions.
+- Does the Tab budget hold against an index of a few thousand sessions?
+  The completers read the newest 50 rows off `idx_sessions_started_at` and
+  derive repos and models from a bounded 400-row slice, so the shape is
+  right; only the small case has been timed.
