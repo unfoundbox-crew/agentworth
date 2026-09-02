@@ -274,7 +274,7 @@ claude mcp add agentworth --scope user -- agentworth mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-Nine read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `outcome_rate`, plus the two handoff tools below. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+Ten read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `outcome_rate`, plus the two handoff tools and `forgotten_context` below. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
 
 ### The handoff, over MCP
 
@@ -286,6 +286,22 @@ Nine read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summa
 Two things these deliberately do not do. They never write a file — where a handoff lands is the caller's business. And they never summarise: every line is a fact from a row, quoted verbatim with a sequence number or a timestamp, because the moment a model writes the prose the receipt stops meaning anything.
 
 What they cannot answer is stated in the output rather than filled in: open decisions, PR and CI state, and environment traps are not in the index. The machine owns the inventory; the judgment is still yours. Full design: `docs/specs/handoff.md`.
+
+### What compaction dropped
+
+When a session runs out of context, the harness replaces the conversation with a summary. The model's view is gone; the transcript on disk is not. So the dropped span and the summary that replaced it both exist, and can be diffed.
+
+Measured on one real eight-round session: **402 decision-shaped sentences went into the compaction rounds and 28 came out.** Conclusions survive at about 15%, reasons at 1.7% — which is exactly the shape that makes a session confidently re-propose something it already tried and rejected.
+
+| Tool | What it answers |
+| :--- | :--- |
+| `forgotten_context(session_id?, round?, classes?, limit?, include_raw?)` | "What did I decide and forget?" — decision-shaped sentences dropped by this session's own compaction rounds, quoted verbatim, newest first. Each carries its round, source sequence, and what the session did in the next few events, so a decision that was acted on reads differently from one that was only stated. `classes` is any of `decision`, `rejected`, `reason`; `limit` defaults to 20, ceiling 200. |
+
+Three answers stay distinct and none is padded: never compacted, compacted with nothing decision-shaped dropped, and a real list. A session whose transcript has since been deleted gets a refusal, not a diff assembled from index rows.
+
+**No model, on purpose.** Three regexes return the sentence verbatim with a sequence number. A model paraphrasing the dropped span would make this a second summariser — the exact lossy step the feature exists to undo — and the receipt would stop pointing at words anyone said. Full design: `docs/specs/compaction-diff.md`.
+
+On the CLI, the same diff is `agentworth forgotten [SESSION_ID | prefix] [--round N] [--class CLASS] [--json]`, and a compacted session's handoff carries it as its first section.
 
 ---
 
