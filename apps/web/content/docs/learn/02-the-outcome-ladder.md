@@ -68,8 +68,8 @@ A group with rows but no detected outcomes returns `rate: null` and the reason
 `no_outcome_detection`. That is not the same claim as a rate of zero: null means
 nothing parses outcomes for that adapter yet, zero would mean it always fails.
 
-Two things the ladder deliberately does not do. It never returns a pass/fail
-verdict — whether 74% is good is not something the data knows. And it never
+Two things the ladder deliberately does not do. It never says pass or
+fail — whether 74% is good is not something the data knows. And it never
 compares you to anyone else; the index is one machine's.
 
 ## What to run
