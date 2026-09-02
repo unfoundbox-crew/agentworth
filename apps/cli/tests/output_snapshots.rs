@@ -62,7 +62,15 @@ fn render_with(
     cmd.env("COLUMNS", columns.to_string())
         .env_remove("NO_COLOR")
         .env_remove("COLORTERM")
-        .env_remove("CLICOLOR_FORCE");
+        .env_remove("CLICOLOR_FORCE")
+        // `app::run` loads persisted defaults on every command, so without this the whole
+        // suite reads the developer's own `~/.agentworth/config.toml` -- and a persisted
+        // `json = true` there would turn every screen below into a JSON payload. Points at
+        // the fixture directory, where no config file exists.
+        .env(
+            "AGENTWORTH_CONFIG_PATH",
+            db.parent().unwrap().join("config.toml"),
+        );
     // The test harness is never a TTY, so CLICOLOR_FORCE stands in for one.
     if color || unicode {
         cmd.env("CLICOLOR_FORCE", "1");
@@ -124,7 +132,20 @@ fn screens(root: &std::path::Path) -> Vec<(&'static str, Vec<String>)> {
         // the overview, so both are held to the same four rules as every other screen.
         ("overview", argv(&[])),
         ("tui", argv(&["tui"])),
+        // The second audit pass (#111 covered the thirteen above).
+        ("session-autopsy", argv(&["session", "autopsy"])),
+        ("session-recall", argv(&["session", "recall", "vector index"])),
+        ("session-search", argv(&["session", "search", "vector index"])),
+        // `--offline` on both: neither may reach the network from a test.
+        ("version", argv(&["version", "--offline"])),
+        ("update", argv(&["update", "--offline"])),
+        ("config-list", argv(&["config", "list"])),
     ]
+}
+
+/// `session show` needs a session id, so it joins the sweep separately.
+fn session_show_args(db: &std::path::Path) -> Vec<String> {
+    vec!["session".to_string(), "show".to_string(), session_id(db)]
 }
 
 fn is_allowed(c: char) -> bool {
@@ -133,10 +154,17 @@ fn is_allowed(c: char) -> bool {
         || matches!(c, '●' | '○' | '·' | '—' | '→')
 }
 
+/// Every screen in `screens`, plus `session show` on the fixture's own newest session.
+fn every_screen(t: &TempDir, db: &std::path::Path) -> Vec<(&'static str, Vec<String>)> {
+    let mut all = screens(t.path());
+    all.push(("session-show", session_show_args(db)));
+    all
+}
+
 #[test]
 fn no_screen_wraps_at_80_or_120_columns() {
     let (t, db) = fixture();
-    for (name, args) in screens(t.path()) {
+    for (name, args) in every_screen(&t, &db) {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         for columns in [80usize, 120] {
             let out = render(&db, &args, columns, false);
@@ -162,12 +190,15 @@ fn colour_never_moves_a_column() {
     // only on --json. Stripping the escapes has to give back the plain rendering byte
     // for byte.
     let (t, db) = fixture();
-    for (name, args) in screens(t.path()) {
+    for (name, args) in every_screen(&t, &db) {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         // `scan` reports elapsed-dependent counts on a second run; skip its re-render.
         // `watch-once` prints the wall-clock second it polled at, which can tick over
         // between the plain and coloured invocations below -- same class of flake.
-        if name == "scan" || name == "watch-once" {
+        // `session-search` tops up the vector store as a side effect, so its first run
+        // reports chunks embedded and its second reports none: the two renderings below
+        // are of different states, not of different palettes.
+        if name == "scan" || name == "watch-once" || name == "session-search" {
             continue;
         }
         for columns in [80usize, 120] {
@@ -194,7 +225,7 @@ fn colour_never_moves_a_column() {
 #[test]
 fn no_screen_ships_a_glyph_outside_the_allowed_set() {
     let (t, db) = fixture();
-    for (name, args) in screens(t.path()) {
+    for (name, args) in every_screen(&t, &db) {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let out = render(&db, &args, 80, false);
         for c in out.chars() {
@@ -664,11 +695,63 @@ fn json_payloads_are_untouched_by_the_redesign() {
         vec!["pr-blame", "crates/storage/src/vector.rs", "--json"],
         vec!["blunder", "--json"],
         vec!["blunder-blame", "--json"],
+        // The second audit pass. `version`/`update` stay `--offline` so no test reaches
+        // the network; `session search`/`recall` take a query positional.
+        vec!["session", "autopsy", "--json"],
+        vec!["session", "recall", "vector index", "--json"],
+        vec!["session", "search", "vector index", "--json"],
+        vec!["version", "--offline", "--json"],
+        vec!["update", "--offline", "--json"],
+        vec!["config", "list", "--json"],
     ] {
         let out = render(&db, &args, 80, false);
         serde_json::from_str::<serde_json::Value>(out.trim())
             .unwrap_or_else(|e| panic!("{:?} is no longer valid JSON: {}", args, e));
         assert!(!out.contains('\x1b'), "{:?} leaked an escape into --json", args);
+    }
+
+    // `session show --json` is the whole trace, keyed off a real session id.
+    let show = render(&db, &["session", "show", id.as_str(), "--json"], 80, false);
+    let trace: serde_json::Value = serde_json::from_str(show.trim()).expect("session show --json");
+    assert_eq!(trace["session_id"].as_str(), Some(id.as_str()));
+    assert!(trace["stats"].is_object(), "session show --json lost its stats block");
+    assert!(trace["events"].is_array(), "session show --json lost its events array");
+}
+
+/// `--plain` and `--no-color` must land every column where a piped stream already puts it,
+/// for the second audit pass's commands as well as #111's. `--plain` also forces the ASCII
+/// glyph set; `--no-color` keeps Unicode, so the two are compared against the matching
+/// rendering rather than against each other.
+#[test]
+fn plain_and_no_color_hold_the_column_positions_of_every_audited_screen() {
+    let (t, db) = fixture();
+    for (name, args) in every_screen(&t, &db) {
+        if name == "scan" || name == "watch-once" || name == "session-search" {
+            continue;
+        }
+        let base: Vec<&str> = args.iter().map(String::as_str).collect();
+
+        let piped = render(&db, &base, 80, false);
+        let mut plain_args = base.clone();
+        plain_args.push("--plain");
+        assert_eq!(
+            render(&db, &plain_args, 80, false),
+            piped,
+            "{name}: --plain differs from what a pipe already gets"
+        );
+
+        // Unicode glyphs, colour forced on, then stripped: must equal the same run with
+        // --no-color, which keeps the glyphs and drops only the palette.
+        let coloured = render_with(&db, &base, 80, true, true);
+        let mut no_color_args = base.clone();
+        no_color_args.push("--no-color");
+        let no_color = render_with(&db, &no_color_args, 80, true, true);
+        assert!(!no_color.contains('\x1b'), "{name}: --no-color still painted");
+        assert_eq!(
+            console::strip_ansi_codes(&coloured),
+            no_color,
+            "{name}: --no-color moved a column"
+        );
     }
 }
 

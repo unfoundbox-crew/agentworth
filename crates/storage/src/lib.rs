@@ -1142,7 +1142,17 @@ impl Storage {
         let ended_at_str = trace.ended_at.map(|t| t.to_rfc3339());
         let models_json = serde_json::to_string(&trace.stats.models_used)?;
         let tools_json = serde_json::to_string(&trace.stats.tools_used)?;
-        let metadata_json = serde_json::to_string(&trace.metadata)?;
+        // `sessions.metadata` is a nullable TEXT column, and `trace.metadata` is a
+        // `serde_json::Value` that defaults to `Value::Null` -- serializing that
+        // unconditionally stored the four-character string "null" in a column whose own
+        // encoding of "absent" is SQL NULL, so `WHERE metadata IS NULL` matched nothing and
+        // `json_extract` had to special-case it. Written as a real NULL from here on;
+        // `normalize_metadata` below reads the old literal back as absent, so no migration.
+        let metadata_json = if trace.metadata.is_null() {
+            None
+        } else {
+            Some(serde_json::to_string(&trace.metadata)?)
+        };
 
         const PROMPT_PREVIEW_MAX_CHARS: usize = 200;
         let prompt_preview = trace.events.iter().find_map(|event| match &event.payload {
@@ -1706,6 +1716,21 @@ impl Storage {
             results.push(row_to_session_summary(row)?);
         }
         Ok(results)
+    }
+
+    /// A session's free-form `metadata` blob, or `None` when it carries nothing.
+    ///
+    /// Rows written before the NULL fix in `upsert_session` hold the literal string "null"
+    /// rather than SQL NULL; `normalize_metadata` folds both onto `None`, which is why this
+    /// needed no migration.
+    pub fn get_session_metadata(&self, session_id: &str) -> Result<Option<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare("SELECT metadata FROM sessions WHERE session_id = ?1")?;
+        let mut rows = stmt.query(params![session_id])?;
+        match rows.next()? {
+            Some(row) => Ok(normalize_metadata(row.get::<_, Option<String>>(0)?)),
+            None => Ok(None),
+        }
     }
 
     /// Retrieve the per-model token usage breakdown for a single session.
@@ -3113,6 +3138,23 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
 /// here so existing callers importing it from `agentworth_storage` don't need to change.
 pub use agentworth_schema::extract_repository_or_workspace;
 
+/// Read `sessions.metadata` back as a value. SQL NULL, the empty string, and the literal
+/// four-character string "null" written by every scan before the NULL fix all mean the same
+/// thing: this session carries no metadata.
+pub fn normalize_metadata(raw: Option<String>) -> Option<serde_json::Value> {
+    let raw = raw?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return None;
+    }
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(serde_json::Value::Null) => None,
+        Ok(value) => Some(value),
+        // Not JSON at all: hand back what is actually stored rather than dropping it.
+        Err(_) => Some(serde_json::Value::String(raw)),
+    }
+}
+
 pub fn default_db_dir() -> Result<PathBuf> {
     if let Some(base_dirs) = BaseDirs::new() {
         Ok(base_dirs.home_dir().join(".agentworth"))
@@ -3128,6 +3170,65 @@ mod tests {
     use chrono::Duration;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    /// `sessions.metadata` used to be written as the four-character string "null" for every
+    /// trace that carried none (`serde_json::to_string(&Value::Null)`), in a nullable column
+    /// whose own encoding of "absent" is SQL NULL -- so `WHERE metadata IS NULL` matched no
+    /// row in the whole index. Found while measuring archie-bench. Fixed write-side, with the
+    /// old literal folded onto `None` on read so no migration is needed.
+    #[test]
+    fn metadata_is_written_as_sql_null_and_the_old_literal_reads_back_as_absent() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        let prov = Provenance::new("/test/meta.jsonl", "claude_code", 10, 100, "fp_meta");
+        let trace = AgentWorthTrace::new("sess_meta", "claude_code", prov, Utc::now());
+        assert!(trace.metadata.is_null(), "a fresh trace carries no metadata");
+        storage.upsert_trace(&trace).expect("upsert");
+
+        // The column itself, not just the accessor: a real SQL NULL, never the string "null".
+        let raw: Option<String> = {
+            let conn = storage.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT metadata FROM sessions WHERE session_id = ?1",
+                params!["sess_meta"],
+                |row| row.get(0),
+            )
+            .expect("read metadata")
+        };
+        assert_eq!(raw, None, "metadata must be SQL NULL, not the literal string");
+        assert_eq!(storage.get_session_metadata("sess_meta").unwrap(), None);
+
+        // A trace that does carry metadata still round-trips.
+        let prov2 = Provenance::new("/test/meta2.jsonl", "claude_code", 10, 100, "fp_meta2");
+        let mut with_meta =
+            AgentWorthTrace::new("sess_meta_2", "claude_code", prov2, Utc::now());
+        with_meta.metadata = serde_json::json!({ "cwd": "/repo" });
+        storage.upsert_trace(&with_meta).expect("upsert");
+        assert_eq!(
+            storage.get_session_metadata("sess_meta_2").unwrap(),
+            Some(serde_json::json!({ "cwd": "/repo" }))
+        );
+
+        // Every row already on disk from before the fix: the literal reads back as absent.
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE sessions SET metadata = 'null' WHERE session_id = ?1",
+                params!["sess_meta_2"],
+            )
+            .expect("simulate a pre-fix row");
+        }
+        assert_eq!(storage.get_session_metadata("sess_meta_2").unwrap(), None);
+
+        assert_eq!(normalize_metadata(None), None);
+        assert_eq!(normalize_metadata(Some("null".to_string())), None);
+        assert_eq!(normalize_metadata(Some("  ".to_string())), None);
+        assert_eq!(
+            normalize_metadata(Some("{\"a\":1}".to_string())),
+            Some(serde_json::json!({ "a": 1 }))
+        );
+    }
 
     #[test]
     fn test_storage_in_memory_crud_and_incremental() {

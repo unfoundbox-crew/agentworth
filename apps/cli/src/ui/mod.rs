@@ -254,15 +254,24 @@ impl Ui {
     }
 
     /// A label, dot leaders, a right-aligned number. Receipt-shaped output only.
+    ///
+    /// The value is cut to the room the label leaves, so the assembled row never exceeds
+    /// `width`. It has to be cut here rather than by the caller's own width clamp: by then
+    /// the row carries paint escapes, and a clamp measuring printable columns would cut one
+    /// in half. A value that already fits is untouched. This matters for the few genuinely
+    /// unbounded values that reach this line -- a release URL, an index path under macOS's
+    /// `/var/folders/<hash>/T/...` temp root.
     pub fn leaders(&self, label: &str, value: &str, width: usize, value_role: Role) -> String {
         let lw = display_width(label);
-        let vw = display_width(value);
-        let dots = width.saturating_sub(lw + vw + 2);
+        // label + space + at least one dot + space.
+        let value = truncate(value, width.saturating_sub(lw + 3));
+        let vw = display_width(&value);
+        let dots = width.saturating_sub(lw + vw + 2).max(1);
         format!(
             "{} {} {}",
             self.paint(Role::Value, label),
             self.paint(Role::Chrome, &".".repeat(dots)),
-            self.paint(value_role, value)
+            self.paint(value_role, &value)
         )
     }
 
@@ -635,6 +644,18 @@ mod tests {
             let ui = Ui::new(80, mode, false);
             let line = ui.leaders("CI green", "86", 76, Role::Verified);
             assert_eq!(display_width(&line), 76, "mode {:?}", mode);
+        }
+    }
+
+    #[test]
+    fn a_leaders_row_never_outgrows_its_width() {
+        for mode in [ColorMode::True, ColorMode::None] {
+            let ui = Ui::new(80, mode, false);
+            let long = "/var/folders/9k/3w2h8n1s0qz7m4b6c8d0f2g40000gn/T/.tmpAbCdEf/agentworth.db";
+            let line = ui.leaders("  index", long, 78, Role::Value);
+            assert_eq!(display_width(&line), 78, "mode {:?}", mode);
+            // The dot leaders never vanish entirely -- the row still reads as a leader row.
+            assert!(console::strip_ansi_codes(&line).contains('.'));
         }
     }
 

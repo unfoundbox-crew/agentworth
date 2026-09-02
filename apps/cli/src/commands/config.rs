@@ -14,6 +14,9 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::ui::views::{self, ConfigListView};
+use crate::ui::{Role, Ui};
+
 /// Persisted user-level CLI defaults. Every field is optional: `None` means "not set,
 /// fall back to the command's own built-in default."
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -305,11 +308,11 @@ pub fn config_as_json(cfg: &CliConfig) -> serde_json::Value {
 }
 
 /// Execute `archie config list`.
-pub fn run_config_list(json: bool) -> Result<()> {
-    run_config_list_at(&config_file_path()?, json)
+pub fn run_config_list(json: bool, ui: &Ui) -> Result<()> {
+    run_config_list_at(&config_file_path()?, json, ui)
 }
 
-fn run_config_list_at(path: &Path, json: bool) -> Result<()> {
+fn run_config_list_at(path: &Path, json: bool, ui: &Ui) -> Result<()> {
     let cfg = load_config_from(path)?;
 
     if json {
@@ -319,27 +322,31 @@ fn run_config_list_at(path: &Path, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("Config file: {}", path.display());
-    println!();
+    let mut entries = Vec::with_capacity(CONFIG_KEYS.len());
     for key in CONFIG_KEYS {
-        print_kv(key, config_value(&cfg, key)?);
+        entries.push((*key, config_value(&cfg, key)?));
     }
+    let path_display = path.to_string_lossy().to_string();
+    print!(
+        "{}",
+        views::config_list(
+            ui,
+            &ConfigListView { config_path: &path_display, entries }
+        )
+    );
     Ok(())
 }
 
-fn print_kv(key: &str, value: Option<String>) {
-    match value {
-        Some(v) => println!("  {:<16} = {}", key, v),
-        None => println!("  {:<16} = (not set)", key),
-    }
-}
-
 /// Execute `archie config get <key>`.
-pub fn run_config_get(key: &str, json: bool) -> Result<()> {
-    run_config_get_at(&config_file_path()?, key, json)
+pub fn run_config_get(key: &str, json: bool, ui: &Ui) -> Result<()> {
+    run_config_get_at(&config_file_path()?, key, json, ui)
 }
 
-fn run_config_get_at(path: &Path, key: &str, json: bool) -> Result<()> {
+/// The one screen in the CLI that deliberately prints a bare value and nothing else.
+/// `LIMIT=$(archie config get limit)` is the whole point of the command, and a header, a
+/// rule or a Next line would land in that variable. Only the "not set" case, which is prose
+/// rather than a value, is painted.
+fn run_config_get_at(path: &Path, key: &str, json: bool, ui: &Ui) -> Result<()> {
     let cfg = load_config_from(path)?;
     let value = config_value(&cfg, key)?;
 
@@ -351,18 +358,18 @@ fn run_config_get_at(path: &Path, key: &str, json: bool) -> Result<()> {
     } else {
         match value {
             Some(v) => println!("{}", v),
-            None => println!("(not set)"),
+            None => println!("{}", ui.paint(Role::Unverified, "(not set)")),
         }
     }
     Ok(())
 }
 
 /// Execute `archie config set <key> <value>`.
-pub fn run_config_set(key: &str, value: &str, json: bool) -> Result<()> {
-    run_config_set_at(&config_file_path()?, key, value, json)
+pub fn run_config_set(key: &str, value: &str, json: bool, ui: &Ui) -> Result<()> {
+    run_config_set_at(&config_file_path()?, key, value, json, ui)
 }
 
-fn run_config_set_at(path: &Path, key: &str, value: &str, json: bool) -> Result<()> {
+fn run_config_set_at(path: &Path, key: &str, value: &str, json: bool, ui: &Ui) -> Result<()> {
     let mut cfg = load_config_from(path)?;
     apply_config_value(&mut cfg, key, value)?;
     save_config_to(path, &cfg)?;
@@ -376,7 +383,12 @@ fn run_config_set_at(path: &Path, key: &str, value: &str, json: bool) -> Result<
             serde_json::to_string_pretty(&json!({ "key": key, "value": stored, "status": "saved" }))?
         );
     } else {
-        println!("Saved {} = {}", key, stored);
+        println!(
+            "{} {} = {}",
+            ui.paint(Role::Verified, "saved"),
+            ui.paint(Role::Label, key),
+            ui.paint(Role::Emphasis, &stored)
+        );
     }
     Ok(())
 }
@@ -385,6 +397,10 @@ fn run_config_set_at(path: &Path, key: &str, value: &str, json: bool) -> Result<
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn test_ui() -> Ui {
+        Ui::new(80, crate::ui::ColorMode::None, true)
+    }
 
     #[test]
     fn test_round_trip_save_and_load() {
@@ -469,18 +485,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
-        run_config_set_at(&path, "limit", "42", false).unwrap();
-        run_config_set_at(&path, "json", "true", false).unwrap();
-        run_config_set_at(&path, "period", "week", false).unwrap();
+        run_config_set_at(&path, "limit", "42", false, &test_ui()).unwrap();
+        run_config_set_at(&path, "json", "true", false, &test_ui()).unwrap();
+        run_config_set_at(&path, "period", "week", false, &test_ui()).unwrap();
 
         let cfg = load_config_from(&path).unwrap();
         assert_eq!(cfg.limit, Some(42));
         assert_eq!(cfg.json, Some(true));
         assert_eq!(cfg.period, Some("week".to_string()));
 
-        run_config_get_at(&path, "limit", false).unwrap();
-        run_config_list_at(&path, false).unwrap();
-        run_config_list_at(&path, true).unwrap();
+        run_config_get_at(&path, "limit", false, &test_ui()).unwrap();
+        run_config_list_at(&path, false, &test_ui()).unwrap();
+        run_config_list_at(&path, true, &test_ui()).unwrap();
     }
 
     #[test]
@@ -488,15 +504,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
-        run_config_set_at(&path, "archie.accessory", "GOGGLES", false).unwrap();
-        run_config_set_at(&path, "archie.colourway", "c4", false).unwrap();
+        run_config_set_at(&path, "archie.accessory", "GOGGLES", false, &test_ui()).unwrap();
+        run_config_set_at(&path, "archie.colourway", "c4", false, &test_ui()).unwrap();
 
         let cfg = load_config_from(&path).unwrap();
         assert_eq!(config_value(&cfg, "archie.accessory").unwrap().as_deref(), Some("goggles"));
         assert_eq!(config_value(&cfg, "archie.colourway").unwrap().as_deref(), Some("C4"));
 
         // Setting one archie key must not wipe the other.
-        run_config_set_at(&path, "archie.accessory", "none", false).unwrap();
+        run_config_set_at(&path, "archie.accessory", "none", false, &test_ui()).unwrap();
         let cfg = load_config_from(&path).unwrap();
         assert_eq!(config_value(&cfg, "archie.colourway").unwrap().as_deref(), Some("C4"));
     }
@@ -505,8 +521,8 @@ mod tests {
     fn test_archie_keys_reject_invalid_values() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        assert!(run_config_set_at(&path, "archie.accessory", "monocle", false).is_err());
-        assert!(run_config_set_at(&path, "archie.colourway", "C9", false).is_err());
+        assert!(run_config_set_at(&path, "archie.accessory", "monocle", false, &test_ui()).is_err());
+        assert!(run_config_set_at(&path, "archie.colourway", "C9", false, &test_ui()).is_err());
     }
 
     #[test]
@@ -535,7 +551,7 @@ mod tests {
     fn test_set_rejects_unknown_key() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        let err = run_config_set_at(&path, "bogus", "x", false).unwrap_err();
+        let err = run_config_set_at(&path, "bogus", "x", false, &test_ui()).unwrap_err();
         assert!(err.to_string().contains("unknown config key"));
     }
 
@@ -543,9 +559,9 @@ mod tests {
     fn test_set_rejects_invalid_values() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        assert!(run_config_set_at(&path, "json", "maybe", false).is_err());
-        assert!(run_config_set_at(&path, "limit", "not-a-number", false).is_err());
-        assert!(run_config_set_at(&path, "period", "fortnight", false).is_err());
+        assert!(run_config_set_at(&path, "json", "maybe", false, &test_ui()).is_err());
+        assert!(run_config_set_at(&path, "limit", "not-a-number", false, &test_ui()).is_err());
+        assert!(run_config_set_at(&path, "period", "fortnight", false, &test_ui()).is_err());
     }
 
     #[test]
@@ -553,8 +569,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
         // No file written at all yet: every key should read back as unset, not error.
-        run_config_get_at(&path, "json", false).unwrap();
-        run_config_get_at(&path, "limit", false).unwrap();
-        run_config_get_at(&path, "period", false).unwrap();
+        run_config_get_at(&path, "json", false, &test_ui()).unwrap();
+        run_config_get_at(&path, "limit", false, &test_ui()).unwrap();
+        run_config_get_at(&path, "period", false, &test_ui()).unwrap();
     }
 }

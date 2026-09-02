@@ -1,21 +1,23 @@
 //! Semantic latent vector search command for AgentWorth.
 //!
-//! Subcommand: `agwt search "<query>" [--limit N] [--min-score F] [--kind KIND] [--json]`
-//! Generates query embedding vector, queries the VectorStore, and renders ASCII thermal receipt cards.
+//! Subcommand: `archie session search "<query>" [--limit N] [--min-score F] [--kind KIND] [--json]`
+//! Embeds the query, tops up the vector store with anything scanned since the last run,
+//! ranks by cosine similarity, and renders the matched turns through the `ui` module.
 
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use agentworth_core::Scanner;
-use agentworth_schema::vector::{ChunkKind, VectorSearchResult};
+use agentworth_schema::vector::ChunkKind;
 use agentworth_storage::vector::VectorStore;
 use agentworth_storage::{
     extract_repository_or_workspace, LocalEmbedder, SessionFilter, Storage, TrajectoryChunker,
 };
 use anyhow::Result;
-use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
+
+use crate::ui::views::{self, SearchRow, SearchView};
+use crate::ui::Ui;
 
 /// Per-invocation ceiling on how many not-yet-indexed sessions get embedded in one
 /// `agwt search` bootstrap pass.
@@ -37,6 +39,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 const MAX_SESSIONS_TO_INDEX_PER_RUN: usize = 25_000;
 
 /// Execute the `agwt search` subcommand.
+#[allow(clippy::too_many_arguments)]
 pub fn run_search_command(
     query: &str,
     limit: usize,
@@ -44,20 +47,19 @@ pub fn run_search_command(
     kind: Option<String>,
     json_output: bool,
     db_path: Option<PathBuf>,
+    ui: &Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
     let vector_store = storage.vector_store()?;
     let embedder = LocalEmbedder::new();
 
-    // 1. Incrementally top up the vector store with any session not yet embedded.
-    bootstrap_vector_store(
-        &storage,
-        &vector_store,
-        &embedder,
-        MAX_SESSIONS_TO_INDEX_PER_RUN,
-        json_output,
-    )?;
-    let stats = vector_store.stats()?;
+    // 1. Incrementally top up the vector store with any session not yet embedded. This is
+    // the one genuinely slow step -- a disk read plus an adapter parse plus an embed per
+    // not-yet-indexed session -- and it used to draw an off-brand `indicatif` bar built out
+    // of braille spinner glyphs no allowed face carries.
+    let bootstrap = crate::ui::with_status(ui, "embedding new sessions", || {
+        bootstrap_vector_store(&storage, &vector_store, &embedder, MAX_SESSIONS_TO_INDEX_PER_RUN)
+    })?;
 
     // 2. Generate embedding for search query
     let query_vector = embedder.embed_text(query)?;
@@ -75,28 +77,65 @@ pub fn run_search_command(
         return Ok(());
     }
 
-    if results.is_empty() {
-        println!();
-        println!(
-            "{}",
-            style(format!(
-                "No semantic matches found for query '{}' (min_score: {:.2}).",
-                query, min_score
-            ))
-            .dim()
-        );
-        if stats.total_chunks == 0 {
-            println!(
-                "{}",
-                style("Tip: Run `archie scan` first to index local agent histories.").yellow()
-            );
-        }
-        println!();
-        return Ok(());
-    }
+    let engine = if embedder.is_onnx() {
+        "ONNX (BGE-Small-EN-v1.5)"
+    } else {
+        "offline semantic vectors (384-dim)"
+    };
 
-    render_ascii_thermal_receipts(query, &results, &embedder, &storage);
+    // One `get_session_by_id` per row, off the index, for the repo the turn came from.
+    let projects: Vec<String> = results
+        .iter()
+        .map(|res| {
+            storage
+                .get_session_by_id(&res.session_id)
+                .ok()
+                .flatten()
+                .map(|s| extract_repository_or_workspace(&s.source_path))
+                .unwrap_or_else(|| "workspace".to_string())
+        })
+        .collect();
+    let turns: Vec<String> = results
+        .iter()
+        .map(|res| {
+            if res.turn_index > 0 {
+                format!("turn #{}", res.turn_index)
+            } else {
+                "summary".to_string()
+            }
+        })
+        .collect();
 
+    let rows: Vec<SearchRow<'_>> = results
+        .iter()
+        .zip(projects.iter().zip(turns.iter()))
+        .map(|(res, (project, turn))| SearchRow {
+            session_id: &res.session_id,
+            adapter: &res.adapter,
+            model: res.model.as_deref().unwrap_or("unknown"),
+            project,
+            started_at: res.started_at.as_deref().unwrap_or("unknown"),
+            kind: res.kind.as_str(),
+            turn,
+            total_tokens: res.total_tokens,
+            score: res.score,
+            snippet: &res.text_content,
+        })
+        .collect();
+
+    print!(
+        "{}",
+        views::search(
+            ui,
+            &SearchView {
+                query,
+                engine,
+                indexed_chunks: bootstrap.chunks_embedded,
+                still_pending: bootstrap.sessions_still_pending,
+                rows,
+            }
+        )
+    );
     Ok(())
 }
 
@@ -134,7 +173,6 @@ fn bootstrap_vector_store<V: VectorStore>(
     vector_store: &V,
     embedder: &LocalEmbedder,
     max_sessions_per_run: usize,
-    json_output: bool,
 ) -> Result<BootstrapOutcome> {
     let already_indexed = vector_store.indexed_session_ids()?;
     let all_sessions = storage.list_sessions_filtered(&SessionFilter::default())?;
@@ -152,35 +190,8 @@ fn bootstrap_vector_store<V: VectorStore>(
     let sessions_embedded = pending_sessions.len();
     let sessions_still_pending = total_pending - sessions_embedded;
 
-    if !json_output {
-        println!(
-            "{}",
-            style(format!(
-                "⚡ Indexing {} sessions into vector store for latent semantic retrieval...",
-                sessions_embedded
-            ))
-            .dim()
-        );
-    }
-
     let scanner = Scanner::new(Arc::clone(storage));
     let mut chunks_embedded = 0;
-
-    let pb = if !json_output {
-        let pb = ProgressBar::new(pending_sessions.len() as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template(
-                    "{spinner:.cyan.bold} Embedding trajectories ▕{bar:30.cyan/238}▏ {pos}/{len} sessions",
-                )
-                .unwrap()
-                .progress_chars("█▉▊▋▌▍▎▏ "),
-        );
-        Some(pb)
-    } else {
-        None
-    };
 
     for sess in &pending_sessions {
         if let Ok(trace) = scanner.load_trace(&sess.session_id) {
@@ -193,36 +204,6 @@ fn bootstrap_vector_store<V: VectorStore>(
                 }
             }
         }
-        if let Some(ref pb) = pb {
-            pb.inc(1);
-        }
-    }
-
-    if let Some(pb) = pb {
-        pb.finish_and_clear();
-    }
-
-    if !json_output && chunks_embedded > 0 {
-        println!(
-            "{}",
-            style(format!(
-                "✓ Indexed {} trajectory chunks ({} dimensions)",
-                chunks_embedded,
-                embedder.dimension()
-            ))
-            .green()
-        );
-    }
-
-    if !json_output && sessions_still_pending > 0 {
-        println!(
-            "{}",
-            style(format!(
-                "Tip: {} more sessions not yet searchable. Run `archie session search` again to index them.",
-                sessions_still_pending
-            ))
-            .yellow()
-        );
     }
 
     Ok(BootstrapOutcome {
@@ -231,200 +212,6 @@ fn bootstrap_vector_store<V: VectorStore>(
         sessions_still_pending,
     })
 }
-
-/// Render beautiful ASCII thermal receipt cards with score badges, model, tokens, and turn snippets.
-fn render_ascii_thermal_receipts(
-    query: &str,
-    results: &[VectorSearchResult],
-    embedder: &LocalEmbedder,
-    storage: &Storage,
-) {
-    let engine_tag = if embedder.is_onnx() {
-        "ONNX (BGE-Small-EN-v1.5)"
-    } else {
-        "Offline Semantic Vector Engine (384-dim)"
-    };
-
-    println!();
-    println!(
-        "{}",
-        style("┌─ ⚡ AgentWorth Semantic Latent Vector Search ──────────────────────────┐")
-            .bold()
-            .cyan()
-    );
-    println!(
-        "│ Query:   {:<59} │",
-        style(format!("\"{}\"", query)).bold().yellow()
-    );
-    println!(
-        "│ Engine:  {:<59} │",
-        style(engine_tag).dim()
-    );
-    println!(
-        "│ Matches: {:<59} │",
-        style(format!("{} trajectory turn(s) retrieved", results.len())).green()
-    );
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────────────────┤")
-            .bold()
-    );
-
-    for (i, res) in results.iter().enumerate() {
-        let (_badge, badge_styled) = format_thermal_score_badge(res.score);
-        let kind_badge = format!("[{}]", res.kind.as_str().to_uppercase());
-
-        println!(
-            "│ {}  {:<24} {:>32} │",
-            style(format!("#{:02}", i + 1)).bold().dim(),
-            badge_styled,
-            style(&kind_badge).bold().magenta()
-        );
-
-        println!(
-            "│ Session:   {:<58} │",
-            style(&res.session_id).cyan().bold()
-        );
-
-        let model_disp = res.model.as_deref().unwrap_or("unknown");
-        println!(
-            "│ Adapter:   {:<24} Model:   {:<25} │",
-            style(&res.adapter).green(),
-            style(model_disp).yellow()
-        );
-
-        let started_disp = res
-            .started_at
-            .as_deref()
-            .unwrap_or("Unknown timestamp");
-        let token_burn_disp = if res.total_tokens > 1_000_000 {
-            format!("{:.2}M tokens", res.total_tokens as f64 / 1_000_000.0)
-        } else if res.total_tokens > 0 {
-            format!("{} tokens", format_number(res.total_tokens))
-        } else {
-            "0 tokens".to_string()
-        };
-
-        println!(
-            "│ Timestamp: {:<24} Tokens:  {:<25} │",
-            style(started_disp).dim(),
-            style(token_burn_disp).bold()
-        );
-
-        // Fetch session path to display repo / project
-        let project_disp = storage
-            .get_session_by_id(&res.session_id)
-            .ok()
-            .flatten()
-            .map(|s| extract_repository_or_workspace(&s.source_path))
-            .unwrap_or_else(|| "workspace".to_string());
-
-        let turn_disp = if res.turn_index > 0 {
-            format!("#{}", res.turn_index)
-        } else {
-            "Summary".to_string()
-        };
-
-        println!(
-            "│ Project:   {:<24} Turn:    {:<25} │",
-            style(project_disp).cyan(),
-            style(turn_disp).yellow()
-        );
-
-        println!(
-            "│ {}",
-            style("──────────────────────────────────────────────────────────────────────").dim()
-        );
-
-        // Clean & wrap snippet text
-        let snippet_lines = clean_and_wrap_text(&res.text_content, 68);
-        for line in snippet_lines.iter().take(6) {
-            println!("│   {:<66} │", style(line).italic());
-        }
-        if snippet_lines.len() > 6 {
-            println!(
-                "│   {:<66} │",
-                style(format!("... [{} more lines]", snippet_lines.len() - 6)).dim()
-            );
-        }
-
-        if i + 1 < results.len() {
-            println!(
-                "{}",
-                style("├────────────────────────────────────────────────────────────────────────┤")
-                    .bold()
-            );
-        }
-    }
-
-    println!(
-        "{}",
-        style("└────────────────────────────────────────────────────────────────────────┘")
-            .bold()
-    );
-    println!();
-}
-
-/// Format thermal match score badge with emoji and color.
-fn format_thermal_score_badge(score: f32) -> (String, console::StyledObject<String>) {
-    let pct = (score * 100.0).clamp(0.0, 100.0);
-    if pct >= 85.0 {
-        let txt = format!("[MATCH: {:.1}% 🔥]", pct);
-        (txt.clone(), style(txt).bold().red())
-    } else if pct >= 70.0 {
-        let txt = format!("[MATCH: {:.1}% ⚡]", pct);
-        (txt.clone(), style(txt).bold().yellow())
-    } else if pct >= 50.0 {
-        let txt = format!("[MATCH: {:.1}% 💡]", pct);
-        (txt.clone(), style(txt).bold().cyan())
-    } else {
-        let txt = format!("[MATCH: {:.1}% 🔎]", pct);
-        (txt.clone(), style(txt).dim())
-    }
-}
-
-/// Wrap text to a maximum line width.
-fn clean_and_wrap_text(text: &str, max_width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for raw_line in text.lines() {
-        let trimmed = raw_line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let mut current = String::new();
-        for word in trimmed.split_whitespace() {
-            if current.len() + word.len() + 1 > max_width && !current.is_empty() {
-                lines.push(current);
-                current = String::new();
-            }
-            if !current.is_empty() {
-                current.push(' ');
-            }
-            current.push_str(word);
-        }
-        if !current.is_empty() {
-            lines.push(current);
-        }
-    }
-    if lines.is_empty() {
-        lines.push("No text content recorded.".to_string());
-    }
-    lines
-}
-
-fn format_number(n: u64) -> String {
-    let s = n.to_string();
-    let mut result = String::new();
-    for (count, c) in s.chars().rev().enumerate() {
-        if count > 0 && count % 3 == 0 {
-            result.push(',');
-        }
-        result.push(c);
-    }
-    result.chars().rev().collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,7 +288,7 @@ mod tests {
         let session_a = write_claude_session("please add retry logic", "done, added backoff");
         scan_one(&scanner, &session_a);
 
-        let outcome_1 = bootstrap_vector_store(&storage, &vector_store, &embedder, 100, true)
+        let outcome_1 = bootstrap_vector_store(&storage, &vector_store, &embedder, 100)
             .expect("first bootstrap");
         assert_eq!(outcome_1.sessions_embedded, 1);
         assert_eq!(outcome_1.sessions_still_pending, 0);
@@ -515,7 +302,7 @@ mod tests {
         );
         scan_one(&scanner, &session_b);
 
-        let outcome_2 = bootstrap_vector_store(&storage, &vector_store, &embedder, 100, true)
+        let outcome_2 = bootstrap_vector_store(&storage, &vector_store, &embedder, 100)
             .expect("second bootstrap");
         assert_eq!(
             outcome_2.sessions_embedded, 1,
@@ -561,13 +348,13 @@ mod tests {
             })
             .collect();
 
-        let outcome_1 = bootstrap_vector_store(&storage, &vector_store, &embedder, 2, true)
+        let outcome_1 = bootstrap_vector_store(&storage, &vector_store, &embedder, 2)
             .expect("first bootstrap");
         assert_eq!(outcome_1.sessions_embedded, 2);
         assert_eq!(outcome_1.sessions_still_pending, 1);
         assert_eq!(vector_store.stats().unwrap().total_sessions, 2);
 
-        let outcome_2 = bootstrap_vector_store(&storage, &vector_store, &embedder, 2, true)
+        let outcome_2 = bootstrap_vector_store(&storage, &vector_store, &embedder, 2)
             .expect("second bootstrap");
         assert_eq!(outcome_2.sessions_embedded, 1);
         assert_eq!(outcome_2.sessions_still_pending, 0);
@@ -587,17 +374,17 @@ mod tests {
         let vector_store = SqliteVectorStore::open_in_memory().expect("open vector store");
         let embedder = LocalEmbedder::new_deterministic();
 
-        let outcome = bootstrap_vector_store(&storage, &vector_store, &embedder, 100, true)
+        let outcome = bootstrap_vector_store(&storage, &vector_store, &embedder, 100)
             .expect("bootstrap on empty index");
         assert_eq!(outcome, BootstrapOutcome::default());
 
         let session = write_claude_session("hello", "hi there");
         scan_one(&scanner, &session);
-        bootstrap_vector_store(&storage, &vector_store, &embedder, 100, true)
+        bootstrap_vector_store(&storage, &vector_store, &embedder, 100)
             .expect("bootstrap indexes the one session");
 
         // Nothing new since the last run -- must do no work, not re-embed.
-        let outcome_again = bootstrap_vector_store(&storage, &vector_store, &embedder, 100, true)
+        let outcome_again = bootstrap_vector_store(&storage, &vector_store, &embedder, 100)
             .expect("bootstrap with nothing pending");
         assert_eq!(outcome_again, BootstrapOutcome::default());
     }
