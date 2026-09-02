@@ -388,6 +388,83 @@ fn the_suspect_screen_holds_the_grid() {
     assert!(!hook.contains("exit 1"), "a pre-push note must never block a push: {hook}");
 }
 
+/// `inspect`, `export`, and `receipt` used to require a session id as a positional clap
+/// argument, so omitting it failed before any of this code ran ("required arguments were
+/// not provided"). It is now optional and this is what fills the gap: on a TTY, a picker;
+/// otherwise, the same listing as `--json` or a plain table, and exit 2 rather than a
+/// silent guess.
+#[test]
+fn picker_lists_sessions_and_exits_2_without_an_id_or_last() {
+    let (_t, db) = fixture();
+    let mut cmd = Command::cargo_bin("agentworth").unwrap();
+    let assert = cmd
+        .arg("--db-path")
+        .arg(&db)
+        .arg("inspect")
+        .env("COLUMNS", "80")
+        .env("NO_COLOR", "1")
+        .assert()
+        .code(2);
+    let output = assert.get_output();
+    let out = String::from_utf8(output.stdout.clone()).unwrap();
+    let err = String::from_utf8(output.stderr.clone()).unwrap();
+
+    assert!(out.contains("SESSION"), "{out}");
+    assert!(out.contains("ADAPTER"), "{out}");
+    assert!(
+        out.contains("session_tested") || out.contains("session_claimed"),
+        "the plain fallback must print full, copyable ids: {out}"
+    );
+    assert!(err.contains("pass a session id or prefix"), "{err}");
+    for line in out.lines() {
+        assert!(console::measure_text_width(line) <= 78, "{line}");
+        for c in line.chars() {
+            assert!(is_allowed(c), "picker listing ships U+{:04X}", c as u32);
+        }
+    }
+}
+
+/// The `--json` fallback carries the same rows a person would pick from interactively --
+/// enough for a script to resolve a session on its own instead of parsing the plain table.
+#[test]
+fn picker_json_listing_is_well_formed_and_exits_2() {
+    let (_t, db) = fixture();
+    let mut cmd = Command::cargo_bin("agentworth").unwrap();
+    let assert = cmd
+        .arg("--db-path")
+        .arg(&db)
+        .arg("inspect")
+        .arg("--json")
+        .assert()
+        .code(2);
+    let out = assert.get_output().stdout.clone();
+    let rows: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.len(), 2, "the fixture has two non-stub sessions");
+    for row in rows {
+        assert!(row["session_id"].is_string());
+        assert!(row["rung"].is_u64());
+        assert!(row["number"].is_u64());
+    }
+}
+
+/// `export` and `receipt` only ever matched an exact id; `agentworth inspect` (#76) made a
+/// unique prefix the normal way to name a session and this brings the other two in line.
+#[test]
+fn export_and_receipt_resolve_a_unique_prefix() {
+    let (_t, db) = fixture();
+    let full_id = session_id(&db);
+    let prefix = &full_id[..full_id.len() - 1];
+
+    let out = render(&db, &["export", prefix, "--format", "json"], 80, false);
+    let trace: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(trace["session_id"].as_str().unwrap(), full_id);
+
+    let out = render(&db, &["receipt", prefix, "--format", "json"], 80, false);
+    let receipt: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(receipt["session_id"].as_str().unwrap(), full_id);
+}
+
 #[test]
 fn json_payloads_are_untouched_by_the_redesign() {
     let (_t, db) = fixture();

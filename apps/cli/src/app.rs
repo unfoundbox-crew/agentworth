@@ -147,8 +147,19 @@ enum Commands {
 
     /// Inspect a specific trace session in detail with timeline visualization
     Inspect {
-        /// The session ID to inspect
-        session_id: String,
+        /// The session ID to inspect, by full ID or a unique prefix. With nothing given on
+        /// a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+
+        /// Inspect the newest session for this directory's repository. The default when
+        /// no ID is given and stdout is not a TTY
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// Output raw trace structure as formatted JSON
         #[arg(long)]
@@ -157,8 +168,19 @@ enum Commands {
 
     /// Export a trace session safely in JSON or ATIF format
     Export {
-        /// The session ID to export
-        session_id: String,
+        /// The session ID to export, by full ID or a unique prefix. With nothing given on
+        /// a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+
+        /// Export the newest session for this directory's repository. The default when
+        /// no ID is given and stdout is not a TTY
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// Apply redaction to mask secrets, API keys, tokens, emails, and home paths
         #[arg(short, long)]
@@ -175,8 +197,20 @@ enum Commands {
 
     /// Generate and render an authentic ANSI or SVG Flight Receipt for a trace session
     Receipt {
-        /// The session ID to generate flight receipt for
-        session_id: String,
+        /// The session ID to generate flight receipt for, by full ID or a unique prefix.
+        /// With nothing given on a TTY, a picker lists the newest sessions; elsewhere,
+        /// pass an ID or `--last`
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+
+        /// Generate the receipt for the newest session for this directory's repository.
+        /// The default when no ID is given and stdout is not a TTY
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// Output format: terminal (default), ansi, svg, receipt, or json
         #[arg(short, long, default_value = "terminal", value_parser = ["terminal", "ansi", "svg", "receipt", "json"])]
@@ -300,13 +334,18 @@ enum Commands {
 
     /// Hand a session over: what it promised and dropped, decided, changed, ran, and proved
     Handoff {
-        /// Session to hand over. Defaults to the newest session indexed for this directory's
-        /// repository, which is what `--last` also selects.
+        /// Session to hand over, by full ID or a unique prefix. With nothing given on a
+        /// TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
         session_id: Option<String>,
 
-        /// Hand over the newest session for this repository. The default when no ID is given.
+        /// Hand over the newest session for this repository. The default when no ID is
+        /// given and stdout is not a TTY
         #[arg(long)]
         last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// Mask secrets, paths, and this session's own repository name before printing
         #[arg(short, long)]
@@ -327,9 +366,19 @@ enum Commands {
 
     /// What compaction dropped: decisions this session made and its own summaries did not keep
     Forgotten {
-        /// Session to diff, by full ID or a unique prefix. Defaults to the newest session
-        /// indexed for this directory's repository.
+        /// Session to diff, by full ID or a unique prefix. With nothing given on a TTY, a
+        /// picker lists the newest sessions; elsewhere, defaults to the newest session
+        /// indexed for this directory's repository (same as `--last`)
         session_id: Option<String>,
+
+        /// Diff the newest session for this directory's repository. The default when no
+        /// ID is given and stdout is not a TTY
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// One 1-based compaction round. Defaults to every round.
         #[arg(long)]
@@ -563,10 +612,19 @@ enum Commands {
         #[arg(long, conflicts_with = "session")]
         file: Option<String>,
 
-        /// Blunder -> blame direction: one specific session ID. Resolves it to the
-        /// files AI Code Blame attributes to that session
+        /// Blunder -> blame direction: one specific session ID, by full ID or a unique
+        /// prefix. Resolves it to the files AI Code Blame attributes to that session
         #[arg(long, conflicts_with = "file")]
         session: Option<String>,
+
+        /// Blunder -> blame direction for the newest session in this repository, same as
+        /// `--session` with that session's ID
+        #[arg(long, conflicts_with = "file")]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long, conflicts_with = "file")]
+        current: bool,
 
         /// In default mode (no --file or --session), number of top blunders to bridge
         #[arg(short, long, default_value_t = 5)]
@@ -746,32 +804,50 @@ pub fn run() -> Result<()> {
                 &ui,
             )?;
         }
-        Commands::Inspect { session_id, json } => {
+        Commands::Inspect {
+            session_id,
+            last,
+            current,
+            json,
+        } => {
             let json = resolve_json(json);
-            if let Err(e) = run_inspect_command(&session_id, json, cli.db_path.clone(), &ui) {
-                if json {
-                    return Err(e);
-                }
-                // An error screen is a navigation screen, so it replaces the anyhow dump
-                // rather than following it. Every storage handle is already dropped here.
-                print!("{}", inspect_not_found(&session_id, cli.db_path, &ui));
-                std::process::exit(1);
-            }
+            run_inspect_command(session_id, last, current, json, cli.db_path.clone(), &ui)?;
         }
         Commands::Export {
             session_id,
+            last,
+            current,
             redact,
             format,
             output,
         } => {
-            run_export_command(&session_id, redact, &format, output.as_deref(), cli.db_path)?;
+            run_export_command(
+                session_id,
+                last,
+                current,
+                redact,
+                &format,
+                output.as_deref(),
+                cli.db_path,
+                &ui,
+            )?;
         }
         Commands::Receipt {
             session_id,
+            last,
+            current,
             format,
             output,
         } => {
-            crate::run_receipt_command(&session_id, &format, output, cli.db_path, &ui)?;
+            crate::run_receipt_command(
+                session_id,
+                last,
+                current,
+                &format,
+                output,
+                cli.db_path,
+                &ui,
+            )?;
         }
 
         Commands::Search {
@@ -825,10 +901,8 @@ pub fn run() -> Result<()> {
         }
         Commands::Handoff {
             session_id,
-            // `--last` and "no session id" mean the same thing, so the flag exists to be
-            // typed rather than to change behaviour. Accepting both keeps the documented
-            // `agentworth handoff [session-id | --last]` shape honest.
-            last: _,
+            last,
+            current,
             redact,
             markdown,
             max_lines,
@@ -836,6 +910,8 @@ pub fn run() -> Result<()> {
         } => {
             handoff_command::run_handoff_command(
                 session_id,
+                last,
+                current,
                 redact,
                 max_lines,
                 markdown,
@@ -846,6 +922,8 @@ pub fn run() -> Result<()> {
         }
         Commands::Forgotten {
             session_id,
+            last,
+            current,
             round,
             classes,
             limit,
@@ -854,6 +932,8 @@ pub fn run() -> Result<()> {
         } => {
             forgotten_command::run_forgotten_command(
                 session_id,
+                last,
+                current,
                 round,
                 classes,
                 limit,
@@ -962,12 +1042,16 @@ pub fn run() -> Result<()> {
         Commands::BlunderBlame {
             file,
             session,
+            last,
+            current,
             top,
             json,
         } => {
             crate::run_blunder_blame_command(
                 file,
                 session,
+                last,
+                current,
                 top,
                 resolve_json(json),
                 cli.db_path,
@@ -1455,15 +1539,30 @@ fn format_duration(seconds: f64) -> String {
 // -----------------------------------------------------------------------------
 
 fn run_inspect_command(
-    session_id: &str,
+    session_id: Option<String>,
+    last: bool,
+    current: bool,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &crate::ui::Ui,
 ) -> Result<()> {
-    let storage = open_storage(db_path)?;
+    let storage = open_storage(db_path.clone())?;
     let scanner = Scanner::new(storage.clone());
 
-    let resolved_id = resolve_inspect_session_id(&storage, session_id)?;
+    let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
+    let resolved_id = match crate::ui::picker::resolve(&storage, ui, json, &arg)? {
+        crate::ui::picker::Resolved::Id(id) => id,
+        crate::ui::picker::Resolved::NotFound(input) => {
+            if json {
+                anyhow::bail!(
+                    "Session '{}' not found in SQLite index. Try running 'agentworth scan' first.",
+                    input
+                );
+            }
+            print!("{}", inspect_not_found(&input, db_path, ui));
+            std::process::exit(1);
+        }
+    };
     let trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(&resolved_id))?;
 
     if json {
@@ -1473,25 +1572,6 @@ fn run_inspect_command(
     }
 
     Ok(())
-}
-
-/// Resolve what the caller typed to one exact session id. An exact match wins immediately
-/// -- the common case, and the one that must stay fastest. Failing that, a *unique* prefix
-/// match resolves silently to the id it names; an absent or ambiguous prefix is left
-/// unresolved so the caller's own not-found screen takes over, which already lists the
-/// nearest ids (an ambiguous prefix's candidates all start with it, so they surface there
-/// as the "closest three" without this function needing its own listing).
-fn resolve_inspect_session_id(storage: &Storage, input: &str) -> Result<String> {
-    if storage.get_session_by_id(input)?.is_some() {
-        return Ok(input.to_string());
-    }
-    match storage.find_sessions_by_id_prefix(input, 2)?.as_slice() {
-        [only] => Ok(only.session_id.clone()),
-        _ => anyhow::bail!(
-            "Session '{}' not found in SQLite index. Try running 'agentworth scan' first.",
-            input
-        ),
-    }
 }
 
 fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
@@ -1891,15 +1971,41 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
 // Command: Export
 // -----------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn run_export_command(
-    session_id: &str,
+    session_id: Option<String>,
+    last: bool,
+    current: bool,
     redact: bool,
     format: &str,
     output: Option<&std::path::Path>,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
     let scanner = Scanner::new(storage.clone());
+
+    let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
+    let session_id = match crate::ui::picker::resolve(&storage, ui, false, &arg)? {
+        crate::ui::picker::Resolved::Id(id) => id,
+        crate::ui::picker::Resolved::NotFound(input) => {
+            print!(
+                "{}",
+                crate::ui::picker::not_found(
+                    ui,
+                    &storage,
+                    &format!("agentworth export {input}"),
+                    &input,
+                    &[(
+                        "agentworth export --last".to_string(),
+                        "export the newest session in this repo".to_string(),
+                    )],
+                )
+            );
+            std::process::exit(1);
+        }
+    };
+    let session_id = session_id.as_str();
 
     let mut trace = scanner.load_trace(session_id)?;
 

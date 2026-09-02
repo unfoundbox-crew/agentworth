@@ -769,7 +769,9 @@ pub fn render_svg_receipt(trace: &AgentWorthTrace, score: &TraceScore) -> String
 
 /// Executes the `agwt receipt` command to render terminal or SVG flight receipts.
 pub fn run_receipt_command(
-    session_id: &str,
+    session_id: Option<String>,
+    last: bool,
+    current: bool,
     format: &str,
     output: Option<PathBuf>,
     db_path: Option<PathBuf>,
@@ -781,9 +783,30 @@ pub fn run_receipt_command(
         Arc::new(Storage::open_default()?)
     };
 
+    let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
+    let session_id = match crate::ui::picker::resolve(&storage, ui, false, &arg)? {
+        crate::ui::picker::Resolved::Id(id) => id,
+        crate::ui::picker::Resolved::NotFound(input) => {
+            print!(
+                "{}",
+                crate::ui::picker::not_found(
+                    ui,
+                    &storage,
+                    &format!("agentworth receipt {input}"),
+                    &input,
+                    &[(
+                        "agentworth receipt --last".to_string(),
+                        "the receipt for the newest session in this repo".to_string(),
+                    )],
+                )
+            );
+            std::process::exit(1);
+        }
+    };
+
     let scanner = Scanner::new(storage);
     let trace = scanner
-        .load_trace(session_id)
+        .load_trace(&session_id)
         .with_context(|| format!("Failed loading trace for session '{}'", session_id))?;
 
     let scorer = TraceScorer::default();
