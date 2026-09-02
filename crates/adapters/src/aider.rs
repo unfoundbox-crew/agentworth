@@ -581,7 +581,11 @@ fn parse_aider_markdown(
                             EventPayload::ShellCommand(ShellCommand {
                                 command: cmd_line.clone(),
                                 cwd: None,
-                                exit_code: Some(0),
+                                // Aider's markdown chat history transcribes the command and its
+                                // output; it never records an exit status. Claiming `Some(0)`
+                                // here manufactured the exact proof the outcome engine treats as
+                                // "this really passed" out of a command that was merely typed.
+                                exit_code: None,
                                 output: output_str.clone(),
                             }),
                         )
@@ -793,7 +797,8 @@ fn parse_aider_markdown(
                     EventPayload::ShellCommand(ShellCommand {
                         command: cmd.to_string(),
                         cwd: None,
-                        exit_code: Some(0),
+                        // No exit status in this format — see above.
+                        exit_code: None,
                         output: None,
                     }),
                 )

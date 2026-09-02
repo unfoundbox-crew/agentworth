@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
+use crate::exit_status::backfill_shell_exit_codes;
 
 /// Adapter for discovering and normalizing Cursor (Composer / Chat) agent sessions.
 pub struct CursorAdapter;
@@ -330,6 +331,7 @@ impl AgentAdapter for CursorAdapter {
                         trace.ended_at = Some(latest);
                     }
 
+                    backfill_shell_exit_codes(&mut trace.events);
                     trace.recalculate_stats();
 
                     return Ok(ParseResult {
@@ -376,6 +378,7 @@ impl AgentAdapter for CursorAdapter {
             trace.ended_at = Some(latest);
         }
 
+        backfill_shell_exit_codes(&mut trace.events);
         trace.recalculate_stats();
 
         Ok(ParseResult {

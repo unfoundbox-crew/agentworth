@@ -1,6 +1,7 @@
 import {
   AggregateStats,
   AgentWorthTrace,
+  ArchaeologyData,
   EventsPageResponse,
   SessionSummary,
   TokenUsage,
@@ -36,7 +37,23 @@ export const EMPTY_AGGREGATE_STATS: AggregateStats = {
     done_claimed: 0,
     unresolved: 0,
   },
-  archaeology: undefined,
+};
+
+/** Matches ArchaeologyHighlights::default() on an empty index (see
+ * apps/cli/src/server/archaeology.rs) -- every highlight absent, an all-zero timeline. */
+export const EMPTY_ARCHAEOLOGY_DATA: ArchaeologyData = {
+  most_expensive_unsolved: null,
+  longest_recovery_loop: null,
+  most_frequent_model_switches: null,
+  token_carbon_dating: {
+    earliest_session_at: null,
+    latest_session_at: null,
+    total_days_active: 0,
+    total_tokens: 0,
+    average_tokens_per_session: 0,
+    timeline: [],
+    adapter_tokens: {},
+  },
 };
 
 export const GROUNDED_CAPABILITY_MATRIX: AdapterCapability[] = [
@@ -341,13 +358,47 @@ export async function fetchAggregateStats(): Promise<AggregateStats> {
         outcome_distribution: data.outcome_distribution,
         first_session_at: data.date_range?.first_session_at ?? data.first_session_at,
         last_session_at: data.date_range?.last_session_at ?? data.last_session_at,
-        archaeology: data.archaeology,
       };
     }
   } catch (_err) {
     // Backend API not running or returned error; report genuine empty/unmeasured state
   }
   return EMPTY_AGGREGATE_STATS;
+}
+
+/**
+ * Fetches archaeology highlights (most expensive unsolved task, longest recovery loop,
+ * heaviest model-switcher, token carbon-dating timeline) from /api/archaeology.
+ *
+ * This is its own request rather than a field folded into /api/stats: computing it walks
+ * full traces for up to 40 candidate sessions (see compute_archaeology_highlights), so
+ * bundling it into the stats payload would make that work run on every stats poll instead
+ * of only when this pane is actually open.
+ */
+export async function fetchArchaeology(): Promise<ArchaeologyData> {
+  try {
+    const res = await fetch(`${BASE_URL}/archaeology`);
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        most_expensive_unsolved: data.most_expensive_unsolved ?? null,
+        longest_recovery_loop: data.longest_recovery_loop ?? null,
+        most_frequent_model_switches: data.most_frequent_model_switches ?? null,
+        token_carbon_dating: {
+          earliest_session_at: data.token_carbon_dating?.earliest_session_at ?? null,
+          latest_session_at: data.token_carbon_dating?.latest_session_at ?? null,
+          total_days_active: data.token_carbon_dating?.total_days_active ?? 0,
+          total_tokens: data.token_carbon_dating?.total_tokens ?? 0,
+          average_tokens_per_session: data.token_carbon_dating?.average_tokens_per_session ?? 0,
+          timeline: data.token_carbon_dating?.timeline ?? [],
+          adapter_tokens: data.token_carbon_dating?.adapter_tokens ?? {},
+        },
+      };
+    }
+  } catch (_err) {
+    // Backend API not running or returned error; report genuine empty/unmeasured state
+  }
+  return EMPTY_ARCHAEOLOGY_DATA;
 }
 
 /**

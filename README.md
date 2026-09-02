@@ -98,8 +98,9 @@ AgentWorth runs **100% offline** on your machine. It discovers histories from Cl
 * **AI Code Lineage (`blame`)**: Trace file modifications back to the exact agent session, model, timestamp, and user prompt that produced them.
 * **Verified Outcomes**: Deterministic detection of whether the agent actually accomplished the goal or just claimed it was done.
 * **Autonomous Recovery Loops**: Detecting when an agent encountered a compiler/runtime error, diagnosed it, and recovered without human intervention.
-* **Timeline Archaeology**: Step-by-step interactive inspection of prompts, thinking blocks, tool calls, and file diffs.
-* **Safe ATIF v1.0 Export**: 13-rule offline privacy scrubber (API keys, `.env` secrets, user paths) with export to standard Agent Trajectory Interchange Format (ATIF v1.0).
+* **Timeline Archaeology**: Step-by-step interactive inspection of prompts, thinking blocks, tool calls, and file diffs. Large sessions stream into the dashboard instead of blocking: the inspector paints the first 500 events immediately and streams the rest in behind them.
+* **Compaction Awareness**: A dedicated pane shows when and why a session's context got compacted, and the session list carries a per-session compaction count.
+* **Safe ATIF v1.0 Export**: 16-rule offline privacy scrubber (API keys, `.env` secrets, user paths, repository identity) with export to standard Agent Trajectory Interchange Format (ATIF v1.0).
 
 ---
 
@@ -232,7 +233,7 @@ packages/
 
 AgentWorth natively supports the **Agent Trajectory Interchange Format (ATIF v1.0)** for sharing anonymized, high-signal trajectories with benchmark suites, evaluators, and research harnesses.
 
-Before exporting, every trace passes through a deterministic **13-rule offline redaction pipeline**:
+Before exporting, every trace passes through a deterministic **16-rule offline redaction pipeline**:
 * API keys & bearer tokens (`sk-ant-*`, `sk-*`, `ghp_*`, AWS credentials)
 * Environment variable assignments (`.env` secrets, password strings)
 * Organization names and private domain URLs
@@ -255,12 +256,17 @@ agentworth export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | `agentworth usage [--period ...]` | Usage rollups by `day`, `week`, or `month`, or rolling 5-hour pacing (`--pacing`). |
 | `agentworth blame <FILE>` | AI code lineage: finds all agent sessions and prompts that modified a given file. |
 | `agentworth traces [OPTIONS]` | Tabular directory of indexed sessions (`--limit`, `--adapter`, `--model`, `--json`). |
-| `agentworth inspect <ID>` | Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs. |
+| `agentworth matrix [--json]` | Extraction capability and coverage matrix across all 20 agent adapters. |
+| `agentworth inspect <ID>` | Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs. `<ID>` accepts any unique session-ID prefix, not just the full ID. |
 | `agentworth serve [OPTIONS]` | Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`). |
 | `agentworth export <ID>` | Exports a session as JSON, ATIF v1.0, or a Flight Receipt (`--format json\|atif\|receipt\|svg`), with optional privacy scrubbing (`--redact`). |
 | `agentworth receipt <ID>` | Renders a Flight Receipt for a session: an ANSI box for the terminal or a shareable 1200x630 SVG card (`--format terminal\|svg\|json`, `--output <PATH>`). |
+| `agentworth handoff [ID \| --last]` | What a session promised, decided, changed, ran, and proved — the same report the `session_handoff` MCP tool returns (`--markdown`, `--redact`, `--json`). |
+| `agentworth loose-ends [ID \| --last]` | The handoff's loose-ends section alone: what a session said it would do and didn't (`--prompt` prints a copyable brief). |
 | `agentworth doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
 | `agentworth mcp` | Starts the read-only MCP server over stdio, so a coding agent can query this machine's session index mid-session (see below). |
+
+Every command accepts `--plain` (no colour, ASCII-only glyphs, same column positions as the colour output) and `--no-color`; setting `NO_COLOR` in the environment has the same effect as `--no-color`.
 
 ---
 

@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
+use crate::exit_status::backfill_shell_exit_codes;
 
 /// Adapter for discovering and normalizing Herdr multi-agent coordination traces.
 pub struct HerdrAdapter;
@@ -225,6 +226,7 @@ impl AgentAdapter for HerdrAdapter {
                         trace.ended_at = Some(latest);
                     }
 
+                    backfill_shell_exit_codes(&mut trace.events);
                     trace.recalculate_stats();
 
                     return Ok(ParseResult {
@@ -271,6 +273,7 @@ impl AgentAdapter for HerdrAdapter {
             trace.ended_at = Some(latest);
         }
 
+        backfill_shell_exit_codes(&mut trace.events);
         trace.recalculate_stats();
 
         Ok(ParseResult {

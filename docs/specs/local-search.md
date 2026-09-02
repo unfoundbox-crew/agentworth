@@ -7,12 +7,14 @@
 > it sends nothing about the user. Document it; do not treat it as a privacy
 > problem.
 >
-> The redaction engine has **15** rules, not 13: anthropic_api_key,
+> The redaction engine has **16** rules, not 13: anthropic_api_key,
 > aws_access_key, bearer_token, credential_url, email_address, github_token,
-> google_api_key, jwt_token, linux_home_path, macos_home_path,
-> openai_api_key, pem_private_key, private_ip_address, sensitive_env_vars,
-> windows_home_path. None of them covers repository or project names, which
-> AGENTS.md says exports must not leak. That gap is real.
+> google_api_key, high_entropy_secret, jwt_token, linux_home_path,
+> macos_home_path, openai_api_key, pem_private_key, private_ip_address,
+> sensitive_env_vars, windows_home_path. None of them covers repository or
+> project names, which AGENTS.md says exports must not leak. That gap is
+> real (a separate `repository_identity_rule` covers it, applied on top of
+> these when a session's repo name is known).
 
 # Local search and the small-model angle
 
