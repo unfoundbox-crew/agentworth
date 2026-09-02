@@ -4,11 +4,16 @@
 //! up to externally verified CI and deployment) and recovery signals (when agents
 //! fix failing tests, compiler errors, and broken states).
 
+pub mod compaction_diff;
 pub mod loose_ends;
 mod outcome;
 mod recovery;
 mod verify;
 
+pub use compaction_diff::{
+    diff_compaction_rounds, CompactionDiff, Evidence, ForgottenStatement, RoundDiff,
+    StatementClass, SURVIVAL_JACCARD_THRESHOLD,
+};
 pub use loose_ends::{find_loose_ends, find_loose_ends_in_trace, loose_ends_prompt, LooseEnd};
 pub use outcome::{outcome_kind_name, outcome_rank, OutcomeDetector, OutcomeHierarchyDetector};
 pub use recovery::{RecoveryDetector, RecoverySignal};
