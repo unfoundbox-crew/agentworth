@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.14] - 2026-09-02
+
+### Added
+
+- **The handoff, written by the machine.** `agentworth handoff`, `agentworth loose-ends`, and the MCP tools `session_handoff` and `carry_forward`: what a session promised and did not do, what it decided, files touched, commands and how they ended, the outcome rung, compactions. Every line carries a receipt; nothing is summarised (#77).
+- **`forgotten_context`.** The decisions compaction dropped, handed back with receipts, plus `agentworth forgotten`. Measured on one 8-round session: 405 decision sentences in, 28 out (#83).
+- **`suspect_commits`** and `agentworth suspect --hook`: commits whose authoring session had no exit-0 test, a demoted done-claim, or a loop; anchored to the repo so relative blame paths cannot suffix-match every repo on disk (#84).
+- **`outcome_rate`**: verified-outcome rate by model, adapter or repo, with an n floor (#75).
+- `inspect` accepts a session-id prefix; `doctor` and `matrix` render in the design system (#76).
+- CI runs tests on ubuntu and macOS, clippy gates, path-aware jobs; the dead GitHub Pages deploy is gone (#79).
+
+### Fixed
+
+- **"Tests passed" now means exit 0.** The Claude Code adapter never parsed tool results on real transcripts (they nest under `message.content`), so no exit code ever reached the outcome engine, which granted rung 3 from the command string alone. Exit codes are parsed from `is_error` and "Exit code N"; a test, build, CI or deploy command with no exit code cannot reach a verified rung. Aider's markdown path no longer hardcodes success (#81, #85).
+- Every real session gets scored; a parser version per adapter triggers a one-time reparse when parsing changes; backfill runs once per version and never loops on sessions with no prompt (#85, #89).
+- `stats` and `usage` count the same sessions; usage views apply the non-stub predicate (#78).
+- Live-tail adapter attribution works on macOS (FSEvents reports canonical paths) (#87).
+- The archaeology pane fetches its data (#80). Trace responses gzip and paginate; the inspector streams large sessions (#72, #73). prompt_preview backfills; the matrix derives from the adapter registry (#74).
+
+---
+
 ## [0.1.13] - 2026-09-02
 
 ### Added
