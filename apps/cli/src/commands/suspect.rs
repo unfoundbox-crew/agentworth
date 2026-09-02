@@ -418,9 +418,15 @@ pub fn compute_suspect_commits(storage: &Storage, q: &SuspectQuery) -> Result<Su
     let commits = read_commits(&root, &range_args, q.max_commits)?;
 
     let window = Duration::hours(q.window_hours.max(0));
-    let earliest = commits.iter().map(|c| c.committed_at).min();
+    // An empty range — nothing to push — must not turn into an unbounded blame query. With no
+    // commits there is no `since` to bound it, so it would read the whole table to learn
+    // nothing.
+    let earliest = match commits.iter().map(|c| c.committed_at).min() {
+        Some(t) => t - window,
+        None => Utc::now(),
+    };
     let worktrees = linked_worktrees(&root);
-    let blame = storage.blame_for_repo(&root_str, &worktrees, earliest.map(|t| t - window))?;
+    let blame = storage.blame_for_repo(&root_str, &worktrees, Some(earliest))?;
 
     // One lookup per changed path, rather than a scan of every blame row per commit.
     let mut by_path: BTreeMap<&str, Vec<&AnchoredBlameRow>> = BTreeMap::new();
