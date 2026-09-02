@@ -341,8 +341,8 @@ fn stats_draws_the_evidence_line_between_rung_3_and_rung_2() {
         .iter()
         .position(|l| l.contains("the evidence line"))
         .expect("stats draws the evidence line");
-    let rung3 = lines.iter().position(|l| l.contains("tests passed")).unwrap();
-    let rung2 = lines.iter().position(|l| l.contains("files changed")).unwrap();
+    let rung3 = lines.iter().position(|l| l.contains("test or build passed")).unwrap();
+    let rung2 = lines.iter().position(|l| l.contains("artifact changed")).unwrap();
     assert!(
         rung3 < line_at && line_at < rung2,
         "the evidence line must sit between rung 3 and rung 2"

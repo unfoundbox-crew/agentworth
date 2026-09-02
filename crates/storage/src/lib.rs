@@ -286,7 +286,10 @@ pub const OUTCOME_RATE_DEFAULT_MIN_N: usize = 20;
 
 /// Rungs at or above this one left evidence something outside the agent could check.
 /// `agentworth_outcomes::outcome_rank`'s scale; the same 3 `get_outcome_rate` calls verified.
-pub const LADDER_EVIDENCE_FLOOR: usize = 3;
+///
+/// The one definition in the product. `apps/cli/src/ui/views.rs`'s `EVIDENCE_FLOOR` is an
+/// alias of this, so a screen and the query behind it can never draw the line in two places.
+pub const EVIDENCE_FLOOR: usize = 3;
 
 /// `OutcomeKind`'s own serialized name for a rung, and `unflown` for the bottom -- the
 /// design system's word for no evidence at all, which is not a failure state (AGENTS.md,
@@ -2316,9 +2319,12 @@ impl Storage {
     ///
     /// Two bounded queries and no transcript reparse: `sessions` for the window, then
     /// `session_model_usage` joined to the same window so a session that ran two models has
-    /// each model's tokens priced at that model's own rate. A session with no per-model rows
-    /// (an older parse) falls back to its own token columns priced at the first model it
-    /// names -- never the blended default, which mis-prices everything but Sonnet.
+    /// each model's tokens priced at that model's own rate. A session is attributed exactly
+    /// once: models with a usage row take their own tokens and cost, and anything the session
+    /// carries beyond those rows is split evenly across the models that have none (an index
+    /// scanned before that table existed has none for any of them). Its own token columns are
+    /// priced at the first model it names -- never the blended default, which mis-prices
+    /// everything but Sonnet.
     ///
     /// "Verified" is rung 3 or higher via `agentworth_outcomes::outcome_rank`, and "claimed"
     /// is any non-null `primary_outcome` -- both inherited from `get_outcome_rate` so the two
@@ -2345,6 +2351,9 @@ impl Storage {
                 values.push(Box::new(format!("%{model}%")));
             }
         };
+        // The same `'2020-01-01'` sanity floor every usage query carries: a transcript with a
+        // corrupt or epoch-zero timestamp is not a session that happened in this window.
+        where_sql.push_str(" AND started_at > '2020-01-01'");
         if !q.include_stubs {
             where_sql.push_str(&format!(" AND ({NON_STUB_SQL_PREDICATE})"));
         }
@@ -2528,7 +2537,7 @@ impl Storage {
         }
         let below_line_cost_usd: f64 = rungs
             .iter()
-            .filter(|r| (r.rung as usize) < LADDER_EVIDENCE_FLOOR)
+            .filter(|r| (r.rung as usize) < EVIDENCE_FLOOR)
             .map(|r| r.cost_usd)
             .sum();
 
@@ -2556,7 +2565,7 @@ impl Storage {
                     cost: 0.0,
                 });
                 acc.n += 1;
-                if (f.rung as usize) >= LADDER_EVIDENCE_FLOOR {
+                if (f.rung as usize) >= EVIDENCE_FLOOR {
                     acc.verified += 1;
                 }
                 acc.tokens.push(tokens);
@@ -2571,11 +2580,37 @@ impl Storage {
                     None => sessions_without_effort += 1,
                 },
                 LadderGroupBy::Model => {
+                    // A session is attributed once, never once per model. Models with a
+                    // `session_model_usage` row take their own tokens and their own cost;
+                    // whatever the session carries beyond those rows is split evenly across
+                    // the models that have none. Adding the whole session to every model
+                    // without a row -- which an index scanned before that table existed has
+                    // for all of them -- made a two-model session count twice, and the group
+                    // sums came out larger than the window's own total spend.
                     let usage = per_model.get(&f.session_id);
+                    let missing: Vec<&String> = f
+                        .models
+                        .iter()
+                        .filter(|m| usage.and_then(|u| u.get(*m)).is_none())
+                        .collect();
+                    let attributed_tokens: u64 =
+                        usage.map_or(0, |u| u.values().map(|(t, _)| t).sum());
+                    let attributed_cost: f64 =
+                        usage.map_or(0.0, |u| u.values().map(|(_, c)| c).sum());
+                    let share_tokens = if missing.is_empty() {
+                        0
+                    } else {
+                        f.tokens.saturating_sub(attributed_tokens) / missing.len() as u64
+                    };
+                    let share_cost = if missing.is_empty() {
+                        0.0
+                    } else {
+                        (f.cost_usd - attributed_cost).max(0.0) / missing.len() as f64
+                    };
                     for model in &f.models {
                         match usage.and_then(|u| u.get(model)) {
                             Some((tokens, cost)) => add(model.clone(), *tokens, *cost),
-                            None => add(model.clone(), f.tokens, f.cost_usd),
+                            None => add(model.clone(), share_tokens, share_cost),
                         }
                     }
                 }
@@ -2604,7 +2639,7 @@ impl Storage {
 
         let mut verified: Vec<&Fetched> = fetched
             .iter()
-            .filter(|f| (f.rung as usize) >= LADDER_EVIDENCE_FLOOR)
+            .filter(|f| (f.rung as usize) >= EVIDENCE_FLOOR)
             .collect();
         verified.sort_by_key(|f| std::cmp::Reverse(f.started_at));
         let recent_verified = verified
@@ -6192,6 +6227,58 @@ mod tests {
         assert_eq!(by_effort.groups[0].key, "high");
         assert_eq!(by_effort.groups[0].n, 4);
         assert_eq!(by_effort.sessions_without_effort, 1);
+    }
+
+
+    /// The double-counting guard. An index scanned before `session_model_usage` existed has
+    /// no per-model rows at all, and a session naming two models must still be attributed
+    /// exactly once: the group costs have to sum to the session's cost, not to twice it.
+    #[test]
+    fn test_get_ladder_attributes_a_session_once_when_no_per_model_rows_exist() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let t0 = Utc::now() - Duration::hours(2);
+
+        // Seeded the normal way, then the per-model rows are deleted -- exactly the shape a
+        // pre-`session_model_usage` index has on disk.
+        seed_ladder_session(
+            &storage,
+            "sess-two-models",
+            "claude_code",
+            "/home/u/code/org-a/repo-a/two.jsonl",
+            &[("model-a", 3_000_000), ("model-b", 1_000_000)],
+            Some("commit_observed"),
+            None,
+            8,
+            t0,
+        );
+        {
+            let conn = storage.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            conn.execute("DELETE FROM session_model_usage", [])
+                .expect("drop the per-model rows");
+        }
+
+        let result = storage
+            .get_ladder(&LadderQuery { min_n: 1, ..LadderQuery::default() })
+            .expect("get_ladder with no per-model rows");
+
+        assert_eq!(result.total_sessions, 1);
+        let session_cost = result.total_cost_usd;
+        assert!(session_cost > 0.0, "4M tokens is not free");
+
+        let group_total: f64 = result.groups.iter().map(|g| g.cost_usd).sum();
+        assert!(
+            (group_total - session_cost).abs() < 1e-9,
+            "one session, counted once: groups sum to {group_total}, session cost is {session_cost}"
+        );
+        assert_eq!(result.groups.len(), 2, "both models still get a row");
+        for g in &result.groups {
+            assert_eq!(g.n, 1);
+            assert!(
+                (g.cost_usd - session_cost / 2.0).abs() < 1e-9,
+                "with no rows to go on, the session splits evenly: {g:?}"
+            );
+            assert_eq!(g.median_tokens, 2_000_000, "4M tokens split two ways");
+        }
     }
 
     /// `--repo`, `--adapter` and `--model` narrow the population the whole screen is computed

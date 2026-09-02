@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use agentworth_storage::{
-    LadderGroupBy, LadderQuery, LadderResult, Storage, LADDER_EVIDENCE_FLOOR,
+    LadderGroupBy, LadderQuery, LadderResult, Storage, EVIDENCE_FLOOR,
 };
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -129,7 +129,7 @@ fn render(ui: &crate::ui::Ui, result: &LadderResult, args: &LadderArgs) -> Strin
         .iter()
         .map(|r| views::LadderRungRowView {
             rung: r.rung as usize,
-            label: views::LADDER_RUNG_LABELS[r.rung as usize],
+            label: views::RUNG_LABELS[r.rung as usize],
             sessions: r.sessions,
             share: r.share,
             median_tokens: r.median_tokens,
@@ -141,7 +141,7 @@ fn render(ui: &crate::ui::Ui, result: &LadderResult, args: &LadderArgs) -> Strin
     let below_sessions: usize = result
         .rungs
         .iter()
-        .filter(|r| (r.rung as usize) < LADDER_EVIDENCE_FLOOR)
+        .filter(|r| (r.rung as usize) < EVIDENCE_FLOOR)
         .map(|r| r.sessions)
         .sum();
 

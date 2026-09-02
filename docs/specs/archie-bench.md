@@ -16,11 +16,20 @@ departures from the plan below, each on purpose.
   returns one axis; the `model x repo` cross this spec measured is not built.
   The measurement below still stands and the cross is still the informative
   shape; it needs a two-key row and a wider screen than 80 columns.
-- **The floor is 20, the code's number, not this spec's 10.** The open question
-  below is unresolved. `agentworth_storage::OUTCOME_RATE_DEFAULT_MIN_N` is now
-  the single place it lives, so settling it is a one-line change. Under it a
-  rate and a cost render blank rather than being hidden: the row still ships
-  its `n`.
+- **The floor is 20, and that is now settled.** This spec's open question below
+  is closed: `agentworth_storage::OUTCOME_RATE_DEFAULT_MIN_N` is the one place
+  it lives, `docs/DESIGN.md`'s chart rule 3 was changed from 10 to point at it,
+  and one product now has one floor. Under it a rate and a cost render blank
+  rather than being hidden -- the row still ships its `n`.
+- **The token column is a median per session, not a mean per verified outcome.**
+  Section 3 below proposes `tokens / verified`. The CLI ships `MED TOK`, the
+  median tokens of one session in the group. The reason is section 3's own
+  finding: 97.4% of these tokens are cache reads, so the sum is dominated by a
+  few very long-lived contexts and a mean divided by a verified count inherits
+  all of that skew. A median says what a typical session in this group cost in
+  tokens, which is the question the column is next to. The ratio is one division
+  away from the shipped `n`, `verified` and totals in `--json` for anyone who
+  wants it.
 
 Two preconditions cleared since this was written. Pricing was refreshed in
 #115, so the dollar column is no longer one rate card applied to every model.
@@ -368,10 +377,10 @@ in a group means more confidence in the number, never fewer numbers shown.
 
 ## Open questions
 
-- **Floor of 10 or 20?** `DESIGN.md` says suppress below 10; `outcome_rate`
-  defaults to 20. Measured above, the difference is 41 groups against 27 and 87%
-  coverage against 79%. Two floors in one product is the worse answer; which one
-  wins is not settled here.
+- ~~**Floor of 10 or 20?**~~ **Settled: 20** (#124). Measured above, the
+  difference is 41 groups against 27 and 87% coverage against 79%. Two floors in
+  one product was the worse answer, so `DESIGN.md`'s rule 3 now names
+  `OUTCOME_RATE_DEFAULT_MIN_N` instead of a second number.
 - **Multi-model sessions.** A session using two models counts once in each
   model's group, so 2,063 sessions produce 2,246 rows. Splitting by token share
   instead would change the cost column and no other. Unmeasured.

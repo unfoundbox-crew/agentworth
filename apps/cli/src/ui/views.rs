@@ -161,18 +161,25 @@ pub fn short_model(model: &str) -> String {
     }
 }
 
-/// The ladder, top rung first. Index is the rung number.
+/// The ladder, rung 0 first. Index is the rung number.
+///
+/// One set of words for every screen that draws the ladder, in `OutcomeKind`'s own terms so
+/// a reader can carry a label from `stats` to `stats ladder` to `session show` and have it
+/// mean the same thing. Rung 0 is *unflown*: no outcome evidence of any kind was found,
+/// which is not a failure state and is never danger-coloured (AGENTS.md, "Things you cannot
+/// learn from the code", item 4).
 pub const RUNG_LABELS: [&str; 6] = [
-    "unverified",
-    "claimed done",
-    "files changed",
-    "tests passed",
-    "commit landed",
-    "CI green",
+    "unflown",
+    "done claimed",
+    "artifact changed",
+    "test or build passed",
+    "commit observed",
+    "CI or deployment verified",
 ];
 
-/// Rungs 3 and up are evidence; below is still a claim.
-pub const EVIDENCE_FLOOR: usize = 3;
+/// Rungs 3 and up are evidence; below is still a claim. An alias of the storage constant the
+/// queries apply, so a screen and the query behind it cannot draw the line in two places.
+pub const EVIDENCE_FLOOR: usize = agentworth_storage::EVIDENCE_FLOOR;
 
 fn rung_role(rung: usize) -> Role {
     if rung >= EVIDENCE_FLOOR {
@@ -4046,26 +4053,15 @@ pub fn update(ui: &Ui, v: &UpdateView<'_>) -> String {
 // stats ladder
 // -----------------------------------------------------------------------------
 
-/// The ladder in `OutcomeKind`'s own words, rung 0 first. `RUNG_LABELS` is the short form the
-/// dense screens use; this is the long one, because `stats ladder` is the screen where a
-/// reader learns what each rung actually means. Rung 0 is *unflown* -- no outcome evidence of
-/// any kind was found, which is not a failure state and is never danger-coloured (AGENTS.md,
-/// "Things you cannot learn from the code", item 4).
-pub const LADDER_RUNG_LABELS: [&str; 6] = [
-    "unflown",
-    "done claimed",
-    "artifact changed",
-    "test or build passed",
-    "commit observed",
-    "CI or deployment verified",
-];
-
 /// One dollar format for the whole screen. Cents below a thousand, where they are the
 /// difference between two rows; thousands separators above it, where they are noise and the
 /// column has no room for them.
 fn money(usd: f64) -> String {
     if usd >= 1000.0 {
         format!("${}", thousands(usd.round() as u64))
+    } else if usd > 0.0 && usd < 0.005 {
+        // Real spend, too small to round to a cent. `$0.00` would say nothing was spent.
+        "<$0.01".to_string()
     } else {
         format!("${:.2}", usd)
     }
@@ -4181,7 +4177,7 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
                     rpad("SESS", SESS),
                     rpad("SHARE", SHARE),
                     rpad("MED TOK", TOK),
-                    rpad("$/SESS", PER),
+                    rpad("MED $", PER),
                     rpad("SPEND", SPEND),
                     rpad("%SPEND", OF),
                 )
@@ -4424,7 +4420,7 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
             ui.paint(
                 Role::Emphasis,
                 &format!(
-                    "{:.0}% of spend this period sits below the evidence line.",
+                    "{:.1}% of spend this period sits below the evidence line.",
                     v.below_spend_share * 100.0
                 )
             )
