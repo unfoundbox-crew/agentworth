@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use tempfile::{tempdir, TempDir};
 
 /// Opening the cockpit must not read the index the way a scan does. This is the marginal
-/// cost -- the same binary's `--help` is subtracted off -- so it measures the index work
-/// and not this machine's process start.
+/// cost over one bounded query on the same index, so it measures the overview's own
+/// reading rather than this machine's process start or its disk.
 const OPEN_BUDGET: Duration = Duration::from_millis(agentworth_cli::ui::cockpit::OPEN_BUDGET_MS as u64);
 
 /// Enough sessions that an unbounded query would show up as time, built the cheap way: one
@@ -302,10 +302,16 @@ fn rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
 
 /// Opening must not scan.
 ///
-/// Measured as the *marginal* cost: the same binary printing `--help`, which touches no
-/// index at all, against the same binary drawing the first screen. Subtracting the
-/// baseline takes process start, dynamic linking and clap out of the number, so this
-/// measures the index work and stays honest on a slow CI runner.
+/// Measured as the *marginal* cost over `session list --limit 1 --json`, which is the
+/// smallest thing this binary can do that still opens the index and runs one bounded
+/// query. Subtracting it takes out process start, dynamic linking, clap, and opening
+/// SQLite -- so what is left is the overview's own reading.
+///
+/// The baseline used to be `--help`, which never touches the disk. That made the
+/// subtraction wrong under load rather than merely noisy: on a build host running two
+/// other compiles, the baseline stayed at 9 ms while the measured run was starved on I/O,
+/// and the test failed at 3 s for reasons that had nothing to do with this code. A
+/// baseline that pays the same costs moves with it.
 ///
 /// A ten-thousand-session fixture is not built here -- scanning ten thousand transcripts
 /// would dominate the test's own runtime and measure the scanner. What actually makes a
@@ -314,14 +320,16 @@ fn rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
 #[test]
 fn the_cockpit_opens_without_reading_the_index() {
     let (_t, db) = fixture(400);
+    let baseline_args = ["session", "list", "--limit", "1", "--json"];
 
     // Warm the page cache and the binary the way a second run would find them.
-    let _ = run(&db, &["--help"], &[]);
+    let _ = run(&db, &baseline_args, &[]);
     let _ = run(&db, &[], &[]);
 
     let start = Instant::now();
-    let _ = run(&db, &["--help"], &[]);
+    let base = run(&db, &baseline_args, &[]);
     let baseline = start.elapsed();
+    assert!(base.status.success());
 
     let start = Instant::now();
     let out = run(&db, &[], &[]);
@@ -331,8 +339,8 @@ fn the_cockpit_opens_without_reading_the_index() {
     let marginal = total.saturating_sub(baseline);
     assert!(
         marginal < OPEN_BUDGET,
-        "the first screen cost {marginal:?} of index work ({total:?} total against a \
-         {baseline:?} baseline), over the {OPEN_BUDGET:?} budget"
+        "the first screen cost {marginal:?} more than one bounded query ({total:?} total \
+         against a {baseline:?} baseline), over the {OPEN_BUDGET:?} budget"
     );
 }
 
