@@ -1,8 +1,10 @@
 import {
   AggregateStats,
   AgentWorthTrace,
+  EventsPageResponse,
   SessionSummary,
   TokenUsage,
+  TraceDetailResponse,
   UsageRollupResponse,
   PacingResponse,
   BlameResponse,
@@ -398,14 +400,34 @@ function normalizeTokenUsage(raw: any): TokenUsage {
   };
 }
 
+export interface EventsPage {
+  offset?: number;
+  limit?: number;
+}
+
 /**
  * Fetches trace detail from /api/traces/:id.
+ *
+ * `page` slices the embedded `trace.events` server-side (#72); omit it to get
+ * everything, matching pre-pagination behavior. A server that predates #72
+ * ignores the query params and always returns every event with no
+ * `events_total` — the caller tells the two cases apart by checking whether
+ * `events_total` came back at all.
  */
 export async function fetchTraceDetail(
-  sessionId: string
-): Promise<AgentWorthTrace | null> {
+  sessionId: string,
+  page?: EventsPage,
+  signal?: AbortSignal
+): Promise<TraceDetailResponse | null> {
   try {
-    const res = await fetch(`${BASE_URL}/traces/${encodeURIComponent(sessionId)}`);
+    const params = new URLSearchParams();
+    if (page?.offset != null) params.set('offset', String(page.offset));
+    if (page?.limit != null) params.set('limit', String(page.limit));
+    const qs = params.toString();
+    const res = await fetch(
+      `${BASE_URL}/traces/${encodeURIComponent(sessionId)}${qs ? `?${qs}` : ''}`,
+      { signal }
+    );
     if (res.ok) {
       const data = await res.json();
       const rawTrace = data.trace ?? data;
@@ -421,10 +443,41 @@ export async function fetchTraceDetail(
         score: data.score || rawTrace.score,
         outcomes: data.outcomes || rawTrace.outcomes,
         recoveries: data.recoveries || rawTrace.recoveries,
+        events_total: data.events_total,
+        events_offset: data.events_offset,
       };
     }
   } catch (_err) {
-    // Trace not found
+    // Trace not found, or the request was aborted — callers that pass a
+    // signal check their own cancellation flag before treating this as an
+    // error, so an abort here is silently indistinguishable from a 404.
+  }
+  return null;
+}
+
+/**
+ * Fetches one page of a trace's events from /api/traces/:id/events (#72), for
+ * paging in the rest of a large session after the first page has painted.
+ */
+export async function fetchTraceEventsPage(
+  sessionId: string,
+  offset: number,
+  limit: number,
+  signal?: AbortSignal
+): Promise<EventsPageResponse | null> {
+  try {
+    const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    const res = await fetch(
+      `${BASE_URL}/traces/${encodeURIComponent(sessionId)}/events?${params.toString()}`,
+      { signal }
+    );
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (_err) {
+    // Aborted or network error; the caller's polling loop stops on its own
+    // cancellation flag or on a null/short page rather than needing this to
+    // distinguish the two.
   }
   return null;
 }
