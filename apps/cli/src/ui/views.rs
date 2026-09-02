@@ -183,6 +183,9 @@ pub struct StatsView<'a> {
     pub adapters: Vec<(String, usize)>,
     pub models: Vec<(String, usize)>,
     pub tools: Vec<(String, usize)>,
+    /// False when something else closes the screen. `overview` below sets it so the
+    /// window block lands above the one closing line, rather than after it.
+    pub show_next: bool,
 }
 
 pub fn stats(ui: &Ui, v: &StatsView<'_>) -> String {
@@ -410,10 +413,75 @@ pub fn stats(ui: &Ui, v: &StatsView<'_>) -> String {
         out.push('\n');
     }
 
-    out.push_str(&ui.next(
-        "archie session list --limit 20",
-        "the newest sessions, ladder first",
-    ));
+    if v.show_next {
+        out.push_str(&ui.next(
+            "archie session list --limit 20",
+            "the newest sessions, ladder first",
+        ));
+    }
+    out
+}
+
+// -----------------------------------------------------------------------------
+// overview
+// -----------------------------------------------------------------------------
+
+/// The rolling window, as the overview draws it.
+pub struct OverviewWindow {
+    pub hours: i64,
+    pub span: String,
+    pub sessions: usize,
+    pub events: usize,
+    pub tokens: u64,
+    pub burn_rate_tokens_per_hour: f64,
+    pub cache_hit_ratio: f64,
+    pub estimated_cost_usd: f64,
+}
+
+/// What `archie stats` prints, plus the current window.
+///
+/// The cockpit's first screen and, off a terminal, the whole of what a bare `archie`
+/// prints. Both go through here, which is what keeps the cockpit from growing a
+/// rendering of its own.
+pub fn overview(ui: &Ui, stats_view: &StatsView<'_>, window: Option<&OverviewWindow>) -> String {
+    let i = ui.inner();
+    let mut out = stats(ui, stats_view);
+
+    match window {
+        Some(w) => {
+            section(&mut out, ui, &format!("WINDOW  last {}h", w.hours), &w.span);
+            for (label, value, role) in [
+                ("sessions active", thousands(w.sessions as u64), Role::Value),
+                ("events", thousands(w.events as u64), Role::Value),
+                ("tokens consumed", compact(w.tokens), Role::Value),
+                (
+                    "burn velocity",
+                    format!("{:.1}M / hour", w.burn_rate_tokens_per_hour / 1_000_000.0),
+                    Role::Value,
+                ),
+                ("cache hit ratio", format!("{:.1}%", w.cache_hit_ratio), Role::Value),
+                (
+                    "estimated cost",
+                    format!("${:.2}", w.estimated_cost_usd),
+                    Role::Verified,
+                ),
+            ] {
+                push(&mut out, ui, ui.leaders(&format!("  {}", label), &value, i, role));
+            }
+            out.push('\n');
+        }
+        None => {
+            section(&mut out, ui, "WINDOW", "");
+            push(
+                &mut out,
+                ui,
+                format!("  {}", ui.paint(Role::Label, "Nothing indexed in the last window.")),
+            );
+            out.push('\n');
+        }
+    }
+
+    out.push_str(&ui.next("archie tui", "the same data with a cursor"));
     out
 }
 

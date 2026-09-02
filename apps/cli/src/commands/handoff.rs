@@ -190,6 +190,14 @@ pub fn run_loose_ends_command(
     Ok(())
 }
 
+/// The `session handoff` screen for a session already resolved to an exact id -- what the
+/// cockpit's `h` shows. Same report, same renderer, no second rendering path.
+pub(crate) fn view_for(storage: &Arc<Storage>, ui: &Ui, session_id: &str) -> Result<String> {
+    let scanner = Scanner::new(storage.clone());
+    let (report, _trace) = load_handoff(storage, &scanner, session_id, HandoffOptions::default())?;
+    Ok(render_terminal(&report, ui))
+}
+
 fn render_terminal(report: &HandoffReport, ui: &Ui) -> String {
     let mut sections = Vec::new();
 

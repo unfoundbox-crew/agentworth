@@ -72,6 +72,12 @@ rusqlite.workspace = true
 # against it the same way a coding agent's MCP client would.
 rmcp = { version = "=3.2.0", features = ["transport-io", "client", "transport-child-process"] }
 schemars = "1.0"
+# The cockpit (`archie`, `archie tui`), spec section 3. Verified on docs.rs 2026-09-02:
+# 0.30.2 is the newest release, and its default features select the crossterm backend
+# (ratatui-crossterm 0.1.x over crossterm 0.29). Pinned exactly, like rmcp above, because
+# a TUI breaks visibly rather than loudly when a backend changes under it. Nothing else in
+# the workspace depends on crossterm, so this brings exactly one copy into Cargo.lock.
+ratatui = "=0.30.2"
 
 [dev-dependencies]
 tempfile.workspace = true

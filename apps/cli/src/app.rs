@@ -87,8 +87,10 @@ struct Cli {
     )]
     plain: bool,
 
+    /// Nothing typed at all opens the cockpit on a terminal, and prints the overview
+    /// anywhere else. See `Action::Tui` and `run_cockpit_command`.
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 /// Every pre-0.1.16 top-level spelling still runs; it is only hidden from `--help` and from
@@ -241,6 +243,12 @@ enum Commands {
 
     /// Merge another local SQLite index database into this index
     Merge(MergeArgs),
+
+    /// Open the cockpit: the same grammar, full screen, with a cursor. A bare `archie`
+    /// does this too; `archie tui` is the explicit spelling. Off a terminal, under
+    /// `--plain`, under `TERM=dumb`, or with JSON output, both print the overview and
+    /// exit 0 instead of taking the terminal over
+    Tui(TuiArgs),
 
     // -------------------------------------------------------------------------
     // Hidden aliases for the pre-0.1.16 spellings. See HIDDEN_ALIASES_REMOVED_IN.
@@ -771,6 +779,13 @@ struct MergeArgs {
     json: bool,
 }
 
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct TuiArgs {
+    /// Print the overview as JSON and exit, without opening anything
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(clap::Args, Debug, PartialEq)]
 struct DocsArgs {
     /// Output format when printing to stdout (ignored with --write, which always
@@ -1206,6 +1221,7 @@ enum Action {
     Update(UpdateArgs),
     Completions(CompletionsArgs),
     Merge(MergeArgs),
+    Tui(TuiArgs),
 }
 
 /// The only place both spellings of a command are named. Everything below the divider is
@@ -1227,6 +1243,7 @@ fn normalize(command: Commands) -> Action {
         Commands::Update(a) => Action::Update(a),
         Commands::Completions(a) => Action::Completions(a),
         Commands::Merge(a) => Action::Merge(a),
+        Commands::Tui(a) => Action::Tui(a),
 
         // ---- hidden aliases ----
         Commands::Traces(a) => Action::Session(SessionCommand::List(a)),
@@ -1301,7 +1318,7 @@ pub fn run() -> Result<()> {
     // corrupt the protocol stream for whatever client spawned this process (the same reason
     // every rmcp stdio example logs to stderr). Every other subcommand keeps the existing
     // stdout default.
-    if matches!(cli.command, Commands::Mcp) {
+    if matches!(cli.command, Some(Commands::Mcp)) {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_target(false)
@@ -1336,7 +1353,17 @@ pub fn run() -> Result<()> {
     console::set_colors_enabled(ui.color() != crate::ui::ColorMode::None);
     console::set_colors_enabled_stderr(ui.color() != crate::ui::ColorMode::None);
 
-    match normalize(cli.command) {
+    // A bare `archie` is `archie tui`: the cockpit on a terminal, the overview anywhere
+    // else. Spec section 3, and the answer to its open question 4.
+    let action = match cli.command {
+        Some(command) => normalize(command),
+        None => Action::Tui(TuiArgs::default()),
+    };
+
+    match action {
+        Action::Tui(a) => {
+            run_cockpit_command(resolve_json(a.json), cli.db_path, &ui)?;
+        }
         Action::Scan(a) => {
             run_scan_command(a.paths, a.force, a.include_stubs, resolve_json(a.json), cli.db_path, &ui)?;
         }
@@ -1955,9 +1982,20 @@ fn build_stats_view(
     ui: &crate::ui::Ui,
 ) -> String {
     let db = db_path.map(|p| p.to_string_lossy().to_string());
+    crate::ui::views::stats(ui, &stats_view(stats, verdict, db.as_deref(), true))
+}
+
+/// The `stats` screen's data, apart from how it is drawn -- `overview` below reuses it with
+/// the closing line off, so the window block lands inside the same screen.
+fn stats_view<'a>(
+    stats: &agentworth_storage::AggregateStats,
+    verdict: &VerdictBreakdown,
+    db_path: Option<&'a str>,
+    show_next: bool,
+) -> crate::ui::views::StatsView<'a> {
     let tokens = &stats.token_usage;
-    let view = crate::ui::views::StatsView {
-        db_path: db.as_deref(),
+    crate::ui::views::StatsView {
+        db_path,
         total_sessions: stats.total_sessions,
         total_events: stats.total_events as u64,
         first_day: stats.first_session_at.map(|d| d.format("%Y-%m-%d").to_string()),
@@ -1981,8 +2019,8 @@ fn build_stats_view(
             .map(|(m, c)| (crate::ui::views::short_model(&m), c))
             .collect(),
         tools: ranked(&stats.tools_usage_count, 3),
-    };
-    crate::ui::views::stats(ui, &view)
+        show_next,
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -2251,35 +2289,46 @@ fn run_inspect_command(
     Ok(())
 }
 
-fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
+/// The `archie session show` screen, as a string.
+///
+/// One rendering, two readers: the command prints it, and the cockpit's session screen
+/// shows it in a viewport. Nothing here is TUI-only, which is the spec's binding rule.
+pub(crate) fn inspect_view(trace: &agentworth_schema::AgentWorthTrace) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
     let scorer = agentworth_scoring::TraceScorer::default();
     let score = scorer.score(trace);
     let outcomes = evaluate_trace_outcomes(trace);
 
-    println!();
-    println!(
+    out.push('\n');
+    let _ = writeln!(
+        out,
         "{}",
         style("╔════════════════════════════════════════════════════════════════════════════════╗")
             .bold()
     );
-    println!(
+    let _ = writeln!(
+        out,
         "║ {:<78} ║",
         style(format!("AgentWorth Session Trace: {}", trace.session_id))
             .bold()
             .cyan()
     );
-    println!(
+    let _ = writeln!(
+        out,
         "{}",
         style("╠════════════════════════════════════════════════════════════════════════════════╣")
             .bold()
     );
-    println!(
+    let _ = writeln!(
+        out,
         "║ Adapter:     {:<20} Started:    {:<30} ║",
         style(&trace.adapter).green().bold(),
         trace.started_at.to_rfc3339()
     );
     if let Some(ended) = trace.ended_at {
-        println!(
+        let _ = writeln!(
+        out,
             "║ Duration:    {:<20} Ended:      {:<30} ║",
             trace
                 .stats
@@ -2289,7 +2338,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
             ended.to_rfc3339()
         );
     }
-    println!(
+    let _ = writeln!(
+        out,
         "║ Score:       {:<20} Events:     {:<30} ║",
         style(format!("{:.1} / 100", score.composite_score * 100.0))
             .bold()
@@ -2298,7 +2348,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
     );
 
     let tokens = &trace.stats.token_usage;
-    println!(
+    let _ = writeln!(
+        out,
         "║ Tokens:      {:<20} Breakdown: {:<30} ║",
         style(format_number(tokens.total())).bold().magenta(),
         format!(
@@ -2310,7 +2361,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
     );
 
     if !trace.stats.models_used.is_empty() {
-        println!(
+        let _ = writeln!(
+        out,
             "║ Models:      {:<66} ║",
             style(trace.stats.models_used.join(", ")).green()
         );
@@ -2329,7 +2381,7 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
         } else {
             tools_str
         };
-        println!("║ Tools:       {:<66} ║", style(display).yellow());
+        let _ = writeln!(out, "║ Tools:       {:<66} ║", style(display).yellow());
     }
 
     if let Some(strongest) = agentworth_outcomes::highest_outcome(&outcomes) {
@@ -2341,15 +2393,18 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
             agentworth_schema::OutcomeKind::DoneClaimed => (1, "Done Claimed"),
         };
 
-        println!(
+        let _ = writeln!(
+        out,
             "{}",
             style("╠════════════════════════════════════════════════════════════════════════════════╣").bold()
         );
-        println!(
+        let _ = writeln!(
+        out,
             "║ Highest Outcome Reached: {:<53} ║",
             style(format!("Rung {} - {} (Confidence: {:.0}%)", rung_num, rung_label, strongest.confidence * 100.0)).bold().green()
         );
-        println!(
+        let _ = writeln!(
+        out,
             "║ Supporting Evidence:                                                           ║"
         );
 
@@ -2360,7 +2415,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
             } else {
                 ev.summary.clone()
             };
-            println!(
+            let _ = writeln!(
+        out,
                 "║   • {:<72} ║",
                 style(format!("{} (conf: {:.0}%)", summary_display, ev.confidence * 100.0)).cyan()
             );
@@ -2368,7 +2424,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
 
         let other_signals: Vec<_> = outcomes.iter().filter(|o| o.kind != strongest.kind).collect();
         if !other_signals.is_empty() {
-            println!(
+            let _ = writeln!(
+        out,
                 "║ Precursor / Secondary Evidence Signals ({}):                                   ║",
                 other_signals.len()
             );
@@ -2378,7 +2435,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                 } else {
                     ev.summary.clone()
                 };
-                println!(
+                let _ = writeln!(
+        out,
                     "║   - [{:<20}] {:<48} ║",
                     format!("{:?}", ev.kind),
                     style(summary_display).dim()
@@ -2387,18 +2445,21 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
         }
     }
 
-    println!(
+    let _ = writeln!(
+        out,
         "║ Source:      {:<66} ║",
         style(&trace.provenance.source_path).dim()
     );
-    println!(
+    let _ = writeln!(
+        out,
         "{}",
         style("╚════════════════════════════════════════════════════════════════════════════════╝")
             .bold()
     );
-    println!();
+    out.push('\n');
 
-    println!(
+    let _ = writeln!(
+        out,
         "{}",
         style("─ Session Timeline ─────────────────────────────────────────────────────────────")
             .bold()
@@ -2410,41 +2471,44 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
 
         match &ev.payload {
             agentworth_schema::EventPayload::UserMessage { content } => {
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 👤 {}",
                     style(&seq).dim(),
                     style(&ts).dim(),
                     style("USER PROMPT").bold().blue()
                 );
                 for line in content.lines() {
-                    println!("   │ {}", line);
+                    let _ = writeln!(out, "   │ {}", line);
                 }
-                println!("   │");
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::AssistantMessage { content, thinking } => {
                 if let Some(th) = thinking {
-                    println!(
+                    let _ = writeln!(
+        out,
                         "{} {} 🧠 {}",
                         style(&seq).dim(),
                         style(&ts).dim(),
                         style("ASSISTANT THINKING").dim().cyan()
                     );
                     for line in th.lines() {
-                        println!("   │ {}", style(line).dim());
+                        let _ = writeln!(out, "   │ {}", style(line).dim());
                     }
-                    println!("   │");
+                    let _ = writeln!(out, "   │");
                 }
                 if !content.is_empty() {
-                    println!(
+                    let _ = writeln!(
+        out,
                         "{} {} 💬 {}",
                         style(&seq).dim(),
                         style(&ts).dim(),
                         style("ASSISTANT").bold().green()
                     );
                     for line in content.lines() {
-                        println!("   │ {}", line);
+                        let _ = writeln!(out, "   │ {}", line);
                     }
-                    println!("   │");
+                    let _ = writeln!(out, "   │");
                 }
             }
             agentworth_schema::EventPayload::ModelInvocation {
@@ -2458,7 +2522,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     .map(|c| format!(" (${:.4})", c))
                     .unwrap_or_default();
                 let latency_str = latency_ms.map(|l| format!(" {}ms", l)).unwrap_or_default();
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 🤖 {} {}{}",
                     style(&seq).dim(),
                     style(&ts).dim(),
@@ -2470,11 +2535,12 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     .dim(),
                     style(latency_str).dim()
                 );
-                println!("   │");
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::ModelSwitch(ms) => {
                 let from_str = ms.from_model.as_deref().unwrap_or("auto");
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 🔀 {} {} -> {}",
                     style(&seq).dim(),
                     style(&ts).dim(),
@@ -2483,12 +2549,13 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     style(&ms.to_model).magenta().bold()
                 );
                 if let Some(ref reason) = ms.reason {
-                    println!("   │ reason: {}", style(reason).dim());
+                    let _ = writeln!(out, "   │ reason: {}", style(reason).dim());
                 }
-                println!("   │");
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::ToolCall(tc) => {
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} ⚡ {} {}",
                     style(&seq).dim(),
                     style(&ts).dim(),
@@ -2497,9 +2564,9 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                 );
                 let args_str = serde_json::to_string_pretty(&tc.arguments).unwrap_or_default();
                 for line in args_str.lines() {
-                    println!("   │ {}", style(line).dim());
+                    let _ = writeln!(out, "   │ {}", style(line).dim());
                 }
-                println!("   │");
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::ToolResult(tr) => {
                 let status = if tr.is_error {
@@ -2508,7 +2575,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     style("[OK]").green().bold()
                 };
                 let name = tr.name.as_deref().unwrap_or("Tool");
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 📥 {} {} {}",
                     style(&seq).dim(),
                     style(&ts).dim(),
@@ -2522,15 +2590,16 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     serde_json::to_string_pretty(&tr.output).unwrap_or_default()
                 };
                 for line in out_str.lines().take(15) {
-                    println!("   │ {}", style(line).dim());
+                    let _ = writeln!(out, "   │ {}", style(line).dim());
                 }
                 if out_str.lines().count() > 15 {
-                    println!("   │ {}", style("... (truncated output)").dim().italic());
+                    let _ = writeln!(out, "   │ {}", style("... (truncated output)").dim().italic());
                 }
-                println!("   │");
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::ShellCommand(sc) => {
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 💻 {} {}",
                     style(&seq).dim(),
                     style(&ts).dim(),
@@ -2538,12 +2607,12 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     style(&sc.command).cyan().bold()
                 );
                 if let Some(ref cwd) = sc.cwd {
-                    println!("   │ cwd: {}", style(cwd).dim());
+                    let _ = writeln!(out, "   │ cwd: {}", style(cwd).dim());
                 }
                 if let Some(code) = sc.exit_code {
-                    println!("   │ exit: {}", code);
+                    let _ = writeln!(out, "   │ exit: {}", code);
                 }
-                println!("   │");
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::FileAction {
                 path,
@@ -2551,7 +2620,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                 lines_changed,
                 ..
             } => {
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 📝 {} {:?} {}",
                     style(&seq).dim(),
                     style(&ts).dim(),
@@ -2560,12 +2630,13 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     style(path).bold()
                 );
                 if let Some(lines) = lines_changed {
-                    println!("   │ lines changed: {}", lines);
+                    let _ = writeln!(out, "   │ lines changed: {}", lines);
                 }
-                println!("   │");
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::OutcomeEvidence(oe) => {
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 🏆 {} {:?} (confidence: {:.0}%)",
                     style(&seq).dim(),
                     style(&ts).dim(),
@@ -2573,25 +2644,27 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     oe.kind,
                     oe.confidence * 100.0
                 );
-                println!("   │ {}", style(&oe.summary).green());
-                println!("   │");
+                let _ = writeln!(out, "   │ {}", style(&oe.summary).green());
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::Error {
                 message,
                 is_recovered,
             } => {
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} ⚠️  {} (recovered: {})",
                     style(&seq).dim(),
                     style(&ts).dim(),
                     style("ERROR:").bold().red(),
                     is_recovered
                 );
-                println!("   │ {}", style(message).red());
-                println!("   │");
+                let _ = writeln!(out, "   │ {}", style(message).red());
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::HumanIntervention(hi) => {
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 🛑 {} {}",
                     style(&seq).dim(),
                     style(&ts).dim(),
@@ -2599,16 +2672,17 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     hi.action
                 );
                 if let Some(ref details) = hi.details {
-                    println!("   │ details: {}", details);
+                    let _ = writeln!(out, "   │ details: {}", details);
                 }
-                println!("   │");
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::Compaction(c) => {
                 let tokens_str = match (c.pre_tokens, c.post_tokens) {
                     (Some(pre), Some(post)) => format!(" {} -> {} tokens", pre, post),
                     _ => String::new(),
                 };
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 🗜️  {} trigger={}{}",
                     style(&seq).dim(),
                     style(&ts).dim(),
@@ -2617,32 +2691,39 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                     style(tokens_str).dim()
                 );
                 if let Some(dropped) = c.dropped_tokens {
-                    println!("   │ dropped: {} tokens", dropped);
+                    let _ = writeln!(out, "   │ dropped: {} tokens", dropped);
                 }
                 if let Some(duration) = c.duration_ms {
-                    println!("   │ duration: {}ms", duration);
+                    let _ = writeln!(out, "   │ duration: {}ms", duration);
                 }
-                println!("   │");
+                let _ = writeln!(out, "   │");
             }
             agentworth_schema::EventPayload::Custom { kind, data } => {
-                println!(
+                let _ = writeln!(
+        out,
                     "{} {} 📦 {} {}",
                     style(&seq).dim(),
                     style(&ts).dim(),
                     style("CUSTOM EVENT:").dim(),
                     kind
                 );
-                println!("   │ {}", data);
-                println!("   │");
+                let _ = writeln!(out, "   │ {}", data);
+                let _ = writeln!(out, "   │");
             }
         }
     }
-    println!(
+    let _ = writeln!(
+        out,
         "{}",
         style("────────────────────────────────────────────────────────────────────────────────")
             .bold()
     );
-    println!();
+    out.push('\n');
+    out
+}
+
+fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
+    print!("{}", inspect_view(trace));
 }
 
 // -----------------------------------------------------------------------------
@@ -2920,30 +3001,7 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>, ui: &crate::
     // Derived from the registry (`agentworth_adapters::all_adapters()`) rather than a
     // hand-copied list here: a newly-registered adapter now shows up in this table without
     // anyone remembering to add it in a second place.
-    let adapters: Vec<Box<dyn agentworth_adapter_sdk::AgentAdapter>> = agentworth_adapters::all_adapters();
-
-    let scan_opts = ScanOptions::default();
-    let mut rows_data = Vec::new();
-    let mut total_supported = 0usize;
-    let mut total_possible = 0usize;
-
-    for adapter in &adapters {
-        let name = adapter.name();
-        let caps = adapter.capabilities();
-        let (sup, poss) = caps.score();
-        total_supported += sup;
-        total_possible += poss;
-
-        let is_detected = adapter.detect(&scan_opts).map(|d| d.is_present).unwrap_or(false);
-        let source_root = adapter_source_root(name);
-
-        rows_data.push((name, source_root, caps, is_detected));
-    }
-
-    let real_coverage_rate = format!(
-        "{:.1}%",
-        (total_supported as f64 / total_possible as f64) * 100.0
-    );
+    let (rows_data, real_coverage_rate) = matrix_rows_data();
 
     if json_output {
         let json_arr: Vec<_> = rows_data
@@ -2976,6 +3034,23 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>, ui: &crate::
         return Ok(());
     }
 
+    print!("{}", build_matrix_view(&rows_data, &real_coverage_rate, ui));
+
+    Ok(())
+}
+
+/// What `archie agent list` draws, as a string. The cockpit's agents screen shows the same
+/// thing in a viewport.
+fn build_matrix_view(
+    rows_data: &[(
+        &str,
+        &'static str,
+        agentworth_adapter_sdk::AdapterCapabilities,
+        bool,
+    )],
+    coverage_rate: &str,
+    ui: &crate::ui::Ui,
+) -> String {
     // Only `claude_code`'s parser populates `compaction_count`/`CompactionEvent` today
     // (`crates/adapters/src/claude.rs`) -- add an adapter's name here only once its parser
     // does the same, so this column stays a grounded fact rather than a guess.
@@ -2985,7 +3060,7 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>, ui: &crate::
     let rows: Vec<crate::ui::views::MatrixRow> = rows_data
         .iter()
         .map(|(name, _source_root, caps, is_detected)| crate::ui::views::MatrixRow {
-            adapter: name.to_string(),
+            adapter: (*name).to_string(),
             detected: *is_detected,
             parse: caps.prompts,
             outcomes: caps.outcomes,
@@ -2997,9 +3072,42 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>, ui: &crate::
             compaction: compaction_tracking.contains(*name),
         })
         .collect();
-    print!("{}", crate::ui::views::matrix(ui, &real_coverage_rate, &rows));
+    crate::ui::views::matrix(ui, coverage_rate, &rows)
+}
 
-    Ok(())
+/// The adapter registry's own answer to `agent list`, shared by the command, its JSON and
+/// the cockpit.
+fn matrix_rows_data() -> (
+    Vec<(
+        &'static str,
+        &'static str,
+        agentworth_adapter_sdk::AdapterCapabilities,
+        bool,
+    )>,
+    String,
+) {
+    let adapters: Vec<Box<dyn agentworth_adapter_sdk::AgentAdapter>> =
+        agentworth_adapters::all_adapters();
+    let scan_opts = ScanOptions::default();
+    let mut rows_data = Vec::new();
+    let mut total_supported = 0usize;
+    let mut total_possible = 0usize;
+
+    for adapter in &adapters {
+        let name = adapter.name();
+        let caps = adapter.capabilities();
+        let (sup, poss) = caps.score();
+        total_supported += sup;
+        total_possible += poss;
+        let is_detected = adapter.detect(&scan_opts).map(|d| d.is_present).unwrap_or(false);
+        rows_data.push((name, adapter_source_root(name), caps, is_detected));
+    }
+
+    let coverage = format!(
+        "{:.1}%",
+        (total_supported as f64 / total_possible as f64) * 100.0
+    );
+    (rows_data, coverage)
 }
 
 // -----------------------------------------------------------------------------
@@ -3547,7 +3655,7 @@ mod tests {
         for argv0 in ["agentworth", "agwt", "archie"] {
             let parsed = Cli::try_parse_from([argv0, "doctor", "--json"]).unwrap();
             match parsed.command {
-                Commands::Doctor(a) => {
+                Some(Commands::Doctor(a)) => {
                     assert!(a.json);
                     assert!(!a.self_test);
                 }
@@ -3558,7 +3666,7 @@ mod tests {
         // Test parsing "doctor --self-test"
         let parsed_self_test = Cli::try_parse_from(["agentworth", "doctor", "--self-test"]).unwrap();
         match parsed_self_test.command {
-            Commands::Doctor(a) => {
+            Some(Commands::Doctor(a)) => {
                 assert!(!a.json);
                 assert!(a.self_test);
             }
@@ -3568,7 +3676,7 @@ mod tests {
         // Test usage pacing with alert-above, on the hidden alias
         let parsed_usage = Cli::try_parse_from(["agwt", "usage", "--pacing", "--alert-above", "50.0"]).unwrap();
         match parsed_usage.command {
-            Commands::Usage(a) => {
+            Some(Commands::Usage(a)) => {
                 assert!(a.pacing);
                 assert_eq!(a.alert_above, Some(50.0));
             }
@@ -3827,26 +3935,43 @@ fn run_repo_list_command(
         return Ok(());
     }
 
-    let rows: Vec<crate::ui::views::RepoListRow<'_>> = ranked
+    print!("{}", build_repo_list_view(&ranked, total_sessions, limit, "", ui).0);
+    Ok(())
+}
+
+/// `archie repo list` as a string, plus the repository behind each row so the cockpit's
+/// cursor knows what it is pointing at. `filter` is the cockpit's `/`; the command passes
+/// an empty one, which keeps every row.
+fn build_repo_list_view(
+    ranked: &[(String, usize)],
+    total_sessions: usize,
+    limit: usize,
+    filter: &str,
+    ui: &crate::ui::Ui,
+) -> (String, Vec<String>) {
+    let needle = filter.to_lowercase();
+    let kept: Vec<(String, usize)> = ranked
         .iter()
+        .filter(|(repo, _)| needle.is_empty() || repo.to_lowercase().contains(&needle))
         .take(limit)
+        .cloned()
+        .collect();
+    let rows: Vec<crate::ui::views::RepoListRow<'_>> = kept
+        .iter()
         .map(|(repo, sessions)| crate::ui::views::RepoListRow {
             repo,
             sessions: *sessions,
         })
         .collect();
-    print!(
-        "{}",
-        crate::ui::views::repo_list(
-            ui,
-            &crate::ui::views::RepoListView {
-                total_repos: ranked.len(),
-                total_sessions,
-                rows: &rows,
-            }
-        )
+    let text = crate::ui::views::repo_list(
+        ui,
+        &crate::ui::views::RepoListView {
+            total_repos: ranked.len(),
+            total_sessions,
+            rows: &rows,
+        },
     );
-    Ok(())
+    (text, kept.iter().map(|(repo, _)| repo.clone()).collect())
 }
 
 // -----------------------------------------------------------------------------
@@ -3973,75 +4098,17 @@ fn run_window_list_command(
     let hours = hours.max(1);
     let limit = limit.clamp(1, 200);
 
-    let newest = storage.list_sessions_filtered(&SessionFilter {
-        limit: Some(1),
-        order_by: Some(SessionOrderBy::StartedAtDesc),
-        ..Default::default()
-    })?;
-    let Some(anchor) = newest.first().map(|s| s.started_at) else {
+    let Some((anchor, rows)) = window_buckets(&storage, hours, limit)? else {
         if json {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({ "window_hours": hours, "windows": [] }))?
             );
         } else {
-            print!(
-                "{}",
-                crate::ui::views::window_list(
-                    ui,
-                    &crate::ui::views::WindowListView {
-                        hours,
-                        anchor: "nothing indexed",
-                        rows: &[],
-                    }
-                )
-            );
+            print!("{}", empty_window_list_view(hours, ui));
         }
         return Ok(());
     };
-
-    let span = chrono::Duration::hours(hours * limit as i64);
-    let sessions = storage.list_sessions_filtered(&SessionFilter {
-        start_date: Some(anchor - span),
-        order_by: Some(SessionOrderBy::StartedAtDesc),
-        ..Default::default()
-    })?;
-
-    let mut buckets: Vec<(usize, u64, f64)> = vec![(0, 0, 0.0); limit];
-    for s in &sessions {
-        let elapsed_hours = (anchor - s.started_at).num_seconds() as f64 / 3600.0;
-        let index = (elapsed_hours / hours as f64).floor().max(0.0) as usize;
-        if index >= limit {
-            continue;
-        }
-        buckets[index].0 += 1;
-        buckets[index].1 += s.total_tokens;
-        // Priced from the same per-model usage rows `stats usage` prices from, so the two
-        // surfaces cannot disagree about what a window cost.
-        let per_model: std::collections::BTreeMap<String, agentworth_schema::TokenUsage> = storage
-            .get_session_model_usage(&s.session_id)
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-        buckets[index].2 += agentworth_storage::estimate_total_cost_from_per_model_usage(&per_model);
-    }
-
-    let rows: Vec<crate::ui::views::WindowListRow> = buckets
-        .iter()
-        .enumerate()
-        .map(|(i, (sessions, tokens, cost))| {
-            let end = anchor - chrono::Duration::hours(hours * i as i64);
-            let start = end - chrono::Duration::hours(hours);
-            crate::ui::views::WindowListRow {
-                label: format!("{} to {}", start.format("%b %e %H:%M"), end.format("%H:%M")),
-                sessions: *sessions,
-                total_tokens: *tokens,
-                estimated_cost_usd: *cost,
-                burn_rate_tokens_per_hour: *tokens as f64 / hours as f64,
-            }
-        })
-        .collect();
-
     if json {
         let out: Vec<_> = rows
             .iter()
@@ -4082,6 +4149,102 @@ fn run_window_list_command(
         )
     );
     Ok(())
+}
+
+/// The windows themselves, anchored and bucketed. `None` when nothing is indexed.
+///
+/// One bucketing pass, three readers: the command's table, its `--json`, and the cockpit's
+/// windows screen. The span read is `hours * limit` wide, so this reads recent rows and
+/// never the whole index.
+fn window_buckets(
+    storage: &Arc<Storage>,
+    hours: i64,
+    limit: usize,
+) -> Result<Option<(chrono::DateTime<chrono::Utc>, Vec<crate::ui::views::WindowListRow>)>> {
+    let newest = storage.list_sessions_filtered(&SessionFilter {
+        limit: Some(1),
+        order_by: Some(SessionOrderBy::StartedAtDesc),
+        ..Default::default()
+    })?;
+    let Some(anchor) = newest.first().map(|s| s.started_at) else {
+        return Ok(None);
+    };
+
+    let span = chrono::Duration::hours(hours * limit as i64);
+    let sessions = storage.list_sessions_filtered(&SessionFilter {
+        start_date: Some(anchor - span),
+        order_by: Some(SessionOrderBy::StartedAtDesc),
+        ..Default::default()
+    })?;
+
+    let mut buckets: Vec<(usize, u64, f64)> = vec![(0, 0, 0.0); limit];
+    for s in &sessions {
+        let elapsed_hours = (anchor - s.started_at).num_seconds() as f64 / 3600.0;
+        let index = (elapsed_hours / hours as f64).floor().max(0.0) as usize;
+        if index >= limit {
+            continue;
+        }
+        buckets[index].0 += 1;
+        buckets[index].1 += s.total_tokens;
+        // Priced from the same per-model usage rows `stats usage` prices from, so the two
+        // surfaces cannot disagree about what a window cost.
+        let per_model: std::collections::BTreeMap<String, agentworth_schema::TokenUsage> = storage
+            .get_session_model_usage(&s.session_id)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        buckets[index].2 += agentworth_storage::estimate_total_cost_from_per_model_usage(&per_model);
+    }
+
+    let rows = buckets
+        .iter()
+        .enumerate()
+        .map(|(i, (sessions, tokens, cost))| {
+            let end = anchor - chrono::Duration::hours(hours * i as i64);
+            let start = end - chrono::Duration::hours(hours);
+            crate::ui::views::WindowListRow {
+                label: format!("{} to {}", start.format("%b %e %H:%M"), end.format("%H:%M")),
+                sessions: *sessions,
+                total_tokens: *tokens,
+                estimated_cost_usd: *cost,
+                burn_rate_tokens_per_hour: *tokens as f64 / hours as f64,
+            }
+        })
+        .collect();
+    Ok(Some((anchor, rows)))
+}
+
+fn empty_window_list_view(hours: i64, ui: &crate::ui::Ui) -> String {
+    crate::ui::views::window_list(
+        ui,
+        &crate::ui::views::WindowListView {
+            hours,
+            anchor: "nothing indexed",
+            rows: &[],
+        },
+    )
+}
+
+/// `archie window list` as a string, for the cockpit's windows screen.
+fn build_window_list_view(
+    storage: &Arc<Storage>,
+    hours: i64,
+    limit: usize,
+    ui: &crate::ui::Ui,
+) -> Result<String> {
+    let hours = hours.max(1);
+    let limit = limit.clamp(1, 200);
+    Ok(match window_buckets(storage, hours, limit)? {
+        Some((anchor, rows)) => crate::ui::views::window_list(
+            ui,
+            &crate::ui::views::WindowListView {
+                hours,
+                anchor: &anchor.format("%b %e %H:%M").to_string(),
+                rows: &rows,
+            },
+        ),
+        None => empty_window_list_view(hours, ui),
+    })
 }
 
 // -----------------------------------------------------------------------------
@@ -4177,6 +4340,218 @@ fn adapter_source_root(name: &str) -> &'static str {
     }
 }
 
+
+// -----------------------------------------------------------------------------
+// The cockpit
+// -----------------------------------------------------------------------------
+
+/// A bare `archie`, and `archie tui`.
+///
+/// The spec's rule, and the answer to its open question 4: on a real terminal this opens
+/// the cockpit; off one, or under `--plain`, `TERM=dumb` or JSON output, it prints the
+/// overview and exits 0. Nothing here writes -- the cockpit is read-only, permanently.
+fn run_cockpit_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui) -> Result<()> {
+    use crate::ui::cockpit;
+
+    // `Storage::open_path` creates the file it cannot find, so "no index" is a count of
+    // zero rather than a failed open -- an open that does fail is something else (a
+    // permission, a corrupt file) and is reported the same way, with its own text.
+    let (storage, missing) = match open_storage(db_path) {
+        Ok(s) => {
+            let empty = s
+                .get_aggregate_stats(true)
+                .map(|a| a.total_sessions == 0)
+                .unwrap_or(true);
+            (Some(s), if empty { Some(String::new()) } else { None })
+        }
+        Err(e) => (None, Some(e.to_string())),
+    };
+
+    if let Some(detail) = missing {
+        // Byte for byte the screen `archie session list` prints against an empty index.
+        let text = crate::ui::views::error(
+            ui,
+            "archie",
+            cockpit::NO_INDEX_LINE,
+            &detail,
+            &[],
+            &[(
+                "archie scan".to_string(),
+                "discover and index agent histories".to_string(),
+            )],
+        );
+        if cockpit::should_open(ui, json) {
+            return cockpit::run_message(&text);
+        }
+        print!("{}", text);
+        return Ok(());
+    }
+
+    let storage = storage.expect("an index that is not missing is open");
+    let screens = CockpitScreens {
+        storage: storage.clone(),
+        ui: *ui,
+    };
+
+    if json {
+        let stats = storage.get_aggregate_stats(false)?;
+        let verdict = compute_verdict_breakdown(&storage, stats.total_sessions);
+        let window = storage.get_pacing_window(cockpit::WINDOW_HOURS).ok();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "total_sessions": stats.total_sessions,
+                "total_events": stats.total_events,
+                "verified_rate": verdict.real_verified_rate,
+                "total_tokens": stats.token_usage.total(),
+                "window": window.map(|w| json!({
+                    "hours": w.window_hours,
+                    "session_count": w.session_count,
+                    "total_tokens": w.total_tokens,
+                    "burn_rate_tokens_per_hour": w.burn_rate_tokens_per_hour,
+                    "estimated_cost_usd": w.estimated_cost_usd,
+                })),
+            }))?
+        );
+        return Ok(());
+    }
+
+    if cockpit::should_open(ui, json) {
+        return cockpit::run(ui, &screens);
+    }
+    print!("{}", crate::ui::cockpit::Screens::overview(&screens)?);
+    Ok(())
+}
+
+/// Every cockpit screen, fetched the way its printed command fetches it.
+///
+/// This is the whole of the cockpit's contact with storage: each method calls a builder the
+/// CLI already uses, so a screen cannot drift from the command that prints the same thing.
+struct CockpitScreens {
+    storage: Arc<Storage>,
+    ui: crate::ui::Ui,
+}
+
+impl crate::ui::cockpit::Screens for CockpitScreens {
+    fn overview(&self) -> Result<String> {
+        let ui = &self.ui;
+        let stats = self.storage.get_aggregate_stats(false)?;
+        let verdict = compute_verdict_breakdown(&self.storage, stats.total_sessions);
+        let db = self
+            .storage
+            .db_path()
+            .map(|p| p.to_string_lossy().to_string());
+        let view = stats_view(&stats, &verdict, db.as_deref(), false);
+
+        let window = self
+            .storage
+            .get_pacing_window(crate::ui::cockpit::WINDOW_HOURS)
+            .ok()
+            .map(|p| crate::ui::views::OverviewWindow {
+                hours: p.window_hours,
+                span: format!(
+                    "{} {} {}",
+                    p.started_at.format("%Y-%m-%d %H:%M"),
+                    ui.arrow(),
+                    p.ended_at.format("%H:%M")
+                ),
+                sessions: p.session_count,
+                events: p.total_events,
+                tokens: p.total_tokens,
+                burn_rate_tokens_per_hour: p.burn_rate_tokens_per_hour,
+                cache_hit_ratio: p.cache_hit_ratio,
+                estimated_cost_usd: p.estimated_cost_usd,
+            });
+        Ok(crate::ui::views::overview(ui, &view, window.as_ref()))
+    }
+
+    fn sessions(&self, filter: &str) -> Result<(String, Vec<String>)> {
+        let limit = crate::ui::cockpit::LIST_LIMIT;
+        let sessions = self.storage.list_sessions_filtered(&SessionFilter {
+            limit: None,
+            order_by: Some(SessionOrderBy::StartedAtDesc),
+            ..Default::default()
+        })?;
+        let needle = filter.to_lowercase();
+        let kept: Vec<_> = sessions
+            .into_iter()
+            .filter(|s| s.total_events > 1)
+            .filter(|s| {
+                needle.is_empty()
+                    || s.session_id.to_lowercase().contains(&needle)
+                    || s.adapter.to_lowercase().contains(&needle)
+                    || s.source_path.to_lowercase().contains(&needle)
+                    || s
+                        .models_used
+                        .iter()
+                        .any(|m| m.to_lowercase().contains(&needle))
+            })
+            .take(limit)
+            .collect();
+
+        let rows = build_trace_rows(&self.storage, kept);
+        let ids: Vec<String> = rows
+            .iter()
+            .map(|(_, _, _, s)| s.session_id.clone())
+            .collect();
+        let indexed = self
+            .storage
+            .get_aggregate_stats(false)
+            .map(|s| s.total_sessions)
+            .unwrap_or(rows.len());
+        Ok((build_traces_view(&rows, indexed, limit, &self.ui), ids))
+    }
+
+    fn session(&self, id: &str, tab: crate::ui::cockpit::Tab) -> Result<String> {
+        use crate::ui::cockpit::Tab;
+        match tab {
+            Tab::Show => {
+                let scanner = Scanner::new(self.storage.clone());
+                let trace = scanner.load_trace(id)?;
+                Ok(inspect_view(&trace))
+            }
+            Tab::Handoff => handoff_command::view_for(&self.storage, &self.ui, id),
+            Tab::Asks => asks_command::view_for(&self.storage, &self.ui, id),
+            Tab::Forgotten => forgotten_command::view_for(&self.storage, &self.ui, id),
+            Tab::Receipt => {
+                let scanner = Scanner::new(self.storage.clone());
+                let trace = scanner.load_trace(id)?;
+                let score = agentworth_scoring::TraceScorer::default().score(&trace);
+                Ok(crate::commands::receipt::render_terminal_receipt_with(
+                    &trace, &score, &self.ui,
+                ))
+            }
+        }
+    }
+
+    fn agents(&self) -> Result<String> {
+        let (rows_data, coverage) = matrix_rows_data();
+        Ok(build_matrix_view(&rows_data, &coverage, &self.ui))
+    }
+
+    fn repos(&self, filter: &str) -> Result<(String, Vec<String>)> {
+        let ranked = self.storage.get_top_repositories()?;
+        let total_sessions: usize = ranked.iter().map(|(_, n)| *n).sum();
+        Ok(build_repo_list_view(
+            &ranked,
+            total_sessions,
+            crate::ui::cockpit::LIST_LIMIT,
+            filter,
+            &self.ui,
+        ))
+    }
+
+    fn windows(&self) -> Result<String> {
+        build_window_list_view(
+            &self.storage,
+            crate::ui::cockpit::WINDOW_HOURS,
+            crate::ui::cockpit::WINDOW_COUNT,
+            &self.ui,
+        )
+    }
+}
+
+
 #[cfg(test)]
 mod grammar_tests {
     use super::*;
@@ -4188,7 +4563,8 @@ mod grammar_tests {
         normalize(
             Cli::try_parse_from(full)
                 .unwrap_or_else(|e| panic!("{argv:?} did not parse: {e}"))
-                .command,
+                .command
+                .unwrap_or_else(|| panic!("{argv:?} parsed to no subcommand")),
         )
     }
 
@@ -4297,13 +4673,24 @@ mod grammar_tests {
 
         for expected in [
             "session", "agent", "repo", "window", "stats", "scan", "serve", "mcp", "doctor",
-            "docs", "config", "version", "update", "completions", "merge",
+            "docs", "config", "version", "update", "completions", "merge", "tui",
         ] {
             assert!(
                 visible.iter().any(|n| n == expected),
                 "`{expected}` should be visible in --help; visible: {visible:?}"
             );
         }
+    }
+
+    /// A bare `archie` is the cockpit, and `archie tui` is the same thing said out loud.
+    /// Both must reach `Action::Tui`; the difference between them is a terminal check, not
+    /// a different command.
+    #[test]
+    fn a_bare_invocation_and_the_tui_verb_are_the_same_action() {
+        let bare = Cli::try_parse_from(["agentworth"]).expect("a bare archie must parse");
+        assert!(bare.command.is_none(), "a bare archie should take no subcommand");
+        assert!(matches!(action(&["tui"]), Action::Tui(_)));
+        assert!(matches!(action(&["tui", "--json"]), Action::Tui(TuiArgs { json: true })));
     }
 
     /// `--unproven` is a filter on the listing, not a second listing wearing a flag, so it

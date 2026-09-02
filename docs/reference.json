@@ -1532,6 +1532,20 @@
           "possibleValues": []
         }
       ]
+    },
+    {
+      "path": "archie tui",
+      "about": "Open the cockpit: the same grammar, full screen, with a cursor. A bare `archie` does this too; `archie tui` is the explicit spelling. Off a terminal, under `--plain`, under `TERM=dumb`, or with JSON output, both print the overview and exit 0 instead of taking the terminal over",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Print the overview as JSON and exit, without opening anything",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
     }
   ],
   "api": [

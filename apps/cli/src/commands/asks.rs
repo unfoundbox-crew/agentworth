@@ -277,6 +277,19 @@ fn parse_relative_duration(value: &str) -> Option<Duration> {
 /// so this is about what stays readable, same reasoning as `forgotten.rs`'s `TERMINAL_ROWS`.
 const TERMINAL_ROWS: usize = 15;
 
+/// The `session asks` screen for an already-resolved id -- the cockpit's `a`.
+pub(crate) fn view_for(storage: &Arc<Storage>, ui: &Ui, session_id: &str) -> Result<String> {
+    let scanner = Scanner::new(storage.clone());
+    let options = AsksOptions {
+        since: None,
+        unanswered_only: false,
+        limit: DEFAULT_LIMIT,
+    };
+    let (report, trace) = load_asks(storage, &scanner, session_id, &options)?;
+    let report = report.redacted(&Redactor::new().for_trace(&trace));
+    Ok(render_terminal(&report, ui, &Resolution::Explicit))
+}
+
 fn render_terminal(report: &AsksReport, ui: &Ui, resolution: &Resolution) -> String {
     let all_rows: Vec<(String, String)> = report
         .asks

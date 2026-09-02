@@ -136,7 +136,7 @@ worth drawing.
 | E | `compaction-diff.md` — **built, #83** | `forgotten_context` | nothing left: the round boundaries are stored and backfilled |
 | F | `beliefs.md` | `claim_check` | D's absolute-path anchoring, which the same-file claims reuse |
 | G | `efficiency-receipts.md` | `repeat_check`, `fanout_reads` | nothing — the P0 experiment is done and it picked the detector |
-| H | `cli-grammar.md` | every tool renamed to match the CLI noun | the open CLI branches, which the rename would otherwise sit under |
+| H | `cli-grammar.md` — **built, #118 and #121** | every tool renamed to match the CLI noun | only `window receipt`, which waits on G's `fanout_reads`/`repeat_check` |
 | I | `spacepilot-loop.md` | `--route`, `--resolve-entities`, `--summarize` (each a call to SpacePilot) | the contract, then `asks.md`'s tier 2 |
 | J | `archie-bench.md` | `stats_bench` | a pricing-table refresh, then B's shared rung ordering |
 | K | `convergence.md` | `session_explain` | nothing — the measurement is done |

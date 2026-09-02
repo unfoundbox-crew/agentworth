@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The cockpit.** A bare `archie` on a terminal opens a full-screen reader over the same data: overview, sessions, one session, agents, repos and windows, with `j`/`k`, `Enter`, `/`, `1`-`6`, `h`/`a`/`f`/`r`, `?` and `q`. `archie tui` is the explicit spelling. Off a terminal, under `--plain`, under `TERM=dumb`, or with JSON output, both print the overview — what `archie stats` prints plus the current window — and exit 0. Read-only, permanently: no writes, no scan, no config changes, no model calls. Every screen is a string a printed command already produces; the cockpit adds a viewport, a cursor and key handling and nothing else (#121).
+
 ## [0.1.16] - 2026-09-02
 
 ### Added

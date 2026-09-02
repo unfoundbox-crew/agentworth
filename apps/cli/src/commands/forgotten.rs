@@ -76,6 +76,18 @@ pub fn run_forgotten_command(
     Ok(())
 }
 
+/// The `session forgotten` screen for an already-resolved id -- the cockpit's `f`.
+pub(crate) fn view_for(storage: &Arc<Storage>, ui: &Ui, session_id: &str) -> Result<String> {
+    let scanner = Scanner::new(storage.clone());
+    let options = ForgottenOptions {
+        round: None,
+        classes: Vec::new(),
+        limit: DEFAULT_LIMIT,
+    };
+    let (report, _trace) = load_forgotten(storage, &scanner, session_id, &options)?;
+    Ok(render_terminal(&report, ui))
+}
+
 fn render_terminal(report: &ForgottenReport, ui: &Ui) -> String {
     // One section per round, so the reader can see the shape of the loss round by round rather
     // than as one undifferentiated list. The heading carries both numbers, which is how
