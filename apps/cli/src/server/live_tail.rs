@@ -64,12 +64,27 @@ fn classify(kind: &EventKind) -> Option<LiveTailChangeKind> {
 /// returns its adapter name. Roots are not assumed to be pre-collapsed: a nested pair
 /// like `~/.claude` and `~/.claude/projects` both attributing to `claude_code` resolves
 /// to the deeper one, which is what you'd want even if that stops being true.
+///
+/// Both `roots` and `changed` must already be in the same (canonical or raw) form for the
+/// `starts_with` comparison to mean anything — see `canonicalize_or_self` and its callers
+/// in `spawn_live_tail_watcher`, which is why this stays a plain, uncanonicalizing helper.
 fn attribute_adapter(roots: &[WatchRoot], changed: &Path) -> Option<String> {
     roots
         .iter()
         .filter(|root| changed.starts_with(&root.path))
         .max_by_key(|root| root.path.components().count())
         .map(|root| root.adapter.clone())
+}
+
+/// Resolves `path` to its canonical form (symlinks and relative components resolved), or
+/// returns it unchanged if that fails — e.g. the path doesn't exist yet, or was just removed.
+///
+/// `notify`'s FSEvents backend on macOS always reports canonicalized paths (`/private/var/...`
+/// for `/var/...`, and resolved symlinks under `$HOME` in some setups), so both a watch root
+/// and an incoming event path need this before `attribute_adapter` can compare them
+/// meaningfully.
+fn canonicalize_or_self(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Collapses a set of paths down to the top-level ones, dropping any path that is a
@@ -142,7 +157,21 @@ pub fn spawn_live_tail_watcher(
     roots: &[WatchRoot],
     tx: broadcast::Sender<LiveTailEvent>,
 ) -> notify::Result<RecommendedWatcher> {
-    let attribution = roots.to_vec();
+    // `attribution` holds the canonicalized form of each root, used only for matching
+    // incoming (canonicalized) event paths. `raw_roots` keeps the original, uncanonicalized
+    // paths alongside it so a root whose directory didn't exist yet at watcher-start (and so
+    // fell back to its raw path here) can be retried the next time an event comes in, once
+    // the directory has plausibly been created. The roots actually passed to `watcher.watch`
+    // below stay in their original raw form throughout — canonicalizing is purely an
+    // attribution concern, not a watching one.
+    let mut attribution: Vec<WatchRoot> = roots
+        .iter()
+        .map(|root| WatchRoot {
+            path: canonicalize_or_self(&root.path),
+            adapter: root.adapter.clone(),
+        })
+        .collect();
+    let raw_roots: Vec<PathBuf> = roots.iter().map(|root| root.path.clone()).collect();
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<NotifyEvent>| {
         let event = match res {
@@ -158,11 +187,20 @@ pub fn spawn_live_tail_watcher(
         };
         let timestamp = Utc::now();
 
+        for (root, raw) in attribution.iter_mut().zip(raw_roots.iter()) {
+            if root.path == *raw {
+                if let Ok(canonical) = std::fs::canonicalize(raw) {
+                    root.path = canonical;
+                }
+            }
+        }
+
         for path in &event.paths {
+            let canonical_path = canonicalize_or_self(path);
             let live_event = LiveTailEvent {
                 path: path.clone(),
                 kind,
-                adapter: attribute_adapter(&attribution, path),
+                adapter: attribute_adapter(&attribution, &canonical_path),
                 timestamp,
             };
             let _ = tx.send(live_event);
@@ -257,6 +295,47 @@ mod tests {
         );
     }
 
+    // Reproduces the macOS FSEvents mismatch (see the real-filesystem test below) without
+    // needing a platform-specific `/private/var` path: a symlinked root, declared in its raw
+    // (un-resolved) form, mirrors a watch root that gets canonicalized by the OS the same way
+    // FSEvents canonicalizes reported event paths. Uses a real tempdir + symlink so it runs
+    // identically on macOS and Linux CI.
+    #[test]
+    fn test_attribute_adapter_requires_canonicalized_inputs_to_match_symlinked_root() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let real_dir = temp_dir.path().join("real");
+        std::fs::create_dir(&real_dir).expect("create real dir");
+        let symlinked_root = temp_dir.path().join("symlinked-root");
+        std::os::unix::fs::symlink(&real_dir, &symlinked_root).expect("create symlink");
+
+        let event_path = real_dir.join("session.jsonl");
+        std::fs::write(&event_path, b"{}").expect("write file");
+
+        let roots = vec![WatchRoot {
+            path: symlinked_root,
+            adapter: "test_adapter".to_string(),
+        }];
+
+        // Raw comparison fails: the event is reported (or, here, constructed) against the
+        // resolved directory, not the symlink the root was declared as.
+        assert_eq!(attribute_adapter(&roots, &event_path), None);
+
+        // Canonicalizing both sides the way `spawn_live_tail_watcher` does resolves the
+        // symlink on both the root and the event path, and the match succeeds.
+        let canonical_roots: Vec<WatchRoot> = roots
+            .iter()
+            .map(|root| WatchRoot {
+                path: canonicalize_or_self(&root.path),
+                adapter: root.adapter.clone(),
+            })
+            .collect();
+        let canonical_event_path = canonicalize_or_self(&event_path);
+        assert_eq!(
+            attribute_adapter(&canonical_roots, &canonical_event_path),
+            Some("test_adapter".to_string())
+        );
+    }
+
     /// A minimal fake adapter for exercising `discover_session_roots` without touching the
     /// real home directory or any of the 20 real adapters.
     struct FakeAdapter {
@@ -312,19 +391,13 @@ mod tests {
         assert_eq!(roots[0].path, PathBuf::from("/fake/home/.present"));
     }
 
-    // Real bug, not a flaky test: notify's FSEvents backend always reports canonicalized
-    // paths on macOS (confirmed in notify's own RawEvent docs), so a temp dir path like
-    // `/var/folders/...` (via the `/var` -> `/private/var` symlink) never matches what
-    // `attribute_adapter`'s plain `starts_with` comparison expects, and adapter attribution
-    // silently comes back `None` for every live-tail event on macOS. Needs canonicalizing
-    // `WatchRoot::path` (or the incoming event path) in attribute_adapter/collapse_nested_roots
-    // before this can be re-enabled -- out of scope for the CI workflow change that surfaced
-    // it. Tracked in PR #79.
-    #[cfg_attr(
-        target_os = "macos",
-        ignore = "attribute_adapter compares raw paths against FSEvents' canonicalized paths; \
-                  see the comment above this test"
-    )]
+    /// Exercises the real bug from PR #79: notify's FSEvents backend always reports
+    /// canonicalized paths on macOS (confirmed in notify's own RawEvent docs), so a temp dir
+    /// path like `/var/folders/...` (via the `/var` -> `/private/var` symlink) never matched
+    /// what `attribute_adapter`'s plain `starts_with` comparison expected, and adapter
+    /// attribution silently came back `None` for every live-tail event on macOS.
+    /// `spawn_live_tail_watcher` now canonicalizes both the watch roots and each incoming
+    /// event path before attributing, so this runs unconditionally on every OS.
     #[tokio::test]
     async fn test_watcher_broadcasts_real_filesystem_event() {
         let temp_dir = tempfile::tempdir().expect("create tempdir");
