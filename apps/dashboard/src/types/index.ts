@@ -201,47 +201,63 @@ export interface SessionSummary {
   compaction_tokens_dropped?: number;
 }
 
-export interface ArchaeologyTask {
-  title: string;
+// These mirror apps/cli/src/server/archaeology.rs's ArchaeologyHighlights and its nested
+// structs field-for-field (serde's default snake_case) — the response shape of GET
+// /api/archaeology, this dashboard's only source of archaeology data.
+
+export interface UnsolvedTaskHighlight {
+  session_id: string;
+  adapter: string;
   prompt: string;
-  tokens: string;
-  models_count: number;
-  models_list: string[];
-  duration: string;
-  outcome: string;
-  notes: string;
+  total_tokens: number;
+  duration_seconds?: number | null;
+  models_used: string[];
+  outcome_summary: string;
+  error_count: number;
 }
 
-export interface RecoveryArchaeology {
-  title: string;
-  attempts_count: number;
-  initial_error: string;
-  corrective_action: string;
-  final_resolution: string;
-  tokens_burned: string;
-  tool_calls: number;
+export interface RecoveryLoopHighlight {
+  session_id: string;
+  adapter: string;
+  failure_sequence: number;
+  recovery_sequence: number;
+  steps_to_recover: number;
+  corrective_actions_count: number;
+  duration_seconds?: number | null;
+  failure_summary: string;
+  recovery_summary: string;
 }
 
-export interface ModelHoppingArchaeology {
-  title: string;
-  sequence: string[];
-  reason: string;
-  total_cost: string;
+export interface ModelSwitchesHighlight {
+  session_id: string;
+  adapter: string;
+  switch_count: number;
+  unique_models: string[];
+  models_sequence: string[];
+  total_tokens: number;
 }
 
-export interface WeirdDiscovery {
-  id: string;
-  title: string;
-  description: string;
-  severity: 'hilarious' | 'bizarre' | 'costly';
-  stat: string;
+export interface CarbonDatingEra {
+  period: string;
+  tokens: number;
+  sessions_count: number;
+}
+
+export interface TokenCarbonDating {
+  earliest_session_at?: string | null;
+  latest_session_at?: string | null;
+  total_days_active: number;
+  total_tokens: number;
+  average_tokens_per_session: number;
+  timeline: CarbonDatingEra[];
+  adapter_tokens: Record<string, number>;
 }
 
 export interface ArchaeologyData {
-  most_expensive_task: ArchaeologyTask;
-  longest_recovery_loop: RecoveryArchaeology;
-  model_hopping: ModelHoppingArchaeology;
-  weird_discoveries: WeirdDiscovery[];
+  most_expensive_unsolved: UnsolvedTaskHighlight | null;
+  longest_recovery_loop: RecoveryLoopHighlight | null;
+  most_frequent_model_switches: ModelSwitchesHighlight | null;
+  token_carbon_dating: TokenCarbonDating;
 }
 
 export interface OutcomeDistribution {
@@ -330,7 +346,6 @@ export interface AggregateStats {
   outcome_distribution?: OutcomeDistribution;
   first_session_at?: string;
   last_session_at?: string;
-  archaeology?: ArchaeologyData;
 }
 
 
