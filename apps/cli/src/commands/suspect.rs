@@ -207,6 +207,25 @@ pub fn resolve_repo_root(path: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(root))
 }
 
+/// Every checkout of this repository on disk, besides the main one.
+///
+/// Not a nicety. A worktree normally sits inside the main checkout
+/// (`<repo>/.claude/worktrees/<name>`), so an edit made in one records an absolute path that
+/// anchors to `.claude/worktrees/<name>/crates/a.rs` — a path no commit will ever name.
+/// Measured on this repository's own index, 58 of 308 in-repo blame rows were written from a
+/// worktree, and every one of them attributed to nothing. Returns an empty list rather than
+/// failing: a missing worktree list makes the answer smaller, not wrong.
+fn linked_worktrees(root: &Path) -> Vec<String> {
+    let Ok(out) = git_stdout(root, &["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
+    out.lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .map(str::to_string)
+        .filter(|p| p != &root.to_string_lossy())
+        .collect()
+}
+
 /// Choose the commit range, and say in words which rule chose it.
 fn resolve_range(root: &Path, q: &SuspectQuery) -> Result<(Vec<String>, String)> {
     let head = match &q.branch {
@@ -400,7 +419,8 @@ pub fn compute_suspect_commits(storage: &Storage, q: &SuspectQuery) -> Result<Su
 
     let window = Duration::hours(q.window_hours.max(0));
     let earliest = commits.iter().map(|c| c.committed_at).min();
-    let blame = storage.blame_for_repo(&root_str, earliest.map(|t| t - window))?;
+    let worktrees = linked_worktrees(&root);
+    let blame = storage.blame_for_repo(&root_str, &worktrees, earliest.map(|t| t - window))?;
 
     // One lookup per changed path, rather than a scan of every blame row per commit.
     let mut by_path: BTreeMap<&str, Vec<&AnchoredBlameRow>> = BTreeMap::new();

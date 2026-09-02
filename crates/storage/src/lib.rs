@@ -2339,37 +2339,61 @@ impl Storage {
     /// 33% one that was 90% false (`docs/specs/suspect-commits.md`). The anchoring rule lives
     /// in `crate::anchoring` with its own tests.
     ///
+    /// `additional_roots` are linked git worktrees of the same repository. They matter more than
+    /// they sound: a worktree normally lives *inside* the main checkout
+    /// (`<repo>/.claude/worktrees/<name>`), so without it every edit made in one anchors to
+    /// `.claude/worktrees/<name>/crates/a.rs` — a path no commit will ever name, and the session
+    /// silently attributes to nothing. Measured on this repo's own index, 58 of 308 in-repo
+    /// blame rows were written from a worktree.
+    ///
     /// `since` bounds `occurred_at`; pass `None` for the whole index. Results are deduplicated
     /// to one row per (session, path) — the most recent touch — and ordered newest first.
     pub fn blame_for_repo(
         &self,
         repo_root: &str,
+        additional_roots: &[String],
         since: Option<DateTime<Utc>>,
     ) -> Result<AnchoredBlame> {
-        let root = anchoring::normalize_root(repo_root);
-        let identity = anchoring::repo_identity(&root);
+        let roots = anchoring::sorted_roots(repo_root, additional_roots);
+        let identity = anchoring::repo_identity(repo_root);
 
-        // Two candidate sets, unioned by SQL so the whole table is never pulled into memory:
-        // paths under this root, and every relative path (relative rows carry no root to filter
-        // on, and there are ~156 of them in a 25,206-row index).
-        let like_prefix = format!("{}/%", anchoring::like_prefix_escaped(&root));
-        let since_str = since.map(|t| t.to_rfc3339());
+        // Candidate sets unioned by SQL so the whole table is never pulled into memory: paths
+        // under any of the roots, and every relative path (relative rows carry no root to filter
+        // on, and there are ~156 of them in a 25,206-row index). Only the outermost root needs a
+        // prefix clause, since every worktree root sits under it — but a worktree placed
+        // elsewhere would not, so each gets its own.
+        let mut clauses = Vec::with_capacity(roots.len());
+        let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
+        for root in &roots {
+            clauses.push(format!(
+                "fm.file_path LIKE ?{} ESCAPE '\\' OR fm.file_path = ?{}",
+                binds.len() + 1,
+                binds.len() + 2
+            ));
+            binds.push(Box::new(format!("{}/%", anchoring::like_prefix_escaped(root))));
+            binds.push(Box::new(root.clone()));
+        }
+        clauses.push("fm.file_path NOT LIKE '/%'".to_string());
+        let since_placeholder = binds.len() + 1;
+        binds.push(Box::new(since.map(|t| t.to_rfc3339())));
 
-        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut stmt = conn.prepare(
+        let sql = format!(
             r#"
             SELECT fm.file_path, fm.action, fm.occurred_at, fm.model,
                    s.session_id, s.adapter, s.source_path, s.models_used, s.primary_outcome
             FROM file_modifications fm
             JOIN sessions s ON s.session_id = fm.session_id
-            WHERE (fm.file_path LIKE ?1 ESCAPE '\' OR fm.file_path = ?2
-                   OR fm.file_path NOT LIKE '/%')
-              AND (?3 IS NULL OR fm.occurred_at >= ?3)
+            WHERE ({})
+              AND (?{since_placeholder} IS NULL OR fm.occurred_at >= ?{since_placeholder})
             ORDER BY fm.occurred_at DESC
             "#,
-        )?;
+            clauses.join(" OR ")
+        );
 
-        let mut rows = stmt.query(params![like_prefix, root, since_str])?;
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&sql)?;
+        let bound: Vec<&dyn ToSql> = binds.iter().map(std::convert::AsRef::as_ref).collect();
+        let mut rows = stmt.query(bound.as_slice())?;
 
         // Keyed by (session, repo-relative path) so a file touched twenty times in one session
         // contributes one row — the most recent, which the DESC ordering makes the first seen.
@@ -2382,7 +2406,7 @@ impl Storage {
             let source_path: String = row.get(6)?;
 
             let (anchor, relative) =
-                anchoring::anchor_path(&file_path, &root, &identity, &source_path);
+                anchoring::anchor_path(&file_path, &roots, &identity, &source_path);
             let relative = match (anchor, relative) {
                 (anchoring::Anchor::Unanchored, _) => {
                     unanchored_rows += 1;
@@ -2417,7 +2441,7 @@ impl Storage {
         }
 
         Ok(AnchoredBlame {
-            repo_root: root,
+            repo_root: anchoring::normalize_root(repo_root),
             repo_identity: identity,
             rows: anchored,
             unanchored_rows,
@@ -3218,7 +3242,7 @@ mod tests {
             now - Duration::minutes(6),
         );
 
-        let found = storage.blame_for_repo(root, None).expect("anchored blame");
+        let found = storage.blame_for_repo(root, &[], None).expect("anchored blame");
 
         assert_eq!(found.repo_identity, "unfoundbox/agentworth");
         assert_eq!(
@@ -3249,10 +3273,41 @@ mod tests {
             Utc::now() - Duration::minutes(3),
         );
 
-        let found = storage.blame_for_repo(root, None).expect("anchored blame");
+        let found = storage.blame_for_repo(root, &[], None).expect("anchored blame");
         assert_eq!(found.rows.len(), 1);
         assert_eq!(found.rows[0].repo_relative_path, "Cargo.lock");
         assert_eq!(found.unanchored_rows, 0);
+    }
+
+    /// An edit made in a linked worktree has to come back as a path a commit can name. Without
+    /// the worktree root it anchors to `.claude/worktrees/…/src/lib.rs`, which matches nothing
+    /// and silently attributes the session to no commit at all.
+    #[test]
+    fn test_blame_for_repo_reads_a_worktree_edit_as_a_repo_relative_path() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let root = "/Users/dev/code/unfoundbox/agentworth";
+        let worktree = format!("{root}/.claude/worktrees/feat-x");
+
+        seed_file_touch(
+            &storage,
+            "sess_in_worktree",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth--claude-worktrees-feat-x/w.jsonl",
+            &format!("{worktree}/crates/storage/src/lib.rs"),
+            Utc::now() - Duration::minutes(5),
+        );
+
+        let without = storage.blame_for_repo(root, &[], None).expect("blame");
+        assert_eq!(
+            without.rows[0].repo_relative_path,
+            ".claude/worktrees/feat-x/crates/storage/src/lib.rs",
+            "without the worktree root the path is unusable for matching commits"
+        );
+
+        let with = storage
+            .blame_for_repo(root, &[worktree], None)
+            .expect("blame with worktree");
+        assert_eq!(with.rows.len(), 1, "the same touch, counted once");
+        assert_eq!(with.rows[0].repo_relative_path, "crates/storage/src/lib.rs");
     }
 
     #[test]
@@ -3284,13 +3339,13 @@ mod tests {
             now - Duration::hours(2),
         );
 
-        let all = storage.blame_for_repo(root, None).expect("anchored blame");
+        let all = storage.blame_for_repo(root, &[], None).expect("anchored blame");
         let ids: Vec<&str> = all.rows.iter().map(|r| r.session_id.as_str()).collect();
         assert!(!ids.contains(&"sess_sibling"), "agentworth-web is a different tree");
         assert_eq!(ids.len(), 2);
 
         let recent = storage
-            .blame_for_repo(root, Some(now - Duration::hours(24)))
+            .blame_for_repo(root, &[], Some(now - Duration::hours(24)))
             .expect("anchored blame since");
         assert_eq!(recent.rows.len(), 1);
         assert_eq!(recent.rows[0].session_id, "sess_recent");

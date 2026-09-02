@@ -61,15 +61,20 @@ pub(crate) fn repo_identity(repo_root: &str) -> String {
 ///
 /// `session_source_path` is the session's own transcript path, used only for the relative case:
 /// it is the only surviving clue about where a relative path was written.
+/// `roots` must be sorted longest-first: a linked git worktree normally sits *inside* the main
+/// checkout (`<repo>/.claude/worktrees/<name>`), so both roots match the same path and only the
+/// deeper one yields a path a commit can be compared against. See `sorted_roots`.
 pub(crate) fn anchor_path(
     recorded_path: &str,
-    repo_root_normalized: &str,
+    roots: &[String],
     repo_identity: &str,
     session_source_path: &str,
 ) -> (Anchor, Option<String>) {
     if recorded_path.starts_with('/') {
-        if let Some(rel) = strip_root(recorded_path, repo_root_normalized) {
-            return (Anchor::Absolute, Some(rel));
+        for root in roots {
+            if let Some(rel) = strip_root(recorded_path, root) {
+                return (Anchor::Absolute, Some(rel));
+            }
         }
         return (Anchor::ElsewhereAbsolute, None);
     }
@@ -86,6 +91,19 @@ pub(crate) fn anchor_path(
     } else {
         (Anchor::Unanchored, None)
     }
+}
+
+/// Normalize and order the roots a path may be anchored against: longest first, deduplicated.
+/// The main checkout and its linked worktrees overlap on disk, so order is what decides whether
+/// `<repo>/.claude/worktrees/x/crates/a.rs` reads as `crates/a.rs` (right) or as
+/// `.claude/worktrees/x/crates/a.rs` (a path no commit will ever name).
+pub(crate) fn sorted_roots(repo_root: &str, additional: &[String]) -> Vec<String> {
+    let mut roots: Vec<String> = std::iter::once(normalize_root(repo_root))
+        .chain(additional.iter().map(|r| normalize_root(r)))
+        .collect();
+    roots.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    roots.dedup();
+    roots
 }
 
 /// `Some(path relative to root)` when `absolute` is the root itself or sits under it, matching
@@ -129,7 +147,34 @@ mod tests {
         "/Users/dev/.local/share/opencode/project/-Users-dev-code-motionvector-studio/s2.json";
 
     fn anchor(path: &str, session: &str) -> (Anchor, Option<String>) {
-        anchor_path(path, ROOT, &repo_identity(ROOT), session)
+        anchor_path(path, &sorted_roots(ROOT, &[]), &repo_identity(ROOT), session)
+    }
+
+    /// A linked git worktree lives inside the main checkout, so both roots match the same path.
+    /// The deeper one has to win, or every worktree edit anchors to a path no commit names.
+    #[test]
+    fn a_worktree_root_wins_over_the_checkout_that_contains_it() {
+        let worktree = format!("{ROOT}/.claude/worktrees/feat-x");
+        let roots = sorted_roots(ROOT, &[worktree.clone()]);
+        assert_eq!(roots[0], worktree, "longest root first");
+
+        let (a, rel) = anchor_path(
+            &format!("{worktree}/crates/storage/src/lib.rs"),
+            &roots,
+            &repo_identity(ROOT),
+            IN_REPO_SESSION,
+        );
+        assert_eq!(a, Anchor::Absolute);
+        assert_eq!(rel.as_deref(), Some("crates/storage/src/lib.rs"));
+    }
+
+    /// Without the worktree root, the same path still anchors — just to a relative path no
+    /// commit will ever match. This is the failure the ordering above prevents, pinned so the
+    /// two behaviours cannot be confused.
+    #[test]
+    fn without_the_worktree_root_the_path_is_useless_for_matching() {
+        let (_, rel) = anchor(&format!("{ROOT}/.claude/worktrees/feat-x/Cargo.toml"), IN_REPO_SESSION);
+        assert_eq!(rel.as_deref(), Some(".claude/worktrees/feat-x/Cargo.toml"));
     }
 
     #[test]
