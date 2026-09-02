@@ -84,7 +84,7 @@ fn self_test_runs_clean_against_a_small_fixture_index() {
         "inspect <newest non-stub session>",
         "handoff --last",
         "forgotten <newest compacted session>",
-        "asks --last",
+        "asks --current",
         "mcp round trip",
     ] {
         assert!(names.contains(&expected), "missing step '{expected}': {names:?}");

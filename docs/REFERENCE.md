@@ -212,6 +212,7 @@ Check local environment, adapter discoveries, and SQLite database health
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
 | `--json` | no | Output diagnostic report as formatted JSON | false | - |
+| `--self-test` | no | Run the real release workflow end to end -- scan, stats, usage, traces, inspect, handoff, forgotten, and an MCP round trip -- against the real index on this machine, with no network, and report pass/fail/slow and timing for each step. Exits non-zero if any step fails | false | - |
 
 ### `agentworth version`
 

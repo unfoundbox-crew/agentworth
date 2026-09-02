@@ -158,9 +158,10 @@ fn array_len_receipt(noun: &str) -> impl Fn(&Value) -> String + '_ {
 }
 
 /// Whether `asks` is registered as a subcommand of the running binary. `--help` on a
-/// real subcommand always exits 0; clap exits non-zero on an unrecognized one. This lets
-/// the step self-detect the day `asks` lands on main, instead of a hardcoded skip that
-/// would silently go stale.
+/// real subcommand always exits 0; clap exits non-zero on an unrecognized one. `asks`
+/// landed on main in #97; this check means a binary built from a commit before that
+/// still skips the step gracefully instead of failing on a missing subcommand, and any
+/// future removal or rename degrades the same way rather than as a hard failure.
 fn asks_subcommand_exists(exe: &Path) -> bool {
     Command::new(exe)
         .args(["asks", "--help"])
@@ -389,13 +390,22 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
         steps.push(run_step(
             &exe,
             db_path_ref,
-            "asks --last",
-            &["asks", "--last", "--json"],
+            "asks --current",
+            &["asks", "--current", "--json"],
             DEFAULT_BUDGET,
-            |v| format!("{} rows", v.as_array().map(Vec::len).unwrap_or(0)),
+            |v| {
+                let id = v
+                    .get("receipt")
+                    .and_then(|r| r.get("session_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
+                let total = v.get("total_questions").and_then(Value::as_u64).unwrap_or(0);
+                let returned = v.get("returned").and_then(Value::as_u64).unwrap_or(0);
+                format!("session {id}, {total} questions, {returned} returned")
+            },
         ));
     } else {
-        steps.push(skip("asks --last", "not on main yet"));
+        steps.push(skip("asks --current", "not on main yet"));
     }
 
     {
