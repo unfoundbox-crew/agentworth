@@ -214,7 +214,11 @@ if [ "$TTY" -eq 0 ]; then
   fi
   curl -fsSL -A "$UA" -o "$tmpdir/$asset" "$url" || err "failed to download $url"
 else
-  curl -fsSL -A "$UA" -o "$tmpdir/$asset" "$url" &
+  # `</dev/null` is belt and braces: `curl ... | sh` feeds this script in on stdin, and a
+  # background job that inherited it could eat the lines the shell has not read yet. POSIX
+  # already redirects a background job's stdin from /dev/null; this makes it not depend on
+  # the shell getting that right.
+  curl -fsSL -A "$UA" -o "$tmpdir/$asset" "$url" </dev/null &
   dl_pid=$!
   frame=0
   draw_download 0 "$total" o
