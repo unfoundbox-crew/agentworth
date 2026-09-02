@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 240" role="img" aria-labelledby="t3 d3">
+  <title id="t3">Reasoning effort and answer verbosity are separate controls</title>
+  <desc id="d3">A prompt enters a model box holding two independent sliders, one for how hard to think and one for how much to say, before an answer comes out. Sliders can be set to different levels: heavy reasoning paired with a short answer, or the reverse.</desc>
+  <style>
+    .ink{fill:#111113}
+    .muted{fill:#52525b}
+    .faint{fill:#a1a1aa}
+    .node{fill:#ffffff;stroke:#e4e4e7;stroke-width:1.5}
+    .edge{stroke:#a1a1aa;stroke-width:1.4;fill:none}
+    .rail{stroke:#e4e4e7;stroke-width:5}
+    .knob-accent{fill:#7c6bb3}
+    .knob{fill:#a1a1aa}
+    text{font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+  </style>
+  <defs>
+    <marker id="arrow3" markerWidth="8" markerHeight="8" refX="7" refY="2.5" orient="auto">
+      <path d="M0,0 L0,5 L7,2.5 z" class="faint"/>
+    </marker>
+  </defs>
+
+  <rect class="node" x="20" y="95" width="140" height="70" rx="14"/>
+  <text class="ink" x="90" y="135" text-anchor="middle" font-size="16" font-weight="600">Prompt</text>
+
+  <rect class="node" x="270" y="40" width="220" height="190" rx="18"/>
+  <text class="ink" x="380" y="70" text-anchor="middle" font-size="16" font-weight="700">Model</text>
+
+  <text class="muted" x="300" y="105" font-size="12">reasoning effort</text>
+  <line x1="300" y1="120" x2="460" y2="120" class="rail" stroke-linecap="round"/>
+  <circle cx="410" cy="120" r="7" class="knob-accent"/>
+
+  <text class="muted" x="300" y="160" font-size="12">answer verbosity</text>
+  <line x1="300" y1="175" x2="460" y2="175" class="rail" stroke-linecap="round"/>
+  <circle cx="330" cy="175" r="7" class="knob"/>
+
+  <text class="faint" x="380" y="212" text-anchor="middle" font-size="11">set independently</text>
+
+  <rect class="node" x="560" y="95" width="140" height="70" rx="14"/>
+  <text class="ink" x="630" y="135" text-anchor="middle" font-size="16" font-weight="600">Answer</text>
+
+  <path class="edge" marker-end="url(#arrow3)" d="M160 130 H270"/>
+  <path class="edge" marker-end="url(#arrow3)" d="M490 130 H560"/>
+</svg>
