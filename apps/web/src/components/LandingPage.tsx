@@ -6,7 +6,7 @@ import { SiteHeader, SiteFooter, SCAN_CMD, CURL_CMD } from "./SiteChrome";
 /**
  * The outcome distribution from one real machine.
  *
- * Source: `agentworth stats` on the author's laptop, 2026-09-02, over an
+ * Source: `archie stats` on the author's laptop, 2026-09-02, over an
  * index of 2,960 sessions. Every figure here is copied from that output —
  * nothing on this page is illustrative. All six rows together are the whole
  * index: 7 + 449 + 808 + 120 + 86 + 1,490 = 2,960, and the percentages sum
@@ -213,7 +213,7 @@ export const LandingPage: React.FC = () => {
             <div className="fact reveal">
               <h3>Blame, for agents</h3>
               <p>
-                <code>agentworth blame src/main.rs</code> names the session,
+                <code>archie repo blame src/main.rs</code> names the session,
                 the model and the prompt behind a line of code &mdash; months
                 after whoever ran it forgot.
               </p>
