@@ -1399,3 +1399,193 @@ fn shorten_home(path: &str) -> String {
         _ => path.to_string(),
     }
 }
+
+// -----------------------------------------------------------------------------
+// handoff
+// -----------------------------------------------------------------------------
+
+/// One body section of a handoff: a heading, its true row count, and the rows that fit.
+pub struct HandoffSection<'a> {
+    pub title: &'a str,
+    pub total: usize,
+    /// `(gutter, claim)` — the gutter carries the receipt (`seq 8441`, `14:07`) so every line
+    /// on screen can be traced back to the transcript without the reader hunting for it.
+    pub rows: Vec<(String, String)>,
+    pub dropped: usize,
+}
+
+pub struct HandoffView<'a> {
+    pub command: &'a str,
+    pub repo: &'a str,
+    pub task: Option<&'a str>,
+    /// `(rung, kind)`, absent when no outcome evidence was found.
+    pub outcome: Option<(usize, String)>,
+    pub cost: &'a str,
+    pub sections: &'a [HandoffSection<'a>],
+    pub skipped: &'a [(String, usize)],
+    pub receipt: [String; 2],
+    pub next: Option<(String, String)>,
+}
+
+/// The handoff, on the grid. Same facts as the markdown the MCP tools return, in the shape a
+/// terminal reads: gutter, then the claim. Where the markdown spends a line budget, this
+/// spends the column budget — a long path is truncated, never wrapped.
+pub fn handoff(ui: &Ui, v: &HandoffView<'_>) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header(v.command, v.repo));
+    out.push('\n');
+
+    const LABEL: usize = 10;
+    let field = i.saturating_sub(LABEL + 2).max(8);
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}  {}",
+            ui.paint(Role::Label, &rpad("Task", LABEL)),
+            match v.task {
+                Some(t) => ui.paint(Role::Emphasis, &truncate(t, field)),
+                None => ui.paint(Role::Unverified, "first prompt not indexed yet"),
+            }
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}  {}",
+            ui.paint(Role::Label, &rpad("Outcome", LABEL)),
+            match &v.outcome {
+                Some((rung, kind)) => format!(
+                    "{}  {}",
+                    ui.paint(rung_role(*rung), &ui.meter(*rung)),
+                    ui.paint(rung_role(*rung), &format!("rung {}, {}", rung, kind))
+                ),
+                None => ui.paint(Role::Unverified, "no outcome evidence in this session"),
+            }
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}  {}",
+            ui.paint(Role::Label, &rpad("Cost", LABEL)),
+            ui.paint(Role::Value, &truncate(v.cost, field))
+        ),
+    );
+
+    if v.sections.is_empty() && v.skipped.is_empty() {
+        out.push('\n');
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Unverified,
+                    "Nothing to hand over but the receipt: no file changes, no commands, no \
+                     outcome evidence."
+                )
+            ),
+        );
+    }
+
+    // The gutter is sized once, across every section, so every claim starts at one column.
+    let gutter = v
+        .sections
+        .iter()
+        .flat_map(|s| s.rows.iter())
+        .map(|(g, _)| display_width(g))
+        .max()
+        .unwrap_or(0)
+        .min(12);
+
+    for section in v.sections {
+        out.push('\n');
+        out.push_str(&ui.section(&section.title.to_uppercase(), &section.total.to_string()));
+        for (gutter_text, row) in &section.rows {
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}  {}",
+                    ui.paint(Role::Chrome, &rpad(&truncate(gutter_text, gutter), gutter)),
+                    ui.paint(Role::Value, &truncate(row, i.saturating_sub(gutter + 2)))
+                ),
+            );
+        }
+        if section.dropped > 0 {
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}",
+                    ui.paint(
+                        Role::Unverified,
+                        &format!("{} more, not shown", section.dropped)
+                    )
+                ),
+            );
+        }
+    }
+
+    if !v.skipped.is_empty() {
+        let named = v
+            .skipped
+            .iter()
+            .map(|(title, total)| format!("{} ({})", title, total))
+            .collect::<Vec<_>>()
+            .join(", ");
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(Role::Warn, &format!("Dropped whole, for room: {}", named))
+            ),
+        );
+    }
+
+    // The section the machine cannot fill. Saying so is the point: a generated handoff that
+    // quietly omits the open decisions gets read as complete.
+    out.push('\n');
+    out.push_str(&ui.section("NOT IN THIS HANDOFF", ""));
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Label,
+                "Open decisions, PR and CI state, and environment traps are not in the index."
+            )
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Label,
+                "The inventory above is the machine's; the judgment is yours."
+            )
+        ),
+    );
+
+    out.push('\n');
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    for line in &v.receipt {
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, line)));
+    }
+
+    if let Some((command, why)) = &v.next {
+        out.push('\n');
+        out.push_str(&ui.next(command, why));
+    }
+
+    out
+}

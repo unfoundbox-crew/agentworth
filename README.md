@@ -274,7 +274,18 @@ claude mcp add agentworth --scope user -- agentworth mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-Seven read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `outcome_rate`. Redacted output is the default everywhere event or file content is returned; `session_get`'s `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+Nine read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `outcome_rate`, plus the two handoff tools below. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+
+### The handoff, over MCP
+
+| Tool | What it answers |
+| :--- | :--- |
+| `session_handoff(session_id?, max_lines?, include_loose_ends?, include_raw?)` | "What did this session actually do?" — what it said it would do and never did, what it said it decided, which files changed, which commands ran and how they ended, the outcome rung reached, and how often the context was compacted. Returns markdown under a line budget (default 60, ceiling 120), the receipt every claim traces back to, and `gaps`. Defaults to the newest session for the repo the server runs in. |
+| `carry_forward(repo, n?, since?, max_lines?, include_raw?)` | "What happened in this repo recently?" — the last `n` handoffs (default 3, ceiling 10), newest first, so a session's *first* tool call can be the catch-up. A repo's worktrees all answer to one `repo` key. |
+
+Two things these deliberately do not do. They never write a file — where a handoff lands is the caller's business. And they never summarise: every line is a fact from a row, quoted verbatim with a sequence number or a timestamp, because the moment a model writes the prose the receipt stops meaning anything.
+
+What they cannot answer is stated in the output rather than filled in: open decisions, PR and CI state, and environment traps are not in the index. The machine owns the inventory; the judgment is still yours. Full design: `docs/specs/handoff.md`.
 
 ---
 

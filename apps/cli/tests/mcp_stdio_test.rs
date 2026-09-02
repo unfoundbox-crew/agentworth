@@ -66,6 +66,8 @@ async fn test_stdio_tools_list_and_sessions_find() {
         "pacing_window",
         "coverage_stats",
         "outcome_rate",
+        "session_handoff",
+        "carry_forward",
     ] {
         assert!(
             tool_names.contains(&expected),

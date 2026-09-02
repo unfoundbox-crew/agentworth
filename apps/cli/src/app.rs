@@ -33,6 +33,10 @@ mod pr_blame;
 mod config;
 #[path = "commands/version_info.rs"]
 mod version_info;
+// Declared here rather than in `commands/mod.rs`, which `lib.rs` glob-re-exports: a public
+// `commands::handoff` would collide with the `crate::handoff` module this command renders.
+#[path = "commands/handoff.rs"]
+mod handoff_command;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -284,6 +288,56 @@ enum Commands {
         file_path: String,
 
         /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Hand a session over: what it promised and dropped, decided, changed, ran, and proved
+    Handoff {
+        /// Session to hand over. Defaults to the newest session indexed for this directory's
+        /// repository, which is what `--last` also selects.
+        session_id: Option<String>,
+
+        /// Hand over the newest session for this repository. The default when no ID is given.
+        #[arg(long)]
+        last: bool,
+
+        /// Mask secrets, paths, and this session's own repository name before printing
+        #[arg(short, long)]
+        redact: bool,
+
+        /// Emit the same markdown the `session_handoff` MCP tool returns
+        #[arg(long)]
+        markdown: bool,
+
+        /// Line budget for `--markdown` (default 60, ceiling 120)
+        #[arg(long)]
+        max_lines: Option<usize>,
+
+        /// Output the structured handoff as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// The handoff's loose-ends section alone: what a session said it would do and did not
+    #[command(name = "loose-ends")]
+    LooseEnds {
+        /// Session to check. Defaults to the newest session for this directory's repository.
+        session_id: Option<String>,
+
+        /// Check the newest session for this repository. The default when no ID is given.
+        #[arg(long)]
+        last: bool,
+
+        /// Mask secrets, paths, and this session's own repository name before printing
+        #[arg(short, long)]
+        redact: bool,
+
+        /// Print the copyable prompt to hand to an agent that has the repository open
+        #[arg(long)]
+        prompt: bool,
+
+        /// Output the loose ends as JSON
         #[arg(long)]
         json: bool,
     },
@@ -652,6 +706,43 @@ pub fn run() -> Result<()> {
         }
         Commands::Blame { file_path, json } => {
             run_blame_command(&file_path, resolve_json(json), cli.db_path, &ui)?;
+        }
+        Commands::Handoff {
+            session_id,
+            // `--last` and "no session id" mean the same thing, so the flag exists to be
+            // typed rather than to change behaviour. Accepting both keeps the documented
+            // `agentworth handoff [session-id | --last]` shape honest.
+            last: _,
+            redact,
+            markdown,
+            max_lines,
+            json,
+        } => {
+            handoff_command::run_handoff_command(
+                session_id,
+                redact,
+                max_lines,
+                markdown,
+                resolve_json(json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Commands::LooseEnds {
+            session_id,
+            last: _,
+            redact,
+            prompt,
+            json,
+        } => {
+            handoff_command::run_loose_ends_command(
+                session_id,
+                redact,
+                prompt,
+                resolve_json(json),
+                cli.db_path,
+                &ui,
+            )?;
         }
         Commands::Serve { port, open, dist } => {
             let storage = open_storage(cli.db_path)?;
