@@ -1115,3 +1115,98 @@ fn test_cli_forgotten_command_on_a_session_that_never_compacted() {
     assert_eq!(value["compactions"], 0);
     assert_eq!(value["notes"][0], "no_compactions_in_this_session");
 }
+
+/// Writes a minimal (non-stub: `extract_repository_or_workspace` needs two real events,
+/// `Storage::is_near_empty_session` prunes anything with one) session whose `source_path`
+/// resolves to `<org>/<repo>` by putting it under a `code/<org>/<repo>/` directory --
+/// `extract_repository_or_workspace`'s `/code/` rule reads that back the same way whether
+/// it is asked about this file or about a plain `code/<org>/<repo>` directory used as a
+/// process's current directory, which is what makes the fixture below work.
+fn write_repo_session(root: &std::path::Path, org: &str, repo: &str, session_id: &str, ts: &str) {
+    let dir = root
+        .join("code")
+        .join(org)
+        .join(repo)
+        .join(".claude")
+        .join("projects")
+        .join("proj");
+    fs::create_dir_all(&dir).unwrap();
+    let mut f = File::create(dir.join(format!("{session_id}.jsonl"))).unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"user","timestamp":"{ts}","content":"do the thing in {repo}"}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"assistant","timestamp":"{ts}","model":"claude-3-5-haiku-20241022","usage":{{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"text","text":"done"}}]}}"#
+    )
+    .unwrap();
+}
+
+/// `--last` (and its `--current` alias) exist so a bare `agentworth inspect` can resolve to
+/// something instead of erroring with "required arguments were not provided" -- the
+/// complaint this whole picker feature answers. The resolution has to be repo-scoped, not
+/// just "the newest session anywhere": `repo-b`'s session is newer in wall-clock time, but
+/// running `--last` from inside `repo-a` must still come back with `repo-a`'s own session.
+#[test]
+fn last_picks_the_newest_session_for_the_current_repo_not_the_global_newest() {
+    let temp = tempdir().unwrap();
+    let db_path = temp.path().join("last.db");
+
+    write_repo_session(temp.path(), "org", "repo-a", "session_a", "2026-08-20T10:00:00Z");
+    write_repo_session(temp.path(), "org", "repo-b", "session_b", "2026-08-29T10:00:00Z");
+
+    // Scanned per repo directory, not the whole tempdir: the adapter's directory walk
+    // caps at `max_depth(4)` from whatever root it is given, and `.claude/projects/proj/
+    // <id>.jsonl` is already 4 levels deep on its own -- scanning `temp.path()` instead
+    // would put every session one `code/<org>/<repo>/` past that cap and find nothing.
+    let repo_a_dir = temp.path().join("code").join("org").join("repo-a");
+    let repo_b_dir = temp.path().join("code").join("org").join("repo-b");
+    for dir in [&repo_a_dir, &repo_b_dir] {
+        Command::cargo_bin("agentworth")
+            .unwrap()
+            .arg("--db-path")
+            .arg(&db_path)
+            .arg("scan")
+            .arg(dir)
+            .assert()
+            .success();
+    }
+
+    let out = Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("inspect")
+        .arg("--last")
+        .arg("--json")
+        .current_dir(&repo_a_dir)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let trace: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(
+        trace["session_id"], "session_a",
+        "--last must scope to the repo under the current directory, not the global newest"
+    );
+
+    // `--current` is documented as an alias of `--last`; it must resolve identically.
+    let out = Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("inspect")
+        .arg("--current")
+        .arg("--json")
+        .current_dir(&repo_a_dir)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let trace: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(trace["session_id"], "session_a");
+}
