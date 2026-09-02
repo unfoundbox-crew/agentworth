@@ -63,7 +63,9 @@ Inspect a specific trace session in detail with timeline visualization
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `SESSION_ID` | yes | The session ID to inspect | - | - |
+| `SESSION_ID` | no | The session ID to inspect, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last` | - | - |
+| `--last` | no | Inspect the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY | false | - |
+| `--current` | no | Alias of `--last` | false | - |
 | `--json` | no | Output raw trace structure as formatted JSON | false | - |
 
 ### `agentworth export`
@@ -72,7 +74,9 @@ Export a trace session safely in JSON or ATIF format
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `SESSION_ID` | yes | The session ID to export | - | - |
+| `SESSION_ID` | no | The session ID to export, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last` | - | - |
+| `--last` | no | Export the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY | false | - |
+| `--current` | no | Alias of `--last` | false | - |
 | `--redact, -r` | no | Apply redaction to mask secrets, API keys, tokens, emails, and home paths | false | - |
 | `--format, -f` | no | Export format: json (default), atif, receipt, or svg | json | json, atif, receipt, terminal, ansi, svg |
 | `--output, -o` | no | Optional file path to write export output to (defaults to stdout) | - | - |
@@ -83,7 +87,9 @@ Generate and render an authentic ANSI or SVG Flight Receipt for a trace session
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `SESSION_ID` | yes | The session ID to generate flight receipt for | - | - |
+| `SESSION_ID` | no | The session ID to generate flight receipt for, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last` | - | - |
+| `--last` | no | Generate the receipt for the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY | false | - |
+| `--current` | no | Alias of `--last` | false | - |
 | `--format, -f` | no | Output format: terminal (default), ansi, svg, receipt, or json | terminal | terminal, ansi, svg, receipt, json |
 | `--output, -o` | no | Optional file path to write receipt or SVG output to (defaults to stdout) | - | - |
 
@@ -138,12 +144,13 @@ View deep usage, pacing, and token expenditure rollups
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `--period, -p` | no | Rollup period: day, week, or month (default day, or persisted `config period`) | - | day, week, month |
+| `--period, -p` | no | Rollup period: day, week, month, year, or all -- `all` is one row per group across all time, with no period column. Single-letter aliases d/w/m/y also work. Default day, or persisted `config period` | - | - |
 | `--pacing` | no | Show 5-hour rolling pacing window (burn rate, active models, quota headroom) | false | - |
 | `--hours` | no | Pacing window duration in hours | 5 | - |
 | `--alert-above` | no | Alert and highlight if window spend exceeds this threshold in USD | - | - |
-| `--limit, -l` | no | Maximum number of rows to display (default 20, or persisted `config limit`) | - | - |
-| `--by-model` | no | Group the rollup by model instead of adapter (e.g. how many tokens each of claude-opus-5 / claude-sonnet-5 / claude-fable-5 used) | false | - |
+| `--limit, -l` | no | Maximum number of periods to keep (default 30 for day, 26 for week, 24 for month, unbounded for year) -- or, under `--period all`, the number of top groups by spend to keep (default 20, or persisted `config limit`). Counts periods, not rows: a day with two adapters is one period, not two | - | - |
+| `--by` | no | Group the rollup by adapter (default; most informative when nearly every session shares one adapter, e.g. Claude Code), model (usually the useful one), or repo | adapter | adapter, model, repo |
+| `--since` | no | Only include sessions started at or after this time: an absolute date (`2026-08-01` or RFC 3339), or a relative shorthand (`1d`, `7d`, `2w`, `3m`) | - | - |
 | `--json` | no | Output usage data as JSON | false | - |
 
 ### `agentworth blame`
@@ -161,8 +168,9 @@ Hand a session over: what it promised and dropped, decided, changed, ran, and pr
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `SESSION_ID` | no | Session to hand over. Defaults to the newest session indexed for this directory's repository, which is what `--last` also selects | - | - |
-| `--last` | no | Hand over the newest session for this repository. The default when no ID is given | false | - |
+| `SESSION_ID` | no | Session to hand over, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last` | - | - |
+| `--last` | no | Hand over the newest session for this repository. The default when no ID is given and stdout is not a TTY | false | - |
+| `--current` | no | Alias of `--last` | false | - |
 | `--redact, -r` | no | Mask secrets, paths, and this session's own repository name before printing | false | - |
 | `--markdown` | no | Emit the same markdown the `session_handoff` MCP tool returns | false | - |
 | `--max-lines` | no | Line budget for `--markdown` (default 60, ceiling 120) | - | - |
@@ -174,7 +182,9 @@ What compaction dropped: decisions this session made and its own summaries did n
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `SESSION_ID` | no | Session to diff, by full ID or a unique prefix. Defaults to the newest session indexed for this directory's repository | - | - |
+| `SESSION_ID` | no | Session to diff, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, defaults to the newest session indexed for this directory's repository (same as `--last`) | - | - |
+| `--last` | no | Diff the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY | false | - |
+| `--current` | no | Alias of `--last` | false | - |
 | `--round` | no | One 1-based compaction round. Defaults to every round | - | - |
 | `--class` | no | Any of decision, rejected, reason. Repeatable. Defaults to all three | - | - |
 | `--limit` | no | How many statements to return, newest first (default 20, ceiling 200) | - | - |
@@ -187,8 +197,9 @@ The questions you asked and where their answers are -- built so you never have t
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `--session` | no | Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed directly if it isn't an indexed session). Defaults to the newest session for this directory's repository, same as `--current` | - | - |
-| `--current` | no | Resolve the newest session for this directory's repository. The default when `--session` is not given -- this flag exists so an invocation can say that on purpose | false | - |
+| `--session` | no | Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed directly if it isn't an indexed session). With neither this nor `--last` given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last` | - | - |
+| `--last` | no | Resolve the newest session for this directory's repository, falling back to the newest session anywhere | false | - |
+| `--current` | no | Alias of `--last` | false | - |
 | `--since` | no | Only questions asked at or after this time: RFC 3339, `YYYY-MM-DD`, or a relative duration like `2h`, `30m`, `1d`, `3w` | - | - |
 | `--unanswered` | no | Only questions that are not `answered` -- still open, or flagged back to you | false | - |
 | `--json` | no | Output the structured index as JSON | false | - |
@@ -212,6 +223,7 @@ Check local environment, adapter discoveries, and SQLite database health
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
 | `--json` | no | Output diagnostic report as formatted JSON | false | - |
+| `--self-test` | no | Run the real release workflow end to end -- scan, stats, usage, traces, inspect, handoff, forgotten, and an MCP round trip -- against the real index on this machine, with no network, and report pass/fail/slow and timing for each step. Exits non-zero if any step fails | false | - |
 
 ### `agentworth version`
 
@@ -324,7 +336,9 @@ Bridge AI Code Blame with the Hall of Blunders: trace a recorded blunder forward
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
 | `--file` | no | Blame -> blunder direction: file path or pattern. Checks every session AI Code Blame attributes this file to for a recorded blunder | - | - |
-| `--session` | no | Blunder -> blame direction: one specific session ID. Resolves it to the files AI Code Blame attributes to that session | - | - |
+| `--session` | no | Blunder -> blame direction: one specific session ID, by full ID or a unique prefix. Resolves it to the files AI Code Blame attributes to that session | - | - |
+| `--last` | no | Blunder -> blame direction for the newest session in this repository, same as `--session` with that session's ID | false | - |
+| `--current` | no | Alias of `--last` | false | - |
 | `--top, -t` | no | In default mode (no --file or --session), number of top blunders to bridge | 5 | - |
 | `--json` | no | Output results as JSON | false | - |
 
@@ -1139,7 +1153,7 @@ Which commits on this branch came out of a session that never proved anything. W
 
 ### `usage_summary`
 
-Daily, weekly, or monthly usage rollups: session counts, token breakdown, estimated cost, and cache hit ratio, grouped by adapter -- the same rollups /api/usage returns for one period at a time.
+Daily, weekly, or monthly usage rollups: session counts, token breakdown, estimated cost, and cache hit ratio, grouped by adapter -- the same rollups /api/usage returns for one period at a time. Every estimated_cost_usd is an API list-price equivalent, not what the account actually paid -- see cost_basis/subscription_tier.
 
 | Param | Required | Type | Description |
 |---|---|---|---|

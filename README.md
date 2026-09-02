@@ -75,8 +75,9 @@ agentworth scan
 # 2. View machine-wide token burn, top models, and expenditures
 agentworth stats
 
-# 3. Inspect daily token burn and 5-hour rolling pacing windows
+# 3. Inspect daily token burn, per-model spend, and 5-hour rolling pacing windows
 agentworth usage --period day
+agentworth usage --period month --by model
 agentworth usage --pacing
 
 # 4. Blame file edits back to the agent session and prompt that authored them
@@ -253,22 +254,27 @@ agentworth export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | :--- | :--- |
 | `agentworth scan [PATHS...]` | Discovers and incrementally indexes agent sessions into local SQLite. |
 | `agentworth stats [--json]` | Displays machine-wide token totals, top models, top tools, and session counts. |
-| `agentworth usage [--period ...]` | Usage rollups by `day`, `week`, or `month`, or rolling 5-hour pacing (`--pacing`). |
+| `agentworth usage [--period ...]` | Usage rollups by `day`, `week`, `month`, `year`, or `all` (no period column); group with `--by adapter\|model\|repo` (`model` is usually the useful one -- most sessions share one adapter); filter with `--since <date\|1d\|2w\|3m>`; or rolling 5-hour pacing (`--pacing`). Cost is always an API list-price equivalent, labelled as such, not what a subscription plan actually billed. |
 | `agentworth blame <FILE>` | AI code lineage: finds all agent sessions and prompts that modified a given file. |
 | `agentworth traces [OPTIONS]` | Tabular directory of indexed sessions (`--limit`, `--adapter`, `--model`, `--json`). |
 | `agentworth matrix [--json]` | Extraction capability and coverage matrix across all 20 agent adapters. |
-| `agentworth inspect <ID>` | Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs. `<ID>` accepts any unique session-ID prefix, not just the full ID. |
+| `agentworth inspect [ID]` | Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs. `ID` accepts any unique session-ID prefix, not just the full ID. |
 | `agentworth serve [OPTIONS]` | Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`). |
-| `agentworth export <ID>` | Exports a session as JSON, ATIF v1.0, or a Flight Receipt (`--format json\|atif\|receipt\|svg`), with optional privacy scrubbing (`--redact`). |
-| `agentworth receipt <ID>` | Renders a Flight Receipt for a session: an ANSI box for the terminal or a shareable 1200x630 SVG card (`--format terminal\|svg\|json`, `--output <PATH>`). |
-| `agentworth handoff [ID \| --last]` | What a session promised, decided, changed, ran, and proved — the same report the `session_handoff` MCP tool returns (`--markdown`, `--redact`, `--json`). |
+| `agentworth export [ID]` | Exports a session as JSON, ATIF v1.0, or a Flight Receipt (`--format json\|atif\|receipt\|svg`), with optional privacy scrubbing (`--redact`). |
+| `agentworth receipt [ID]` | Renders a Flight Receipt for a session: an ANSI box for the terminal or a shareable 1200x630 SVG card (`--format terminal\|svg\|json`, `--output <PATH>`). |
+| `agentworth handoff [ID]` | What a session promised, decided, changed, ran, and proved — the same report the `session_handoff` MCP tool returns (`--markdown`, `--redact`, `--json`). |
 | `agentworth loose-ends [ID \| --last]` | The handoff's loose-ends section alone: what a session said it would do and didn't (`--prompt` prints a copyable brief). |
-| `agentworth asks [--session ID \| --current] [--since 2h] [--unanswered]` | The questions you asked and where their answers already are, so you never re-scroll or re-ask (`--session` also accepts a raw JSONL path; `--json` for the structured list). |
+| `agentworth asks [--session ID \| --last] [--since 2h] [--unanswered]` | The questions you asked and where their answers already are, so you never re-scroll or re-ask (`--session` also accepts a raw JSONL path; `--current` is an alias of `--last`; `--json` for the structured list). |
+| `agentworth forgotten [ID]` | What compaction dropped: decisions a session made that its own summaries didn't keep (`--round N`, `--class CLASS`, `--json`). |
+| `agentworth blunder-blame [--session ID \| --file PATH]` | Bridges a recorded blunder forward to the files it touched, or a file's blame history back to any blunder in the sessions blamed for it (`--top N`, `--json`). |
 | `agentworth suspect [OPTIONS]` | Lists commits on this branch whose authoring session never proved anything, so you know where to look twice before pushing (`--repo`, `--since`, `--json`). `--hook` prints a pre-push script that prints and never blocks. |
 | `agentworth doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
+| `agentworth doctor --self-test` | Runs the real workflow end to end — scan, stats, usage, traces, inspect, handoff, forgotten, an MCP round trip — against the real index on this machine, with no network. Prints pass/fail/slow and timing per step; exits non-zero if any step fails. |
 | `agentworth mcp` | Starts the read-only MCP server over stdio, so a coding agent can query this machine's session index mid-session (see below). |
 
 Every command accepts `--plain` (no colour, ASCII-only glyphs, same column positions as the colour output) and `--no-color`; setting `NO_COLOR` in the environment has the same effect as `--no-color`.
+
+`inspect`, `export`, `receipt`, `handoff`, and `forgotten` all take the session ID the same way, and it's always optional. Every one of them also takes `--last` (the newest session for this directory's repository, falling back to the newest session anywhere) and `--current` (an alias of `--last`); `blunder-blame` and `asks` take the same two flags for `--session`. Leave the ID off entirely on a terminal and a picker lists the newest sessions to choose from — type a number, type text to filter by ID, repo, adapter, or prompt, `m` for more, `q` to quit. Off a terminal, or with `--json`, the same list prints as JSON or a plain table and the command exits 2 with `pass a session id or prefix` — nothing is guessed for a script.
 
 ---
 

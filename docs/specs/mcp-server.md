@@ -231,9 +231,19 @@ Wraps `Storage::get_daily_usage` / `get_weekly_usage` / `get_monthly_usage`
 | `period` | enum, required — `day`, `week`, or `month` |
 | `limit` | integer, optional, default matches the route's own defaults (30 / 20 / 12) |
 
-Returns `Vec<UsagePeriodSummary>` (`period`, `adapter`, `session_count`,
-token breakdown, `total_duration_seconds`, `estimated_cost_usd`,
-`cache_hit_ratio`).
+Returns `{ rows, cost_basis, subscription_tier }`. `rows` is
+`Vec<UsagePeriodSummary>` (`period`, `adapter`, `session_count`, token
+breakdown, `total_duration_seconds`, `estimated_cost_usd`,
+`cache_hit_ratio`). `cost_basis` is always `"api_list_price_equivalent"`
+— every `estimated_cost_usd` here is computed from the public API price
+list, not what the account actually paid. `subscription_tier` is present
+when `~/.claude.json` names one (e.g. a Claude subscriber's plan); its
+presence means the cost figures above are not the account's real bill.
+
+`agentworth usage`'s own richer rollup (`--period day|week|month|year|all`,
+`--by adapter|model|repo`, `--since`, honest period-count `--limit`) isn't
+exposed over MCP yet — this tool still mirrors the older adapter-grouped
+`/api/usage` shape.
 
 ### `pacing_window`
 

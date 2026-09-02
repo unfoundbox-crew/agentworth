@@ -163,9 +163,25 @@
         {
           "name": "SESSION_ID",
           "positional": true,
-          "required": true,
-          "help": "The session ID to inspect",
+          "required": false,
+          "help": "The session ID to inspect, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Inspect the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -185,9 +201,25 @@
         {
           "name": "SESSION_ID",
           "positional": true,
-          "required": true,
-          "help": "The session ID to export",
+          "required": false,
+          "help": "The session ID to export, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Export the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -230,9 +262,25 @@
         {
           "name": "SESSION_ID",
           "positional": true,
-          "required": true,
-          "help": "The session ID to generate flight receipt for",
+          "required": false,
+          "help": "The session ID to generate flight receipt for, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Generate the receipt for the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -400,13 +448,9 @@
           "name": "--period, -p",
           "positional": false,
           "required": false,
-          "help": "Rollup period: day, week, or month (default day, or persisted `config period`)",
+          "help": "Rollup period: day, week, month, year, or all -- `all` is one row per group across all time, with no period column. Single-letter aliases d/w/m/y also work. Default day, or persisted `config period`",
           "default": null,
-          "possibleValues": [
-            "day",
-            "week",
-            "month"
-          ]
+          "possibleValues": []
         },
         {
           "name": "--pacing",
@@ -436,16 +480,28 @@
           "name": "--limit, -l",
           "positional": false,
           "required": false,
-          "help": "Maximum number of rows to display (default 20, or persisted `config limit`)",
+          "help": "Maximum number of periods to keep (default 30 for day, 26 for week, 24 for month, unbounded for year) -- or, under `--period all`, the number of top groups by spend to keep (default 20, or persisted `config limit`). Counts periods, not rows: a day with two adapters is one period, not two",
           "default": null,
           "possibleValues": []
         },
         {
-          "name": "--by-model",
+          "name": "--by",
           "positional": false,
           "required": false,
-          "help": "Group the rollup by model instead of adapter (e.g. how many tokens each of claude-opus-5 / claude-sonnet-5 / claude-fable-5 used)",
-          "default": "false",
+          "help": "Group the rollup by adapter (default; most informative when nearly every session shares one adapter, e.g. Claude Code), model (usually the useful one), or repo",
+          "default": "adapter",
+          "possibleValues": [
+            "adapter",
+            "model",
+            "repo"
+          ]
+        },
+        {
+          "name": "--since",
+          "positional": false,
+          "required": false,
+          "help": "Only include sessions started at or after this time: an absolute date (`2026-08-01` or RFC 3339), or a relative shorthand (`1d`, `7d`, `2w`, `3m`)",
+          "default": null,
           "possibleValues": []
         },
         {
@@ -488,7 +544,7 @@
           "name": "SESSION_ID",
           "positional": true,
           "required": false,
-          "help": "Session to hand over. Defaults to the newest session indexed for this directory's repository, which is what `--last` also selects",
+          "help": "Session to hand over, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
           "possibleValues": []
         },
@@ -496,7 +552,15 @@
           "name": "--last",
           "positional": false,
           "required": false,
-          "help": "Hand over the newest session for this repository. The default when no ID is given",
+          "help": "Hand over the newest session for this repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
           "default": "false",
           "possibleValues": []
         },
@@ -542,8 +606,24 @@
           "name": "SESSION_ID",
           "positional": true,
           "required": false,
-          "help": "Session to diff, by full ID or a unique prefix. Defaults to the newest session indexed for this directory's repository",
+          "help": "Session to diff, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, defaults to the newest session indexed for this directory's repository (same as `--last`)",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Diff the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -596,15 +676,23 @@
           "name": "--session",
           "positional": false,
           "required": false,
-          "help": "Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed directly if it isn't an indexed session). Defaults to the newest session for this directory's repository, same as `--current`",
+          "help": "Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed directly if it isn't an indexed session). With neither this nor `--last` given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Resolve the newest session for this directory's repository, falling back to the newest session anywhere",
+          "default": "false",
           "possibleValues": []
         },
         {
           "name": "--current",
           "positional": false,
           "required": false,
-          "help": "Resolve the newest session for this directory's repository. The default when `--session` is not given -- this flag exists so an invocation can say that on purpose",
+          "help": "Alias of `--last`",
           "default": "false",
           "possibleValues": []
         },
@@ -689,6 +777,14 @@
           "positional": false,
           "required": false,
           "help": "Output diagnostic report as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--self-test",
+          "positional": false,
+          "required": false,
+          "help": "Run the real release workflow end to end -- scan, stats, usage, traces, inspect, handoff, forgotten, and an MCP round trip -- against the real index on this machine, with no network, and report pass/fail/slow and timing for each step. Exits non-zero if any step fails",
           "default": "false",
           "possibleValues": []
         }
@@ -997,8 +1093,24 @@
           "name": "--session",
           "positional": false,
           "required": false,
-          "help": "Blunder -> blame direction: one specific session ID. Resolves it to the files AI Code Blame attributes to that session",
+          "help": "Blunder -> blame direction: one specific session ID, by full ID or a unique prefix. Resolves it to the files AI Code Blame attributes to that session",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Blunder -> blame direction for the newest session in this repository, same as `--session` with that session's ID",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -1844,7 +1956,7 @@
     },
     {
       "name": "usage_summary",
-      "description": "Daily, weekly, or monthly usage rollups: session counts, token breakdown, estimated cost, and cache hit ratio, grouped by adapter -- the same rollups /api/usage returns for one period at a time.",
+      "description": "Daily, weekly, or monthly usage rollups: session counts, token breakdown, estimated cost, and cache hit ratio, grouped by adapter -- the same rollups /api/usage returns for one period at a time. Every estimated_cost_usd is an API list-price equivalent, not what the account actually paid -- see cost_basis/subscription_tier.",
       "inputSchema": {
         "$defs": {
           "UsagePeriodParam": {

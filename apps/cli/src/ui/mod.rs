@@ -11,6 +11,7 @@
 
 use std::fmt::Write;
 
+pub mod picker;
 pub mod views;
 
 /// Widest content the CLI ever draws. A 100-column window shows 22 columns of air; an

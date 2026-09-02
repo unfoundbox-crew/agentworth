@@ -10,14 +10,14 @@ use std::sync::Arc;
 
 use agentworth_core::Scanner;
 use agentworth_redaction::Redactor;
-use agentworth_schema::extract_repository_or_workspace;
-use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
-use anyhow::{Context, Result};
+use agentworth_storage::Storage;
+use anyhow::Result;
 
 use crate::handoff::{
     load_handoff, loose_ends_prompt_for, render_markdown, HandoffOptions, HandoffReport,
     DEFAULT_MAX_LINES, MAX_LINES_CEILING,
 };
+use crate::ui::picker::{self, SessionArg};
 use crate::ui::views::{HandoffSection, HandoffView};
 use crate::ui::{compact, thousands, Ui};
 
@@ -26,82 +26,35 @@ use crate::ui::{compact, thousands, Ui};
 /// scrolls, so these are about what stays readable rather than what fits.
 const TERMINAL_ROWS: usize = 12;
 
-/// Resolves which session to hand over.
-///
-/// With no id and no `--last`, `--last` is what was meant: an agent or a person asking for
-/// "the handoff" in a repo means the newest session there. Falls back to the newest session
-/// anywhere only when this directory has none indexed, and says which it used.
-fn resolve_session(storage: &Storage, session_id: Option<&str>, ui: &Ui) -> Result<String> {
-    if let Some(id) = session_id {
-        return match storage.get_session_by_id(id)? {
-            Some(s) => Ok(s.session_id),
-            None => {
-                print!("{}", not_found(storage, id, ui));
-                std::process::exit(1);
-            }
-        };
-    }
-
-    let repo = std::env::current_dir()
-        .ok()
-        .map(|d| extract_repository_or_workspace(&d.to_string_lossy()));
-
-    if let Some(repo) = repo.as_deref() {
-        if let Some(session) = storage
-            .list_sessions_for_repo(repo, 1)?
-            .sessions
-            .into_iter()
-            .next()
-        {
-            return Ok(session.session_id);
+/// Resolves which session `command_name` should act on, via the shared picker
+/// (`crate::ui::picker`). An unresolved explicit id or prefix prints that command's own
+/// not-found screen and exits 1; on a TTY with nothing typed, the picker takes over.
+fn resolve_session(
+    storage: &Storage,
+    ui: &Ui,
+    json: bool,
+    command_name: &str,
+    arg: &SessionArg,
+) -> Result<String> {
+    match picker::resolve(storage, ui, json, arg)? {
+        picker::Resolved::Id(id) => Ok(id),
+        picker::Resolved::NotFound(input) => {
+            print!(
+                "{}",
+                picker::not_found(
+                    ui,
+                    storage,
+                    &format!("agentworth {command_name} {input}"),
+                    &input,
+                    &[(
+                        format!("agentworth {command_name} --last"),
+                        "the newest session in this repo".to_string(),
+                    )],
+                )
+            );
+            std::process::exit(1);
         }
-        eprintln!("No indexed session for {repo}; falling back to the newest session anywhere.");
     }
-
-    storage
-        .list_sessions_filtered(&SessionFilter {
-            limit: Some(1),
-            order_by: Some(SessionOrderBy::StartedAtDesc),
-            ..Default::default()
-        })?
-        .into_iter()
-        .next()
-        .map(|s| s.session_id)
-        .context("no sessions are indexed; run `agentworth scan` first")
-}
-
-fn not_found(storage: &Storage, session_id: &str, ui: &Ui) -> String {
-    let needle = session_id.to_lowercase();
-    let nearest: Vec<String> = storage
-        .list_sessions_filtered(&SessionFilter {
-            limit: Some(200),
-            order_by: Some(SessionOrderBy::StartedAtDesc),
-            ..Default::default()
-        })
-        .unwrap_or_default()
-        .iter()
-        .filter(|s| s.session_id.to_lowercase().contains(&needle))
-        .take(3)
-        .map(|s| format!("{}\t{}", s.session_id, s.started_at.format("%b %e %H:%M")))
-        .collect();
-
-    crate::ui::views::error(
-        ui,
-        &format!("agentworth handoff {session_id}"),
-        &format!("No indexed session starts with {session_id}."),
-        "Closest three:",
-        &nearest,
-        &[
-            (
-                "agentworth handoff".to_string(),
-                "hand over the newest session in this repo".to_string(),
-            ),
-            (
-                "agentworth scan".to_string(),
-                "re-index, if it should be here".to_string(),
-            ),
-        ],
-    )
 }
 
 fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
@@ -114,15 +67,18 @@ fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
 
 /// Loads one session's report, applying `--redact` the same way the MCP tools apply
 /// `include_raw: false` — one `Redactor::for_trace` instance across every field.
+#[allow(clippy::too_many_arguments)]
 fn report_for(
     db_path: Option<PathBuf>,
-    session_id: Option<&str>,
+    ui: &Ui,
+    json: bool,
+    command_name: &str,
+    arg: &SessionArg,
     redact: bool,
     options: HandoffOptions,
-    ui: &Ui,
 ) -> Result<HandoffReport> {
     let storage = open_storage(db_path)?;
-    let resolved = resolve_session(&storage, session_id, ui)?;
+    let resolved = resolve_session(&storage, ui, json, command_name, arg)?;
     let scanner = Scanner::new(storage.clone());
     let (report, trace) = crate::ui::with_status(ui, "loading session", || {
         load_handoff(&storage, &scanner, &resolved, options)
@@ -137,6 +93,8 @@ fn report_for(
 #[allow(clippy::too_many_arguments)]
 pub fn run_handoff_command(
     session_id: Option<String>,
+    last: bool,
+    current: bool,
     redact: bool,
     max_lines: Option<usize>,
     markdown: bool,
@@ -144,12 +102,15 @@ pub fn run_handoff_command(
     db_path: Option<PathBuf>,
     ui: &Ui,
 ) -> Result<()> {
+    let arg = SessionArg::new(session_id, last, current);
     let report = report_for(
         db_path,
-        session_id.as_deref(),
+        ui,
+        json,
+        "handoff",
+        &arg,
         redact,
         HandoffOptions::default(),
-        ui,
     )?;
 
     if json {
@@ -176,12 +137,18 @@ pub fn run_loose_ends_command(
     db_path: Option<PathBuf>,
     ui: &Ui,
 ) -> Result<()> {
+    // `loose-ends` isn't in the shared-picker rollout (no `--last`/`--current` of its own
+    // yet) -- `last: true` keeps its pre-picker behaviour: nothing typed means the newest
+    // session for this repository, on any stdout, not the interactive/JSON picker.
+    let arg = SessionArg::new(session_id, true, false);
     let report = report_for(
         db_path,
-        session_id.as_deref(),
+        ui,
+        json,
+        "loose-ends",
+        &arg,
         redact,
         HandoffOptions::default(),
-        ui,
     )?;
 
     if json {

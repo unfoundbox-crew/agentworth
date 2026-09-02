@@ -142,6 +142,8 @@ fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
 pub fn run_blunder_blame_command(
     file: Option<String>,
     session: Option<String>,
+    last: bool,
+    current: bool,
     top: usize,
     json_output: bool,
     db_path: Option<PathBuf>,
@@ -159,7 +161,16 @@ pub fn run_blunder_blame_command(
         return Ok(());
     }
 
-    // Blunder -> blame direction, one specific session.
+    // Blunder -> blame direction, one specific session -- by id/prefix, or `--last`/
+    // `--current` for the newest session in this repository.
+    let session = match session {
+        Some(input) => match crate::ui::picker::resolve_explicit(&storage, &input)? {
+            crate::ui::picker::Resolved::Id(id) => Some(id),
+            crate::ui::picker::Resolved::NotFound(input) => Some(input),
+        },
+        None if last || current => crate::ui::picker::resolve_last(&storage)?,
+        None => None,
+    };
     if let Some(session_id) = session {
         let exhibit = match blunder_for_session(&storage, &session_id)? {
             Some(exhibit) => exhibit,
