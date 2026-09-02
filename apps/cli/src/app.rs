@@ -33,6 +33,8 @@ mod pr_blame;
 mod config;
 #[path = "commands/version_info.rs"]
 mod version_info;
+#[path = "commands/self_test.rs"]
+mod self_test;
 // Declared here rather than in `commands/mod.rs`, which `lib.rs` glob-re-exports: a public
 // `commands::handoff` would collide with the `crate::handoff` module this command renders.
 #[path = "commands/handoff.rs"]
@@ -471,6 +473,13 @@ enum Commands {
         /// Output diagnostic report as formatted JSON
         #[arg(long)]
         json: bool,
+
+        /// Run the real release workflow end to end -- scan, stats, usage, traces,
+        /// inspect, handoff, forgotten, and an MCP round trip -- against the real index
+        /// on this machine, with no network, and report pass/fail/slow and timing for
+        /// each step. Exits non-zero if any step fails
+        #[arg(long)]
+        self_test: bool,
     },
 
     /// Print version details: binary version, npm install detection, and a live
@@ -787,8 +796,12 @@ pub fn run() -> Result<()> {
         Commands::Stats { json } => {
             run_stats_command(resolve_json(json), cli.db_path, &ui)?;
         }
-        Commands::Doctor { json } => {
-            run_doctor_command(resolve_json(json), cli.db_path, &ui)?;
+        Commands::Doctor { json, self_test } => {
+            if self_test {
+                self_test::run_self_test_command(resolve_json(json), cli.db_path, &ui)?;
+            } else {
+                run_doctor_command(resolve_json(json), cli.db_path, &ui)?;
+            }
         }
         Commands::Version { offline, json } => {
             version_info::run_version_command(resolve_json(json), offline)?;
@@ -2968,14 +2981,30 @@ mod tests {
         // Test parsing command using "agentworth" binary name
         let parsed_agentworth = Cli::try_parse_from(["agentworth", "doctor", "--json"]).unwrap();
         match parsed_agentworth.command {
-            Commands::Doctor { json } => assert!(json),
+            Commands::Doctor { json, self_test } => {
+                assert!(json);
+                assert!(!self_test);
+            }
             _ => panic!("Expected Doctor command"),
         }
 
         // Test parsing command using "agwt" binary alias
         let parsed_agwt = Cli::try_parse_from(["agwt", "doctor", "--json"]).unwrap();
         match parsed_agwt.command {
-            Commands::Doctor { json } => assert!(json),
+            Commands::Doctor { json, self_test } => {
+                assert!(json);
+                assert!(!self_test);
+            }
+            _ => panic!("Expected Doctor command"),
+        }
+
+        // Test parsing "doctor --self-test"
+        let parsed_self_test = Cli::try_parse_from(["agentworth", "doctor", "--self-test"]).unwrap();
+        match parsed_self_test.command {
+            Commands::Doctor { json, self_test } => {
+                assert!(!json);
+                assert!(self_test);
+            }
             _ => panic!("Expected Doctor command"),
         }
 

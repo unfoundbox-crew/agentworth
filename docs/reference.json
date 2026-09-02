@@ -779,6 +779,14 @@
           "help": "Output diagnostic report as formatted JSON",
           "default": "false",
           "possibleValues": []
+        },
+        {
+          "name": "--self-test",
+          "positional": false,
+          "required": false,
+          "help": "Run the real release workflow end to end -- scan, stats, usage, traces, inspect, handoff, forgotten, and an MCP round trip -- against the real index on this machine, with no network, and report pass/fail/slow and timing for each step. Exits non-zero if any step fails",
+          "default": "false",
+          "possibleValues": []
         }
       ]
     },
