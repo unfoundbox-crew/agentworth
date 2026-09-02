@@ -5,6 +5,9 @@ import { formatTokens } from '../utils/formatters';
 
 export interface CompactionProps {
   events: NormalizedEvent[] | null | undefined;
+  /** False while background pages are still loading — round counts and the
+   * "what the model can still see" figure need every event to be right. */
+  eventsComplete?: boolean;
 }
 
 function survivedPercent(pre: number, post: number): string {
@@ -23,11 +26,22 @@ function survivedPercent(pre: number, post: number): string {
  * pass ContextComposition (PR #46) already makes over `compactMetadata`,
  * rather than reading that field a second time.
  */
-export function Compaction({ events }: CompactionProps) {
+export function Compaction({ events, eventsComplete = true }: CompactionProps) {
   const composition = useMemo(() => analyzeComposition(events ?? []), [events]);
   const rounds = composition.compactions;
 
   if (!events) return null;
+
+  if (!eventsComplete) {
+    return (
+      <section className="cmp-comp">
+        <div className="cmp-head">
+          <span className="cmp-eyebrow">Compaction</span>
+          <span className="cmp-rounds">Loading…</span>
+        </div>
+      </section>
+    );
+  }
 
   if (rounds.length === 0) {
     return (

@@ -5,6 +5,9 @@ import { findLooseEnds, looseEndsPrompt } from '../utils/looseEnds';
 export interface LooseEndsProps {
   events: NormalizedEvent[] | null | undefined;
   sessionId: string;
+  /** False while background pages are still loading — the count below is
+   * only a lower bound until every event has been scanned. */
+  eventsComplete?: boolean;
 }
 
 /** How many to show before collapsing the rest behind a toggle. */
@@ -23,10 +26,21 @@ const PREVIEW = 5;
  * codebase; being right about what is missing is the answerable half, and
  * whatever already has the repo open can do the rest.
  */
-export function LooseEnds({ events, sessionId }: LooseEndsProps) {
+export function LooseEnds({ events, sessionId, eventsComplete = true }: LooseEndsProps) {
   const ends = useMemo(() => findLooseEnds(events ?? []), [events]);
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  if (!eventsComplete) {
+    return (
+      <section className="loose-ends">
+        <div className="loose-head">
+          <span className="loose-eyebrow">Loose ends</span>
+          <span className="loose-count">Loading…</span>
+        </div>
+      </section>
+    );
+  }
 
   if (ends.length === 0) return null;
 
