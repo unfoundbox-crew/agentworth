@@ -8,7 +8,6 @@ use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
@@ -59,6 +58,20 @@ struct Cli {
         help = "Force text output even if persisted config defaults to JSON (see `agentworth config`)"
     )]
     no_json: bool,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Disable colour. NO_COLOR in the environment does the same thing"
+    )]
+    no_color: bool,
+
+    #[arg(
+        long,
+        global = true,
+        help = "No colour and ASCII-only glyphs, at identical column positions"
+    )]
+    plain: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -520,16 +533,17 @@ pub fn run() -> Result<()> {
     });
     let no_json = cli.no_json;
     let resolve_json = |flag: bool| config::resolve_json(flag, no_json, persisted_config.json);
+    let ui = crate::ui::Ui::detect(cli.no_color, cli.plain);
 
     match cli.command {
         Commands::Scan { paths, force, json } => {
-            run_scan_command(paths, force, resolve_json(json), cli.db_path)?;
+            run_scan_command(paths, force, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::Stats { json } => {
-            run_stats_command(resolve_json(json), cli.db_path)?;
+            run_stats_command(resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::Doctor { json } => {
-            run_doctor_command(resolve_json(json), cli.db_path)?;
+            run_doctor_command(resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::Version { offline, json } => {
             version_info::run_version_command(resolve_json(json), offline)?;
@@ -538,7 +552,7 @@ pub fn run() -> Result<()> {
             version_info::run_update_command(resolve_json(json), offline)?;
         }
         Commands::Matrix { json } => {
-            run_matrix_command(resolve_json(json), cli.db_path)?;
+            run_matrix_command(resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::Traces {
             limit,
@@ -548,10 +562,27 @@ pub fn run() -> Result<()> {
             json,
         } => {
             let limit = config::resolve_limit(limit, persisted_config.limit, 20);
-            run_traces_command(limit, adapter, model, all_stubs, resolve_json(json), cli.db_path)?;
+            run_traces_command(
+                limit,
+                adapter,
+                model,
+                all_stubs,
+                resolve_json(json),
+                cli.db_path,
+                &ui,
+            )?;
         }
         Commands::Inspect { session_id, json } => {
-            run_inspect_command(&session_id, resolve_json(json), cli.db_path)?;
+            let json = resolve_json(json);
+            if let Err(e) = run_inspect_command(&session_id, json, cli.db_path.clone()) {
+                if json {
+                    return Err(e);
+                }
+                // An error screen is a navigation screen, so it replaces the anyhow dump
+                // rather than following it. Every storage handle is already dropped here.
+                print!("{}", inspect_not_found(&session_id, cli.db_path, &ui));
+                std::process::exit(1);
+            }
         }
         Commands::Export {
             session_id,
@@ -566,7 +597,7 @@ pub fn run() -> Result<()> {
             format,
             output,
         } => {
-            crate::run_receipt_command(&session_id, &format, output, cli.db_path)?;
+            crate::run_receipt_command(&session_id, &format, output, cli.db_path, &ui)?;
         }
 
         Commands::Search {
@@ -612,10 +643,11 @@ pub fn run() -> Result<()> {
                 by_model,
                 json: resolve_json(json),
                 db_path: cli.db_path,
+                ui: &ui,
             })?;
         }
         Commands::Blame { file_path, json } => {
-            run_blame_command(&file_path, resolve_json(json), cli.db_path)?;
+            run_blame_command(&file_path, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::Serve { port, open, dist } => {
             let storage = open_storage(cli.db_path)?;
@@ -723,6 +755,7 @@ fn run_scan_command(
     force: bool,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
     let scanner = Scanner::new(storage.clone());
@@ -731,53 +764,79 @@ fn run_scan_command(
         force,
     };
 
-    let pb = if !json {
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template("{spinner:.cyan.bold} {msg}")
-                .unwrap(),
-        );
-        pb.set_message("Discovering agent history sources...");
-        pb.enable_steady_tick(std::time::Duration::from_millis(80));
-        Some(pb)
-    } else {
-        None
-    };
-
-    let mut configured_bar = false;
+    // Under a non-TTY nothing prints until the summary; the three-line block is redrawn in
+    // place, so a stream that cannot move the cursor would otherwise collect one block per
+    // frame.
+    let animate = !json && console::Term::stdout().is_term();
+    let mut progress = ScanProgress::new(ui, animate);
 
     let summary = scanner.run_scan(&options, |current, total| {
-        if let Some(ref pb) = pb {
-            if !configured_bar && total > 0 {
-                pb.set_length(total as u64);
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                        .template(
-                            "{spinner:.cyan.bold} Scanning agent histories ▕{bar:30.cyan/238}▏ {percent:>3}% [ETA {eta}]",
-                        )
-                        .unwrap()
-                        .progress_chars("█▉▊▋▌▍▎▏ "),
-                );
-                configured_bar = true;
-            }
-            pb.set_position(current as u64);
-        }
+        progress.tick(current, total);
     })?;
-
-    if let Some(pb) = pb {
-        pb.finish_and_clear();
-    }
+    progress.clear();
 
     if json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
     } else {
-        print_scan_summary(&summary, storage.db_path());
+        print_scan_summary(&summary, ui);
     }
 
     Ok(())
+}
+
+/// Three lines, redrawn in place at 8 fps. Faster than that is noise, and it costs a
+/// redraw on every terminal on the machine.
+struct ScanProgress<'a> {
+    ui: &'a crate::ui::Ui,
+    animate: bool,
+    frame: u64,
+    drawn: bool,
+    last: std::time::Instant,
+}
+
+const SCAN_FRAME_MS: u64 = 125;
+const SCAN_BLOCK_LINES: usize = 3;
+
+impl<'a> ScanProgress<'a> {
+    fn new(ui: &'a crate::ui::Ui, animate: bool) -> Self {
+        ScanProgress {
+            ui,
+            animate,
+            frame: 0,
+            drawn: false,
+            last: std::time::Instant::now() - std::time::Duration::from_millis(SCAN_FRAME_MS),
+        }
+    }
+
+    fn tick(&mut self, current: usize, total: usize) {
+        if !self.animate || self.last.elapsed().as_millis() < SCAN_FRAME_MS as u128 {
+            return;
+        }
+        self.last = std::time::Instant::now();
+        let term = console::Term::stdout();
+        if self.drawn {
+            let _ = term.move_cursor_up(SCAN_BLOCK_LINES);
+            let _ = term.clear_to_end_of_screen();
+        }
+        print!(
+            "{}",
+            crate::ui::views::scan_progress(self.ui, self.frame, "agent histories", current, total)
+        );
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
+        self.frame += 1;
+        self.drawn = true;
+    }
+
+    /// The progress line is cleared in one frame, per --motion-exit.
+    fn clear(&mut self) {
+        if self.drawn {
+            let term = console::Term::stdout();
+            let _ = term.move_cursor_up(SCAN_BLOCK_LINES);
+            let _ = term.clear_to_end_of_screen();
+            self.drawn = false;
+        }
+    }
 }
 // -----------------------------------------------------------------------------
 // Command: Stats
@@ -846,7 +905,7 @@ fn compute_verdict_breakdown(storage: &Arc<Storage>, total_sessions: usize) -> V
     breakdown
 }
 
-fn run_stats_command(json: bool, db_path: Option<PathBuf>) -> Result<()> {
+fn run_stats_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui) -> Result<()> {
     let storage = open_storage(db_path)?;
     // false: compute_verdict_breakdown below iterates list_sessions_filtered's stub-excluded
     // default, so stats.total_sessions must exclude stubs too or real_verified_rate divides by
@@ -890,246 +949,59 @@ fn run_stats_command(json: bool, db_path: Option<PathBuf>) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&json_output)?);
     } else {
-        print_stats_view(&stats, &top_repos, &verdict, storage.db_path());
+        let _ = &top_repos;
+        print!(
+            "{}",
+            build_stats_view(&stats, &verdict, storage.db_path(), ui)
+        );
     }
 
     Ok(())
 }
 
-fn print_archie_ascii_banner() {
-    println!();
-    println!("       {}", style("┌───────────┐").dim());
-    println!("       {}   {}", style("│ ( • _ • ) │").bold().cyan(), style("\"Your agents left receipts.\"").italic());
-    println!("       {}    {}", style("│  /| 🔎 |\\ │").bold(), style("────────────────────────────").dim());
-    println!("       {}    {}", style("│  / |  | \\ │").dim(), style("• Digging through dotfiles").dim());
-    println!("       {}    {}", style("│   /    \\  │").dim(), style("• Auditing token burn pacing").dim());
-    println!("       {}    {}", style("└───┴────┴──┘").dim(), style("• Tracing line-by-line lineage").dim());
-    println!();
+/// Sort a name->count map into the descending order every table on the screen uses.
+fn ranked(map: &std::collections::BTreeMap<String, usize>, take: usize) -> Vec<(String, usize)> {
+    let mut v: Vec<(String, usize)> = map.iter().map(|(k, c)| (k.clone(), *c)).collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.truncate(take);
+    v
 }
 
-fn print_stats_view(
+fn build_stats_view(
     stats: &agentworth_storage::AggregateStats,
-    top_repos: &[(String, usize)],
     verdict: &VerdictBreakdown,
     db_path: Option<&std::path::Path>,
-) {
-    print_archie_ascii_banner();
-    println!(
-        "{}",
-        style("┌──────────────────────────────────────────────────────────┐").bold()
-    );
-    println!(
-        "│ {:<56} │",
-        style("AgentWorth Machine-Wide Experience Summary").bold().cyan()
-    );
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-    println!(
-        "│ Total Sessions: {:>8}                                 │",
-        style(stats.total_sessions).bold().yellow()
-    );
-    println!(
-        "│ Total Events:   {:>8}                                 │",
-        style(stats.total_events).bold()
-    );
-
-    if let (Some(first), Some(last)) = (stats.first_session_at, stats.last_session_at) {
-        println!(
-            "│ Date Range:     {:<41}│",
-            style(format!(
-                "{} to {}",
-                first.format("%Y-%m-%d"),
-                last.format("%Y-%m-%d")
-            ))
-            .dim()
-        );
-    }
-
-    if let Some(path) = db_path {
-        let path_str = path.to_string_lossy();
-        let display_path = if path_str.len() > 40 {
-            format!("...{}", &path_str[path_str.len() - 37..])
-        } else {
-            path_str.to_string()
-        };
-        println!("│ Database Index: {:<41}│", style(display_path).dim());
-    }
-
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-    println!("│ Verdict Breakdown:                                       │");
-    let total = stats.total_sessions;
-    let pct = |count: usize| -> f64 {
-        if total > 0 {
-            (count as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        }
-    };
-    println!(
-        "│   • CI or Deployment Verified (Rung 5): {:>4} ({:>5.1}%) │",
-        style(verdict.ci_or_deployment_verified).bold().green(),
-        pct(verdict.ci_or_deployment_verified)
-    );
-    println!(
-        "│   • Commit Observed (Rung 4):           {:>4} ({:>5.1}%) │",
-        style(verdict.commit_observed).bold().green(),
-        pct(verdict.commit_observed)
-    );
-    println!(
-        "│   • Test or Build Passed (Rung 3):      {:>4} ({:>5.1}%) │",
-        style(verdict.test_or_build_passed).bold().cyan(),
-        pct(verdict.test_or_build_passed)
-    );
-    println!(
-        "│   • Artifact Changed (Rung 2):          {:>4} ({:>5.1}%) │",
-        style(verdict.artifact_changed).bold().yellow(),
-        pct(verdict.artifact_changed)
-    );
-    println!(
-        "│   • Done Claimed (Rung 1):              {:>4} ({:>5.1}%) │",
-        style(verdict.done_claimed).dim(),
-        pct(verdict.done_claimed)
-    );
-    if verdict.unverified > 0 {
-        println!(
-            "│   • Unverified / In-Progress:           {:>4} ({:>5.1}%) │",
-            style(verdict.unverified).dim(),
-            pct(verdict.unverified)
-        );
-    }
-    println!("│                                                          │");
-    println!(
-        "│ Real Verified Tasks: {:>5} / {:<5} ({:>5.1}%)             │",
-        style(verdict.real_verified_tasks).bold().green(),
-        total,
-        verdict.real_verified_rate
-    );
-
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-
+    ui: &crate::ui::Ui,
+) -> String {
+    let db = db_path.map(|p| p.to_string_lossy().to_string());
     let tokens = &stats.token_usage;
-    println!(
-        "│ Total Tokens:   {:>8} ({})                     │",
-        style(format_number(tokens.total())).bold().magenta(),
-        tokens.total()
-    );
-    println!(
-        "│   • Input:      {:>8}                                │",
-        style(format_number(tokens.input_tokens)).dim()
-    );
-    println!(
-        "│   • Output:     {:>8}                                │",
-        style(format_number(tokens.output_tokens)).dim()
-    );
-    println!(
-        "│   • Cache Read: {:>8}                                │",
-        style(format_number(tokens.cache_read_tokens)).dim()
-    );
-    println!(
-        "│   • Cache Write:{:>8}                                │",
-        style(format_number(tokens.cache_creation_tokens)).dim()
-    );
-
-    if !stats.sessions_by_adapter.is_empty() {
-        println!(
-            "{}",
-            style("├──────────────────────────────────────────────────────────┤").bold()
-        );
-        println!("│ Adapters:                                                │");
-        let mut sorted_adapters: Vec<_> = stats.sessions_by_adapter.iter().collect();
-        sorted_adapters.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-        for (adapter, count) in sorted_adapters {
-            let pct_val = if stats.total_sessions > 0 {
-                (*count as f64 / stats.total_sessions as f64) * 100.0
-            } else {
-                0.0
-            };
-            println!(
-                "│   • {:<20} {:>6} sessions ({:>4.1}%)        │",
-                style(adapter).cyan(),
-                style(count).bold(),
-                pct_val
-            );
-        }
-    }
-
-    if !stats.models_usage_count.is_empty() {
-        println!(
-            "{}",
-            style("├──────────────────────────────────────────────────────────┤").bold()
-        );
-        println!("│ Top Models:                                              │");
-        let mut models: Vec<_> = stats.models_usage_count.iter().collect();
-        models.sort_by(|a, b| b.1.cmp(a.1));
-        for (model, count) in models.iter().take(5) {
-            let model_display = if model.len() > 28 {
-                format!("{}...", &model[..25])
-            } else {
-                (*model).clone()
-            };
-            println!(
-                "│   • {:<28} {:>6} sessions         │",
-                style(model_display).green(),
-                style(count).bold()
-            );
-        }
-    }
-
-    if !stats.tools_usage_count.is_empty() {
-        println!(
-            "{}",
-            style("├──────────────────────────────────────────────────────────┤").bold()
-        );
-        println!("│ Top Tools Used:                                          │");
-        let mut tools: Vec<_> = stats.tools_usage_count.iter().collect();
-        tools.sort_by(|a, b| b.1.cmp(a.1));
-        for (tool, count) in tools.iter().take(5) {
-            let tool_display = if tool.len() > 28 {
-                format!("{}...", &tool[..25])
-            } else {
-                (*tool).clone()
-            };
-            println!(
-                "│   • {:<28} {:>6} calls            │",
-                style(tool_display).yellow(),
-                style(count).bold()
-            );
-        }
-    }
-
-    if !top_repos.is_empty() {
-        println!(
-            "{}",
-            style("├──────────────────────────────────────────────────────────┤").bold()
-        );
-        println!("│ Top Repositories / Workspaces:                           │");
-        for (repo, count) in top_repos.iter().take(5) {
-            let repo_display = if repo.len() > 28 {
-                format!("{}...", &repo[..25])
-            } else {
-                repo.clone()
-            };
-            println!(
-                "│   • {:<28} {:>6} sessions         │",
-                style(repo_display).blue(),
-                style(count).bold()
-            );
-        }
-    }
-
-    println!(
-        "{}",
-        style("└──────────────────────────────────────────────────────────┘").bold()
-    );
-    println!();
+    let view = crate::ui::views::StatsView {
+        db_path: db.as_deref(),
+        total_sessions: stats.total_sessions,
+        total_events: stats.total_events as u64,
+        first_day: stats.first_session_at.map(|d| d.format("%Y-%m-%d").to_string()),
+        last_day: stats.last_session_at.map(|d| d.format("%Y-%m-%d").to_string()),
+        rungs: [
+            verdict.unverified,
+            verdict.done_claimed,
+            verdict.artifact_changed,
+            verdict.test_or_build_passed,
+            verdict.commit_observed,
+            verdict.ci_or_deployment_verified,
+        ],
+        verified: verdict.real_verified_tasks,
+        input_tokens: tokens.input_tokens,
+        output_tokens: tokens.output_tokens,
+        cache_read_tokens: tokens.cache_read_tokens,
+        cache_write_tokens: tokens.cache_creation_tokens,
+        adapters: ranked(&stats.sessions_by_adapter, 3),
+        models: ranked(&stats.models_usage_count, 3)
+            .into_iter()
+            .map(|(m, c)| (crate::ui::views::short_model(&m), c))
+            .collect(),
+        tools: ranked(&stats.tools_usage_count, 3),
+    };
+    crate::ui::views::stats(ui, &view)
 }
 
 // -----------------------------------------------------------------------------
@@ -1143,6 +1015,7 @@ fn run_traces_command(
     all_stubs: bool,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
     let scanner = Scanner::new(storage.clone());
@@ -1234,108 +1107,73 @@ fn run_traces_command(
             .collect();
         println!("{}", serde_json::to_string_pretty(&json_rows)?);
     } else if rows.is_empty() {
-        println!("{}", style("No sessions found in index.").yellow());
-        println!(
-            "Run {} to discover and index traces.",
-            style("agentworth scan").cyan().bold()
+        print!(
+            "{}",
+            crate::ui::views::error(
+                ui,
+                "agentworth traces",
+                "No sessions found in index.",
+                "",
+                &[],
+                &[(
+                    "agentworth scan".to_string(),
+                    "discover and index agent histories".to_string()
+                )],
+            )
         );
     } else {
-        print_traces_table(&rows);
+        let indexed = storage.get_aggregate_stats(all_stubs).map(|s| s.total_sessions).unwrap_or(rows.len());
+        print!("{}", build_traces_view(&rows, indexed, limit, ui));
     }
 
     Ok(())
 }
 
-fn print_traces_table(rows: &[(String, f64, Option<agentworth_schema::OutcomeKind>, agentworth_storage::SessionSummary)]) {
-    println!();
-    println!(
-        "{}",
-        style("┌───────────────┬───────┬──────────────────────────────────────┬─────────────┬──────────────────┬──────────┬──────────┬────────┬──────────────────────┐").bold()
-    );
-    println!(
-        "│ {:<13} │ {:<5} │ {:<36} │ {:<11} │ {:<16} │ {:<8} │ {:<8} │ {:<6} │ {:<20} │",
-        style("VERDICT").bold().cyan(),
-        style("SCORE").bold().cyan(),
-        style("SESSION ID").bold().cyan(),
-        style("ADAPTER").bold().cyan(),
-        style("STARTED").bold().cyan(),
-        style("DURATION").bold().cyan(),
-        style("TOKENS").bold().cyan(),
-        style("EVENTS").bold().cyan(),
-        style("MODELS").bold().cyan(),
-    );
-    println!(
-        "{}",
-        style("├───────────────┼───────┼──────────────────────────────────────┼─────────────┼──────────────────┼──────────┼──────────┼────────┼──────────────────────┤").bold()
-    );
+fn build_traces_view(
+    rows: &[(
+        String,
+        f64,
+        Option<agentworth_schema::OutcomeKind>,
+        agentworth_storage::SessionSummary,
+    )],
+    indexed: usize,
+    limit: usize,
+    ui: &crate::ui::Ui,
+) -> String {
+    let view_rows: Vec<crate::ui::views::TraceRow> = rows
+        .iter()
+        .map(|(_, score, kind, s)| crate::ui::views::TraceRow {
+            session_id: s.session_id.clone(),
+            adapter: s.adapter.clone(),
+            model: s
+                .models_used
+                .first()
+                .map(|m| crate::ui::views::short_model(m))
+                .unwrap_or_else(|| "-".to_string()),
+            score: *score,
+            rung: outcome_rung(*kind),
+            duration_seconds: s.duration_seconds,
+            total_tokens: s.total_tokens,
+        })
+        .collect();
+    crate::ui::views::traces(
+        ui,
+        &format!("agentworth traces --limit {}", limit),
+        indexed,
+        &view_rows,
+    )
+}
 
-    for (badge, score, kind, s) in rows {
-        let id_display = if s.session_id.len() > 36 {
-            format!("{}...", &s.session_id[..33])
-        } else {
-            s.session_id.clone()
-        };
-
-        let started_display = s.started_at.format("%Y-%m-%d %H:%M").to_string();
-
-        let duration_display = if let Some(d) = s.duration_seconds {
-            format_duration(d)
-        } else {
-            "-".to_string()
-        };
-
-        let models_display = if s.models_used.is_empty() {
-            "-".to_string()
-        } else {
-            let joined = s.models_used.join(", ");
-            if joined.len() > 20 {
-                format!("{}...", &joined[..17])
-            } else {
-                joined
-            }
-        };
-
-        let styled_badge = match kind {
-            Some(agentworth_schema::OutcomeKind::CiOrDeploymentVerified) => style(badge).bold().green(),
-            Some(agentworth_schema::OutcomeKind::CommitObserved) => style(badge).green(),
-            Some(agentworth_schema::OutcomeKind::TestOrBuildPassed) => style(badge).bold().cyan(),
-            Some(agentworth_schema::OutcomeKind::ArtifactChanged) => style(badge).yellow(),
-            Some(agentworth_schema::OutcomeKind::DoneClaimed) => style(badge).dim(),
-            None => style(badge).dim(),
-        };
-
-        let styled_score = if *score >= 70.0 {
-            style(format!("{:>5.0}", score)).bold().green()
-        } else if *score >= 40.0 {
-            style(format!("{:>5.0}", score)).bold().yellow()
-        } else {
-            style(format!("{:>5.0}", score)).dim()
-        };
-
-        println!(
-            "│ {:<13} │ {:>5} │ {:<36} │ {:<11} │ {:<16} │ {:>8} │ {:>8} │ {:>6} │ {:<20} │",
-            styled_badge,
-            styled_score,
-            style(id_display).bold(),
-            style(&s.adapter).green(),
-            style(started_display).dim(),
-            duration_display,
-            style(format_number(s.total_tokens)).magenta(),
-            s.total_events,
-            style(models_display).dim(),
-        );
+/// The ladder position of an outcome. `None` is rung 0 — unverified, not missing.
+fn outcome_rung(kind: Option<agentworth_schema::OutcomeKind>) -> usize {
+    match kind {
+        Some(agentworth_schema::OutcomeKind::CiOrDeploymentVerified) => 5,
+        Some(agentworth_schema::OutcomeKind::CommitObserved) => 4,
+        Some(agentworth_schema::OutcomeKind::TestOrBuildPassed) => 3,
+        Some(agentworth_schema::OutcomeKind::ArtifactChanged) => 2,
+        Some(agentworth_schema::OutcomeKind::DoneClaimed) => 1,
+        None => 0,
     }
-
-    println!(
-        "{}",
-        style("└───────────────┴───────┴──────────────────────────────────────┴─────────────┴──────────────────┴──────────┴──────────┴────────┴──────────────────────┘").bold()
-    );
-    println!(
-        "Showing {} traces. Use {} for details.",
-        rows.len(),
-        style("agentworth inspect <id>").cyan()
-    );
-    println!();
 }
 
 fn format_duration(seconds: f64) -> String {
@@ -1833,146 +1671,87 @@ fn format_number(n: u64) -> String {
     }
 }
 
-fn print_scan_summary(summary: &ScanSummary, db_path: Option<&std::path::Path>) {
+fn print_scan_summary(summary: &ScanSummary, ui: &crate::ui::Ui) {
+    let view = crate::ui::views::ScanView {
+        discovered: summary.discovered_sources,
+        scanned: summary.scanned_sessions,
+        skipped: summary.skipped_unchanged,
+        errors: summary.errors_encountered,
+        total_indexed: summary.total_indexed_sessions,
+        total_tokens: summary.aggregate_stats.token_usage.total(),
+        adapters: ranked(&summary.aggregate_stats.sessions_by_adapter, 5),
+    };
+    print!("{}", crate::ui::views::scan_summary(ui, &view));
+}
+
+/// The not-found screen for `inspect`: the failing noun, the nearest ids, the two
+/// commands that resolve it.
+fn inspect_not_found(
+    session_id: &str,
+    db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
+) -> String {
+    let nearest: Vec<String> = open_storage(db_path)
+        .ok()
+        .and_then(|s| {
+            s.list_sessions_filtered(&SessionFilter {
+                limit: None,
+                order_by: Some(SessionOrderBy::StartedAtDesc),
+                ..Default::default()
+            })
+            .ok()
+        })
+        .map(|sessions| {
+            let needle = session_id.to_lowercase();
+            let mut hits: Vec<String> = sessions
+                .iter()
+                .filter(|s| s.session_id.to_lowercase().contains(&needle))
+                .map(|s| format!("{}\t{}", s.session_id, s.started_at.format("%b %e %H:%M")))
+                .collect();
+            if hits.is_empty() {
+                hits = sessions
+                    .iter()
+                    .take(3)
+                    .map(|s| format!("{}\t{}", s.session_id, s.started_at.format("%b %e %H:%M")))
+                    .collect();
+            }
+            hits.truncate(3);
+            hits
+        })
+        .unwrap_or_default();
+
+    crate::ui::views::error(
+        ui,
+        &format!("agentworth inspect {}", session_id),
+        &format!("No indexed session starts with {}.", session_id),
+        "Closest three:",
+        &nearest,
+        &[
+            (
+                "agentworth traces --limit 20".to_string(),
+                "list what is indexed".to_string(),
+            ),
+            (
+                "agentworth scan".to_string(),
+                "re-index, if it should be here".to_string(),
+            ),
+        ],
+    )
+}
+
+/// Archie, above a screen that has not yet been moved onto the grid. The old banner
+/// carried a magnifying-glass emoji that is double-width in some terminals; no CLI output
+/// carries an emoji any more.
+fn print_archie_banner(ui: &crate::ui::Ui) {
+    let art = crate::ui::archie(ui, &crate::ui::eyes(ui, crate::ui::EyeKind::Digging));
     println!();
-    println!(
-        "{}",
-        style("┌──────────────────────────────────────────────────────────┐").bold()
-    );
-    println!(
-        "{}",
-        style("│ AgentWorth Scan Summary                                  │")
-            .bold()
-            .cyan()
-    );
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-    println!(
-        "│ Discovered:     {:>8} session files                   │",
-        style(summary.discovered_sources).bold()
-    );
-    println!(
-        "│ Scanned / Sync: {:>8} ({} skipped, {} errors)   │",
-        style(summary.scanned_sessions).green().bold(),
-        style(summary.skipped_unchanged).dim(),
-        if summary.errors_encountered > 0 {
-            style(summary.errors_encountered).red().bold().to_string()
-        } else {
-            style(0).dim().to_string()
-        }
-    );
-    println!(
-        "│ Total Indexed:  {:>8} sessions in SQLite index        │",
-        style(summary.total_indexed_sessions).bold().yellow()
-    );
-    if let Some(path) = db_path {
-        let path_str = path.to_string_lossy();
-        let display_path = if path_str.len() > 40 {
-            format!("...{}", &path_str[path_str.len() - 37..])
-        } else {
-            path_str.to_string()
-        };
-        println!("│ Index Path:     {:<41}│", style(display_path).dim());
+    for line in art {
+        println!("  {}", ui.paint(crate::ui::Role::Chrome, &line));
     }
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-
-    let tokens = &summary.aggregate_stats.token_usage;
-    println!(
-        "│ Total Tokens:   {:>8} ({})                     │",
-        style(format_number(tokens.total())).bold().magenta(),
-        tokens.total()
-    );
-    println!(
-        "│   • Input:      {:>8}                                │",
-        style(format_number(tokens.input_tokens)).dim()
-    );
-    println!(
-        "│   • Output:     {:>8}                                │",
-        style(format_number(tokens.output_tokens)).dim()
-    );
-    println!(
-        "│   • Cache Read: {:>8}                                │",
-        style(format_number(tokens.cache_read_tokens)).dim()
-    );
-    println!(
-        "│   • Cache Write:{:>8}                                │",
-        style(format_number(tokens.cache_creation_tokens)).dim()
-    );
-
-    if !summary.aggregate_stats.sessions_by_adapter.is_empty() {
-        println!(
-            "{}",
-            style("├──────────────────────────────────────────────────────────┤").bold()
-        );
-        println!("│ Adapters:                                                │");
-        let mut sorted_adapters: Vec<_> = summary.aggregate_stats.sessions_by_adapter.iter().collect();
-        sorted_adapters.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-        for (adapter, count) in sorted_adapters {
-            println!(
-                "│   • {:<20} {:>6} sessions               │",
-                style(adapter).cyan(),
-                style(count).bold()
-            );
-        }
-    }
-
-    if !summary.aggregate_stats.models_usage_count.is_empty() {
-        println!(
-            "{}",
-            style("├──────────────────────────────────────────────────────────┤").bold()
-        );
-        println!("│ Top Models:                                              │");
-        let mut models: Vec<_> = summary.aggregate_stats.models_usage_count.iter().collect();
-        models.sort_by(|a, b| b.1.cmp(a.1));
-        for (model, count) in models.iter().take(5) {
-            let model_display = if model.len() > 28 {
-                format!("{}...", &model[..25])
-            } else {
-                (*model).clone()
-            };
-            println!(
-                "│   • {:<28} {:>6} sessions         │",
-                style(model_display).green(),
-                style(count).bold()
-            );
-        }
-    }
-
-    if !summary.aggregate_stats.tools_usage_count.is_empty() {
-        println!(
-            "{}",
-            style("├──────────────────────────────────────────────────────────┤").bold()
-        );
-        println!("│ Top Tools Used:                                          │");
-        let mut tools: Vec<_> = summary.aggregate_stats.tools_usage_count.iter().collect();
-        tools.sort_by(|a, b| b.1.cmp(a.1));
-        for (tool, count) in tools.iter().take(5) {
-            let tool_display = if tool.len() > 28 {
-                format!("{}...", &tool[..25])
-            } else {
-                (*tool).clone()
-            };
-            println!(
-                "│   • {:<28} {:>6} calls            │",
-                style(tool_display).yellow(),
-                style(count).bold()
-            );
-        }
-    }
-
-    println!(
-        "{}",
-        style("└──────────────────────────────────────────────────────────┘").bold()
-    );
     println!();
 }
 
-fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Result<()> {
+fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>, ui: &crate::ui::Ui) -> Result<()> {
     let storage_res = open_storage(custom_db_path.clone());
     let mut storage_healthy = false;
     let mut total_indexed = 0;
@@ -2059,7 +1838,7 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
         return Ok(());
     }
 
-    print_archie_ascii_banner();
+    print_archie_banner(ui);
     println!(
         "{}",
         style("┌──────────────────────────────────────────────────────────┐").bold()
@@ -2138,7 +1917,7 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>) -> Res
 // Command: Matrix
 // -----------------------------------------------------------------------------
 
-fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()> {
+fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>, ui: &crate::ui::Ui) -> Result<()> {
     let adapters: Vec<Box<dyn agentworth_adapter_sdk::AgentAdapter>> = vec![
         Box::new(agentworth_adapters::AiderAdapter::new()),
         Box::new(agentworth_adapters::ClaudeCodeAdapter::new()),
@@ -2241,7 +2020,7 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>) -> Result<()
         return Ok(());
     }
 
-    print_archie_ascii_banner();
+    print_archie_banner(ui);
     println!(
         "{}",
         style("┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐").bold()
@@ -2335,6 +2114,7 @@ struct UsageCommandArgs<'a> {
     by_model: bool,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &'a crate::ui::Ui,
 }
 
 fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
@@ -2347,6 +2127,7 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
         by_model,
         json,
         db_path,
+        ui,
     } = args;
     let storage = open_storage(db_path)?;
 
@@ -2366,113 +2147,10 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
             return Ok(());
         }
 
-        println!();
-        if let Some(threshold) = alert_above {
-            if alert_triggered {
-                println!(
-                    "{}",
-                    style(format!(
-                        "🚨 BURN ALARM TRIGGERED: Window spend (${:.2}) exceeds alert threshold (${:.2})!",
-                        p.estimated_cost_usd, threshold
-                    ))
-                    .bold()
-                    .red()
-                );
-            } else {
-                println!(
-                    "{}",
-                    style(format!(
-                        "🛡️  Burn Alarm Safe: Window spend (${:.2}) is below threshold (${:.2}).",
-                        p.estimated_cost_usd, threshold
-                    ))
-                    .bold()
-                    .green()
-                );
-            }
-            println!();
-        }
-
-        println!(
+        print!(
             "{}",
-            style("┌──────────────────────────────────────────────────────────┐").bold()
+            build_pacing_view(&p, hours, alert_above, alert_triggered, ui)
         );
-        println!(
-            "│ {}                   │",
-            style(format!("⏱️  {}-Hour Rolling Pacing Window", hours)).bold()
-        );
-        println!(
-            "{}",
-            style("├──────────────────────────────────────────────────────────┤").bold()
-        );
-        println!(
-            "│ Window:          {} -> {} │",
-            style(p.started_at.format("%Y-%m-%d %H:%M").to_string()).cyan(),
-            style(p.ended_at.format("%H:%M").to_string()).cyan(),
-        );
-        println!(
-            "│ Sessions Active: {:<39} │",
-            style(p.session_count).bold()
-        );
-        println!(
-            "│ Total Events:    {:<39} │",
-            style(p.total_events).bold()
-        );
-        println!(
-            "│ Tokens Consumed: {:<39} │",
-            style(format!(
-                "{} ({:.2}M)",
-                format_number(p.total_tokens),
-                p.total_tokens as f64 / 1_000_000.0
-            ))
-            .green()
-            .bold()
-        );
-        println!(
-            "│ Burn Velocity:   {:<39} │",
-            style(format!(
-                "{:.1}M tokens / hour",
-                p.burn_rate_tokens_per_hour / 1_000_000.0
-            ))
-            .yellow()
-        );
-        println!(
-            "│ Prompt Caching:  {:<39} │",
-            style(format!("{:.1}% cache hit ratio", p.cache_hit_ratio)).cyan()
-        );
-        println!(
-            "│ Estimated Cost:  {:<39} │",
-            style(format!("${:.2} USD", p.estimated_cost_usd))
-                .magenta()
-                .bold()
-        );
-
-        if !p.active_adapters.is_empty() {
-            println!(
-                "{}",
-                style("├──────────────────────────────────────────────────────────┤").bold()
-            );
-            println!("│ Active Adapters in Window:                               │");
-            for a in &p.active_adapters {
-                println!("│   • {:<52} │", style(a).cyan());
-            }
-        }
-
-        if !p.active_models.is_empty() {
-            println!(
-                "{}",
-                style("├──────────────────────────────────────────────────────────┤").bold()
-            );
-            println!("│ Active Models in Window:                                 │");
-            for m in &p.active_models {
-                println!("│   • {:<52} │", style(m).green());
-            }
-        }
-
-        println!(
-            "{}",
-            style("└──────────────────────────────────────────────────────────┘").bold()
-        );
-        println!();
         return Ok(());
     }
 
@@ -2485,85 +2163,33 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
         }
 
         if records.is_empty() {
-            println!("No usage records found. Run `agentworth scan` (or `agwt scan`) to index local sessions.");
+            print!("{}", no_usage_records(ui));
             return Ok(());
         }
 
-        let title = match period {
-            "week" => "📅 AgentWorth Weekly Usage Rollup (by model)",
-            "month" => "🗓️  AgentWorth Monthly Usage Rollup (by model)",
-            _ => "📊 AgentWorth Daily Usage Ledger (by model)",
-        };
-
-        println!();
-        println!("{}", style(format!("┌─ {} ───────────────────────────────────────────┐", title)).bold());
-        println!(
+        let rows: Vec<crate::ui::views::UsageRow> = records
+            .iter()
+            .map(|r| crate::ui::views::UsageRow {
+                period: r.period.clone(),
+                who: r.model.clone(),
+                sessions: r.session_count,
+                input: r.input_tokens,
+                output: r.output_tokens,
+                cache_read: r.cache_read_tokens,
+                cost_usd: r.estimated_cost_usd,
+                measured: r.total_tokens > 0,
+            })
+            .collect();
+        print!(
             "{}",
-            style("├────────────┬─────────────┬───────────┬────────────┬────────────┬────────────┬───────────┤").bold()
+            crate::ui::views::usage(
+                ui,
+                &format!("agentworth usage --period {} --by-model", period),
+                "MODEL",
+                period,
+                &rows
+            )
         );
-        println!(
-            "│ {:<10} │ {:<11} │ {:<9} │ {:<10} │ {:<10} │ {:<10} │ {:<9} │",
-            style("PERIOD").bold(),
-            style("MODEL").bold(),
-            style("SESSIONS").bold(),
-            style("INPUT").bold(),
-            style("OUTPUT").bold(),
-            style("CACHE READ").bold(),
-            style("EST. COST").bold()
-        );
-        println!(
-            "{}",
-            style("├────────────┼─────────────┼───────────┼────────────┼────────────┼────────────┼───────────┤").bold()
-        );
-
-        let mut total_sessions = 0;
-        let mut total_tokens = 0;
-        let mut total_cost = 0.0;
-
-        for r in &records {
-            total_sessions += r.session_count;
-            total_tokens += r.total_tokens;
-            total_cost += r.estimated_cost_usd;
-
-            let model_disp = if r.model.len() > 11 {
-                format!("{}...", &r.model[..8])
-            } else {
-                r.model.clone()
-            };
-            let input_disp = format_number(r.input_tokens);
-            let output_disp = format_number(r.output_tokens);
-            let cache_disp = format_number(r.cache_read_tokens);
-            let cost_disp = format!("${:.2}", r.estimated_cost_usd);
-
-            println!(
-                "│ {:<10} │ {:<11} │ {:>9} │ {:>10} │ {:>10} │ {:>10} │ {:>9} │",
-                style(&r.period).cyan(),
-                style(model_disp).green(),
-                r.session_count,
-                input_disp,
-                output_disp,
-                cache_disp,
-                style(cost_disp).magenta()
-            );
-        }
-
-        println!(
-            "{}",
-            style("├────────────┴─────────────┼───────────┼────────────┴────────────┼────────────┼───────────┤").bold()
-        );
-        println!(
-            "│ TOTAL (Displayed)        │ {:>9} │ {:<23} │ {:>10} │ {:>9} │",
-            style(total_sessions).bold(),
-            "",
-            style(format_number(total_tokens)).bold(),
-            style(format!("${:.2}", total_cost)).bold().magenta()
-        );
-        println!(
-            "{}",
-            style("└──────────────────────────┴───────────┴─────────────────────────┴────────────┴───────────┘").bold()
-        );
-        println!();
-
         return Ok(());
     }
 
@@ -2579,81 +2205,131 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
     }
 
     if records.is_empty() {
-        println!("No usage records found. Run `agentworth scan` (or `agwt scan`) to index local sessions.");
+        print!("{}", no_usage_records(ui));
         return Ok(());
     }
 
-    let title = match period {
-        "week" => "📅 AgentWorth Weekly Usage Rollup",
-        "month" => "🗓️  AgentWorth Monthly Usage Rollup",
-        _ => "📊 AgentWorth Daily Usage Ledger",
-    };
-
-    println!();
-    println!("{}", style(format!("┌─ {} ───────────────────────────────────────────┐", title)).bold());
-    println!(
+    let rows: Vec<crate::ui::views::UsageRow> = records
+        .iter()
+        .map(|r| crate::ui::views::UsageRow {
+            period: r.period.clone(),
+            who: r.adapter.clone(),
+            sessions: r.session_count,
+            input: r.input_tokens,
+            output: r.output_tokens,
+            cache_read: r.cache_read_tokens,
+            cost_usd: r.estimated_cost_usd,
+            // Nine of today's eleven adapters keep no token counts. Printing 0 and $0.00
+            // for them asserts something false, so the row prints dashes instead.
+            measured: r.total_tokens > 0,
+        })
+        .collect();
+    print!(
         "{}",
-        style("├────────────┬─────────────┬───────────┬────────────┬────────────┬────────────┬───────────┤").bold()
+        crate::ui::views::usage(
+            ui,
+            &format!("agentworth usage --period {}", period),
+            "ADAPTER",
+            period,
+            &rows
+        )
     );
-    println!(
-        "│ {:<10} │ {:<11} │ {:<9} │ {:<10} │ {:<10} │ {:<10} │ {:<9} │",
-        style("PERIOD").bold(),
-        style("ADAPTER").bold(),
-        style("SESSIONS").bold(),
-        style("INPUT").bold(),
-        style("OUTPUT").bold(),
-        style("CACHE READ").bold(),
-        style("EST. COST").bold()
-    );
-    println!(
-        "{}",
-        style("├────────────┼─────────────┼───────────┼────────────┼────────────┼────────────┼───────────┤").bold()
-    );
-
-    let mut total_sessions = 0;
-    let mut total_tokens = 0;
-    let mut total_cost = 0.0;
-
-    for r in &records {
-        total_sessions += r.session_count;
-        total_tokens += r.total_tokens;
-        total_cost += r.estimated_cost_usd;
-
-        let input_disp = format_number(r.input_tokens);
-        let output_disp = format_number(r.output_tokens);
-        let cache_disp = format_number(r.cache_read_tokens);
-        let cost_disp = format!("${:.2}", r.estimated_cost_usd);
-
-        println!(
-            "│ {:<10} │ {:<11} │ {:>9} │ {:>10} │ {:>10} │ {:>10} │ {:>9} │",
-            style(&r.period).cyan(),
-            style(&r.adapter).green(),
-            r.session_count,
-            input_disp,
-            output_disp,
-            cache_disp,
-            style(cost_disp).magenta()
-        );
-    }
-
-    println!(
-        "{}",
-        style("├────────────┴─────────────┼───────────┼────────────┴────────────┼────────────┼───────────┤").bold()
-    );
-    println!(
-        "│ TOTAL (Displayed)        │ {:>9} │ {:<23} │ {:>10} │ {:>9} │",
-        style(total_sessions).bold(),
-        "",
-        style(format_number(total_tokens)).bold(),
-        style(format!("${:.2}", total_cost)).bold().magenta()
-    );
-    println!(
-        "{}",
-        style("└──────────────────────────┴───────────┴─────────────────────────┴────────────┴───────────┘").bold()
-    );
-    println!();
 
     Ok(())
+}
+
+fn no_usage_records(ui: &crate::ui::Ui) -> String {
+    crate::ui::views::error(
+        ui,
+        "agentworth usage",
+        "No usage records in the index.",
+        "",
+        &[],
+        &[(
+            "agentworth scan".to_string(),
+            "index local sessions first".to_string(),
+        )],
+    )
+}
+
+fn build_pacing_view(
+    p: &agentworth_storage::PacingSummary,
+    hours: i64,
+    alert_above: Option<f64>,
+    alert_triggered: bool,
+    ui: &crate::ui::Ui,
+) -> String {
+    use crate::ui::{compact, thousands, views, Role};
+    let i = ui.inner();
+    let mut out = String::new();
+
+    out.push_str(&ui.header(
+        &format!("agentworth usage --pacing --hours {}", hours),
+        &format!(
+            "{} {} {}",
+            p.started_at.format("%Y-%m-%d %H:%M"),
+            ui.arrow(),
+            p.ended_at.format("%H:%M")
+        ),
+    ));
+    out.push('\n');
+
+    for (label, value, role) in [
+        (
+            "sessions active",
+            thousands(p.session_count as u64),
+            Role::Value,
+        ),
+        ("events", thousands(p.total_events as u64), Role::Value),
+        ("tokens consumed", compact(p.total_tokens), Role::Value),
+        (
+            "burn velocity",
+            format!("{:.1}M / hour", p.burn_rate_tokens_per_hour / 1_000_000.0),
+            Role::Value,
+        ),
+        (
+            "cache hit ratio",
+            format!("{:.1}%", p.cache_hit_ratio),
+            Role::Value,
+        ),
+        (
+            "estimated cost",
+            format!("${:.2}", p.estimated_cost_usd),
+            Role::Verified,
+        ),
+    ] {
+        out.push_str(&format!(
+            "{}\n",
+            ui.leaders(&format!("  {}", label), &value, i, role)
+        ));
+    }
+
+    if let Some(threshold) = alert_above {
+        out.push('\n');
+        let (role, line) = if alert_triggered {
+            (
+                Role::Error,
+                format!(
+                    "Window spend ${:.2} is over the ${:.2} alarm.",
+                    p.estimated_cost_usd, threshold
+                ),
+            )
+        } else {
+            (
+                Role::Label,
+                format!(
+                    "Window spend ${:.2} is under the ${:.2} alarm.",
+                    p.estimated_cost_usd, threshold
+                ),
+            )
+        };
+        out.push_str(&format!("  {}\n", ui.paint(role, &line)));
+    }
+
+    let _ = views::RUNG_LABELS;
+    out.push('\n');
+    out.push_str(&ui.next("agentworth usage --period day", "the same spend, by day"));
+    out
 }
 
 // -----------------------------------------------------------------------------
@@ -2664,6 +2340,7 @@ fn run_blame_command(
     file_path: &str,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
     let matches = storage.find_sessions_for_blame(file_path)?;
@@ -2673,73 +2350,36 @@ fn run_blame_command(
         return Ok(());
     }
 
-    println!();
-    println!(
-        "{}",
-        style("┌──────────────────────────────────────────────────────────┐").bold()
-    );
-    println!(
-        "│ {}             │",
-        style(format!("🔍 AI Code Blame: {}", if file_path.len() > 38 { format!("...{}", &file_path[file_path.len()-35..]) } else { file_path.to_string() })).bold()
-    );
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-
-    if matches.is_empty() {
-        println!("│ No indexed sessions modified files matching pattern.     │");
-    } else {
-        println!("│ Found {} session(s) touching this path:                  │", matches.len());
-        println!(
-            "{}",
-            style("├──────────────────────────────────────────────────────────┤").bold()
-        );
-        for (i, m) in matches.iter().enumerate() {
-            println!(
-                "│ [{}] Session: {:<43} │",
-                i + 1,
-                style(&m.session_id).cyan().bold()
-            );
-            println!(
-                "│     Adapter:   {:<41} │",
-                style(&m.adapter).green()
-            );
-            println!(
-                "│     Touched:   {:<41} │",
-                format!(
-                    "{} ({})",
-                    m.modified_at.format("%Y-%m-%d %H:%M:%S UTC"),
-                    m.action
-                )
-            );
-            println!(
-                "│     Started:   {:<41} │",
-                m.started_at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-            );
-            if !m.models_used.is_empty() {
-                println!(
-                    "│     Models:    {:<41} │",
-                    style(m.models_used.join(", ")).yellow()
-                );
+    // The question is not who edited the file, it is which edit is trustworthy — so each
+    // row's trace is scored for its ladder position, the same way `traces` does it.
+    let scanner = Scanner::new(storage.clone());
+    let rows: Vec<crate::ui::views::BlameRow> = matches
+        .iter()
+        .map(|m| {
+            let rung = scanner
+                .load_trace(&m.session_id)
+                .ok()
+                .and_then(|t| agentworth_outcomes::highest_outcome(&evaluate_trace_outcomes(&t)).map(|o| o.kind))
+                .map(Some)
+                .map(outcome_rung)
+                .unwrap_or(0);
+            crate::ui::views::BlameRow {
+                when: m.modified_at.format("%b %e %H:%M").to_string(),
+                rung,
+                session_id: m.session_id.clone(),
+                model: m
+                    .model
+                    .clone()
+                    .or_else(|| m.models_used.first().cloned())
+                    .map(|s| crate::ui::views::short_model(&s))
+                    .unwrap_or_else(|| "-".to_string()),
+                tool_calls: m.tool_calls_count,
+                action: m.action.clone(),
             }
-            println!(
-                "│     Tokens:    {:<41} │",
-                format!("{} tokens ({} tool calls)", format_number(m.total_tokens), m.tool_calls_count)
-            );
-            if i + 1 < matches.len() {
-                println!(
-                    "│                                                          │"
-                );
-            }
-        }
-    }
+        })
+        .collect();
 
-    println!(
-        "{}",
-        style("└──────────────────────────────────────────────────────────┘").bold()
-    );
-    println!();
+    print!("{}", crate::ui::views::blame(ui, file_path, &rows));
 
     Ok(())
 }
