@@ -960,3 +960,141 @@ fn test_cli_receipt_command_ansi_svg_and_export() {
         .success()
         .stdout(predicate::str::contains("<svg width=\"1200\" height=\"630\""));
 }
+
+/// A two-round compacted session, written in the shape Claude Code writes one: a
+/// `system`/`compact_boundary` record carrying `compactMetadata`, immediately followed by a
+/// `user` record with `isCompactSummary: true`.
+fn setup_compacted_claude_session(dir: &std::path::Path) -> String {
+    let claude_dir = dir.join(".claude").join("projects").join("compacted-project");
+    fs::create_dir_all(&claude_dir).unwrap();
+
+    let lines = [
+        r#"{"type":"user","timestamp":"2026-09-01T10:00:00Z","content":"build the compaction diff"}"#,
+        r#"{"type":"assistant","timestamp":"2026-09-01T10:01:00Z","model":"claude-opus-5","usage":{"input_tokens":500,"output_tokens":120,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"We decided to store the round boundaries rather than rescan the file. The splitter is hand-rolled because the regex crate has no lookbehind."}]}"#,
+        r#"{"type":"system","subtype":"compact_boundary","timestamp":"2026-09-01T10:30:00Z","uuid":"b1","compactMetadata":{"trigger":"manual","preTokens":754356,"postTokens":25834,"durationMs":1000,"cumulativeDroppedTokens":728522}}"#,
+        r#"{"type":"user","timestamp":"2026-09-01T10:30:01Z","isCompactSummary":true,"parentUuid":"b1","message":{"role":"user","content":"The work so far concerned the extractor and its tests."}}"#,
+        r#"{"type":"assistant","timestamp":"2026-09-01T11:00:00Z","content":[{"type":"text","text":"Going with 0.6 Jaccard instead of an exact match on the sentence text."}]}"#,
+        r#"{"type":"system","subtype":"compact_boundary","timestamp":"2026-09-01T11:30:00Z","uuid":"b2","compactMetadata":{"trigger":"manual","preTokens":851578,"postTokens":19399,"durationMs":1000,"cumulativeDroppedTokens":832179}}"#,
+        r#"{"type":"user","timestamp":"2026-09-01T11:30:01Z","isCompactSummary":true,"parentUuid":"b2","message":{"role":"user","content":"Work continues on the tool surface."}}"#,
+        r#"{"type":"assistant","timestamp":"2026-09-01T11:31:00Z","content":[{"type":"text","text":"We decided this last sentence is after every round and is still in context."}]}"#,
+    ];
+
+    let session_file = claude_dir.join("compacted_session_1.jsonl");
+    let mut file = File::create(&session_file).unwrap();
+    for line in lines {
+        writeln!(file, "{line}").unwrap();
+    }
+    "compacted_session_1".to_string()
+}
+
+#[test]
+fn test_cli_forgotten_command_reports_what_compaction_dropped() {
+    let temp = tempdir().unwrap();
+    let session_id = setup_compacted_claude_session(temp.path());
+    let db_path = temp.path().join("forgotten.db");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .arg("--json")
+        .assert()
+        .success();
+
+    // JSON first: the structured answer, and the numbers this whole feature is about.
+    let json_out = Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("forgotten")
+        .arg(&session_id)
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: serde_json::Value = serde_json::from_slice(&json_out).expect("forgotten --json");
+
+    assert_eq!(value["compactions"], 2);
+    assert_eq!(value["forgotten_total"], 3);
+    assert_eq!(
+        value["receipt"]["rounds_source"], "index",
+        "the boundaries must come from the scan, not from a rescan inside the command"
+    );
+    assert_eq!(value["receipt"]["method"], "regex_v1");
+    let rows = value["forgotten"].as_array().unwrap();
+    assert_eq!(rows[0]["round"], 2, "newest first");
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r["text"].as_str().unwrap().contains("still in context")),
+        "a sentence after the last boundary was never dropped"
+    );
+
+    // A prefix resolves the same way `agentworth inspect` accepts one.
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("forgotten")
+        .arg("compacted_ses")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Things you decided"))
+        .stdout(predicate::str::contains("0.6 Jaccard"));
+
+    // `--round` narrows to one round.
+    let one_round = Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("forgotten")
+        .arg(&session_id)
+        .arg("--round")
+        .arg("1")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let one: serde_json::Value = serde_json::from_slice(&one_round).unwrap();
+    assert!(one["forgotten"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["round"] == 1));
+}
+
+/// A session that never compacted must say so on the CLI too, rather than printing an empty
+/// screen a reader would take for a finding.
+#[test]
+fn test_cli_forgotten_command_on_a_session_that_never_compacted() {
+    let temp = tempdir().unwrap();
+    let (_file, session_id) = setup_sample_claude_session(temp.path());
+    let db_path = temp.path().join("forgotten_none.db");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("scan")
+        .arg(temp.path())
+        .arg("--json")
+        .assert()
+        .success();
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("forgotten")
+        .arg(&session_id)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("never compacted"))
+        .stdout(predicate::str::contains("no_compactions_in_this_session"));
+}

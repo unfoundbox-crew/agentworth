@@ -37,6 +37,9 @@ mod version_info;
 // `commands::handoff` would collide with the `crate::handoff` module this command renders.
 #[path = "commands/handoff.rs"]
 mod handoff_command;
+// Same collision, same fix: `commands::forgotten` would clash with `crate::forgotten`.
+#[path = "commands/forgotten.rs"]
+mod forgotten_command;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -315,6 +318,33 @@ enum Commands {
         max_lines: Option<usize>,
 
         /// Output the structured handoff as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// What compaction dropped: decisions this session made and its own summaries did not keep
+    Forgotten {
+        /// Session to diff, by full ID or a unique prefix. Defaults to the newest session
+        /// indexed for this directory's repository.
+        session_id: Option<String>,
+
+        /// One 1-based compaction round. Defaults to every round.
+        #[arg(long)]
+        round: Option<u32>,
+
+        /// Any of decision, rejected, reason. Repeatable. Defaults to all three.
+        #[arg(long = "class", value_name = "CLASS")]
+        classes: Vec<String>,
+
+        /// How many statements to return, newest first (default 20, ceiling 200)
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Mask secrets, paths, and this session's own repository name before printing
+        #[arg(short, long)]
+        redact: bool,
+
+        /// Output the structured diff as JSON
         #[arg(long)]
         json: bool,
     },
@@ -723,6 +753,25 @@ pub fn run() -> Result<()> {
                 redact,
                 max_lines,
                 markdown,
+                resolve_json(json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Commands::Forgotten {
+            session_id,
+            round,
+            classes,
+            limit,
+            redact,
+            json,
+        } => {
+            forgotten_command::run_forgotten_command(
+                session_id,
+                round,
+                classes,
+                limit,
+                redact,
                 resolve_json(json),
                 cli.db_path,
                 &ui,
