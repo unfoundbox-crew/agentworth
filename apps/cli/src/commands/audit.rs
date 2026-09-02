@@ -13,8 +13,6 @@ use agentworth_redaction::{RedactionCategory, RedactionReport, Redactor};
 use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent};
 use agentworth_storage::{extract_repository_or_workspace, SessionFilter, Storage};
 use anyhow::Result;
-use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 
 /// Severity levels for forensic safety findings.
@@ -66,16 +64,23 @@ pub fn run_audit_command(
     safety_only: bool,
     json_output: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
-    let report = build_safety_audit_report(storage, safety_only, json_output)?;
+    let report = if json_output {
+        build_safety_audit_report(storage, safety_only)?
+    } else {
+        crate::ui::with_status(ui, "auditing sessions", || {
+            build_safety_audit_report(storage, safety_only)
+        })?
+    };
 
     if json_output {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    render_ascii_safety_report(&report);
+    print!("{}", render_audit_view(ui, &report));
 
     Ok(())
 }
@@ -96,13 +101,10 @@ pub fn run_audit_command(
 /// `detect_credential_leak` runs the full `Redactor` over every event of every session, so an
 /// unbounded scan over a large index is genuinely slower, not just a bigger aggregate query. That
 /// heavier-per-item cost doesn't justify keeping a silent cap on a security tool, but it does
-/// justify the progress bar below (mirroring `search.rs`'s identical "loop over every session,
-/// load_trace each" indexing pass) so a large-index scan reads as working, not hung.
-fn build_safety_audit_report(
-    storage: Arc<Storage>,
-    safety_only: bool,
-    json_output: bool,
-) -> Result<SafetyAuditReport> {
+/// justify `run_audit_command` wrapping this call in `ui::with_status` (mirroring
+/// `search.rs`'s identical "loop over every session, load_trace each" indexing pass) so a
+/// large-index scan reads as working, not hung.
+fn build_safety_audit_report(storage: Arc<Storage>, safety_only: bool) -> Result<SafetyAuditReport> {
     let scanner = Scanner::new(storage.clone());
 
     let all_sessions = storage.list_sessions_filtered(&SessionFilter {
@@ -110,22 +112,6 @@ fn build_safety_audit_report(
         include_stubs: Some(true),
         ..Default::default()
     })?;
-
-    let pb = if !json_output {
-        let pb = ProgressBar::new(all_sessions.len() as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template(
-                    "{spinner:.cyan.bold} Auditing sessions ▕{bar:30.cyan/238}▏ {pos}/{len} sessions",
-                )
-                .unwrap()
-                .progress_chars("█▉▊▋▌▍▎▏ "),
-        );
-        Some(pb)
-    } else {
-        None
-    };
 
     let mut report = SafetyAuditReport {
         total_sessions_audited: all_sessions.len(),
@@ -145,13 +131,6 @@ fn build_safety_audit_report(
             let project = extract_repository_or_workspace(&sess.source_path);
             audit_trace(&trace, &project, safety_only, &redactor, &mut report);
         }
-        if let Some(ref pb) = pb {
-            pb.inc(1);
-        }
-    }
-
-    if let Some(pb) = pb {
-        pb.finish_and_clear();
     }
 
     // Sort findings: Critical first, then High, then Warn, then by timestamp desc
@@ -628,127 +607,30 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 }
 
 /// Render the ASCII Safety Audit Report.
-fn render_ascii_safety_report(report: &SafetyAuditReport) {
-    println!();
-    println!(
-        "{}",
-        style("┌─ 🛡️  AgentWorth Agent Safety & Forensic Threat Audit ────────────────┐")
-            .bold()
-            .cyan()
-    );
-    println!(
-        "│ Sessions Audited: {:<50} │",
-        style(report.total_sessions_audited).bold()
-    );
-    println!(
-        "│ Threat Summary:   {} Critical  •  {} High  •  {} Warn {:>10} │",
-        style(format!("{}", report.critical_count)).bold().red(),
-        style(format!("{}", report.high_count)).bold().yellow(),
-        style(format!("{}", report.warn_count)).bold().cyan(),
-        ""
-    );
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────────────────┤")
-            .bold()
-    );
-
-    if report.findings.is_empty() {
-        println!("│ ✓ Zero security threats or dangerous tool calls detected across index. │");
-        println!(
-            "{}",
-            style("└────────────────────────────────────────────────────────────────────────┘")
-                .bold()
-        );
-        println!();
-        return;
-    }
-
-    for (i, f) in report.findings.iter().enumerate() {
-        let (_sev_label, sev_styled) = match f.severity {
-            SafetySeverity::Critical => ("CRITICAL", style("[CRITICAL]").bold().red()),
-            SafetySeverity::High => ("HIGH", style("[HIGH]").bold().yellow()),
-            SafetySeverity::Warn => ("WARN", style("[WARN]").bold().cyan()),
-        };
-
-        println!(
-            "│ {}  {:<12} {:<49} │",
-            style(format!("#{:02}", i + 1)).dim(),
-            sev_styled,
-            style(&f.title).bold()
-        );
-        println!(
-            "│ Rule ID:   {:<24} Project: {:<27} │",
-            style(&f.rule_id).magenta(),
-            style(&f.project).cyan()
-        );
-        println!(
-            "│ Session:   {:<24} Adapter: {:<27} │",
-            style(&f.session_id).bold(),
-            style(&f.adapter).green()
-        );
-        println!(
-            "│ Timestamp: {:<24} Turn:    {:<27} │",
-            style(&f.timestamp).dim(),
-            style(format!("#{}", f.turn_index)).yellow()
-        );
-
-        println!(
-            "│ {}",
-            style("──────────────────────────────────────────────────────────────────────").dim()
-        );
-
-        // Description wrapped
-        println!("│ Description:                                                           │");
-        for line in wrap_line(&f.description, 66) {
-            println!("│   {:<68} │", style(line).dim());
-        }
-
-        // Snippet wrapped
-        println!("│ Forensic Snippet:                                                      │");
-        for line in wrap_line(&f.offending_snippet, 66) {
-            println!("│   {:<68} │", style(line).red());
-        }
-
-        if i + 1 < report.findings.len() {
-            println!(
-                "{}",
-                style("├────────────────────────────────────────────────────────────────────────┤")
-                    .bold()
-            );
-        }
-    }
-
-    println!(
-        "{}",
-        style("└────────────────────────────────────────────────────────────────────────┘")
-            .bold()
-    );
-    println!();
-}
-
-fn wrap_line(text: &str, max_width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for paragraph in text.lines() {
-        let mut current = String::new();
-        for word in paragraph.split_whitespace() {
-            if current.len() + word.len() + 1 > max_width && !current.is_empty() {
-                lines.push(current);
-                current = String::new();
-            }
-            if !current.is_empty() {
-                current.push(' ');
-            }
-            current.push_str(word);
-        }
-        if !current.is_empty() {
-            lines.push(current);
-        }
-    }
-    if lines.is_empty() {
-        lines.push(text.to_string());
-    }
-    lines
+fn render_audit_view(ui: &crate::ui::Ui, report: &SafetyAuditReport) -> String {
+    let view = crate::ui::views::AuditView {
+        total_sessions_audited: report.total_sessions_audited,
+        critical_count: report.critical_count,
+        high_count: report.high_count,
+        warn_count: report.warn_count,
+        findings: report
+            .findings
+            .iter()
+            .map(|f| crate::ui::views::AuditFindingRow {
+                severity: f.severity.as_str(),
+                title: &f.title,
+                rule_id: &f.rule_id,
+                project: &f.project,
+                session_id: &f.session_id,
+                adapter: &f.adapter,
+                timestamp: &f.timestamp,
+                turn_index: f.turn_index,
+                description: &f.description,
+                offending_snippet: &f.offending_snippet,
+            })
+            .collect(),
+    };
+    crate::ui::views::audit(ui, &view)
 }
 
 #[cfg(test)]
@@ -1072,7 +954,7 @@ mod tests {
         }
 
         let storage = Arc::new(storage);
-        let report = build_safety_audit_report(storage, true, true)
+        let report = build_safety_audit_report(storage, true)
             .expect("build_safety_audit_report should succeed");
 
         assert_eq!(

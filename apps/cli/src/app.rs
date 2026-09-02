@@ -708,6 +708,14 @@ pub fn run() -> Result<()> {
     let no_json = cli.no_json;
     let resolve_json = |flag: bool| config::resolve_json(flag, no_json, persisted_config.json);
     let ui = crate::ui::Ui::detect(cli.no_color, cli.plain);
+    // `Ui` resolves --plain/--no-color/NO_COLOR once above; every raw `console::style(...)`
+    // call across the older commands (the ones not yet rendering through `ui::views`) builds
+    // its own colour decision independently and never saw those flags, so `agentworth blunder
+    // --plain` still printed ANSI codes. Forcing the global switch here to the same verdict
+    // makes every `style()` call in the binary agree with `Ui`, immediately, without waiting
+    // on each command's own redesign.
+    console::set_colors_enabled(ui.color() != crate::ui::ColorMode::None);
+    console::set_colors_enabled_stderr(ui.color() != crate::ui::ColorMode::None);
 
     match cli.command {
         Commands::Scan { paths, force, include_stubs, json } => {
@@ -764,7 +772,7 @@ pub fn run() -> Result<()> {
             format,
             output,
         } => {
-            run_export_command(&session_id, redact, &format, output.as_deref(), cli.db_path)?;
+            run_export_command(&session_id, redact, &format, output.as_deref(), cli.db_path, &ui)?;
         }
         Commands::Receipt {
             session_id,
@@ -792,10 +800,10 @@ pub fn run() -> Result<()> {
             )?;
         }
         Commands::Audit { safety, json } => {
-            crate::run_audit_command(safety, resolve_json(json), cli.db_path)?;
+            crate::run_audit_command(safety, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::Blunder { top, submit, json } => {
-            crate::run_blunder_command(top, submit, resolve_json(json), cli.db_path)?;
+            crate::run_blunder_command(top, submit, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::Usage {
             period,
@@ -908,7 +916,7 @@ pub fn run() -> Result<()> {
             runtime.block_on(crate::run_mcp_server(storage))?;
         }
         Commands::Merge { source_db, json } => {
-            merge::run_merge_command(source_db, resolve_json(json), cli.db_path)?;
+            merge::run_merge_command(source_db, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::Watch {
             interval_secs,
@@ -916,14 +924,14 @@ pub fn run() -> Result<()> {
             json,
             paths,
         } => {
-            watch::run_watch_command(interval_secs, poll_once, resolve_json(json), paths, cli.db_path)?;
+            watch::run_watch_command(interval_secs, poll_once, resolve_json(json), paths, cli.db_path, &ui)?;
         }
         Commands::CacheDoctor { session_id, json } => {
-            cache_doctor::run_cache_doctor_command(&session_id, resolve_json(json), cli.db_path)?;
+            cache_doctor::run_cache_doctor_command(&session_id, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::BlindSpots { limit, json } => {
             let limit = config::resolve_limit(limit, persisted_config.limit, 20);
-            blind_spots::run_blind_spots_command(limit, resolve_json(json), cli.db_path)?;
+            blind_spots::run_blind_spots_command(limit, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::ThreatDigest {
             limit,
@@ -936,6 +944,7 @@ pub fn run() -> Result<()> {
                 &min_severity,
                 resolve_json(json),
                 cli.db_path,
+                &ui,
             )?;
         }
         Commands::Autopsy {
@@ -954,10 +963,10 @@ pub fn run() -> Result<()> {
             recall::run_recall_command(&query, limit, min_score, resolve_json(json), cli.db_path)?;
         }
         Commands::Bisect { session_id, json } => {
-            bisect::run_bisect_command(&session_id, resolve_json(json), cli.db_path)?;
+            bisect::run_bisect_command(&session_id, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::PrBlame { files, json } => {
-            pr_blame::run_pr_blame_command(files, resolve_json(json), cli.db_path)?;
+            pr_blame::run_pr_blame_command(files, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::BlunderBlame {
             file,
@@ -971,6 +980,7 @@ pub fn run() -> Result<()> {
                 top,
                 resolve_json(json),
                 cli.db_path,
+                &ui,
             )?;
         }
         Commands::Suspect {
@@ -1268,6 +1278,41 @@ fn build_stats_view(
 // Command: Traces
 // -----------------------------------------------------------------------------
 
+/// Turns already-indexed sessions into `(badge, score, outcome, session)` rows for `traces`
+/// and its `--json` payload.
+///
+/// `SessionSummary` already carries both `primary_outcome` and `composite_score` straight
+/// from the index -- scan wrote them once, at index time. This used to call
+/// `scanner.load_trace` (a disk read + full adapter reparse) for every displayed row just to
+/// recompute the same two numbers; on `--limit` set high, or `--all-stubs` against a large
+/// index, that reparse cost dominated the whole command. See
+/// `test_traces_reads_the_index_without_reparsing_every_transcript` below.
+fn build_trace_rows(
+    sessions: Vec<agentworth_storage::SessionSummary>,
+) -> Vec<(
+    String,
+    f64,
+    Option<agentworth_schema::OutcomeKind>,
+    agentworth_storage::SessionSummary,
+)> {
+    sessions
+        .into_iter()
+        .map(|s| {
+            let highest_kind = s.primary_outcome.as_deref().and_then(outcome_kind_from_str);
+            let badge = match highest_kind {
+                Some(agentworth_schema::OutcomeKind::CiOrDeploymentVerified) => "[CI_VERIFIED]".to_string(),
+                Some(agentworth_schema::OutcomeKind::CommitObserved) => "[COMMITTED]".to_string(),
+                Some(agentworth_schema::OutcomeKind::TestOrBuildPassed) => "[TEST_PASSED]".to_string(),
+                Some(agentworth_schema::OutcomeKind::ArtifactChanged) => "[ARTIFACT]".to_string(),
+                Some(agentworth_schema::OutcomeKind::DoneClaimed) => "[CLAIM_ONLY]".to_string(),
+                None => "[UNVERIFIED]".to_string(),
+            };
+            let score_val = s.composite_score.unwrap_or(0.0) * 100.0;
+            (badge, score_val, highest_kind, s)
+        })
+        .collect()
+}
+
 fn run_traces_command(
     limit: usize,
     adapter: Option<String>,
@@ -1278,8 +1323,6 @@ fn run_traces_command(
     ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
-    let scanner = Scanner::new(storage.clone());
-    let scorer = agentworth_scoring::TraceScorer::default();
 
     let filter = SessionFilter {
         adapter,
@@ -1297,31 +1340,7 @@ fn run_traces_command(
         .take(limit)
         .collect();
 
-    let mut rows = Vec::new();
-    for s in filtered_sessions {
-        let mut badge = "[UNVERIFIED]".to_string();
-        let mut score_val = 0.0;
-        let mut highest_kind = None;
-
-        if let Ok(trace) = scanner.load_trace(&s.session_id) {
-            let outcomes = evaluate_trace_outcomes(&trace);
-            let sc = scorer.score(&trace);
-            score_val = sc.composite_score * 100.0;
-
-            if let Some(strongest) = agentworth_outcomes::highest_outcome(&outcomes) {
-                highest_kind = Some(strongest.kind);
-                badge = match strongest.kind {
-                    agentworth_schema::OutcomeKind::CiOrDeploymentVerified => "[CI_VERIFIED]".to_string(),
-                    agentworth_schema::OutcomeKind::CommitObserved => "[COMMITTED]".to_string(),
-                    agentworth_schema::OutcomeKind::TestOrBuildPassed => "[TEST_PASSED]".to_string(),
-                    agentworth_schema::OutcomeKind::ArtifactChanged => "[ARTIFACT]".to_string(),
-                    agentworth_schema::OutcomeKind::DoneClaimed => "[CLAIM_ONLY]".to_string(),
-                };
-            }
-        }
-
-        rows.push((badge, score_val, highest_kind, s));
-    }
+    let rows = build_trace_rows(filtered_sessions);
 
     if json {
         // When filtering by model, the session-wide `total_tokens` can be misleading
@@ -1422,6 +1441,15 @@ fn build_traces_view(
         indexed,
         &view_rows,
     )
+}
+
+/// Parses `sessions.primary_outcome`'s stored snake_case string (`"done_claimed"`, ...) back
+/// into the enum, the reverse of `agentworth_outcomes::outcome_kind_name`. `OutcomeKind`
+/// derives `Deserialize` with `rename_all = "snake_case"`, so this is exact, not a guess --
+/// an unrecognised or unset value reads as `None` (unverified) rather than an error, since a
+/// row with no outcome yet is the common, expected case, not a data problem.
+fn outcome_kind_from_str(s: &str) -> Option<agentworth_schema::OutcomeKind> {
+    serde_json::from_value(json!(s)).ok()
 }
 
 /// The ladder position of an outcome. `None` is rung 0 — unverified, not missing.
@@ -1897,11 +1925,12 @@ fn run_export_command(
     format: &str,
     output: Option<&std::path::Path>,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
     let scanner = Scanner::new(storage.clone());
 
-    let mut trace = scanner.load_trace(session_id)?;
+    let mut trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(session_id))?;
 
     if redact {
         trace = agentworth_redaction::redact_trace(&trace);
@@ -1930,12 +1959,14 @@ fn run_export_command(
         }
         std::fs::write(out_path, output_content.as_bytes())
             .with_context(|| format!("Failed to write export file {:?}", out_path))?;
+        // No glyph here: the allowed set (ui/mod.rs's module doc) has no check mark, and this
+        // line is confirmation prose, not a rung or a primary number, so it takes no accent.
         eprintln!(
-            "{} Exported session '{}' ({}) to {:?}",
-            style("✔").green().bold(),
-            session_id,
-            format,
-            out_path
+            "{}",
+            ui.paint(
+                crate::ui::Role::Label,
+                &format!("Exported session '{}' ({}) to {:?}", session_id, format, out_path)
+            )
         );
     } else {
         println!("{}", output_content);
@@ -2501,15 +2532,21 @@ fn run_blame_command(
     }
 
     // The question is not who edited the file, it is which edit is trustworthy — so each
-    // row's trace is scored for its ladder position, the same way `traces` does it.
-    let scanner = Scanner::new(storage.clone());
+    // row's ladder position comes straight from `sessions.primary_outcome`, the same index
+    // column `traces` and `pr-blame` already read for the same question. This used to call
+    // `scanner.load_trace` per row (a disk read + full adapter reparse) just to recompute an
+    // outcome the scan already wrote to the index; `get_session_by_id` is one indexed SQLite
+    // lookup instead.
     let rows: Vec<crate::ui::views::BlameRow> = matches
         .iter()
         .map(|m| {
-            let rung = scanner
-                .load_trace(&m.session_id)
+            let rung = storage
+                .get_session_by_id(&m.session_id)
                 .ok()
-                .and_then(|t| agentworth_outcomes::highest_outcome(&evaluate_trace_outcomes(&t)).map(|o| o.kind))
+                .flatten()
+                .and_then(|s| s.primary_outcome)
+                .as_deref()
+                .and_then(outcome_kind_from_str)
                 .map(Some)
                 .map(outcome_rung)
                 .unwrap_or(0);
@@ -2792,5 +2829,135 @@ mod tests {
             }
             _ => panic!("Expected Usage command"),
         }
+    }
+
+    #[test]
+    fn test_traces_reads_the_index_without_reparsing_every_transcript() {
+        // Timing guard: `run_traces_command` used to call `Scanner::load_trace` for every
+        // displayed row to recompute a badge and score that `SessionSummary.primary_outcome`
+        // / `composite_score` already carry. `build_trace_rows` now reads those two fields
+        // straight off the summary -- no `Scanner` in scope at all -- so this must stay fast
+        // against `--limit` set to the whole 3,000-session index. Nonexistent source paths:
+        // if a `scanner.load_trace` call ever creeps back into this row-building path, it
+        // fails loudly on the missing file rather than this test silently passing anyway.
+        let storage = Storage::open_in_memory().unwrap();
+        let start = Utc::now();
+
+        const SESSION_COUNT: i64 = 3000;
+        let outcomes = [
+            Some("ci_or_deployment_verified"),
+            Some("commit_observed"),
+            Some("test_or_build_passed"),
+            Some("artifact_changed"),
+            Some("done_claimed"),
+            None,
+        ];
+        for i in 0..SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/nonexistent/traces_timing_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_traces_timing_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-traces-timing-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage
+                .upsert_session(&trace, outcomes[(i % 6) as usize], Some(0.5), 1)
+                .unwrap();
+        }
+
+        let sessions = storage
+            .list_sessions_filtered(&SessionFilter {
+                limit: None,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(sessions.len(), SESSION_COUNT as usize);
+
+        let started = std::time::Instant::now();
+        let rows = build_trace_rows(sessions);
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "build_trace_rows took {:?} against {} sessions -- it must read \
+             primary_outcome/composite_score off the index, not reparse every transcript",
+            elapsed,
+            SESSION_COUNT
+        );
+        assert_eq!(rows.len(), SESSION_COUNT as usize);
+        // Every fifth row (i % 6 == 4) is "done_claimed" -- rung 1, badge [CLAIM_ONLY].
+        let done_claimed_row = rows.iter().find(|(_, _, kind, _)| {
+            matches!(kind, Some(agentworth_schema::OutcomeKind::DoneClaimed))
+        });
+        assert_eq!(done_claimed_row.unwrap().0, "[CLAIM_ONLY]");
+    }
+
+    #[test]
+    fn test_blame_reads_the_index_without_reparsing_every_transcript() {
+        // Same shape as the `traces` guard above: `run_blame_command` used to call
+        // `Scanner::load_trace` per matched row just to get the outcome rung.
+        // `get_session_by_id` is a SQLite lookup, not a disk reparse, so this stays fast
+        // against a 3,000-session index even though every source path below is nonexistent.
+        let storage = Storage::open_in_memory().unwrap();
+        let start = Utc::now();
+
+        const SESSION_COUNT: i64 = 3000;
+        for i in 0..SESSION_COUNT {
+            let prov = Provenance::new(
+                format!("/nonexistent/blame_timing_{}.jsonl", i),
+                "claude_code",
+                10,
+                100,
+                format!("fp_blame_timing_{}", i),
+            );
+            let mut trace = AgentWorthTrace::new(
+                format!("sess-blame-timing-{}", i),
+                "claude_code",
+                prov,
+                start + Duration::seconds(i),
+            );
+            trace.stats.total_events = 2;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage
+                .upsert_session(&trace, Some("commit_observed"), Some(0.7), 1)
+                .unwrap();
+        }
+        let storage = Arc::new(storage);
+
+        let started = std::time::Instant::now();
+        let mut rungs_summed = 0usize;
+        for i in 0..SESSION_COUNT {
+            let session_id = format!("sess-blame-timing-{}", i);
+            let rung = storage
+                .get_session_by_id(&session_id)
+                .ok()
+                .flatten()
+                .and_then(|s| s.primary_outcome)
+                .as_deref()
+                .and_then(outcome_kind_from_str)
+                .map(Some)
+                .map(outcome_rung)
+                .unwrap_or(0);
+            rungs_summed += rung;
+        }
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "the blame rung lookup took {:?} against {} sessions -- it must read \
+             primary_outcome off the index, not reparse every transcript",
+            elapsed,
+            SESSION_COUNT
+        );
+        // Every session is "commit_observed" -- rung 4.
+        assert_eq!(rungs_summed, 4 * SESSION_COUNT as usize);
     }
 }

@@ -25,7 +25,6 @@ use crate::commands::blunder::{discover_blunders, evaluate_trace_for_blunder, Bl
 use agentworth_core::Scanner;
 use agentworth_storage::{extract_repository_or_workspace, BlameMatch, Storage};
 use anyhow::Result;
-use console::style;
 use serde::{Deserialize, Serialize};
 
 /// One recorded blunder, resolved forward to the files AI Code Blame attributes to that
@@ -145,38 +144,53 @@ pub fn run_blunder_blame_command(
     top: usize,
     json_output: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
 
     // Blame -> blunder direction.
     if let Some(file_path) = file {
-        let report = trace_blame_to_blunder(&storage, &file_path)?;
+        let report = crate::ui::with_status(ui, "cross-checking blame history", || {
+            trace_blame_to_blunder(&storage, &file_path)
+        })?;
         if json_output {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
-            render_file_blunder_report(&report);
+            let rows: Vec<crate::ui::views::BlunderBlameFileMatchRow> = report
+                .matches
+                .iter()
+                .map(|m| crate::ui::views::BlunderBlameFileMatchRow {
+                    session_id: &m.blame.session_id,
+                    model: m.blame.model.as_deref().unwrap_or("-"),
+                    blunder: m.blunder.as_ref().map(|e| (e.severity.as_str(), e.title.as_str())),
+                })
+                .collect();
+            print!("{}", crate::ui::views::blunder_blame_file_report(ui, &report.file_path, &rows));
         }
         return Ok(());
     }
 
     // Blunder -> blame direction, one specific session.
     if let Some(session_id) = session {
-        let exhibit = match blunder_for_session(&storage, &session_id)? {
+        let exhibit = match crate::ui::with_status(ui, "loading session", || {
+            blunder_for_session(&storage, &session_id)
+        })? {
             Some(exhibit) => exhibit,
             None => {
                 if json_output {
                     println!("null");
                 } else {
-                    println!();
-                    println!(
+                    print!(
                         "{}",
-                        style(format!(
-                            "No indexed session found matching '{}'. Run `agwt scan` first.",
-                            session_id
-                        ))
-                        .yellow()
+                        crate::ui::views::error(
+                            ui,
+                            "agentworth blunder-blame",
+                            &format!("No indexed session found matching '{}'.", session_id),
+                            "",
+                            &[],
+                            &[("agentworth scan".to_string(), "index agent histories first".to_string())],
+                        )
                     );
-                    println!();
                 }
                 return Ok(());
             }
@@ -185,14 +199,16 @@ pub fn run_blunder_blame_command(
         if json_output {
             println!("{}", serde_json::to_string_pretty(&trail)?);
         } else {
-            render_blunder_blame_trails(std::slice::from_ref(&trail));
+            print!("{}", crate::ui::views::blunder_blame_trails(ui, &[trail_row(&trail)]));
         }
         return Ok(());
     }
 
     // Default: blunder -> blame direction, batch mode over the top-N blunders.
     let top_limit = if top == 0 { 5 } else { top };
-    let trails = discover_blunder_blame_trails(&storage, top_limit)?;
+    let trails = crate::ui::with_status(ui, "scanning sessions for blunders", || {
+        discover_blunder_blame_trails(&storage, top_limit)
+    })?;
 
     if json_output {
         println!("{}", serde_json::to_string_pretty(&trails)?);
@@ -200,150 +216,36 @@ pub fn run_blunder_blame_command(
     }
 
     if trails.is_empty() {
-        println!();
-        println!(
+        print!(
             "{}",
-            style("No blunder exhibits found in the local index.").yellow()
+            crate::ui::views::error(
+                ui,
+                "agentworth blunder-blame",
+                "No blunder exhibits found in the local index.",
+                "",
+                &[],
+                &[("agentworth scan".to_string(), "index agent histories first".to_string())],
+            )
         );
-        println!(
-            "{}",
-            style("Tip: Run `agwt scan` to index your agent histories first.").dim()
-        );
-        println!();
         return Ok(());
     }
 
-    render_blunder_blame_trails(&trails);
+    let rows: Vec<crate::ui::views::BlunderBlameTrailRow> = trails.iter().map(trail_row).collect();
+    print!("{}", crate::ui::views::blunder_blame_trails(ui, &rows));
     Ok(())
 }
 
-fn severity_styled(severity: &str) -> console::StyledObject<&'static str> {
-    match severity {
-        "CRITICAL" => style("[CRITICAL]").bold().red(),
-        "HIGH" => style("[HIGH]").bold().yellow(),
-        "WARN" => style("[WARN]").bold().cyan(),
-        _ => style("[INFO]").dim(),
-    }
-}
-
-fn render_blunder_blame_trails(trails: &[BlunderBlameTrail]) {
-    println!();
-    println!(
-        "{}",
-        style("┌─ 🌉 BLUNDER-TO-BLAME BRIDGE ──────────────────────────────────────────┐")
-            .bold()
-            .magenta()
-    );
-    println!(
-        "│ {:<71} │",
-        format!("{} blunder(s) traced back to their blamed files", trails.len())
-    );
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────────────────┤").dim()
-    );
-
-    for (i, trail) in trails.iter().enumerate() {
-        let exhibit = &trail.blunder;
-        println!(
-            "│ {}  {}  {:<47} │",
-            style(format!("BLUNDER #{:02}", i + 1)).bold().magenta(),
-            severity_styled(&exhibit.severity),
-            style(&exhibit.title).bold()
-        );
-        println!(
-            "│   Session: {:<25}  Model: {:<28} │",
-            style(&exhibit.session_id).cyan(),
-            style(&exhibit.model).yellow()
-        );
-
-        if trail.blamed_files.is_empty() {
-            println!("│   Blamed files: none indexed (no FileAction events recorded)           │");
-        } else {
-            println!("│   Blamed files ({}):{:<52} │", trail.blamed_files.len(), "");
-            for bf in &trail.blamed_files {
-                println!(
-                    "│     - {:<54} [{}] │",
-                    truncate_middle(&bf.file_path, 54),
-                    bf.action
-                );
-            }
-        }
-
-        if i + 1 < trails.len() {
-            println!(
-                "{}",
-                style("├────────────────────────────────────────────────────────────────────────┤")
-                    .dim()
-            );
-        }
-    }
-
-    println!(
-        "{}",
-        style("└────────────────────────────────────────────────────────────────────────┘")
-            .bold()
-            .magenta()
-    );
-    println!();
-}
-
-fn render_file_blunder_report(report: &FileBlunderReport) {
-    println!();
-    println!(
-        "{}",
-        style("┌─ 🌉 BLUNDER-TO-BLAME BRIDGE ──────────────────────────────────────────┐")
-            .bold()
-            .magenta()
-    );
-    println!("│ File: {:<71} │", truncate_middle(&report.file_path, 71));
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────────────────┤").dim()
-    );
-
-    if report.matches.is_empty() {
-        println!("│ No indexed sessions touched this file.                                 │");
-    } else {
-        for (i, m) in report.matches.iter().enumerate() {
-            println!(
-                "│ Session: {:<25}  Model: {:<30} │",
-                style(&m.blame.session_id).cyan(),
-                style(m.blame.model.as_deref().unwrap_or("-")).yellow()
-            );
-            match &m.blunder {
-                Some(exhibit) => {
-                    println!(
-                        "│   Blunder found: {} {:<46} │",
-                        severity_styled(&exhibit.severity),
-                        exhibit.title
-                    );
-                }
-                None => {
-                    println!("│   No recorded blunder in this session.                                 │");
-                }
-            }
-            if i + 1 < report.matches.len() {
-                println!("│                                                                          │");
-            }
-        }
-    }
-
-    println!(
-        "{}",
-        style("└────────────────────────────────────────────────────────────────────────┘")
-            .bold()
-            .magenta()
-    );
-    println!();
-}
-
-fn truncate_middle(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        let keep = max_len.saturating_sub(3).max(1);
-        format!("...{}", &s[s.len() - keep..])
+fn trail_row(trail: &BlunderBlameTrail) -> crate::ui::views::BlunderBlameTrailRow<'_> {
+    crate::ui::views::BlunderBlameTrailRow {
+        severity: &trail.blunder.severity,
+        title: &trail.blunder.title,
+        session_id: &trail.blunder.session_id,
+        model: &trail.blunder.model,
+        blamed_files: trail
+            .blamed_files
+            .iter()
+            .map(|bf| (bf.file_path.clone(), bf.action.clone()))
+            .collect(),
     }
 }
 

@@ -73,6 +73,56 @@ fn strip_trailing_sgr(s: &str) -> Option<&str> {
     }
 }
 
+/// The severity labels `audit`, `blunder`, `blunder-blame` and `threat-digest` share
+/// (`CRITICAL` / `HIGH` / `WARN` or `MEDIUM` / anything else reads as the dimmest tier),
+/// mapped to one role each so the four commands agree on what "bad" looks like instead of
+/// each picking its own raw colour. `Role` has no bespoke severity tiers of its own, so this
+/// borrows four roles in descending urgency: `Error` > `Warn` > `Label` > `Unverified`.
+pub fn severity_role(severity: &str) -> Role {
+    match severity {
+        "CRITICAL" => Role::Error,
+        "HIGH" => Role::Warn,
+        "WARN" | "MEDIUM" => Role::Label,
+        _ => Role::Unverified,
+    }
+}
+
+/// `[CRITICAL]`, `[HIGH]`, ... -- the bracketed tag every severity-bearing row leads with.
+pub fn severity_tag(severity: &str) -> String {
+    match severity {
+        "CRITICAL" => "[CRITICAL]".to_string(),
+        "HIGH" => "[HIGH]".to_string(),
+        "WARN" => "[WARN]".to_string(),
+        other if !other.is_empty() => format!("[{}]", other),
+        _ => "[INFO]".to_string(),
+    }
+}
+
+/// Word-wrap `text` to `max_width` columns. Splits on whitespace only, so it never cuts a
+/// word (and, unlike a byte-offset slice, never cuts a multi-byte char either).
+fn wrap(text: &str, max_width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.lines() {
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            if display_width(&current) + display_width(word) + 1 > max_width && !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+        }
+        if !current.is_empty() {
+            lines.push(current);
+        }
+    }
+    if lines.is_empty() {
+        lines.push(text.to_string());
+    }
+    lines
+}
+
 /// Strip the vendor prefix and the release date, which are the same on every row and so
 /// carry nothing. `claude-3-5-sonnet-20241022` reads as `3-5-sonnet`.
 pub fn short_model(model: &str) -> String {
@@ -1631,6 +1681,717 @@ fn shorten_home(path: &str) -> String {
 // -----------------------------------------------------------------------------
 
 /// One body section of a handoff: a heading, its true row count, and the rows that fit.
+// -----------------------------------------------------------------------------
+// bisect
+// -----------------------------------------------------------------------------
+
+pub struct BisectView<'a> {
+    pub session_id: &'a str,
+    pub adapter: &'a str,
+    pub total_events: usize,
+    pub turn: Option<usize>,
+    pub timestamp: Option<&'a str>,
+    pub reason: Option<&'a str>,
+    pub summary: &'a str,
+    pub context: Option<&'a str>,
+}
+
+pub fn bisect(ui: &Ui, v: &BisectView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(
+        &format!("agentworth bisect {}", v.session_id),
+        &format!("{} · {} events", v.adapter, thousands(v.total_events as u64)),
+    ));
+    out.push('\n');
+
+    match v.turn {
+        Some(turn) => {
+            section(&mut out, ui, "INFLECTION POINT", &format!("event #{}", turn));
+            if let Some(reason) = v.reason {
+                push(&mut out, ui, ui.leaders("  reason", reason, ui.width(), Role::Warn));
+            }
+            if let Some(ts) = v.timestamp {
+                push(&mut out, ui, ui.leaders("  at", ts, ui.width(), Role::Value));
+            }
+            out.push('\n');
+            push(&mut out, ui, format!("  {}", ui.paint(Role::Value, v.summary)));
+            if let Some(ctx) = v.context {
+                let room = ui.inner().saturating_sub(2);
+                push(&mut out, ui, format!("  {}", ui.paint(Role::Label, &truncate(ctx, room))));
+            }
+        }
+        None => {
+            section(&mut out, ui, "TRAJECTORY", "");
+            push(
+                &mut out,
+                ui,
+                format!("  {}", ui.paint(Role::Verified, "Clean -- no negative turning point found.")),
+            );
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next(
+        &format!("agentworth inspect {}", v.session_id),
+        "read the full event timeline",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// cache-doctor
+// -----------------------------------------------------------------------------
+
+pub struct CacheDoctorDropRow<'a> {
+    pub turn_index: usize,
+    pub previous_ratio: f64,
+    pub new_ratio: f64,
+    pub drop_pct: f64,
+    pub cause: &'a str,
+}
+
+pub struct CacheDoctorView<'a> {
+    pub session_id: &'a str,
+    pub adapter: &'a str,
+    pub average_hit_ratio: f64,
+    pub drops: Vec<CacheDoctorDropRow<'a>>,
+}
+
+pub fn cache_doctor(ui: &Ui, v: &CacheDoctorView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(&format!("agentworth cache-doctor {}", v.session_id), v.adapter));
+    out.push('\n');
+
+    section(&mut out, ui, "CACHE HEALTH", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  lifetime hit ratio",
+            &format!("{:.1}%", v.average_hit_ratio),
+            ui.width(),
+            Role::Value,
+        ),
+    );
+    out.push('\n');
+
+    if v.drops.is_empty() {
+        section(&mut out, ui, "DEGRADATION", "");
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Verified, "No significant prompt cache degradation detected.")),
+        );
+    } else {
+        section(&mut out, ui, "DEGRADATION", &format!("{} found", v.drops.len()));
+        for drop in &v.drops {
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  turn #{}  {}",
+                    drop.turn_index,
+                    ui.paint(
+                        Role::Warn,
+                        &format!("{:.1}% -> {:.1}% ({:.1}% drop)", drop.previous_ratio, drop.new_ratio, drop.drop_pct)
+                    )
+                ),
+            );
+            push(&mut out, ui, format!("    {}", ui.paint(Role::Label, drop.cause)));
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next(
+        &format!("agentworth inspect {}", v.session_id),
+        "read the full event timeline",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// pr-blame
+// -----------------------------------------------------------------------------
+
+pub struct PrBlameRow<'a> {
+    pub file_path: &'a str,
+    pub ai_touched: bool,
+    pub session_id: Option<&'a str>,
+    pub adapter: Option<&'a str>,
+    pub models: &'a [String],
+    pub outcome: Option<&'a str>,
+    pub confidence: Option<f64>,
+}
+
+pub struct PrBlameView<'a> {
+    pub files_analyzed: usize,
+    pub ai_authored_files: usize,
+    pub rows: Vec<PrBlameRow<'a>>,
+}
+
+pub fn pr_blame(ui: &Ui, v: &PrBlameView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header("agentworth pr-blame", ""));
+    out.push('\n');
+
+    section(&mut out, ui, "OVERLAY", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  changed files", &v.files_analyzed.to_string(), ui.width(), Role::Value),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  AI-authored",
+            &format!("{} ({})", v.ai_authored_files, percent_round(v.ai_authored_files, v.files_analyzed.max(1))),
+            ui.width(),
+            Role::Verified,
+        ),
+    );
+    out.push('\n');
+
+    section(&mut out, ui, "FILES", "");
+    for row in &v.rows {
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Emphasis, row.file_path)));
+        if row.ai_touched {
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "    {}",
+                    ui.paint(
+                        Role::Value,
+                        &format!(
+                            "{} ({})",
+                            row.session_id.unwrap_or("-"),
+                            row.adapter.unwrap_or("-")
+                        )
+                    )
+                ),
+            );
+            if !row.models.is_empty() {
+                push(&mut out, ui, format!("    models: {}", ui.paint(Role::Label, &row.models.join(", "))));
+            }
+            if let Some(outcome) = row.outcome {
+                push(
+                    &mut out,
+                    ui,
+                    format!(
+                        "    outcome: {}",
+                        ui.paint(
+                            Role::Verified,
+                            &format!("{} ({:.0}% conf)", outcome, row.confidence.unwrap_or(0.5) * 100.0)
+                        )
+                    ),
+                );
+            }
+        } else {
+            push(&mut out, ui, format!("    {}", ui.paint(Role::Unverified, "human / unindexed")));
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next("agentworth blame <path>", "the full session ladder for one file"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// blunder-blame
+// -----------------------------------------------------------------------------
+
+pub struct BlunderBlameTrailRow<'a> {
+    pub severity: &'a str,
+    pub title: &'a str,
+    pub session_id: &'a str,
+    pub model: &'a str,
+    pub blamed_files: Vec<(String, String)>,
+}
+
+pub fn blunder_blame_trails(ui: &Ui, rows: &[BlunderBlameTrailRow<'_>]) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header("agentworth blunder-blame", &format!("{} traced", rows.len())));
+    out.push('\n');
+
+    for (i, row) in rows.iter().enumerate() {
+        section(&mut out, ui, &format!("BLUNDER #{:02}", i + 1), &severity_tag(row.severity));
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(severity_role(row.severity), row.title)),
+        );
+        push(
+            &mut out,
+            ui,
+            ui.leaders("  session", row.session_id, ui.width(), Role::Value),
+        );
+        push(&mut out, ui, ui.leaders("  model", &short_model(row.model), ui.width(), Role::Value));
+        if row.blamed_files.is_empty() {
+            push(&mut out, ui, format!("  {}", ui.paint(Role::Unverified, "no blamed files indexed")));
+        } else {
+            for (path, action) in &row.blamed_files {
+                push(
+                    &mut out,
+                    ui,
+                    format!("    {} [{}]", ui.paint(Role::Value, &truncate(path, ui.inner().saturating_sub(14))), action),
+                );
+            }
+        }
+        out.push('\n');
+    }
+    out.push_str(&ui.next("agentworth blunder", "the full ranked exhibit list"));
+    out
+}
+
+pub struct BlunderBlameFileMatchRow<'a> {
+    pub session_id: &'a str,
+    pub model: &'a str,
+    pub blunder: Option<(&'a str, &'a str)>,
+}
+
+pub fn blunder_blame_file_report(ui: &Ui, file_path: &str, rows: &[BlunderBlameFileMatchRow<'_>]) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(&format!("agentworth blunder-blame --file {}", file_path), ""));
+    out.push('\n');
+
+    if rows.is_empty() {
+        section(&mut out, ui, "SESSIONS", "");
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Unverified, "No indexed sessions touched this file.")));
+    } else {
+        section(&mut out, ui, "SESSIONS", &format!("{}", rows.len()));
+        for row in rows {
+            push(&mut out, ui, ui.leaders("  session", row.session_id, ui.width(), Role::Value));
+            push(&mut out, ui, ui.leaders("    model", &short_model(row.model), ui.width(), Role::Value));
+            match row.blunder {
+                Some((severity, title)) => push(
+                    &mut out,
+                    ui,
+                    format!("    {} {}", ui.paint(severity_role(severity), &severity_tag(severity)), title),
+                ),
+                None => push(&mut out, ui, format!("    {}", ui.paint(Role::Verified, "no recorded blunder"))),
+            }
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next("agentworth blunder", "the full ranked exhibit list"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// merge
+// -----------------------------------------------------------------------------
+
+pub struct MergeView<'a> {
+    pub target_name: &'a str,
+    pub source_name: &'a str,
+    pub sessions_inserted: usize,
+    pub sessions_updated: usize,
+    pub sessions_skipped: usize,
+    pub sources_merged: usize,
+    pub files_merged: usize,
+    pub child_rows_merged: usize,
+}
+
+pub fn merge(ui: &Ui, v: &MergeView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(&format!("agentworth merge {}", v.source_name), v.target_name));
+    out.push('\n');
+
+    section(&mut out, ui, "SESSIONS", "");
+    push(&mut out, ui, ui.leaders("  inserted", &thousands(v.sessions_inserted as u64), ui.width(), Role::Verified));
+    push(&mut out, ui, ui.leaders("  updated", &thousands(v.sessions_updated as u64), ui.width(), Role::Value));
+    push(&mut out, ui, ui.leaders("  skipped (already current)", &thousands(v.sessions_skipped as u64), ui.width(), Role::Unverified));
+    out.push('\n');
+
+    section(&mut out, ui, "CHILD ROWS", "");
+    push(&mut out, ui, ui.leaders("  sources", &thousands(v.sources_merged as u64), ui.width(), Role::Value));
+    push(&mut out, ui, ui.leaders("  file modifications", &thousands(v.files_merged as u64), ui.width(), Role::Value));
+    push(&mut out, ui, ui.leaders("  other", &thousands(v.child_rows_merged as u64), ui.width(), Role::Value));
+    out.push('\n');
+
+    out.push_str(&ui.next("agentworth stats", "see the merged index's totals"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// watch
+// -----------------------------------------------------------------------------
+
+pub fn watch_banner(ui: &Ui) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header("agentworth watch", "polling for doom loops"));
+    out.push('\n');
+    out
+}
+
+pub fn watch_clean(ui: &Ui, at: &str) -> String {
+    let mut out = String::new();
+    push(
+        &mut out,
+        ui,
+        format!("  {}", ui.paint(Role::Verified, &format!("[{}] all monitored sessions normal", at))),
+    );
+    out
+}
+
+pub struct WatchAlertRow<'a> {
+    pub session_id: &'a str,
+    pub kind: &'a str,
+    pub target: &'a str,
+    pub repeat_count: usize,
+    pub outcome: &'a str,
+    pub outcome_role: Role,
+}
+
+pub fn watch_alerts(ui: &Ui, rows: &[WatchAlertRow<'_>]) -> String {
+    let mut out = String::new();
+    section(&mut out, ui, "LOOP ALERT", &format!("{} found", rows.len()));
+    for row in rows {
+        push(&mut out, ui, ui.leaders("  session", row.session_id, ui.width(), Role::Value));
+        push(&mut out, ui, ui.leaders("  type", row.kind, ui.width(), Role::Warn));
+        push(&mut out, ui, ui.leaders("  target", row.target, ui.width(), Role::Value));
+        push(
+            &mut out,
+            ui,
+            ui.leaders("  repeats", &format!("{} iterations", row.repeat_count), ui.width(), Role::Warn),
+        );
+        push(&mut out, ui, ui.leaders("  outcome", row.outcome, ui.width(), row.outcome_role));
+        out.push('\n');
+    }
+    out
+}
+
+// -----------------------------------------------------------------------------
+// blind-spots
+// -----------------------------------------------------------------------------
+
+pub struct BlindSpotRow<'a> {
+    pub session_id: &'a str,
+    pub adapter: &'a str,
+    pub outcome: &'a str,
+    pub spend_usd: f64,
+}
+
+pub struct BlindSpotsView<'a> {
+    pub total_blind_spots: usize,
+    pub total_unverified_tokens: u64,
+    pub total_unverified_spend_usd: f64,
+    pub rows: Vec<BlindSpotRow<'a>>,
+}
+
+pub fn blind_spots(ui: &Ui, v: &BlindSpotsView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header("agentworth blind-spots", ""));
+    out.push('\n');
+
+    section(&mut out, ui, "UNVERIFIED", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  sessions", &thousands(v.total_blind_spots as u64), ui.width(), Role::Warn),
+    );
+    push(&mut out, ui, ui.leaders("  tokens burned", &compact(v.total_unverified_tokens), ui.width(), Role::Value));
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  spend", &format!("${:.2}", v.total_unverified_spend_usd), ui.width(), Role::Value),
+    );
+    out.push('\n');
+
+    if v.rows.is_empty() {
+        section(&mut out, ui, "SESSIONS", "");
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Verified, "Every indexed session is verified by CI/tests.")),
+        );
+    } else {
+        section(&mut out, ui, "SESSIONS", &format!("top {}", v.rows.len()));
+        for row in &v.rows {
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}  {}  {}  ${:.2}",
+                    ui.paint(Role::Emphasis, row.session_id),
+                    ui.paint(Role::Label, row.adapter),
+                    ui.paint(Role::Warn, row.outcome),
+                    row.spend_usd
+                ),
+            );
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next("agentworth inspect <session-id>", "read the full event timeline"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// audit
+// -----------------------------------------------------------------------------
+
+pub struct AuditFindingRow<'a> {
+    pub severity: &'a str,
+    pub title: &'a str,
+    pub rule_id: &'a str,
+    pub project: &'a str,
+    pub session_id: &'a str,
+    pub adapter: &'a str,
+    pub timestamp: &'a str,
+    pub turn_index: usize,
+    pub description: &'a str,
+    pub offending_snippet: &'a str,
+}
+
+pub struct AuditView<'a> {
+    pub total_sessions_audited: usize,
+    pub critical_count: usize,
+    pub high_count: usize,
+    pub warn_count: usize,
+    pub findings: Vec<AuditFindingRow<'a>>,
+}
+
+pub fn audit(ui: &Ui, v: &AuditView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(
+        "agentworth audit",
+        &format!("{} sessions", thousands(v.total_sessions_audited as u64)),
+    ));
+    out.push('\n');
+
+    section(&mut out, ui, "THREAT SUMMARY", "");
+    push(&mut out, ui, ui.leaders("  critical", &v.critical_count.to_string(), ui.width(), Role::Error));
+    push(&mut out, ui, ui.leaders("  high", &v.high_count.to_string(), ui.width(), Role::Warn));
+    push(&mut out, ui, ui.leaders("  warn", &v.warn_count.to_string(), ui.width(), Role::Label));
+    out.push('\n');
+
+    if v.findings.is_empty() {
+        section(&mut out, ui, "FINDINGS", "");
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Verified, "No dangerous tool calls or leaked secrets found.")),
+        );
+        out.push('\n');
+        out.push_str(&ui.next("agentworth scan", "pick up anything new since the last index"));
+        return out;
+    }
+
+    section(&mut out, ui, "FINDINGS", &format!("{}", v.findings.len()));
+    let wrap_width = ui.inner().saturating_sub(2);
+    for (i, f) in v.findings.iter().enumerate() {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  #{:02}  {}  {}",
+                i + 1,
+                ui.paint(severity_role(f.severity), &severity_tag(f.severity)),
+                ui.paint(Role::Emphasis, f.title)
+            ),
+        );
+        push(&mut out, ui, format!("    rule: {}   project: {}", f.rule_id, f.project));
+        push(&mut out, ui, format!("    session: {}   adapter: {}", f.session_id, f.adapter));
+        push(&mut out, ui, format!("    at: {}   turn #{}", f.timestamp, f.turn_index));
+        for line in wrap(f.description, wrap_width) {
+            push(&mut out, ui, format!("    {}", ui.paint(Role::Label, &line)));
+        }
+        for line in wrap(f.offending_snippet, wrap_width) {
+            push(&mut out, ui, format!("    {}", ui.paint(Role::Error, &line)));
+        }
+        out.push('\n');
+    }
+    out.push_str(&ui.next(
+        "agentworth export <session-id> --redact",
+        "the full session with secrets stripped",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// blunder
+// -----------------------------------------------------------------------------
+
+pub struct BlunderExhibitRow<'a> {
+    pub severity: &'a str,
+    pub title: &'a str,
+    pub rule_id: &'a str,
+    pub project: &'a str,
+    pub model: &'a str,
+    pub adapter: &'a str,
+    pub tokens: u64,
+    pub spend_usd: f64,
+    pub turns: usize,
+    pub apology_count: usize,
+    pub apology_quote: &'a str,
+    pub code_snippet: &'a str,
+    pub session_hash: &'a str,
+}
+
+pub fn blunder(ui: &Ui, rows: &[BlunderExhibitRow<'_>]) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header("agentworth blunder", &format!("{} exhibit(s)", rows.len())));
+    out.push('\n');
+
+    let wrap_width = ui.inner().saturating_sub(2);
+    for (i, ex) in rows.iter().enumerate() {
+        section(&mut out, ui, &format!("EXHIBIT #{:02}", i + 1), &severity_tag(ex.severity));
+        push(&mut out, ui, format!("  {}", ui.paint(severity_role(ex.severity), ex.title)));
+        push(&mut out, ui, format!("    rule: {}   project: {}", ex.rule_id, ex.project));
+        push(&mut out, ui, format!("    model: {}   adapter: {}", short_model(ex.model), ex.adapter));
+        push(
+            &mut out,
+            ui,
+            format!(
+                "    tokens: {}   spend: ${:.2}   turns: {}   apologies: {}",
+                compact(ex.tokens),
+                ex.spend_usd,
+                ex.turns,
+                ex.apology_count
+            ),
+        );
+        if !ex.apology_quote.is_empty() {
+            push(&mut out, ui, "    remorse quote:".to_string());
+            for line in wrap(ex.apology_quote, wrap_width) {
+                push(&mut out, ui, format!("      {}", ui.paint(Role::Label, &line)));
+            }
+        }
+        if !ex.code_snippet.is_empty() {
+            push(&mut out, ui, "    fatal snippet:".to_string());
+            for line in wrap(ex.code_snippet, wrap_width) {
+                push(&mut out, ui, format!("      {}", ui.paint(Role::Error, &line)));
+            }
+        }
+        push(&mut out, ui, ui.leaders("    receipt hash", ex.session_hash, ui.width(), Role::Unverified));
+        out.push('\n');
+    }
+    out.push_str(&ui.next("agentworth blunder --submit", "publish the top exhibit"));
+    out
+}
+
+pub fn blunder_submitted(ui: &Ui, status: &str, url: &str, id: &str) -> String {
+    let mut out = String::new();
+    section(&mut out, ui, "DISPATCHED", "");
+    push(&mut out, ui, ui.leaders("  status", status, ui.width(), Role::Verified));
+    push(&mut out, ui, ui.leaders("  url", url, ui.width(), Role::Value));
+    push(&mut out, ui, ui.leaders("  id", id, ui.width(), Role::Label));
+    out
+}
+
+pub fn blunder_submit_failed(ui: &Ui, err: &str, receipt_url: &str) -> String {
+    let mut out = String::new();
+    section(&mut out, ui, "DISPATCH FAILED", "");
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Warn, &format!("could not reach submission endpoint: {}", err))));
+    push(&mut out, ui, ui.leaders("  receipt", receipt_url, ui.width(), Role::Label));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// threat-digest
+// -----------------------------------------------------------------------------
+
+pub struct ThreatDigestSessionRow<'a> {
+    pub severity: &'a str,
+    pub session_id: &'a str,
+    pub risk_score: u64,
+    pub adapter: &'a str,
+    pub findings: usize,
+    pub categories: String,
+}
+
+pub struct ThreatDigestView<'a> {
+    pub sessions_scanned: usize,
+    pub sessions_with_exposure: usize,
+    pub sessions_clean: usize,
+    pub sessions_unreadable: usize,
+    pub critical: usize,
+    pub high: usize,
+    pub medium: usize,
+    pub low: usize,
+    pub categories: &'a [(String, usize)],
+    pub top_sessions: Vec<ThreatDigestSessionRow<'a>>,
+}
+
+pub fn threat_digest(ui: &Ui, v: &ThreatDigestView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header(
+        "agentworth threat-digest",
+        &format!("{} sessions scanned", thousands(v.sessions_scanned as u64)),
+    ));
+    out.push('\n');
+
+    section(&mut out, ui, "EXPOSURE", "");
+    push(&mut out, ui, ui.leaders("  exposed", &thousands(v.sessions_with_exposure as u64), ui.width(), Role::Warn));
+    push(&mut out, ui, ui.leaders("  clean", &thousands(v.sessions_clean as u64), ui.width(), Role::Verified));
+    if v.sessions_unreadable > 0 {
+        push(
+            &mut out,
+            ui,
+            ui.leaders(
+                "  unreadable (source moved)",
+                &thousands(v.sessions_unreadable as u64),
+                ui.width(),
+                Role::Unverified,
+            ),
+        );
+    }
+    out.push('\n');
+
+    section(&mut out, ui, "BY PEAK SEVERITY", "");
+    push(&mut out, ui, ui.leaders("  critical", &v.critical.to_string(), ui.width(), Role::Error));
+    push(&mut out, ui, ui.leaders("  high", &v.high.to_string(), ui.width(), Role::Warn));
+    push(&mut out, ui, ui.leaders("  medium", &v.medium.to_string(), ui.width(), Role::Label));
+    push(&mut out, ui, ui.leaders("  low", &v.low.to_string(), ui.width(), Role::Unverified));
+    out.push('\n');
+
+    if !v.categories.is_empty() {
+        section(&mut out, ui, "CATEGORIES", "");
+        for (category, count) in v.categories {
+            push(&mut out, ui, ui.leaders(&format!("  {}", category), &count.to_string(), ui.width(), Role::Value));
+        }
+        out.push('\n');
+    }
+
+    if v.top_sessions.is_empty() {
+        section(&mut out, ui, "TOP SESSIONS", "");
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Verified, "No exposure at or above the requested severity threshold.")),
+        );
+    } else {
+        section(&mut out, ui, "TOP SESSIONS", "rotate these first");
+        for row in &v.top_sessions {
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}  {}  risk {}",
+                    ui.paint(severity_role(row.severity), &severity_tag(row.severity)),
+                    ui.paint(Role::Emphasis, row.session_id),
+                    row.risk_score
+                ),
+            );
+            push(
+                &mut out,
+                ui,
+                format!("    adapter: {}   findings: {}", row.adapter, row.findings),
+            );
+            if !row.categories.is_empty() {
+                push(&mut out, ui, format!("    {}", ui.paint(Role::Label, &row.categories)));
+            }
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next(
+        "agentworth export <session-id> --redact",
+        "the full session with secrets stripped",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// handoff
+// -----------------------------------------------------------------------------
+
 pub struct HandoffSection<'a> {
     pub title: &'a str,
     pub total: usize,

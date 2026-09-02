@@ -18,7 +18,6 @@ use agentworth_storage::{
     Storage,
 };
 use anyhow::{Context, Result};
-use console::style;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -74,11 +73,18 @@ pub fn run_blunder_command(
     submit: bool,
     json_output: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
     let top_limit = if top == 0 { 5 } else { top };
 
-    let exhibits = discover_blunders(&storage, top_limit)?;
+    let exhibits = if json_output {
+        discover_blunders(&storage, top_limit)?
+    } else {
+        crate::ui::with_status(ui, "scanning sessions for blunders", || {
+            discover_blunders(&storage, top_limit)
+        })?
+    };
 
     if json_output {
         if submit && !exhibits.is_empty() {
@@ -98,38 +104,30 @@ pub fn run_blunder_command(
     }
 
     if exhibits.is_empty() {
-        println!();
-        println!(
+        print!(
             "{}",
-            style("No blunder exhibits found in the local index.").yellow()
+            crate::ui::views::error(
+                ui,
+                "agentworth blunder",
+                "No blunder exhibits found in the local index.",
+                "",
+                &[],
+                &[("agentworth scan".to_string(), "index agent histories first".to_string())],
+            )
         );
-        println!(
-            "{}",
-            style("Tip: Run `agwt scan` to index your agent histories first.").dim()
-        );
-        println!();
         return Ok(());
     }
 
-    // Render ASCII Thermal Receipt Slips
-    render_blunder_exhibits(&exhibits);
+    print!("{}", render_blunder_exhibits(ui, &exhibits));
 
     // Interactive or flag-driven submission
     if submit {
-        println!();
-        println!(
-            "{}",
-            style("🚀 Dispatching top exhibit to the Hall of Blunders...").bold().cyan()
-        );
         let top_exhibit = &exhibits[0];
-        dispatch_and_print_result(top_exhibit)?;
+        dispatch_and_print_result(ui, top_exhibit)?;
     } else {
-        println!();
         print!(
             "{}",
-            style("Publish top exhibit to the Hall of Blunders (stfuopus.lol)? [y/N]: ")
-                .bold()
-                .yellow()
+            ui.paint(crate::ui::Role::Label, "Publish top exhibit to the Hall of Blunders (stfuopus.lol)? [y/N]: ")
         );
         io::stdout().flush().ok();
 
@@ -137,20 +135,12 @@ pub fn run_blunder_command(
         if io::stdin().read_line(&mut input).is_ok() {
             let trimmed = input.trim().to_lowercase();
             if trimmed == "y" || trimmed == "yes" || trimmed == "p" || trimmed == "publish" {
-                println!();
-                println!(
-                    "{}",
-                    style("🚀 Redacting secrets and submitting exhibit to Hall of Blunders...")
-                        .bold()
-                        .cyan()
-                );
                 let top_exhibit = &exhibits[0];
-                dispatch_and_print_result(top_exhibit)?;
+                dispatch_and_print_result(ui, top_exhibit)?;
             } else {
-                println!("{}", style("Submission skipped.").dim());
+                println!("{}", ui.paint(crate::ui::Role::Label, "Submission skipped."));
             }
         }
-        println!();
     }
 
     Ok(())
@@ -503,159 +493,58 @@ pub fn submit_exhibit_sync(exhibit: &BlunderExhibit) -> Result<SubmissionRespons
     })
 }
 
-fn dispatch_and_print_result(exhibit: &BlunderExhibit) -> Result<()> {
+fn dispatch_and_print_result(ui: &crate::ui::Ui, exhibit: &BlunderExhibit) -> Result<()> {
     match submit_exhibit_sync(exhibit) {
         Ok(res) => {
-            println!(
+            let display_url = res
+                .url
+                .unwrap_or_else(|| format!("https://stfuopus.lol/blunders#{}", exhibit.session_hash));
+            print!(
                 "{}",
-                style("┌─ 🎉 Exhibit Successfully Dispatched to Hall of Blunders ──────────┐")
-                    .bold()
-                    .green()
-            );
-            println!(
-                "│ Status:   {:<59} │",
-                style(&res.status).bold().yellow()
-            );
-            let display_url = res.url.unwrap_or_else(|| {
-                format!("https://stfuopus.lol/blunders#{}", exhibit.session_hash)
-            });
-            println!(
-                "│ Live URL: {:<59} │",
-                style(&display_url).bold().cyan()
-            );
-            println!(
-                "│ ID:       {:<59} │",
-                style(res.id.as_deref().unwrap_or(&exhibit.session_hash)).magenta()
-            );
-            println!(
-                "{}",
-                style("└────────────────────────────────────────────────────────────────────────┘")
-                    .bold()
-                    .green()
+                crate::ui::views::blunder_submitted(
+                    ui,
+                    &res.status,
+                    &display_url,
+                    res.id.as_deref().unwrap_or(&exhibit.session_hash),
+                )
             );
         }
         Err(err) => {
-            println!(
-                "{} {}",
-                style("⚠️ Could not reach submission endpoint:").yellow(),
-                err
-            );
-            println!(
-                "Your receipt ID is: https://stfuopus.lol/blunders#{}",
-                exhibit.session_hash
+            print!(
+                "{}",
+                crate::ui::views::blunder_submit_failed(
+                    ui,
+                    &err.to_string(),
+                    &format!("https://stfuopus.lol/blunders#{}", exhibit.session_hash),
+                )
             );
         }
     }
     Ok(())
 }
 
-/// Render ASCII Thermal Receipt Slips.
-pub fn render_blunder_exhibits(exhibits: &[BlunderExhibit]) {
-    println!();
-    println!(
-        "{}",
-        style("┌─ 🏆 AGENTWORTH HALL OF BLUNDERS (TOP FORENSIC EXHIBITS) ──────────────┐")
-            .bold()
-            .yellow()
-    );
-    println!(
-        "│ Tagline: {:<61} │",
-        style("\"Why hide your agent's $5,000 mistakes when you can frame the receipt?\"").italic()
-    );
-    println!(
-        "│ Exhibits: {:<60} │",
-        style(format!("{} catastrophic trajectory receipt(s)", exhibits.len())).bold()
-    );
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────────────────┤")
-            .bold()
-            .yellow()
-    );
-
-    for (i, exhibit) in exhibits.iter().enumerate() {
-        let (_sev_badge, sev_styled) = match exhibit.severity.as_str() {
-            "CRITICAL" => ("CRITICAL", style("[CRITICAL]").bold().red()),
-            "HIGH" => ("HIGH", style("[HIGH]").bold().yellow()),
-            "WARN" => ("WARN", style("[WARN]").bold().cyan()),
-            _ => ("INFO", style("[INFO]").dim()),
-        };
-
-        println!(
-            "│ {}  {:<12} {:<49} │",
-            style(format!("EXHIBIT #{:02}", i + 1)).bold().yellow(),
-            sev_styled,
-            style(&exhibit.title).bold()
-        );
-        println!(
-            "│ Rule ID:      {:<24} Project:   {:<23} │",
-            style(&exhibit.rule_id).magenta(),
-            style(&exhibit.project).cyan()
-        );
-        println!(
-            "│ Model:        {:<24} Adapter:   {:<23} │",
-            style(&exhibit.model).bold(),
-            style(&exhibit.adapter).green()
-        );
-        println!(
-            "│ Token Burn:   {:<24} Est. Spend:{:<23} │",
-            style(format!("{} ({} tok)", format_compact_tokens(exhibit.tokens), exhibit.tokens)).bold().magenta(),
-            style(format!("${:.2} USD", exhibit.spend_usd)).bold().red()
-        );
-        println!(
-            "│ Trajectory:   {:<24} Remorse:   {:<23} │",
-            style(format!("{} turns", exhibit.turns)).dim(),
-            style(format!("{} apology turns", exhibit.apology_count)).yellow()
-        );
-
-        println!(
-            "│ {}",
-            style("──────────────────────────────────────────────────────────────────────").dim()
-        );
-
-        // Remorse Quote
-        println!("│ 💬 AGENT REMORSE QUOTE:                                                │");
-        for line in wrap_text(&exhibit.apology_quote, 66) {
-            println!("│   {:<68} │", style(line).italic().cyan());
-        }
-
-        println!("│                                                                        │");
-
-        // Fatal Monospace Snippet
-        println!("│ 💥 FATAL MONOSPACE SNIPPET:                                            │");
-        for line in wrap_text(&exhibit.code_snippet, 66) {
-            println!("│   {:<68} │", style(line).bold().red());
-        }
-
-        println!(
-            "│ {}",
-            style("──────────────────────────────────────────────────────────────────────").dim()
-        );
-        println!(
-            "│                  {}                  │",
-            style("[ VERIFIED BY AGENTWORTH ]").bold().green()
-        );
-        println!(
-            "│ Receipt Hash: {:<56} │",
-            style(&exhibit.session_hash).dim()
-        );
-
-        if i + 1 < exhibits.len() {
-            println!(
-                "{}",
-                style("├────────────────────────────────────────────────────────────────────────┤")
-                    .bold()
-                    .yellow()
-            );
-        }
+fn exhibit_row(exhibit: &BlunderExhibit) -> crate::ui::views::BlunderExhibitRow<'_> {
+    crate::ui::views::BlunderExhibitRow {
+        severity: &exhibit.severity,
+        title: &exhibit.title,
+        rule_id: &exhibit.rule_id,
+        project: &exhibit.project,
+        model: &exhibit.model,
+        adapter: &exhibit.adapter,
+        tokens: exhibit.tokens,
+        spend_usd: exhibit.spend_usd,
+        turns: exhibit.turns,
+        apology_count: exhibit.apology_count,
+        apology_quote: &exhibit.apology_quote,
+        code_snippet: &exhibit.code_snippet,
+        session_hash: &exhibit.session_hash,
     }
+}
 
-    println!(
-        "{}",
-        style("└────────────────────────────────────────────────────────────────────────┘")
-            .bold()
-            .yellow()
-    );
+/// Render the ranked exhibit list through the shared design system.
+pub fn render_blunder_exhibits(ui: &crate::ui::Ui, exhibits: &[BlunderExhibit]) -> String {
+    let rows: Vec<crate::ui::views::BlunderExhibitRow> = exhibits.iter().map(exhibit_row).collect();
+    crate::ui::views::blunder(ui, &rows)
 }
 
 fn is_test_cmd(cmd: &str) -> bool {
@@ -743,37 +632,26 @@ fn format_compact_tokens(n: u64) -> String {
     }
 }
 
+/// `max_len` is a byte budget, but the cut has to land on a char boundary -- real tool
+/// output and apology text routinely carry multi-byte UTF-8 (CJK apologies are literally in
+/// `APOLOGY_PATTERNS` above), and a plain `&trimmed[..max_len - 3]` panics the moment that
+/// boundary falls inside one (the same bug shape as `recovery.rs::truncate_str`, fixed
+/// alongside this one). Walk char boundaries and stop at the last one at or before the
+/// budget instead.
 fn truncate_snippet(s: &str, max_len: usize) -> String {
     let trimmed = s.trim();
     if trimmed.len() <= max_len {
         trimmed.to_string()
     } else {
-        format!("{}...", &trimmed[..max_len - 3])
+        let budget = max_len.saturating_sub(3);
+        let cut = trimmed
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= budget)
+            .last()
+            .unwrap_or(0);
+        format!("{}...", &trimmed[..cut])
     }
-}
-
-fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for paragraph in text.lines() {
-        let mut current = String::new();
-        for word in paragraph.split_whitespace() {
-            if current.len() + word.len() + 1 > max_width && !current.is_empty() {
-                lines.push(current);
-                current = String::new();
-            }
-            if !current.is_empty() {
-                current.push(' ');
-            }
-            current.push_str(word);
-        }
-        if !current.is_empty() {
-            lines.push(current);
-        }
-    }
-    if lines.is_empty() {
-        lines.push(text.to_string());
-    }
-    lines
 }
 
 #[cfg(test)]
@@ -781,6 +659,18 @@ mod tests {
     use super::*;
     use agentworth_schema::{Provenance, ShellCommand, TokenUsage};
     use chrono::Utc;
+
+    /// Regression test: `truncate_snippet` used to cut on a raw byte offset
+    /// (`&trimmed[..max_len - 3]`), which panics ("not a char boundary") the moment that
+    /// offset falls inside a multi-byte UTF-8 char -- observed for real against the local
+    /// index (`agentworth blunder` and `agentworth audit` both crashed on it before this fix
+    /// and `recovery.rs::truncate_str`'s matching one).
+    #[test]
+    fn truncate_snippet_cuts_on_a_char_boundary_not_a_byte_offset() {
+        let s = "a".repeat(18) + "─────────"; // each "─" is 3 bytes (U+2500)
+        let out = truncate_snippet(&s, 20);
+        assert!(out.ends_with("..."));
+    }
 
     #[test]
     fn test_evaluate_katana_blunder() {

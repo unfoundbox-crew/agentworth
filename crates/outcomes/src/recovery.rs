@@ -568,9 +568,40 @@ fn is_test_command(cmd: &str) -> bool {
 fn truncate_str(s: &str, max_len: usize) -> String {
     let clean = s.lines().next().unwrap_or("").trim();
     if clean.len() > max_len {
-        format!("{}...", &clean[..max_len])
+        // `clean.len()` is bytes, but `max_len` is meant as a byte budget for a slice
+        // boundary that has to land on a char -- real tool output routinely carries
+        // multi-byte UTF-8 (box-drawing glyphs from a nested `agentworth` run, CJK text,
+        // etc.), and a plain `&clean[..max_len]` panics ("not a char boundary") the moment
+        // that boundary falls inside one. Walk char boundaries and stop at the last one at
+        // or before `max_len` instead.
+        let cut = clean
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= max_len)
+            .last()
+            .unwrap_or(0);
+        format!("{}...", &clean[..cut])
     } else {
         clean.to_string()
+    }
+}
+
+#[cfg(test)]
+mod truncate_str_tests {
+    use super::truncate_str;
+
+    #[test]
+    fn cuts_on_a_char_boundary_not_a_byte_offset() {
+        // Each "─" is 3 bytes (U+2500); byte offset 80 lands inside one, which is exactly
+        // what panicked before this fix.
+        let s = "a".repeat(78) + "───────────";
+        let out = truncate_str(&s, 80);
+        assert!(out.ends_with("..."));
+    }
+
+    #[test]
+    fn leaves_short_strings_untouched() {
+        assert_eq!(truncate_str("short", 80), "short");
     }
 }
 

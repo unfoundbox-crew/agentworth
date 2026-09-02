@@ -10,7 +10,6 @@ use agentworth_core::Scanner;
 use agentworth_schema::{AgentWorthTrace, EventPayload};
 use agentworth_storage::{calculate_cache_hit_ratio, Storage};
 use anyhow::{Context, Result};
-use console::style;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +148,7 @@ pub fn run_cache_doctor_command(
     session_id: &str,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
@@ -160,7 +160,7 @@ pub fn run_cache_doctor_command(
         .with_context(|| format!("Session '{}' not found in local index.", session_id))?;
 
     let scanner = Scanner::new(storage.clone());
-    let trace = scanner.load_trace(session_id)?;
+    let trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(session_id))?;
     let diagnosis = diagnose_cache_efficiency(&trace);
 
     if json {
@@ -168,53 +168,23 @@ pub fn run_cache_doctor_command(
         return Ok(());
     }
 
-    println!();
-    println!(
-        "{}",
-        style("┌─ 🏥 AgentWorth Cache Hit-Rate Doctor ──────────────────────┐").bold().cyan()
-    );
-    println!(
-        "│ Session:  {:<48} │",
-        style(&diagnosis.session_id).bold()
-    );
-    println!(
-        "│ Adapter:  {:<48} │",
-        style(&diagnosis.adapter).green()
-    );
-    println!(
-        "│ Lifetime Cache Hit: {:<42} │",
-        style(format!("{:.1}% average efficiency", diagnosis.average_cache_hit_ratio)).cyan()
-    );
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────┤").bold()
-    );
-
-    if diagnosis.drop_findings.is_empty() {
-        println!("│ ✓ No significant prompt cache degradation detected.        │");
-    } else {
-        println!("│ ⚠️  Cache Degradation Anomalies Detected:                   │");
-        for (i, drop) in diagnosis.drop_findings.iter().enumerate() {
-            println!(
-                "│ [{}] Turn #{}: {:.1}% -> {:.1}% ({:.1}% drop)                  │",
-                i + 1,
-                drop.turn_index,
-                drop.previous_hit_ratio,
-                drop.new_hit_ratio,
-                drop.drop_percentage
-            );
-            println!(
-                "│     Cause: {:<47} │",
-                style(&drop.probable_cause).yellow()
-            );
-        }
-    }
-
-    println!(
-        "{}",
-        style("└────────────────────────────────────────────────────────────┘").bold()
-    );
-    println!();
+    let view = crate::ui::views::CacheDoctorView {
+        session_id: &diagnosis.session_id,
+        adapter: &diagnosis.adapter,
+        average_hit_ratio: diagnosis.average_cache_hit_ratio,
+        drops: diagnosis
+            .drop_findings
+            .iter()
+            .map(|d| crate::ui::views::CacheDoctorDropRow {
+                turn_index: d.turn_index,
+                previous_ratio: d.previous_hit_ratio,
+                new_ratio: d.new_hit_ratio,
+                drop_pct: d.drop_percentage,
+                cause: &d.probable_cause,
+            })
+            .collect(),
+    };
+    print!("{}", crate::ui::views::cache_doctor(ui, &view));
 
     Ok(())
 }

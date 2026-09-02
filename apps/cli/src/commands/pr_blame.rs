@@ -11,7 +11,6 @@ use std::sync::Arc;
 use agentworth_core::Scanner;
 use agentworth_storage::{estimate_total_cost_from_per_model_usage, Storage};
 use anyhow::Result;
-use console::style;
 use serde::{Deserialize, Serialize};
 
 /// Confidence weight for a `primary_outcome` label, matching the constants
@@ -122,6 +121,7 @@ pub fn run_pr_blame_command(
     files: Vec<String>,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
@@ -153,73 +153,33 @@ pub fn run_pr_blame_command(
         return Ok(());
     }
 
-    let report = annotate_pr_files(&storage, &target_files)?;
+    let report = crate::ui::with_status(ui, "matching sessions to files", || {
+        annotate_pr_files(&storage, &target_files)
+    })?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    println!();
-    println!(
-        "{}",
-        style("┌─ 📋 AgentWorth AI Provenance PR Overlay ──────────────────┐").bold().cyan()
-    );
-    println!(
-        "│ Changed Files:    {:<39} │",
-        style(report.files_analyzed).bold()
-    );
-    println!(
-        "│ AI-Authored Files:{:<39} │",
-        style(format!(
-            "{} ({}% AI generated)",
-            report.ai_authored_files,
-            (report.ai_authored_files * 100).checked_div(report.files_analyzed).unwrap_or(0)
-        )).bold().green()
-    );
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-
-    for ann in &report.annotations {
-        println!(
-            "│ File: {:<50} │",
-            style(&ann.file_path).bold()
-        );
-        if ann.ai_touched {
-            println!(
-                "│   • Touched by: {:<40} │",
-                style(format!("{} ({})", ann.session_id.as_deref().unwrap_or(""), ann.adapter.as_deref().unwrap_or(""))).cyan()
-            );
-            if !ann.models_used.is_empty() {
-                println!(
-                    "│   • Models:     {:<40} │",
-                    style(ann.models_used.join(", ")).yellow()
-                );
-            }
-            if let Some(outcome) = &ann.primary_outcome {
-                println!(
-                    "│   • Outcome:    {:<40} │",
-                    style(format!("{} ({:.0}% conf)", outcome, ann.outcome_confidence.unwrap_or(0.5) * 100.0)).green()
-                );
-            }
-        } else {
-            println!(
-                "│   • Provenance: {:<40} │",
-                style("Human / Unindexed").dim()
-            );
-        }
-        println!(
-            "│                                                          │"
-        );
-    }
-
-    println!(
-        "{}",
-        style("└──────────────────────────────────────────────────────────┘").bold()
-    );
-    println!();
+    let view = crate::ui::views::PrBlameView {
+        files_analyzed: report.files_analyzed,
+        ai_authored_files: report.ai_authored_files,
+        rows: report
+            .annotations
+            .iter()
+            .map(|ann| crate::ui::views::PrBlameRow {
+                file_path: &ann.file_path,
+                ai_touched: ann.ai_touched,
+                session_id: ann.session_id.as_deref(),
+                adapter: ann.adapter.as_deref(),
+                models: &ann.models_used,
+                outcome: ann.primary_outcome.as_deref(),
+                confidence: ann.outcome_confidence,
+            })
+            .collect(),
+    };
+    print!("{}", crate::ui::views::pr_blame(ui, &view));
 
     Ok(())
 }

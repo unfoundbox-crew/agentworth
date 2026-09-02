@@ -12,7 +12,6 @@ use agentworth_core::Scanner;
 use agentworth_schema::{AgentWorthTrace, EventPayload};
 use agentworth_storage::Storage;
 use anyhow::{Context, Result};
-use console::style;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,11 +145,24 @@ pub fn bisect_session_trajectory(trace: &AgentWorthTrace) -> BisectResult {
     }
 }
 
+/// A human label for `RegressionReason`, kept separate from its `Debug`/JSON encoding
+/// (`BuildOrTestFailure`) so the JSON payload stays byte-identical while the terminal
+/// screen reads like a sentence.
+fn reason_label(reason: &RegressionReason) -> &'static str {
+    match reason {
+        RegressionReason::BuildOrTestFailure => "build or test failure",
+        RegressionReason::FileReversionOrThrashing => "file reversion or thrashing",
+        RegressionReason::RepeatedToolError => "repeated tool error",
+        RegressionReason::ApologyRemorseTrigger => "apology / remorse trigger",
+    }
+}
+
 /// Execute the `agentworth bisect` subcommand.
 pub fn run_bisect_command(
     session_id: &str,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
@@ -162,7 +174,7 @@ pub fn run_bisect_command(
         .with_context(|| format!("Session '{}' not found in local index.", session_id))?;
 
     let scanner = Scanner::new(storage.clone());
-    let trace = scanner.load_trace(session_id)?;
+    let trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(session_id))?;
     let result = bisect_session_trajectory(&trace);
 
     if json {
@@ -170,59 +182,17 @@ pub fn run_bisect_command(
         return Ok(());
     }
 
-    println!();
-    println!(
-        "{}",
-        style("┌─ ✂️  AgentWorth Trajectory Bisect ────────────────────────┐").bold().cyan()
-    );
-    println!(
-        "│ Session:  {:<48} │",
-        style(&result.session_id).bold()
-    );
-    println!(
-        "│ Adapter:  {:<48} │",
-        style(&result.adapter).green()
-    );
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────┤").bold()
-    );
-
-    if let Some(turn) = result.pivotal_turn_index {
-        println!(
-            "│ ⚠️  Inflection Point Detected at Event #{:<25} │",
-            style(turn).bold().red()
-        );
-        if let Some(ts) = &result.pivotal_timestamp {
-            println!("│ Timestamp: {:<47} │", style(ts).dim());
-        }
-        println!(
-            "│ Reason:    {:<47} │",
-            style(format!("{:?}", result.reason.unwrap())).yellow()
-        );
-        println!(
-            "│ Summary:   {:<47} │",
-            style(&result.summary).bold()
-        );
-        if let Some(ctx) = &result.context_snippet {
-            println!(
-                "│ Context:   {:<47} │",
-                style(if ctx.len() > 44 {
-                    format!("{}...", &ctx[..41])
-                } else {
-                    ctx.clone()
-                }).dim()
-            );
-        }
-    } else {
-        println!("│ ✓ Trajectory was clean (no negative turning point found).  │");
-    }
-
-    println!(
-        "{}",
-        style("└────────────────────────────────────────────────────────────┘").bold()
-    );
-    println!();
+    let view = crate::ui::views::BisectView {
+        session_id: &result.session_id,
+        adapter: &result.adapter,
+        total_events: result.total_events,
+        turn: result.pivotal_turn_index,
+        timestamp: result.pivotal_timestamp.as_deref(),
+        reason: result.reason.as_ref().map(reason_label),
+        summary: &result.summary,
+        context: result.context_snippet.as_deref(),
+    };
+    print!("{}", crate::ui::views::bisect(ui, &view));
 
     Ok(())
 }
