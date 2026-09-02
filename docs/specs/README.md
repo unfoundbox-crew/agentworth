@@ -17,11 +17,12 @@
 | `questions.md` | proposed | — |
 | `verified-outcome-rate.md` | proposed, measured | — |
 | `suspect-commits.md` | proposed, measured | — |
-| `handoff.md` | built | #TBD — `session_handoff`, `carry_forward`, `agentworth handoff`; `prompt_preview` turned out to be filled since #47, only the pre-#47 rows are null |
+| `handoff.md` | built | #77 — `session_handoff`, `carry_forward`, `agentworth handoff`; `prompt_preview` turned out to be filled since #47, only the pre-#47 rows are null |
+| `loose-ends.md` | built | #77 — `agentworth loose-ends`, the dashboard's detector ported to Rust |
 | `compaction-diff.md` | proposed, measured | — |
 | `market-autofix.md` | research doc, not a build item | — |
 
-Thirteen specs sit beside this file. They are independent of each other but not of
+Seventeen specs sit beside this file. They are independent of each other but not of
 the backend, and two of them are worth less than they look until a bug lands
 first. This is the sequencing.
 

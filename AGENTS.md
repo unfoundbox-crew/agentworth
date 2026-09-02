@@ -10,6 +10,16 @@ V0 should answer:
 
 The immediate product is not a marketplace.
 
+## Read these first
+
+- `docs/specs/README.md` — the roadmap and what shipped, with a dated status table.
+- `docs/capability-matrix.md` — what each adapter actually extracts, measured. Internal.
+- `docs/DECISION-INBOX.md` — dated status at the top; the body below it is a historical log.
+- `CHANGELOG.md` — what shipped per release.
+- `README.md` — the user-facing description of the product.
+
+To check any of these is still current: `git log -1 <path>` for when it last changed, and `gh pr view <N>` for any PR number it cites.
+
 ## Technology
 
 Use:
