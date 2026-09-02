@@ -32,28 +32,47 @@ export function readLockup() {
   return groups.slice(0, 2).join('\n  ');
 }
 
+const wrap = (title, perLine) => {
+  const lines = [];
+  let line = '';
+  for (const word of title.split(/\s+/)) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > perLine && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+};
+
 /**
- * Geist Mono advances at 0.6em, so line length is arithmetic rather than a
- * measurement. Steps the size down until the title fits three lines.
+ * Geist Mono is monospace, so line length is arithmetic rather than a
+ * measurement: 0.62em per character, measured against the rendered card
+ * rather than taken from the nominal 0.6 advance, which overflowed.
+ *
+ * Steps the size down until the title fits three lines, then narrows the
+ * measure until the last line is not a lone orphan word — "…now means exit"
+ * over "0" is worse than two balanced lines.
  */
 function layoutTitle(title, maxWidth = 1040) {
   for (const size of [58, 52, 46, 40, 36]) {
-    const perLine = Math.floor(maxWidth / (size * 0.6));
-    const lines = [];
-    let line = '';
-    for (const word of title.split(/\s+/)) {
-      const next = line ? `${line} ${word}` : word;
-      if (next.length > perLine && line) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = next;
-      }
+    const perLine = Math.floor(maxWidth / (size * 0.62));
+    let lines = wrap(title, perLine);
+    if (lines.length > 3) continue;
+
+    for (let narrow = perLine; narrow > perLine * 0.6; narrow--) {
+      const candidate = wrap(title, narrow);
+      if (candidate.length > lines.length) break;
+      const last = candidate[candidate.length - 1];
+      lines = candidate;
+      if (candidate.length === 1 || last.length >= narrow * 0.45) break;
     }
-    if (line) lines.push(line);
-    if (lines.length <= 3) return { size, lines };
+    return { size, lines };
   }
-  return { size: 36, lines: title.split(/\s+/).slice(0, 12).join(' ').split('\n') };
+  return { size: 36, lines: wrap(title, Math.floor(maxWidth / (36 * 0.62))).slice(0, 3) };
 }
 
 export function postCardSvg({ title, kicker, footer }, lockup) {
