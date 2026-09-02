@@ -163,9 +163,25 @@
         {
           "name": "SESSION_ID",
           "positional": true,
-          "required": true,
-          "help": "The session ID to inspect",
+          "required": false,
+          "help": "The session ID to inspect, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Inspect the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -185,9 +201,25 @@
         {
           "name": "SESSION_ID",
           "positional": true,
-          "required": true,
-          "help": "The session ID to export",
+          "required": false,
+          "help": "The session ID to export, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Export the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -230,9 +262,25 @@
         {
           "name": "SESSION_ID",
           "positional": true,
-          "required": true,
-          "help": "The session ID to generate flight receipt for",
+          "required": false,
+          "help": "The session ID to generate flight receipt for, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Generate the receipt for the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -488,7 +536,7 @@
           "name": "SESSION_ID",
           "positional": true,
           "required": false,
-          "help": "Session to hand over. Defaults to the newest session indexed for this directory's repository, which is what `--last` also selects",
+          "help": "Session to hand over, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
           "possibleValues": []
         },
@@ -496,7 +544,15 @@
           "name": "--last",
           "positional": false,
           "required": false,
-          "help": "Hand over the newest session for this repository. The default when no ID is given",
+          "help": "Hand over the newest session for this repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
           "default": "false",
           "possibleValues": []
         },
@@ -542,8 +598,24 @@
           "name": "SESSION_ID",
           "positional": true,
           "required": false,
-          "help": "Session to diff, by full ID or a unique prefix. Defaults to the newest session indexed for this directory's repository",
+          "help": "Session to diff, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, defaults to the newest session indexed for this directory's repository (same as `--last`)",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Diff the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -596,15 +668,23 @@
           "name": "--session",
           "positional": false,
           "required": false,
-          "help": "Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed directly if it isn't an indexed session). Defaults to the newest session for this directory's repository, same as `--current`",
+          "help": "Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed directly if it isn't an indexed session). With neither this nor `--last` given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Resolve the newest session for this directory's repository, falling back to the newest session anywhere",
+          "default": "false",
           "possibleValues": []
         },
         {
           "name": "--current",
           "positional": false,
           "required": false,
-          "help": "Resolve the newest session for this directory's repository. The default when `--session` is not given -- this flag exists so an invocation can say that on purpose",
+          "help": "Alias of `--last`",
           "default": "false",
           "possibleValues": []
         },
@@ -997,8 +1077,24 @@
           "name": "--session",
           "positional": false,
           "required": false,
-          "help": "Blunder -> blame direction: one specific session ID. Resolves it to the files AI Code Blame attributes to that session",
+          "help": "Blunder -> blame direction: one specific session ID, by full ID or a unique prefix. Resolves it to the files AI Code Blame attributes to that session",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Blunder -> blame direction for the newest session in this repository, same as `--session` with that session's ID",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
