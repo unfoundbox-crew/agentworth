@@ -2,11 +2,11 @@
   <title id="t2">Anthropic's five effort levels, high as the default</title>
   <desc id="d2">Five points on a track — low, medium, high, xhigh, max — with high enlarged and filled to show it is what you get if you never set the parameter.</desc>
   <style>
-    .ink{fill:#111113}
-    .muted{fill:#52525b}
-    .track{stroke:#e4e4e7;stroke-width:6}
-    .dot{fill:#ffffff;stroke:#a1a1aa;stroke-width:1.5}
-    .dot-default{fill:#7c6bb3;stroke:#7c6bb3}
+    .ink{fill:#ffffff}
+    .muted{fill:#a1a1aa}
+    .track{stroke:#2a2a2d;stroke-width:6}
+    .dot{fill:#18181b;stroke:#52525b;stroke-width:1.5}
+    .dot-default{fill:#a396d6;stroke:#a396d6}
     text{font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
     .mono{font-family:"Geist Mono",ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace}
   </style>

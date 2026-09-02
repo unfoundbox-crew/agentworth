@@ -2,15 +2,15 @@
   <title id="t5">Codex logs effort on every turn; Claude Code never logs it</title>
   <desc id="d5">Two record cards side by side. Codex CLI's turn_context record on the left carries an effort field, highlighted, alongside model, approval_policy and sandbox_policy, written every turn. Claude Code's assistant record on the right lists sessionId, cwd, gitBranch and message usage, with no effort field at all — shown as a faint, dashed, absent row.</desc>
   <style>
-    .ink{fill:#111113}
-    .muted{fill:#52525b}
-    .faint{fill:#a1a1aa}
-    .card{fill:#ffffff;stroke:#e4e4e7;stroke-width:1.5}
-    .row-line{stroke:#ececee;stroke-width:1}
-    .accent-fill{fill:#7c6bb3}
-    .accent-text{fill:#7c6bb3}
-    .accent-stroke{stroke:#7c6bb3}
-    .absent-stroke{stroke:#a1a1aa;stroke-dasharray:3 3}
+    .ink{fill:#ffffff}
+    .muted{fill:#a1a1aa}
+    .faint{fill:#52525b}
+    .card{fill:#18181b;stroke:#2a2a2d;stroke-width:1.5}
+    .row-line{stroke:#1c1c1f;stroke-width:1}
+    .accent-fill{fill:#a396d6}
+    .accent-text{fill:#a396d6}
+    .accent-stroke{stroke:#a396d6}
+    .absent-stroke{stroke:#52525b;stroke-dasharray:3 3}
     text{font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
     .mono{font-family:"Geist Mono",ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace}
   </style>

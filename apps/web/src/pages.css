@@ -457,10 +457,14 @@
   border-bottom-color: var(--mv-accent);
 }
 
-/* Figures — standalone SVGs under /blog-figures/, each themed by its own
-   internal prefers-color-scheme query (an <img>-loaded SVG can't see this
-   page's CSS variables), so the frame around it just needs to sit quietly
-   in either mode. */
+/* Figures — standalone SVGs under /blog-figures/, shipped as fixed light
+   files plus fixed -dark siblings (packages/ui/brand/README.md's rule: an
+   <img>-loaded SVG can't see this page's CSS variables or its data-theme
+   attribute, only prefers-color-scheme, which is the OS choice, not the
+   page's own System/Light/Dark toggle). So both files load and this page's
+   own theme state — the same three-state contract as tokens.css — decides
+   which one is visible. The .fig-dark file also carries `hidden` in the
+   markup as a defensive default for contexts with no CSS, e.g. RSS. */
 .prose figure {
   margin: 1.7em 0 1.9em;
 }
@@ -472,6 +476,23 @@
   border: 1px solid var(--mv-border);
   border-radius: 12px;
   padding: 6px;
+}
+.prose figure img.fig-dark {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .prose figure img.fig-light {
+    display: none;
+  }
+  :root:not([data-theme="light"]) .prose figure img.fig-dark {
+    display: block;
+  }
+}
+:root[data-theme="dark"] .prose figure img.fig-light {
+  display: none;
+}
+:root[data-theme="dark"] .prose figure img.fig-dark {
+  display: block;
 }
 .prose figcaption {
   margin-top: 10px;

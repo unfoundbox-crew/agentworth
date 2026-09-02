@@ -2,12 +2,12 @@
   <title id="t1">Model, effort, and harness are three separate variables</title>
   <desc id="d1">A task fans out into three independent controls — which model runs it, how hard that model tries this turn, and what the harness lets it do — before recombining into an outcome. Effort is highlighted as the one this post is about.</desc>
   <style>
-    .ink{fill:#111113}
-    .muted{fill:#52525b}
-    .faint{fill:#a1a1aa}
-    .node{fill:#ffffff;stroke:#e4e4e7;stroke-width:1.5}
-    .node-accent{fill:#ffffff;stroke:#7c6bb3;stroke-width:2}
-    .edge{stroke:#a1a1aa;stroke-width:1.4;fill:none}
+    .ink{fill:#ffffff}
+    .muted{fill:#a1a1aa}
+    .faint{fill:#52525b}
+    .node{fill:#18181b;stroke:#2a2a2d;stroke-width:1.5}
+    .node-accent{fill:#18181b;stroke:#a396d6;stroke-width:2}
+    .edge{stroke:#52525b;stroke-width:1.4;fill:none}
     text{font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
   </style>
   <defs>
