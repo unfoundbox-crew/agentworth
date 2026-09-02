@@ -277,7 +277,7 @@ fi
 # Extract and install
 # -----------------------------------------------------------------------------
 
-tar -xzf "$tmpdir/$asset" -C "$tmpdir"
+tar -xzf "$tmpdir/$asset" -C "$tmpdir" || err "failed to extract $asset"
 say '*' extracting "$asset"
 
 mkdir -p "$INSTALL_DIR"
