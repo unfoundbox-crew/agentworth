@@ -1139,7 +1139,7 @@ fn write_repo_session(root: &std::path::Path, org: &str, repo: &str, session_id:
     .unwrap();
     writeln!(
         f,
-        r#"{{"type":"assistant","timestamp":"{ts}","content":[{{"type":"text","text":"done"}}]}}"#
+        r#"{{"type":"assistant","timestamp":"{ts}","model":"claude-3-5-haiku-20241022","usage":{{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"text","text":"done"}}]}}"#
     )
     .unwrap();
 }
