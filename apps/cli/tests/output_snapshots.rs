@@ -95,6 +95,8 @@ fn screens() -> Vec<(&'static str, Vec<&'static str>)> {
         ("usage-pacing", vec!["usage", "--pacing"]),
         ("blame", vec!["blame", "crates/storage/src/vector.rs"]),
         ("scan", vec!["scan"]),
+        ("doctor", vec!["doctor"]),
+        ("matrix", vec!["matrix"]),
     ]
 }
 
@@ -227,6 +229,46 @@ fn the_error_screen_names_the_noun_and_the_way_out() {
     }
 }
 
+/// The fixture's two sessions are `session_tested` and `session_claimed` -- both file
+/// stems, so both share the `session_` prefix and diverge right after it. Dropping just
+/// the last character off either id keeps far more than that shared prefix, so it stays
+/// unique to its own session without hardcoding which one `session_id()` happens to pick.
+#[test]
+fn inspect_resolves_a_unique_prefix() {
+    let (_t, db) = fixture();
+    let full_id = session_id(&db);
+    let prefix = &full_id[..full_id.len() - 1];
+
+    let out = render(&db, &["inspect", prefix, "--json"], 80, false);
+    let trace: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(trace["session_id"].as_str().unwrap(), full_id);
+}
+
+/// `session_` matches both fixture sessions, so it must fall through to the same
+/// not-found/nearest-matches screen an unknown id gets -- not resolve to either one.
+#[test]
+fn inspect_lists_candidates_for_an_ambiguous_prefix() {
+    let (_t, db) = fixture();
+    let mut cmd = Command::cargo_bin("agentworth").unwrap();
+    let out = cmd
+        .arg("--db-path")
+        .arg(&db)
+        .arg("inspect")
+        .arg("session_")
+        .env("COLUMNS", "80")
+        .env("NO_COLOR", "1")
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+
+    assert!(out.contains("No indexed session starts with session_."));
+    assert!(out.contains("session_tested"));
+    assert!(out.contains("session_claimed"));
+}
+
 #[test]
 fn stats_draws_the_evidence_line_between_rung_3_and_rung_2() {
     let (_t, db) = fixture();
@@ -294,6 +336,8 @@ fn json_payloads_are_untouched_by_the_redesign() {
         vec!["traces", "--json"],
         vec!["usage", "--period", "day", "--json"],
         vec!["blame", "crates/storage/src/vector.rs", "--json"],
+        vec!["doctor", "--json"],
+        vec!["matrix", "--json"],
     ] {
         let out = render(&db, &args, 80, false);
         serde_json::from_str::<serde_json::Value>(out.trim())

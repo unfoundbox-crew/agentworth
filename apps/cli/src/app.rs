@@ -1198,7 +1198,8 @@ fn run_inspect_command(session_id: &str, json: bool, db_path: Option<PathBuf>) -
     let storage = open_storage(db_path)?;
     let scanner = Scanner::new(storage.clone());
 
-    let trace = scanner.load_trace(session_id)?;
+    let resolved_id = resolve_inspect_session_id(&storage, session_id)?;
+    let trace = scanner.load_trace(&resolved_id)?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&trace)?);
@@ -1207,6 +1208,25 @@ fn run_inspect_command(session_id: &str, json: bool, db_path: Option<PathBuf>) -
     }
 
     Ok(())
+}
+
+/// Resolve what the caller typed to one exact session id. An exact match wins immediately
+/// -- the common case, and the one that must stay fastest. Failing that, a *unique* prefix
+/// match resolves silently to the id it names; an absent or ambiguous prefix is left
+/// unresolved so the caller's own not-found screen takes over, which already lists the
+/// nearest ids (an ambiguous prefix's candidates all start with it, so they surface there
+/// as the "closest three" without this function needing its own listing).
+fn resolve_inspect_session_id(storage: &Storage, input: &str) -> Result<String> {
+    if storage.get_session_by_id(input)?.is_some() {
+        return Ok(input.to_string());
+    }
+    match storage.find_sessions_by_id_prefix(input, 2)?.as_slice() {
+        [only] => Ok(only.session_id.clone()),
+        _ => anyhow::bail!(
+            "Session '{}' not found in SQLite index. Try running 'agentworth scan' first.",
+            input
+        ),
+    }
 }
 
 fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
@@ -1740,18 +1760,6 @@ fn inspect_not_found(
     )
 }
 
-/// Archie, above a screen that has not yet been moved onto the grid. The old banner
-/// carried a magnifying-glass emoji that is double-width in some terminals; no CLI output
-/// carries an emoji any more.
-fn print_archie_banner(ui: &crate::ui::Ui) {
-    let art = crate::ui::archie(ui, &crate::ui::eyes(ui, crate::ui::EyeKind::Digging));
-    println!();
-    for line in art {
-        println!("  {}", ui.paint(crate::ui::Role::Chrome, &line));
-    }
-    println!();
-}
-
 fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>, ui: &crate::ui::Ui) -> Result<()> {
     let storage_res = open_storage(custom_db_path.clone());
     let mut storage_healthy = false;
@@ -1839,77 +1847,24 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>, ui: &c
         return Ok(());
     }
 
-    print_archie_banner(ui);
-    println!(
-        "{}",
-        style("┌──────────────────────────────────────────────────────────┐").bold()
-    );
-    println!(
-        "│ {}                   │",
-        style("🩺 AgentWorth System Health & Diagnostics").bold()
-    );
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-    println!("│ Environment:                                             │");
-    println!(
-        "│   • OS / Arch:        {:<34} │",
-        style(format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH)).cyan()
-    );
-    println!(
-        "│   • Binary Version:   {:<34} │",
-        style(format!("v{}", env!("CARGO_PKG_VERSION"))).cyan()
-    );
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-    println!("│ Local SQLite Index:                                      │");
-    println!(
-        "│   • Path:             {:<34} │",
-        style(if db_path_display.len() > 34 {
-            format!("...{}", &db_path_display[db_path_display.len() - 31..])
-        } else {
-            db_path_display.clone()
-        }).cyan()
-    );
-    println!(
-        "│   • Database State:   {:<34} │",
-        if storage_healthy {
-            style("✓ Healthy (WAL Mode)").green().bold()
-        } else {
-            style("✗ Not Found / Uninitialized").red().bold()
-        }
-    );
-    println!(
-        "│   • Size / Sessions:  {:<34} │",
-        style(format!("{:.1} KB ({} sessions indexed)", db_size_bytes as f64 / 1024.0, total_indexed)).cyan()
-    );
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-    println!("│ Detected Agent Adapters:                                 │");
-
-    for d in &detections {
-        let status_str = if d.is_present {
-            format!("✓ Detected ({} roots)", d.discovered_roots.len())
-        } else {
-            "○ Not found".to_string()
-        };
-        println!(
-            "│   • {:<18} {:<33} │",
-            style(&d.adapter_name).bold(),
-            if d.is_present { style(status_str).green() } else { style(status_str).dim() }
-        );
-    }
-
-    println!(
-        "{}",
-        style("└──────────────────────────────────────────────────────────┘").bold()
-    );
-    println!();
+    let view = crate::ui::views::DoctorView {
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        db_path: db_path_display,
+        storage_healthy,
+        db_size_bytes,
+        total_indexed,
+        adapters: detections
+            .iter()
+            .map(|d| crate::ui::views::DoctorAdapterRow {
+                name: d.adapter_name.to_string(),
+                detected: d.is_present,
+                roots: d.discovered_roots.len(),
+            })
+            .collect(),
+    };
+    print!("{}", crate::ui::views::doctor(ui, &view));
 
     Ok(())
 }
@@ -2021,83 +1976,28 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>, ui: &crate::
         return Ok(());
     }
 
-    print_archie_banner(ui);
-    println!(
-        "{}",
-        style("┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐").bold()
-    );
-    println!(
-        "│ {:<112} │",
-        style("AgentWorth Adapter Extraction Coverage Matrix (20 Production Adapters)").bold().cyan()
-    );
-    println!(
-        "{}",
-        style("├─────────────────┬────────────────────────────┬─────────┬────────┬───────┬───────┬───────┬───────┬──────────┬─────────────┤").bold()
-    );
-    println!(
-        "│ {:<15} │ {:<26} │ {:<7} │ {:<6} │ {:<5} │ {:<5} │ {:<5} │ {:<5} │ {:<8} │ {:<11} │",
-        style("ADAPTER").bold().cyan(),
-        style("DEFAULT SOURCE").bold().cyan(),
-        style("PROMPT").bold().cyan(),
-        style("TOKENS").bold().cyan(),
-        style("TOOLS").bold().cyan(),
-        style("SHELL").bold().cyan(),
-        style("DIFFS").bold().cyan(),
-        style("THINK").bold().cyan(),
-        style("OUTCOMES").bold().cyan(),
-        style("STATUS").bold().cyan(),
-    );
-    println!(
-        "{}",
-        style("├─────────────────┼────────────────────────────┼─────────┼────────┼───────┼───────┼───────┼───────┼──────────┼─────────────┤").bold()
-    );
+    // Only `claude_code`'s parser populates `compaction_count`/`CompactionEvent` today
+    // (`crates/adapters/src/claude.rs`) -- add an adapter's name here only once its parser
+    // does the same, so this column stays a grounded fact rather than a guess.
+    let compaction_tracking: std::collections::HashSet<&'static str> =
+        ["claude_code"].into_iter().collect();
 
-    let fmt_cap = |supported: bool| -> String {
-        if supported {
-            style("✓").bold().green().to_string()
-        } else {
-            style("-").dim().to_string()
-        }
-    };
-
-    for (name, source_root, caps, is_detected) in &rows_data {
-        let status_str = if *is_detected {
-            style("✓ Detected").bold().green()
-        } else {
-            style("○ Available").dim()
-        };
-
-        let src_display = if source_root.len() > 26 {
-            format!("{}...", &source_root[..23])
-        } else {
-            source_root.to_string()
-        };
-
-        println!(
-            "│ {:<15} │ {:<26} │ {:^7} │ {:^6} │ {:^5} │ {:^5} │ {:^5} │ {:^5} │ {:^8} │ {:<11} │",
-            style(name).bold(),
-            style(src_display).dim(),
-            fmt_cap(caps.prompts),
-            fmt_cap(caps.tokens),
-            fmt_cap(caps.tools),
-            fmt_cap(caps.shell),
-            fmt_cap(caps.diffs),
-            fmt_cap(caps.thinking),
-            fmt_cap(caps.outcomes),
-            status_str,
-        );
-    }
-
-    println!(
-        "{}",
-        style("└─────────────────┴────────────────────────────┴─────────┴────────┴───────┴───────┴───────┴───────┴──────────┴─────────────┘").bold()
-    );
-    println!(
-        "Showing {} production adapters. Grounded extraction coverage across feature dimensions: {}.",
-        rows_data.len(),
-        style(&real_coverage_rate).bold().cyan()
-    );
-    println!();
+    let rows: Vec<crate::ui::views::MatrixRow> = rows_data
+        .iter()
+        .map(|(name, _source_root, caps, is_detected)| crate::ui::views::MatrixRow {
+            adapter: name.to_string(),
+            detected: *is_detected,
+            parse: caps.prompts,
+            outcomes: caps.outcomes,
+            // Both are required for the shared recovery-loop detector's failure ->
+            // corrective-action -> recovery pattern to have anything to work with (it
+            // walks ToolCall/ToolResult and ShellCommand events; see
+            // `crates/outcomes/src/recovery.rs`).
+            recoveries: caps.tools && caps.shell,
+            compaction: compaction_tracking.contains(*name),
+        })
+        .collect();
+    print!("{}", crate::ui::views::matrix(ui, &real_coverage_rate, &rows));
 
     Ok(())
 }

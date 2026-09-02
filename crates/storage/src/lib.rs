@@ -960,6 +960,37 @@ impl Storage {
         }
     }
 
+    /// Sessions whose id starts with `prefix`, newest first, capped at `limit`. Used by
+    /// `inspect` to resolve a short id the caller typed instead of the full one -- `%` and
+    /// `_` in `prefix` are escaped so they match themselves rather than acting as SQL LIKE
+    /// wildcards, since a session id can legitimately contain either character.
+    pub fn find_sessions_by_id_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<SessionSummary>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let escaped = prefix.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let pattern = format!("{}%", escaped);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT sessions.session_id, sessions.adapter, sessions.source_path, sessions.started_at,
+                   sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
+                   sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
+                   sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
+                   sessions.compaction_tokens_dropped, sources.mtime
+            FROM sessions
+            LEFT JOIN sources ON sessions.source_path = sources.source_path
+            WHERE sessions.session_id LIKE ?1 ESCAPE '\'
+            ORDER BY sessions.started_at DESC
+            LIMIT ?2
+            "#,
+        )?;
+
+        let mut rows = stmt.query(params![pattern, limit as i64])?;
+        let mut results = Vec::new();
+        while let Some(row) = rows.next()? {
+            results.push(row_to_session_summary(row)?);
+        }
+        Ok(results)
+    }
+
     /// Retrieve the per-model token usage breakdown for a single session.
     pub fn get_session_model_usage(&self, session_id: &str) -> Result<Vec<(String, TokenUsage)>> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1657,6 +1688,52 @@ mod tests {
         // 6. Get non-existent session
         let not_found = storage.get_session_by_id("sess_none").expect("not found");
         assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_find_sessions_by_id_prefix() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base_time = Utc::now() - Duration::hours(3);
+
+        // "a_b1" and "aXb1" differ only in whether the second character is a literal
+        // underscore or some other single character -- a giveaway if `_` in the prefix
+        // were left as a raw SQL LIKE wildcard instead of being escaped.
+        for (i, id) in ["abc123", "abc456", "a_b1", "aXb1", "xyz789"].iter().enumerate() {
+            let prov = Provenance::new(
+                format!("/Users/dev/code/org/repo/.claude/{}.jsonl", id),
+                "claude_code",
+                100,
+                100,
+                format!("fp{}", i),
+            );
+            let trace = AgentWorthTrace::new(*id, "claude_code", prov, base_time + Duration::minutes(i as i64));
+            storage.upsert_trace(&trace).expect("upsert");
+        }
+
+        // Unique prefix resolves to exactly one session.
+        let unique = storage.find_sessions_by_id_prefix("abc1", 10).expect("prefix query");
+        assert_eq!(unique.len(), 1);
+        assert_eq!(unique[0].session_id, "abc123");
+
+        // Ambiguous prefix returns every match, newest first.
+        let ambiguous = storage.find_sessions_by_id_prefix("abc", 10).expect("prefix query");
+        assert_eq!(ambiguous.len(), 2);
+        assert_eq!(ambiguous[0].session_id, "abc456");
+        assert_eq!(ambiguous[1].session_id, "abc123");
+
+        // A literal underscore in the prefix must not act as a SQL LIKE single-char
+        // wildcard: "a_" matches "a_b1" only, not "aXb1".
+        let escaped = storage.find_sessions_by_id_prefix("a_", 10).expect("prefix query");
+        assert_eq!(escaped.len(), 1);
+        assert_eq!(escaped[0].session_id, "a_b1");
+
+        // No match at all.
+        let none = storage.find_sessions_by_id_prefix("nope", 10).expect("prefix query");
+        assert!(none.is_empty());
+
+        // `limit` caps the result set.
+        let capped = storage.find_sessions_by_id_prefix("a", 1).expect("prefix query");
+        assert_eq!(capped.len(), 1);
     }
 
     #[test]
