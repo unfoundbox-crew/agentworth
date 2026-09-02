@@ -174,6 +174,23 @@ pub struct CompactionOutcomeBucket {
     pub session_count: usize,
 }
 
+/// Result of `Storage::verdict_breakdown`: a session count per outcome rung, read straight
+/// from the indexed `sessions.primary_outcome` column rather than reparsed from transcripts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct VerdictBreakdown {
+    pub ci_or_deployment_verified: usize,
+    pub commit_observed: usize,
+    pub test_or_build_passed: usize,
+    pub artifact_changed: usize,
+    pub done_claimed: usize,
+    /// `primary_outcome IS NULL` -- the detector found no outcome evidence in this trace.
+    pub unverified: usize,
+    /// `ci_or_deployment_verified + commit_observed + test_or_build_passed`, matching the
+    /// "real_verified_tasks" definition `get_aggregate_stats`'s `verified_outcomes_count` and
+    /// `apps/cli/src/app.rs`'s old per-session reparse both already used.
+    pub real_verified_tasks: usize,
+}
+
 /// Grouping dimension for `Storage::get_outcome_rate`. See `docs/specs/verified-outcome-rate.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1460,6 +1477,60 @@ impl Storage {
         }
 
         Ok(results)
+    }
+
+    /// Verdict-rung session counts, read directly from the indexed `sessions.primary_outcome`
+    /// column instead of reparsing every transcript on disk.
+    ///
+    /// Replaces `apps/cli/src/app.rs`'s old `compute_verdict_breakdown`, which called
+    /// `Scanner::load_trace` + outcome detection for every session on every `agentworth stats`
+    /// invocation -- 17s against a 2,960-session index. Since #85/#81 every non-stub scanned
+    /// session already carries a trustworthy `primary_outcome` (see the doc comment above
+    /// `crates/core/src/lib.rs`'s scan loop: every indexed row gets outcome detection
+    /// unconditionally, so a NULL value means "no outcome evidence found", never "never
+    /// scanned"), so this one aggregate query answers the same question.
+    ///
+    /// Scoped to `NON_STUB_SQL_PREDICATE`, matching `list_sessions_filtered`'s own default and
+    /// `get_aggregate_stats(false)` -- the same population `agentworth stats`'s other numbers
+    /// (`total_sessions`, `verified_outcomes_count`) already describe, so a rate computed from
+    /// this breakdown's `real_verified_tasks` over that `total_sessions` divides consistent
+    /// numerators and denominators (see docs/DECISION-INBOX.md, stats/stub-count-mismatch).
+    pub fn verdict_breakdown(&self) -> Result<VerdictBreakdown> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&format!(
+            r#"
+            SELECT
+                COALESCE(SUM(CASE WHEN primary_outcome = 'ci_or_deployment_verified' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN primary_outcome = 'commit_observed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN primary_outcome = 'test_or_build_passed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN primary_outcome = 'artifact_changed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN primary_outcome = 'done_claimed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN primary_outcome IS NULL THEN 1 ELSE 0 END), 0)
+            FROM sessions
+            WHERE {NON_STUB_SQL_PREDICATE}
+            "#,
+        ))?;
+
+        let mut rows = stmt.query([])?;
+        let mut breakdown = VerdictBreakdown::default();
+        if let Some(row) = rows.next()? {
+            let ci: i64 = row.get(0)?;
+            let commit: i64 = row.get(1)?;
+            let test: i64 = row.get(2)?;
+            let artifact: i64 = row.get(3)?;
+            let done: i64 = row.get(4)?;
+            let unverified: i64 = row.get(5)?;
+
+            breakdown.ci_or_deployment_verified = ci as usize;
+            breakdown.commit_observed = commit as usize;
+            breakdown.test_or_build_passed = test as usize;
+            breakdown.artifact_changed = artifact as usize;
+            breakdown.done_claimed = done as usize;
+            breakdown.unverified = unverified as usize;
+            breakdown.real_verified_tasks = (ci + commit + test) as usize;
+        }
+
+        Ok(breakdown)
     }
 
     /// Retrieve a single session summary by its unique session ID.
@@ -3538,6 +3609,47 @@ mod tests {
         assert_eq!(dist_map.get("artifact_changed"), Some(&1));
         assert_eq!(dist_map.get("done_claimed"), Some(&1));
         assert_eq!(dist_map.get("Unresolved"), Some(&1));
+    }
+
+    #[test]
+    fn test_verdict_breakdown_matches_distribution_and_excludes_stubs() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        let specs = [
+            ("s1", Some("ci_or_deployment_verified"), 1000u64),
+            ("s2", Some("commit_observed"), 2000u64),
+            ("s3", Some("test_or_build_passed"), 3000u64),
+            ("s4", Some("artifact_changed"), 4000u64),
+            ("s5", Some("done_claimed"), 5000u64),
+            ("s6", None, 6000u64),
+        ];
+        for (id, outcome, tokens) in specs {
+            let prov = Provenance::new(format!("/path/{}.jsonl", id), "claude_code", 100, 100, format!("fp_{}", id));
+            let mut trace = AgentWorthTrace::new(id, "claude_code", prov, Utc::now());
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(tokens, 100, 0, 0);
+            storage.upsert_session(&trace, outcome, Some(0.5), 1).expect("upsert");
+        }
+
+        // A stub (total_events <= 1) claiming the strongest outcome must not count anywhere --
+        // NON_STUB_SQL_PREDICATE excludes it, matching list_sessions_filtered's own default
+        // population and get_aggregate_stats(false).
+        let stub_prov = Provenance::new("/path/stub.jsonl", "claude_code", 100, 100, "fp_stub");
+        let mut stub = AgentWorthTrace::new("stub1", "claude_code", stub_prov, Utc::now());
+        stub.stats.total_events = 1;
+        stub.stats.token_usage = TokenUsage::new(0, 0, 0, 0);
+        storage
+            .upsert_session(&stub, Some("ci_or_deployment_verified"), Some(0.99), 1)
+            .expect("upsert stub");
+
+        let breakdown = storage.verdict_breakdown().expect("verdict breakdown");
+        assert_eq!(breakdown.ci_or_deployment_verified, 1, "the stub's outcome must not count");
+        assert_eq!(breakdown.commit_observed, 1);
+        assert_eq!(breakdown.test_or_build_passed, 1);
+        assert_eq!(breakdown.artifact_changed, 1);
+        assert_eq!(breakdown.done_claimed, 1);
+        assert_eq!(breakdown.unverified, 1);
+        assert_eq!(breakdown.real_verified_tasks, 3);
     }
 
     #[test]
