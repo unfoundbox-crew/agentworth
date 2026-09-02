@@ -9,12 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-09-03
+
 ### Added
 
-- **The cockpit.** A bare `archie` on a terminal opens a full-screen reader over the same data: overview, sessions, one session, agents, repos and windows, with `j`/`k`, `Enter`, `/`, `1`-`6`, `h`/`a`/`f`/`r`, `?` and `q`. `archie tui` is the explicit spelling. Off a terminal, under `--plain`, under `TERM=dumb`, or with JSON output, both print the overview — what `archie stats` prints plus the current window — and exit 0. Read-only, permanently: no writes, no scan, no config changes, no model calls. Every screen is a string a printed command already produces; the cockpit adds a viewport, a cursor and key handling and nothing else (#121).
+- **The cockpit.** A bare `archie` on a terminal opens a full-screen reader over the same data: overview, sessions, one session, agents, repos and windows, with `j`/`k`, `Enter`, `/`, `1`-`6`, `h`/`a`/`f`/`r`, `?` and `q`. `archie tui` is the explicit spelling. Off a terminal, under `--plain`, under `TERM=dumb`, or with JSON output, both print the overview — what `archie stats` prints plus the current window — and exit 0. Read-only, permanently: no writes, no scan, no config changes, no model calls. Every screen is a string a printed command already produces; the cockpit adds a viewport, a cursor and key handling and nothing else. Behaviour change: bare `archie` used to exit 2 with a usage message; it now exits 0 (#121).
+- **Onboarding, one line everywhere.** `install.sh` draws its own download progress — curl's own bars land outside the glyph set, so bytes are read straight from the file it's writing and redrawn in place. The npm launcher and the first `archie scan` on an empty index now print that same three-line Archie form instead of an emoji or their own text (#123).
 - **`archie stats ladder`** — one screen for the question `docs/specs/archie-bench.md` set out to answer locally: of everything spent in a window, how much of it bought something a test, a commit or a CI run can be pointed at. Three blocks — every rung of the outcome ladder with the spend that sits below the evidence line, what a verified outcome costs by model / repo / adapter / effort, and the newest sessions that got past the line — closing on one sentence with the share of spend that proved nothing. `--period`, `--repo`, `--adapter`, `--model`, `--by`, `--min-n`, `--json`, and `stats_ladder` over MCP with the same parameters and the same JSON. Reads the index only; no transcript is reparsed (#124).
 - The bottom row is *unflown* — no outcome evidence of any kind was found. It is not a failure state and is never danger-coloured; `OutcomeKind` has no failure value to draw one from. Every screen that draws the ladder now uses that one set of words (`unflown`, `done claimed`, `artifact changed`, `test or build passed`, `commit observed`, `CI or deployment verified`), where `stats`, `session show` and `repo suspect` used to have their own shorter set (#124).
 - The sample floor below which a rate is suppressed now lives in one place, `agentworth_storage::OUTCOME_RATE_DEFAULT_MIN_N` = 20, read by `stats outcomes`, the `stats_outcomes` tool and the new ladder. `docs/DESIGN.md`'s chart rule 3 said 10 and now names that constant, so one product has one floor. Under it, a rate and a cost render blank — never a zero, never a dash pretending to be data (#124).
+
+### Fixed
+
+- **The second audit pass.** Seven more commands — session autopsy, session recall, session search, session show, config, version, docs — render through the ui module and get a status line on their slow path. `session recall` no longer reparses a transcript per match; the per-model spend it needs already lives in `session_model_usage`, written by the same scan that parsed the session. `update` prints its install link on one full line. The suite now passes on a machine with real session history, not just a fresh one (#122).
 
 ## [0.1.16] - 2026-09-02
 
