@@ -236,7 +236,7 @@ agentworth receipt session_8f12ac --format svg --output ./receipt.svg
 - `agentworth loose-ends [SESSION_ID | --last] [--prompt] [--json]`: The handoff's loose-ends section alone. `--prompt` prints a copyable brief for whatever agent already has the repository open — AgentWorth reports the gap and never writes the fix.
 - `agentworth doctor`: Validates local adapter source paths, SQLite schema integrity, and parser health.
 - `agentworth serve [--port 3000] [--open]`: Launches the local forensic API server and Web UI.
-- `agentworth mcp`: Starts a read-only MCP server over stdio (`sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `session_handoff`, `carry_forward`), so a coding agent can query this machine's session index mid-session — and open a session with `carry_forward` or end one with `session_handoff`. Register once with `claude mcp add agentworth --scope user -- agentworth mcp`.
+- `agentworth mcp`: Starts a read-only MCP server over stdio (`sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `outcome_rate`, `session_handoff`, `carry_forward`), so a coding agent can query this machine's session index mid-session — and open a session with `carry_forward` or end one with `session_handoff`. Register once with `claude mcp add agentworth --scope user -- agentworth mcp`.
 
 ---
 
