@@ -14,9 +14,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use tempfile::{tempdir, TempDir};
 
-/// Opening the cockpit must not read the index the way a scan does. Generous against a
-/// fixture, and it includes process start -- the point is to catch a first screen that
-/// walks every session, not to time this machine.
+/// Opening the cockpit must not read the index the way a scan does. This is the marginal
+/// cost -- the same binary's `--help` is subtracted off -- so it measures the index work
+/// and not this machine's process start.
 const OPEN_BUDGET: Duration = Duration::from_millis(agentworth_cli::ui::cockpit::OPEN_BUDGET_MS as u64);
 
 /// Enough sessions that an unbounded query would show up as time, built the cheap way: one
