@@ -14,7 +14,9 @@ use agentworth_outcomes::{OutcomeDetector, RecoveryDetector};
 use agentworth_redaction::{repository_identity_rule, Redactor};
 use agentworth_schema::extract_repository_or_workspace;
 use agentworth_scoring::TraceScorer;
-use agentworth_storage::{SessionFilter, Storage};
+// `OUTCOME_RATE_DEFAULT_MIN_N` is defined once in storage, beside the query that applies it,
+// so the CLI, `stats_outcomes` and `stats_ladder` cannot drift apart on the sample floor.
+use agentworth_storage::{SessionFilter, Storage, OUTCOME_RATE_DEFAULT_MIN_N};
 
 use crate::commands::suspect;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -28,7 +30,7 @@ use serde_json::json;
 
 use super::params::{
     parse_rfc3339_opt, BlameFindParams, CarryForwardParams, CoverageStatsParams,
-    ForgottenContextParams, OutcomeRateParams, PacingWindowParams, SessionAsksParams,
+    ForgottenContextParams, LadderParams, OutcomeRateParams, PacingWindowParams, SessionAsksParams,
     SessionGetParams, SessionHandoffParams, SessionsFindParams, SuspectCommitsParams,
     UsagePeriodParam, UsageSummaryParams,
 };
@@ -48,10 +50,6 @@ const SESSIONS_FIND_LIMIT_CEILING: usize = 200;
 /// column and has to be post-filtered client-side after a bounded fetch (see
 /// `docs/specs/mcp-server.md`'s `session_list` "repo is not a stored column" note).
 const REPO_OVERFETCH_MULTIPLIER: usize = 4;
-
-/// Default `min_n` floor for `stats_outcomes` -- `docs/specs/verified-outcome-rate.md` picks 20
-/// to hide noise, explicitly not a measured value (see the spec's "Open questions").
-const OUTCOME_RATE_DEFAULT_MIN_N: usize = 20;
 
 /// Hard ceiling on `session_carry_forward`'s `n`, matching `docs/specs/handoff.md`. Ten handoffs is
 /// already more history than a session opening turn can use; past that the caller wants
@@ -506,6 +504,51 @@ impl AgentWorthMcpServer {
     }
 
     #[tool(
+        description = "The evidence ladder over a window, in three blocks: how many sessions \
+                        reached each rung (rung 0 is unflown -- no outcome evidence at all, \
+                        which is not a failure) with the API-equivalent spend that sits below \
+                        the evidence line; what a verified outcome costs per model, repo, \
+                        adapter or effort; and the newest sessions that got past the line. \
+                        A group under the sample floor returns rate: null and \
+                        cost_per_verified_usd: null rather than a number nothing supports. \
+                        Every dollar is API-equivalent at list prices (cost_basis says so), \
+                        never what the account was billed. Reads the index only -- no \
+                        transcript is reparsed. See docs/specs/archie-bench.md."
+    )]
+    pub(crate) async fn stats_ladder(
+        &self,
+        Parameters(params): Parameters<LadderParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let period = params.period.as_deref().unwrap_or("month");
+        let period = crate::app::config::normalize_period(period).ok_or_else(|| {
+            McpError::invalid_params(
+                format!("period must be one of day, week, month, year, all (got {period:?})"),
+                None,
+            )
+        })?;
+        let mut query = crate::commands::ladder::ladder_query(
+            period,
+            "model",
+            params.repo,
+            params.adapter,
+            params.model,
+            params.min_n,
+            params.include_stubs.unwrap_or(false),
+        );
+        query.group_by = params.by.into();
+
+        let storage = self.storage.clone();
+        let result = tokio::task::spawn_blocking(move || storage.get_ladder(&query))
+            .await
+            .map_err(Self::join_error)?
+            .map_err(|e| McpError::internal_error(format!("stats_ladder query failed: {e}"), None))?;
+
+        let payload = crate::commands::ladder::ladder_json(&result, period)
+            .map_err(|e| McpError::internal_error(format!("stats_ladder failed: {e}"), None))?;
+        Self::json_result(&payload)
+    }
+
+    #[tool(
         description = "The handoff for one session, written from rows rather than by a model: \
                         what it said it would do and never did, what it said it decided, which \
                         files changed, which commands ran and with what exit code, the outcome \
@@ -957,7 +1000,7 @@ impl ServerHandler for AgentWorthMcpServer {
             .with_instructions(
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  session_list, session_show, repo_blame, stats_usage, window_show, \
-                 agent_list, stats_outcomes, session_handoff, session_carry_forward, \
+                 agent_list, stats_outcomes, stats_ladder, session_handoff, session_carry_forward, \
                  session_forgotten, session_asks, repo_suspect. Start a \
                  session in a repo with session_carry_forward to read what recent sessions there \
                  actually did; end one with session_handoff. If a session has compacted, \

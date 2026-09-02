@@ -276,6 +276,199 @@ pub struct OutcomeRateResult {
 /// Cap on `OutcomeRateRow::session_ids` -- see `OutcomeRateRow::session_ids_truncated`.
 const OUTCOME_RATE_SESSION_IDS_CAP: usize = 50;
 
+/// The sample floor every rate in this product is suppressed below. One constant, three
+/// readers: `stats outcomes` on the CLI, the `stats_outcomes` MCP tool, and `get_ladder`'s
+/// per-group rate and cost. `docs/specs/verified-outcome-rate.md` picked 20 to hide noise and
+/// says so explicitly -- it is not a measured value, and `docs/DESIGN.md`'s chart rule 3 says
+/// 10. That disagreement is open in `docs/specs/archie-bench.md`; the code's answer is here,
+/// in one place, so settling it is a one-line change rather than a hunt.
+pub const OUTCOME_RATE_DEFAULT_MIN_N: usize = 20;
+
+/// Rungs at or above this one left evidence something outside the agent could check.
+/// `agentworth_outcomes::outcome_rank`'s scale; the same 3 `get_outcome_rate` calls verified.
+pub const LADDER_EVIDENCE_FLOOR: usize = 3;
+
+/// `OutcomeKind`'s own serialized name for a rung, and `unflown` for the bottom -- the
+/// design system's word for no evidence at all, which is not a failure state (AGENTS.md,
+/// "Things you cannot learn from the code", item 4).
+pub const fn rung_outcome_name(rung: u8) -> &'static str {
+    match rung {
+        5 => "ci_or_deployment_verified",
+        4 => "commit_observed",
+        3 => "test_or_build_passed",
+        2 => "artifact_changed",
+        1 => "done_claimed",
+        _ => "unflown",
+    }
+}
+
+fn share_of(part: usize, whole: usize) -> f64 {
+    if whole == 0 {
+        0.0
+    } else {
+        part as f64 / whole as f64
+    }
+}
+
+/// Median, taking the lower of the two middle values on an even count rather than averaging
+/// them -- a token count that no session actually had is a worse answer than one that did.
+fn median_u64(values: &mut [u64]) -> u64 {
+    if values.is_empty() {
+        return 0;
+    }
+    values.sort_unstable();
+    values[(values.len() - 1) / 2]
+}
+
+fn median_f64(values: &mut [f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    values[(values.len() - 1) / 2]
+}
+
+/// Grouping dimension for `Storage::get_ladder`'s cost-per-verified-outcome table.
+/// `OutcomeRateGroupBy` plus `Effort`, which only Codex records today (`sessions.effort`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LadderGroupBy {
+    Model,
+    Repo,
+    Adapter,
+    Effort,
+}
+
+impl LadderGroupBy {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "model" => Some(Self::Model),
+            "repo" => Some(Self::Repo),
+            "adapter" => Some(Self::Adapter),
+            "effort" => Some(Self::Effort),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Repo => "repo",
+            Self::Adapter => "adapter",
+            Self::Effort => "effort",
+        }
+    }
+}
+
+/// Everything `Storage::get_ladder` needs. `repo` is a substring match on the derived
+/// repository key, `model` a substring match on `models_used`, and `adapter` an exact name --
+/// the same three shapes `list_sessions_filtered` already applies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LadderQuery {
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+    pub repo: Option<String>,
+    pub adapter: Option<String>,
+    pub model: Option<String>,
+    pub group_by: LadderGroupBy,
+    pub min_n: usize,
+    pub include_stubs: bool,
+    /// How many of the newest verified sessions to return.
+    pub recent_limit: usize,
+}
+
+impl Default for LadderQuery {
+    fn default() -> Self {
+        Self {
+            since: None,
+            until: None,
+            repo: None,
+            adapter: None,
+            model: None,
+            group_by: LadderGroupBy::Model,
+            min_n: OUTCOME_RATE_DEFAULT_MIN_N,
+            include_stubs: false,
+            recent_limit: 5,
+        }
+    }
+}
+
+/// One rung of the evidence ladder over the window.
+///
+/// `rung` 0 is *unflown* -- no outcome evidence of any kind was found. It is not a failure
+/// state (`OutcomeKind` has none) and nothing that renders it may colour it as one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LadderRungRow {
+    pub rung: u8,
+    /// `OutcomeKind`'s own snake_case name, or `unflown` for rung 0.
+    pub outcome: String,
+    pub sessions: usize,
+    /// Share of every session in the window, 0.0..=1.0.
+    pub share: f64,
+    pub median_tokens: u64,
+    /// Median API-equivalent cost of one session on this rung.
+    pub median_cost_usd: f64,
+    /// Every session on this rung, summed.
+    pub cost_usd: f64,
+    /// This rung's share of the window's whole API-equivalent spend.
+    pub cost_share: f64,
+}
+
+/// One row of the cost-per-verified-outcome table.
+///
+/// `n` counts sessions that claimed done (a non-null `primary_outcome`), the same denominator
+/// `get_outcome_rate` uses, so the two screens can be read against each other. `rate` and
+/// `cost_per_verified_usd` are `None` -- rendered blank, never zero -- below the sample floor
+/// or with nothing verified to divide by.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LadderGroupRow {
+    pub key: String,
+    pub n: usize,
+    pub verified: usize,
+    pub rate: Option<f64>,
+    pub median_tokens: u64,
+    pub median_steps: u64,
+    pub cost_usd: f64,
+    pub cost_per_verified_usd: Option<f64>,
+    /// `n` is under the floor, so this row carries counts but no rate and no cost.
+    pub under_floor: bool,
+}
+
+/// One of the newest verified sessions, in `session list`'s own vocabulary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LadderSessionRow {
+    pub session_id: String,
+    pub started_at: DateTime<Utc>,
+    pub repo: String,
+    pub rung: u8,
+    pub model: String,
+    pub total_tokens: u64,
+    pub cost_usd: f64,
+}
+
+/// The whole composed screen, as data. Every dollar figure is API-equivalent at list prices;
+/// the label that says so is attached by the CLI (`apps/cli/src/cost_basis.rs`), which is the
+/// only layer that knows the account's subscription tier.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LadderResult {
+    pub group_by: LadderGroupBy,
+    pub min_n: usize,
+    pub window: OutcomeRateWindow,
+    pub total_sessions: usize,
+    pub total_cost_usd: f64,
+    /// Rungs 0-2 summed: everything the evidence line sits above.
+    pub below_line_cost_usd: f64,
+    pub below_line_cost_share: f64,
+    /// Rung 5 first, rung 0 last. Always six rows, including empty ones.
+    pub rungs: Vec<LadderRungRow>,
+    pub groups: Vec<LadderGroupRow>,
+    /// Sessions that claimed done but carry no `effort` value, and so cannot appear on an
+    /// `--by effort` table. Only Codex records an effort today.
+    pub sessions_without_effort: usize,
+    pub recent_verified: Vec<LadderSessionRow>,
+    pub receipt: OutcomeRateReceipt,
+}
+
 /// Usage aggregation rollup for a time period (Day, Week, Month).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsagePeriodSummary {
@@ -2109,6 +2302,349 @@ impl Storage {
             },
             rows: rows_out,
             suppressed_groups,
+            receipt: OutcomeRateReceipt {
+                counted_at,
+                index_last_session_at,
+                db_path,
+                non_stub_predicate: NON_STUB_SQL_PREDICATE.to_string(),
+            },
+        })
+    }
+
+    /// The evidence ladder for one window, with the spend that sits below the evidence line,
+    /// the cost per verified outcome by group, and the newest verified sessions.
+    ///
+    /// Two bounded queries and no transcript reparse: `sessions` for the window, then
+    /// `session_model_usage` joined to the same window so a session that ran two models has
+    /// each model's tokens priced at that model's own rate. A session with no per-model rows
+    /// (an older parse) falls back to its own token columns priced at the first model it
+    /// names -- never the blended default, which mis-prices everything but Sonnet.
+    ///
+    /// "Verified" is rung 3 or higher via `agentworth_outcomes::outcome_rank`, and "claimed"
+    /// is any non-null `primary_outcome` -- both inherited from `get_outcome_rate` so the two
+    /// screens count the same population. Rung 0 is *unflown*: no evidence was found, which
+    /// is not the same claim as failure.
+    pub fn get_ladder(&self, q: &LadderQuery) -> Result<LadderResult> {
+        let counted_at = Utc::now();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        // Both queries filter on the same predicates; building them once keeps the two
+        // populations identical, which is what makes the per-model cost join sound.
+        let mut where_sql = String::new();
+        let push_params = |values: &mut Vec<Box<dyn ToSql>>| {
+            if let Some(since) = q.since {
+                values.push(Box::new(since.to_rfc3339()));
+            }
+            if let Some(until) = q.until {
+                values.push(Box::new(until.to_rfc3339()));
+            }
+            if let Some(adapter) = &q.adapter {
+                values.push(Box::new(adapter.clone()));
+            }
+            if let Some(model) = &q.model {
+                values.push(Box::new(format!("%{model}%")));
+            }
+        };
+        if !q.include_stubs {
+            where_sql.push_str(&format!(" AND ({NON_STUB_SQL_PREDICATE})"));
+        }
+        if q.since.is_some() {
+            where_sql.push_str(" AND started_at >= ?");
+        }
+        if q.until.is_some() {
+            where_sql.push_str(" AND started_at <= ?");
+        }
+        if q.adapter.is_some() {
+            where_sql.push_str(" AND adapter = ?");
+        }
+        if q.model.is_some() {
+            where_sql.push_str(" AND models_used LIKE ?");
+        }
+
+        struct Fetched {
+            session_id: String,
+            adapter: String,
+            repo: String,
+            started_at: DateTime<Utc>,
+            /// 0 when `primary_outcome` is null -- unflown, not failed.
+            rung: u8,
+            models: Vec<String>,
+            effort: Option<String>,
+            tokens: u64,
+            steps: u64,
+            cost_usd: f64,
+        }
+
+        let mut fetched: Vec<Fetched> = Vec::new();
+        {
+            let sql = format!(
+                "SELECT session_id, adapter, source_path, started_at, primary_outcome, \
+                 models_used, effort, total_tokens, tool_calls_count, input_tokens, \
+                 output_tokens, cache_read_tokens, cache_creation_tokens \
+                 FROM sessions WHERE 1=1{where_sql}"
+            );
+            let mut values: Vec<Box<dyn ToSql>> = Vec::new();
+            push_params(&mut values);
+            let refs: Vec<&dyn ToSql> = values.iter().map(|b| b.as_ref()).collect();
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query(refs.as_slice())?;
+            while let Some(row) = rows.next()? {
+                let source_path: String = row.get(2)?;
+                let repo = extract_repository_or_workspace(&source_path);
+                if let Some(needle) = &q.repo {
+                    if !repo.to_lowercase().contains(&needle.to_lowercase()) {
+                        continue;
+                    }
+                }
+                let started_at: String = row.get(3)?;
+                let Ok(started_at) = DateTime::parse_from_rfc3339(&started_at) else {
+                    continue;
+                };
+                let primary_outcome: Option<String> = row.get(4)?;
+                let rung = primary_outcome
+                    .as_deref()
+                    .and_then(|s| {
+                        serde_json::from_value::<OutcomeKind>(serde_json::Value::String(
+                            s.to_string(),
+                        ))
+                        .ok()
+                        .map(outcome_rank)
+                    })
+                    .unwrap_or(0);
+                let models_str: String = row.get(5)?;
+                let models = serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default();
+                let input: i64 = row.get(9)?;
+                let output: i64 = row.get(10)?;
+                let cache_read: i64 = row.get(11)?;
+                let cache_creation: i64 = row.get(12)?;
+                fetched.push(Fetched {
+                    session_id: row.get(0)?,
+                    adapter: row.get(1)?,
+                    repo,
+                    started_at: started_at.with_timezone(&Utc),
+                    rung,
+                    cost_usd: estimate_model_tokens_cost_usd(
+                        models.first().map(String::as_str),
+                        input as u64,
+                        output as u64,
+                        cache_read as u64,
+                        cache_creation as u64,
+                    ),
+                    models,
+                    effort: row.get(6)?,
+                    tokens: row.get::<_, i64>(7)? as u64,
+                    steps: row.get::<_, i64>(8)? as u64,
+                });
+            }
+        }
+
+        // Per-model tokens and cost for the same window. `sessions.total_tokens` attributes a
+        // session's whole usage to every model it named, which would double-count a
+        // two-model session's spend on an `--by model` table.
+        let mut per_model: BTreeMap<String, BTreeMap<String, (u64, f64)>> = BTreeMap::new();
+        {
+            // `where_sql` needs no table qualifier here: every column it names
+            // (total_events, total_tokens, started_at, adapter, models_used) exists on
+            // `sessions` only, and none of them appears on `session_model_usage`.
+            let sql = format!(
+                "SELECT u.session_id, u.model, u.input_tokens, u.output_tokens, \
+                 u.cache_read_tokens, u.cache_creation_tokens \
+                 FROM session_model_usage u JOIN sessions s ON s.session_id = u.session_id \
+                 WHERE 1=1{where_sql}"
+            );
+            let mut values: Vec<Box<dyn ToSql>> = Vec::new();
+            push_params(&mut values);
+            let refs: Vec<&dyn ToSql> = values.iter().map(|b| b.as_ref()).collect();
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query(refs.as_slice())?;
+            while let Some(row) = rows.next()? {
+                let session_id: String = row.get(0)?;
+                let model: String = row.get(1)?;
+                let input: i64 = row.get(2)?;
+                let output: i64 = row.get(3)?;
+                let cache_read: i64 = row.get(4)?;
+                let cache_creation: i64 = row.get(5)?;
+                let tokens = (input + output + cache_read + cache_creation) as u64;
+                let cost = estimate_model_tokens_cost_usd(
+                    Some(&model),
+                    input as u64,
+                    output as u64,
+                    cache_read as u64,
+                    cache_creation as u64,
+                );
+                per_model
+                    .entry(session_id)
+                    .or_default()
+                    .insert(model, (tokens, cost));
+            }
+        }
+
+        let index_last_session_at: Option<String> = conn
+            .query_row("SELECT MAX(started_at) FROM sessions", [], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .ok()
+            .flatten();
+        let index_last_session_at = index_last_session_at.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
+        drop(conn);
+
+        // A session's real cost is the sum of its per-model rows when it has them.
+        for f in &mut fetched {
+            if let Some(rows) = per_model.get(&f.session_id) {
+                let summed: f64 = rows.values().map(|(_, cost)| cost).sum();
+                if summed > 0.0 {
+                    f.cost_usd = summed;
+                }
+            }
+        }
+
+        let total_sessions = fetched.len();
+        let total_cost_usd: f64 = fetched.iter().map(|f| f.cost_usd).sum();
+
+        let mut rungs = Vec::with_capacity(6);
+        for rung in (0..=5u8).rev() {
+            let mut tokens: Vec<u64> = Vec::new();
+            let mut costs: Vec<f64> = Vec::new();
+            let mut sum = 0.0f64;
+            for f in fetched.iter().filter(|f| f.rung == rung) {
+                tokens.push(f.tokens);
+                costs.push(f.cost_usd);
+                sum += f.cost_usd;
+            }
+            rungs.push(LadderRungRow {
+                rung,
+                outcome: rung_outcome_name(rung).to_string(),
+                sessions: tokens.len(),
+                share: share_of(tokens.len(), total_sessions),
+                median_tokens: median_u64(&mut tokens),
+                median_cost_usd: median_f64(&mut costs),
+                cost_usd: sum,
+                cost_share: if total_cost_usd > 0.0 { sum / total_cost_usd } else { 0.0 },
+            });
+        }
+        let below_line_cost_usd: f64 = rungs
+            .iter()
+            .filter(|r| (r.rung as usize) < LADDER_EVIDENCE_FLOOR)
+            .map(|r| r.cost_usd)
+            .sum();
+
+        struct GroupAcc {
+            n: usize,
+            verified: usize,
+            tokens: Vec<u64>,
+            steps: Vec<u64>,
+            cost: f64,
+        }
+        let mut groups: BTreeMap<String, GroupAcc> = BTreeMap::new();
+        let mut sessions_without_effort = 0usize;
+        for f in &fetched {
+            // The table answers "what does a verified outcome cost here", so only sessions
+            // that claimed something can be in its denominator -- same as `outcome_rate`.
+            if f.rung == 0 {
+                continue;
+            }
+            let mut add = |key: String, tokens: u64, cost: f64| {
+                let acc = groups.entry(key).or_insert_with(|| GroupAcc {
+                    n: 0,
+                    verified: 0,
+                    tokens: Vec::new(),
+                    steps: Vec::new(),
+                    cost: 0.0,
+                });
+                acc.n += 1;
+                if (f.rung as usize) >= LADDER_EVIDENCE_FLOOR {
+                    acc.verified += 1;
+                }
+                acc.tokens.push(tokens);
+                acc.steps.push(f.steps);
+                acc.cost += cost;
+            };
+            match q.group_by {
+                LadderGroupBy::Adapter => add(f.adapter.clone(), f.tokens, f.cost_usd),
+                LadderGroupBy::Repo => add(f.repo.clone(), f.tokens, f.cost_usd),
+                LadderGroupBy::Effort => match &f.effort {
+                    Some(effort) => add(effort.clone(), f.tokens, f.cost_usd),
+                    None => sessions_without_effort += 1,
+                },
+                LadderGroupBy::Model => {
+                    let usage = per_model.get(&f.session_id);
+                    for model in &f.models {
+                        match usage.and_then(|u| u.get(model)) {
+                            Some((tokens, cost)) => add(model.clone(), *tokens, *cost),
+                            None => add(model.clone(), f.tokens, f.cost_usd),
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut group_rows: Vec<LadderGroupRow> = groups
+            .into_iter()
+            .map(|(key, mut acc)| {
+                let under_floor = acc.n < q.min_n;
+                LadderGroupRow {
+                    key,
+                    rate: (!under_floor).then(|| acc.verified as f64 / acc.n as f64),
+                    cost_per_verified_usd: (!under_floor && acc.verified > 0)
+                        .then(|| acc.cost / acc.verified as f64),
+                    median_tokens: median_u64(&mut acc.tokens),
+                    median_steps: median_u64(&mut acc.steps),
+                    n: acc.n,
+                    verified: acc.verified,
+                    cost_usd: acc.cost,
+                    under_floor,
+                }
+            })
+            .collect();
+        group_rows.sort_by(|a, b| b.n.cmp(&a.n).then_with(|| a.key.cmp(&b.key)));
+
+        let mut verified: Vec<&Fetched> = fetched
+            .iter()
+            .filter(|f| (f.rung as usize) >= LADDER_EVIDENCE_FLOOR)
+            .collect();
+        verified.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        let recent_verified = verified
+            .into_iter()
+            .take(q.recent_limit)
+            .map(|f| LadderSessionRow {
+                session_id: f.session_id.clone(),
+                started_at: f.started_at,
+                repo: f.repo.clone(),
+                rung: f.rung,
+                model: f.models.first().cloned().unwrap_or_default(),
+                total_tokens: f.tokens,
+                cost_usd: f.cost_usd,
+            })
+            .collect();
+
+        let db_path = self
+            .db_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| ":memory:".to_string());
+
+        Ok(LadderResult {
+            group_by: q.group_by,
+            min_n: q.min_n,
+            window: OutcomeRateWindow {
+                since: q.since,
+                until: Some(q.until.unwrap_or(counted_at)),
+            },
+            total_sessions,
+            total_cost_usd,
+            below_line_cost_usd,
+            below_line_cost_share: if total_cost_usd > 0.0 {
+                below_line_cost_usd / total_cost_usd
+            } else {
+                0.0
+            },
+            rungs,
+            groups: group_rows,
+            sessions_without_effort,
+            recent_verified,
             receipt: OutcomeRateReceipt {
                 counted_at,
                 index_last_session_at,
@@ -5495,6 +6031,221 @@ mod tests {
         assert!(open_ended.window.since.is_none());
         assert!(open_ended.window.until.is_some());
         assert_eq!(open_ended.baseline.n, 3, "no window means every claimed session counts");
+    }
+
+    /// Seeds one non-stub session for `get_ladder` fixtures: chosen tokens per model (so the
+    /// per-model cost join has rows to price), a tool-call count for the steps column, and an
+    /// optional effort value.
+    #[allow(clippy::too_many_arguments)]
+    fn seed_ladder_session(
+        storage: &Storage,
+        session_id: &str,
+        adapter: &str,
+        source_path: &str,
+        per_model: &[(&str, u64)],
+        primary_outcome: Option<&str>,
+        effort: Option<&str>,
+        steps: usize,
+        started_at: DateTime<Utc>,
+    ) {
+        let prov = Provenance::new(source_path, adapter, 100, 12345, format!("fp_{session_id}"));
+        let mut trace = AgentWorthTrace::new(session_id, adapter, prov, started_at);
+        trace.stats.total_events = 5;
+        trace.stats.tool_calls_count = steps;
+        trace.stats.effort = effort.map(str::to_string);
+        let mut input_total = 0;
+        for (model, input) in per_model {
+            trace.stats.models_used.push((*model).to_string());
+            trace
+                .stats
+                .per_model_token_usage
+                .insert((*model).to_string(), TokenUsage::new(*input, 0, 0, 0));
+            input_total += *input;
+        }
+        trace.stats.token_usage = TokenUsage::new(input_total, 0, 0, 0);
+        storage
+            .upsert_session(&trace, primary_outcome, None, 1)
+            .expect("seed ladder session");
+    }
+
+    /// Every rung populated: the ladder must count each one, put the sessions with no outcome
+    /// evidence on rung 0 (unflown, not a failure), and report the spend below the evidence
+    /// line as a real share of the window's whole spend.
+    #[test]
+    fn test_get_ladder_counts_every_rung_and_the_spend_below_the_line() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let t0 = Utc::now() - Duration::hours(10);
+        let rungs = [
+            ("ci", Some("ci_or_deployment_verified")),
+            ("commit", Some("commit_observed")),
+            ("test", Some("test_or_build_passed")),
+            ("artifact", Some("artifact_changed")),
+            ("done", Some("done_claimed")),
+            ("unflown", None),
+        ];
+        for (i, (name, outcome)) in rungs.iter().enumerate() {
+            seed_ladder_session(
+                &storage,
+                &format!("sess-{name}"),
+                "claude_code",
+                &format!("/home/u/code/org-a/repo-a/{name}.jsonl"),
+                &[("claude-sonnet-5", 1_000_000)],
+                *outcome,
+                None,
+                10,
+                t0 + Duration::minutes(i as i64),
+            );
+        }
+
+        let result = storage
+            .get_ladder(&LadderQuery { min_n: 1, ..LadderQuery::default() })
+            .expect("get_ladder");
+
+        assert_eq!(result.total_sessions, 6);
+        assert_eq!(result.rungs.len(), 6, "always six rows, empty ones included");
+        assert_eq!(result.rungs[0].rung, 5, "top rung first");
+        assert_eq!(result.rungs[0].outcome, "ci_or_deployment_verified");
+        assert_eq!(result.rungs[5].outcome, "unflown");
+        for row in &result.rungs {
+            assert_eq!(row.sessions, 1, "rung {} should hold one session", row.rung);
+            assert!((row.share - 1.0 / 6.0).abs() < 1e-9);
+            assert_eq!(row.median_tokens, 1_000_000);
+            assert!(row.cost_usd > 0.0, "a real token count must carry a real cost");
+        }
+
+        // Rungs 0, 1 and 2 -- three of six identically-priced sessions.
+        assert!((result.below_line_cost_share - 0.5).abs() < 1e-9);
+        assert!(
+            (result.below_line_cost_usd * 2.0 - result.total_cost_usd).abs() < 1e-9,
+            "half the spend sits below the line"
+        );
+        assert_eq!(result.recent_verified.len(), 3, "rungs 3, 4 and 5 are verified");
+        assert_eq!(
+            result.recent_verified[0].session_id, "sess-test",
+            "newest verified first"
+        );
+    }
+
+    /// The group table: `n` under the floor blanks the rate and the cost rather than printing
+    /// a number nothing supports, a session naming two models lands in both groups with only
+    /// its own tokens for each, and the medians come from the claimed sessions only.
+    #[test]
+    fn test_get_ladder_groups_blank_below_the_floor_and_split_multi_model_tokens() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let t0 = Utc::now() - Duration::hours(5);
+
+        for i in 0..4 {
+            seed_ladder_session(
+                &storage,
+                &format!("sess-big-{i}"),
+                "claude_code",
+                &format!("/home/u/code/org-a/repo-a/b{i}.jsonl"),
+                &[("model-big", 2_000_000)],
+                Some(if i < 3 { "commit_observed" } else { "done_claimed" }),
+                Some("high"),
+                20 + i,
+                t0 + Duration::minutes(i as i64),
+            );
+        }
+        // One session, two models: each group must see 1_000_000 tokens, not 3_000_000.
+        seed_ladder_session(
+            &storage,
+            "sess-pair",
+            "claude_code",
+            "/home/u/code/org-a/repo-a/pair.jsonl",
+            &[("model-big", 1_000_000), ("model-small", 1_000_000)],
+            Some("test_or_build_passed"),
+            None,
+            5,
+            t0 + Duration::minutes(9),
+        );
+
+        let result = storage
+            .get_ladder(&LadderQuery { min_n: 4, ..LadderQuery::default() })
+            .expect("get_ladder by model");
+
+        let big = result.groups.iter().find(|g| g.key == "model-big").expect("model-big row");
+        assert_eq!(big.n, 5);
+        assert_eq!(big.verified, 4);
+        assert!(!big.under_floor);
+        assert_eq!(big.rate, Some(0.8));
+        assert!(big.cost_per_verified_usd.is_some());
+        assert_eq!(big.median_tokens, 2_000_000, "the pair contributes only its own share");
+
+        let small = result.groups.iter().find(|g| g.key == "model-small").expect("model-small row");
+        assert_eq!(small.n, 1);
+        assert!(small.under_floor);
+        assert_eq!(small.rate, None, "a rate under the floor is blank, never zero");
+        assert_eq!(small.cost_per_verified_usd, None);
+        assert_eq!(small.median_tokens, 1_000_000);
+        assert_eq!(small.median_steps, 5);
+
+        // Effort is stored on four of the five claimed sessions; the fifth is named, not faked.
+        let by_effort = storage
+            .get_ladder(&LadderQuery {
+                group_by: LadderGroupBy::Effort,
+                min_n: 1,
+                ..LadderQuery::default()
+            })
+            .expect("get_ladder by effort");
+        assert_eq!(by_effort.groups.len(), 1);
+        assert_eq!(by_effort.groups[0].key, "high");
+        assert_eq!(by_effort.groups[0].n, 4);
+        assert_eq!(by_effort.sessions_without_effort, 1);
+    }
+
+    /// `--repo`, `--adapter` and `--model` narrow the population the whole screen is computed
+    /// over, the same three match shapes `list_sessions_filtered` applies.
+    #[test]
+    fn test_get_ladder_filters_narrow_the_window() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let t0 = Utc::now() - Duration::hours(3);
+        seed_ladder_session(
+            &storage, "sess-a", "claude_code", "/home/u/code/org-a/repo-a/x.jsonl",
+            &[("model-x", 500_000)], Some("commit_observed"), None, 3, t0,
+        );
+        seed_ladder_session(
+            &storage, "sess-b", "opencode", "/home/u/code/org-b/repo-b/y.jsonl",
+            &[("model-y", 500_000)], Some("done_claimed"), None, 3, t0 + Duration::minutes(1),
+        );
+
+        let by_repo = storage
+            .get_ladder(&LadderQuery {
+                repo: Some("repo-a".to_string()),
+                min_n: 1,
+                ..LadderQuery::default()
+            })
+            .expect("get_ladder --repo");
+        assert_eq!(by_repo.total_sessions, 1);
+
+        let by_adapter = storage
+            .get_ladder(&LadderQuery {
+                adapter: Some("opencode".to_string()),
+                min_n: 1,
+                ..LadderQuery::default()
+            })
+            .expect("get_ladder --adapter");
+        assert_eq!(by_adapter.total_sessions, 1);
+        assert_eq!(by_adapter.recent_verified.len(), 0, "done_claimed is below the line");
+
+        let by_model = storage
+            .get_ladder(&LadderQuery {
+                model: Some("model-x".to_string()),
+                min_n: 1,
+                ..LadderQuery::default()
+            })
+            .expect("get_ladder --model");
+        assert_eq!(by_model.total_sessions, 1);
+
+        let windowed = storage
+            .get_ladder(&LadderQuery {
+                since: Some(t0 + Duration::seconds(30)),
+                min_n: 1,
+                ..LadderQuery::default()
+            })
+            .expect("get_ladder --since");
+        assert_eq!(windowed.total_sessions, 1);
+        assert!(windowed.window.until.is_some(), "an open window still names its upper bound");
     }
 
     #[test]

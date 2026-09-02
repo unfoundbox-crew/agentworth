@@ -4041,3 +4041,389 @@ pub fn update(ui: &Ui, v: &UpdateView<'_>) -> String {
     out.push_str(&ui.next("archie version", "what this build is and where its index lives"));
     out
 }
+
+// -----------------------------------------------------------------------------
+// stats ladder
+// -----------------------------------------------------------------------------
+
+/// The ladder in `OutcomeKind`'s own words, rung 0 first. `RUNG_LABELS` is the short form the
+/// dense screens use; this is the long one, because `stats ladder` is the screen where a
+/// reader learns what each rung actually means. Rung 0 is *unflown* -- no outcome evidence of
+/// any kind was found, which is not a failure state and is never danger-coloured (AGENTS.md,
+/// "Things you cannot learn from the code", item 4).
+pub const LADDER_RUNG_LABELS: [&str; 6] = [
+    "unflown",
+    "done claimed",
+    "artifact changed",
+    "test or build passed",
+    "commit observed",
+    "CI or deployment verified",
+];
+
+/// One dollar format for the whole screen. Cents below a thousand, where they are the
+/// difference between two rows; thousands separators above it, where they are noise and the
+/// column has no room for them.
+fn money(usd: f64) -> String {
+    if usd >= 1000.0 {
+        format!("${}", thousands(usd.round() as u64))
+    } else {
+        format!("${:.2}", usd)
+    }
+}
+
+pub struct LadderRungRowView<'a> {
+    pub rung: usize,
+    pub label: &'a str,
+    pub sessions: usize,
+    pub share: f64,
+    pub median_tokens: u64,
+    pub median_cost_usd: f64,
+    pub spend_usd: f64,
+    pub spend_share: f64,
+}
+
+pub struct LadderGroupRowView<'a> {
+    pub key: &'a str,
+    pub n: usize,
+    /// `None` under the sample floor: blank, never a zero pretending to be a measurement.
+    pub rate: Option<f64>,
+    pub median_tokens: u64,
+    pub median_steps: u64,
+    pub cost_per_verified_usd: Option<f64>,
+}
+
+pub struct LadderSessionRowView<'a> {
+    pub when: &'a str,
+    pub repo: &'a str,
+    pub rung: usize,
+    pub model: &'a str,
+    pub tokens: u64,
+    pub cost_usd: f64,
+}
+
+pub struct LadderView<'a> {
+    /// `30 days`, `all time` -- what `--period` resolved to.
+    pub period_label: &'a str,
+    /// The active `--repo`/`--adapter`/`--model` filters, already joined, or empty.
+    pub filters: &'a str,
+    pub total_sessions: usize,
+    pub group_by: &'a str,
+    pub min_n: usize,
+    /// Rung 5 first, rung 0 last.
+    pub rungs: &'a [LadderRungRowView<'a>],
+    pub below_sessions: usize,
+    pub below_share: f64,
+    pub below_spend_usd: f64,
+    pub below_spend_share: f64,
+    pub groups: &'a [LadderGroupRowView<'a>],
+    /// Groups the row cap left out, so the table never reads as the whole index.
+    pub groups_hidden: usize,
+    pub sessions_without_effort: usize,
+    pub recent: &'a [LadderSessionRowView<'a>],
+    /// `CostBasis::label_long()` -- every dollar here is API-equivalent, and says so.
+    pub cost_note: &'a str,
+}
+
+/// The composed screen: the ladder, what a verified outcome costs by group, and the newest
+/// sessions that left evidence. One renderer, so the cockpit can draw the same thing without
+/// a second one.
+pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    let right = if v.filters.is_empty() {
+        format!(
+            "{} {} {} sessions",
+            v.period_label,
+            ui.dot(),
+            thousands(v.total_sessions as u64)
+        )
+    } else {
+        format!(
+            "{} {} {} {} {} sessions",
+            v.period_label,
+            ui.dot(),
+            v.filters,
+            ui.dot(),
+            thousands(v.total_sessions as u64)
+        )
+    };
+    out.push_str(&ui.header("archie stats ladder", &right));
+    out.push('\n');
+
+    for line in wrap_note(v.cost_note, i) {
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Label, &line)));
+    }
+    out.push('\n');
+
+    // -- the ladder -----------------------------------------------------------
+    const SESS: usize = 8;
+    const SHARE: usize = 6;
+    const TOK: usize = 7;
+    const PER: usize = 7;
+    const SPEND: usize = 8;
+    const OF: usize = 8;
+    // The name column absorbs the remainder, so the row always sums to the content width.
+    let name = i.saturating_sub(SESS + SHARE + TOK + PER + SPEND + OF).max(12);
+
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Label,
+                &format!(
+                    "{}{}{}{}{}{}{}",
+                    lpad("EVIDENCE LADDER", name),
+                    rpad("SESSIONS", SESS),
+                    rpad("SHARE", SHARE),
+                    rpad("MED TOK", TOK),
+                    rpad("$/SESS", PER),
+                    rpad("SPEND", SPEND),
+                    rpad("OF SPEND", OF),
+                )
+            )
+        ),
+    );
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+
+    for r in v.rungs {
+        if r.rung == EVIDENCE_FLOOR - 1 {
+            push(
+                &mut out,
+                ui,
+                format!("  {}", ui.paint(Role::Chrome, &ui.titled_rule(i, "the evidence line"))),
+            );
+        }
+        // The two spend columns carry ink only below the line: that is the number this
+        // screen exists to show, and a sum beside a verified rung answers nobody's question.
+        let (spend, of_spend) = if r.rung < EVIDENCE_FLOOR {
+            (money(r.spend_usd), format!("{:.1}%", r.spend_share * 100.0))
+        } else {
+            (String::new(), String::new())
+        };
+        let label = format!(
+            "{} {}",
+            ui.meter(r.rung),
+            truncate(r.label, name.saturating_sub(6))
+        );
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}{}{}{}{}{}{}",
+                ui.paint(rung_role(r.rung), &lpad(&label, name)),
+                ui.paint(Role::Value, &rpad(&thousands(r.sessions as u64), SESS)),
+                ui.paint(Role::Label, &rpad(&format!("{:.1}%", r.share * 100.0), SHARE)),
+                ui.paint(Role::Value, &rpad(&compact(r.median_tokens), TOK)),
+                ui.paint(Role::Value, &rpad(&money(r.median_cost_usd), PER)),
+                ui.paint(Role::Value, &rpad(&spend, SPEND)),
+                ui.paint(Role::Label, &rpad(&of_spend, OF)),
+            ),
+        );
+    }
+
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}{}{}{}{}{}{}",
+            ui.paint(Role::Label, &lpad("BELOW THE LINE", name)),
+            ui.paint(Role::Value, &rpad(&thousands(v.below_sessions as u64), SESS)),
+            ui.paint(Role::Label, &rpad(&format!("{:.1}%", v.below_share * 100.0), SHARE)),
+            rpad("", TOK),
+            rpad("", PER),
+            // The one number this screen is for.
+            ui.paint(Role::Verified, &rpad(&money(v.below_spend_usd), SPEND)),
+            ui.paint(Role::Verified, &rpad(&format!("{:.1}%", v.below_spend_share * 100.0), OF)),
+        ),
+    );
+    out.push('\n');
+
+    // -- cost per verified outcome -------------------------------------------
+    section(
+        &mut out,
+        ui,
+        "COST PER VERIFIED OUTCOME",
+        &format!("by {} {} min n {}", v.group_by, ui.dot(), v.min_n),
+    );
+
+    if v.groups.is_empty() {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Unverified,
+                    "No session in this window claimed an outcome, so there is nothing to price."
+                )
+            ),
+        );
+    } else {
+        const N: usize = 6;
+        const RATE: usize = 8;
+        const GTOK: usize = 9;
+        const STEPS: usize = 7;
+        const PERV: usize = 12;
+        let key = i.saturating_sub(N + RATE + GTOK + STEPS + PERV).max(10);
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Label,
+                    &format!(
+                        "{}{}{}{}{}{}",
+                        lpad(&v.group_by.to_uppercase(), key),
+                        rpad("N", N),
+                        rpad("VERIFIED", RATE),
+                        rpad("MED TOK", GTOK),
+                        rpad("STEPS", STEPS),
+                        rpad("$/VERIFIED", PERV),
+                    )
+                )
+            ),
+        );
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+        for g in v.groups {
+            // Blank, not zero and not a dash: under the floor nothing was measured well
+            // enough to print, and a dash here would read as "this group has no cost."
+            let rate = g.rate.map(|r| format!("{:.0}%", r * 100.0)).unwrap_or_default();
+            let per_verified = g.cost_per_verified_usd.map(money).unwrap_or_default();
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}{}{}{}{}{}",
+                    ui.paint(Role::Value, &lpad(&truncate(g.key, key.saturating_sub(1)), key)),
+                    ui.paint(Role::Value, &rpad(&thousands(g.n as u64), N)),
+                    ui.paint(
+                        if g.rate.is_some() { Role::Verified } else { Role::Unverified },
+                        &rpad(&rate, RATE)
+                    ),
+                    ui.paint(Role::Value, &rpad(&compact(g.median_tokens), GTOK)),
+                    ui.paint(Role::Value, &rpad(&thousands(g.median_steps), STEPS)),
+                    ui.paint(Role::Value, &rpad(&per_verified, PERV)),
+                ),
+            );
+        }
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    }
+
+    if v.groups_hidden > 0 {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Unverified,
+                    &format!("{} more group(s) not shown; the largest are above.", v.groups_hidden)
+                )
+            ),
+        );
+    }
+    if v.sessions_without_effort > 0 {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Unverified,
+                    &format!(
+                        "{} session(s) record no effort; only Codex writes one.",
+                        thousands(v.sessions_without_effort as u64)
+                    )
+                )
+            ),
+        );
+    }
+    out.push('\n');
+
+    // -- the newest sessions that left evidence -------------------------------
+    section(&mut out, ui, "RECENT VERIFIED", &format!("{} shown", v.recent.len()));
+    if v.recent.is_empty() {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(Role::Unverified, "Nothing in this window got past the evidence line.")
+            ),
+        );
+    } else {
+        const WHEN: usize = 12;
+        const EV: usize = 8;
+        const RTOK: usize = 7;
+        const RCOST: usize = 9;
+        let rest = i.saturating_sub(WHEN + EV + RTOK + RCOST);
+        let repo = (rest * 3 / 5).max(6);
+        let model = rest.saturating_sub(repo);
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Label,
+                    &format!(
+                        "{}{}{}{}{}{}",
+                        lpad("WHEN", WHEN),
+                        lpad("REPO", repo),
+                        lpad("MODEL", model),
+                        rpad("EVIDENCE", EV),
+                        rpad("TOKENS", RTOK),
+                        rpad("COST", RCOST),
+                    )
+                )
+            ),
+        );
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+        for r in v.recent {
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}{}{}{}{}{}",
+                    ui.paint(Role::Label, &lpad(&truncate(r.when, WHEN), WHEN)),
+                    ui.paint(Role::Value, &lpad(&truncate(r.repo, repo.saturating_sub(1)), repo)),
+                    ui.paint(
+                        Role::Value,
+                        &lpad(&truncate(&short_model(r.model), model.saturating_sub(1)), model)
+                    ),
+                    ui.paint(rung_role(r.rung), &rpad(&ui.meter(r.rung), EV)),
+                    ui.paint(Role::Value, &rpad(&compact(r.tokens), RTOK)),
+                    ui.paint(Role::Value, &rpad(&money(r.cost_usd), RCOST)),
+                ),
+            );
+        }
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    }
+    out.push('\n');
+
+    // The one number that matters, in one sentence.
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Emphasis,
+                &format!(
+                    "{:.0}% of spend this period sits below the evidence line.",
+                    v.below_spend_share * 100.0
+                )
+            )
+        ),
+    );
+    out.push_str(&ui.next(
+        "archie session list --unproven",
+        "the sessions that spend bought nothing provable",
+    ));
+    out
+}

@@ -103,6 +103,7 @@ fn screens(root: &std::path::Path) -> Vec<(&'static str, Vec<String>)> {
     let argv = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
     vec![
         ("stats", argv(&["stats"])),
+        ("stats-ladder", argv(&["stats", "ladder", "--period", "all"])),
         ("traces", argv(&["traces", "--limit", "5"])),
         ("usage", argv(&["usage", "--period", "day"])),
         ("usage-by-model", argv(&["usage", "--period", "day", "--by", "model"])),
@@ -837,4 +838,161 @@ fn merge_holds_the_grid() {
     for c in render(&db, &args, 80, false).chars() {
         assert!(is_allowed(c), "merge ships U+{:04X} ({})", c as u32, c);
     }
+}
+
+/// A second fixture index with one session on every rung of the ladder, including the
+/// unflown bottom -- `stats ladder` is the one screen that draws all six at once, so a
+/// two-session fixture cannot exercise it.
+fn full_ladder_fixture() -> (TempDir, std::path::PathBuf) {
+    let temp = tempdir().unwrap();
+    let dir = temp.path().join(".claude").join("projects").join("proj");
+    fs::create_dir_all(&dir).unwrap();
+
+    let usage = r#""usage":{"input_tokens":40000,"output_tokens":9000,"cache_read_input_tokens":600000,"cache_creation_input_tokens":3000}"#;
+
+    // Rung 5: a PR opened, and the harness cleared is_error -- a real exit 0.
+    let mut f = File::create(dir.join("session_ci.jsonl")).unwrap();
+    writeln!(f, r#"{{"type":"user","timestamp":"2026-08-25T10:00:00Z","content":"open the pull request"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant","timestamp":"2026-08-25T10:00:02Z","model":"claude-3-5-sonnet-20241022",{usage},"content":[{{"type":"tool_use","id":"c1","name":"Bash","input":{{"command":"gh pr create --fill"}}}}]}}"#).unwrap();
+    writeln!(f, r#"{{"type":"tool_result","timestamp":"2026-08-25T10:00:06Z","tool_use_id":"c1","content":"https://github.com/o/r/pull/7","is_error":false}}"#).unwrap();
+
+    // Rung 4: a commit, nothing above it.
+    let mut f = File::create(dir.join("session_commit.jsonl")).unwrap();
+    writeln!(f, r#"{{"type":"user","timestamp":"2026-08-26T10:00:00Z","content":"commit the fix"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant","timestamp":"2026-08-26T10:00:02Z","model":"claude-3-5-sonnet-20241022",{usage},"content":[{{"type":"tool_use","id":"c2","name":"Bash","input":{{"command":"git commit -m 'fix the index'"}}}}]}}"#).unwrap();
+    writeln!(f, r#"{{"type":"tool_result","timestamp":"2026-08-26T10:00:04Z","tool_use_id":"c2","content":"1 file changed","is_error":false}}"#).unwrap();
+
+    // Rung 3: an edit plus a passing test run.
+    let mut f = File::create(dir.join("session_test.jsonl")).unwrap();
+    writeln!(f, r#"{{"type":"user","timestamp":"2026-08-27T10:00:00Z","content":"fix the vector index"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant","timestamp":"2026-08-27T10:00:02Z","model":"claude-3-5-haiku-20241022",{usage},"content":[{{"type":"tool_use","id":"t1","name":"FileEdit","input":{{"file_path":"crates/storage/src/vector.rs","diff":"+ fn cosine() {{}}"}}}}]}}"#).unwrap();
+    writeln!(f, r#"{{"type":"tool_result","timestamp":"2026-08-27T10:00:03Z","tool_use_id":"t1","content":"File modified successfully","is_error":false}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant","timestamp":"2026-08-27T10:00:05Z","content":[{{"type":"tool_use","id":"t2","name":"Bash","input":{{"command":"cargo test"}}}}],"usage":{{"input_tokens":200,"output_tokens":30,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}"#).unwrap();
+    writeln!(f, r#"{{"type":"tool_result","timestamp":"2026-08-27T10:00:07Z","tool_use_id":"t2","content":"test result: ok. 8 passed; 0 failed","is_error":false}}"#).unwrap();
+
+    // Rung 2: a file changed and nothing checked it.
+    let mut f = File::create(dir.join("session_artifact.jsonl")).unwrap();
+    writeln!(f, r#"{{"type":"user","timestamp":"2026-08-28T10:00:00Z","content":"rename the field"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant","timestamp":"2026-08-28T10:00:02Z","model":"claude-3-5-haiku-20241022",{usage},"content":[{{"type":"tool_use","id":"a1","name":"FileEdit","input":{{"file_path":"crates/schema/src/event.rs","diff":"+ pub effort: Option<String>,"}}}}]}}"#).unwrap();
+    writeln!(f, r#"{{"type":"tool_result","timestamp":"2026-08-28T10:00:04Z","tool_use_id":"a1","content":"File modified successfully","is_error":false}}"#).unwrap();
+
+    // Rung 1: the agent says it finished, and that is the whole evidence.
+    let mut f = File::create(dir.join("session_done.jsonl")).unwrap();
+    writeln!(f, r#"{{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"tidy the readme"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant","timestamp":"2026-08-29T10:00:04Z","model":"claude-3-5-haiku-20241022",{usage},"content":[{{"type":"text","text":"The task is complete and the readme reads cleanly now."}}]}}"#).unwrap();
+
+    // Rung 0: unflown -- a real session that claimed nothing at all.
+    let mut f = File::create(dir.join("session_unflown.jsonl")).unwrap();
+    writeln!(f, r#"{{"type":"user","timestamp":"2026-08-30T10:00:00Z","content":"what does this module do?"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant","timestamp":"2026-08-30T10:00:03Z","model":"claude-3-5-haiku-20241022",{usage},"content":[{{"type":"text","text":"It normalizes events into one trace shape."}}]}}"#).unwrap();
+
+    let db = temp.path().join("ladder.db");
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db)
+        .arg("scan")
+        .arg(temp.path())
+        .arg("--json")
+        .assert()
+        .success();
+
+    (temp, db)
+}
+
+/// Every rung on screen, at both widths, in both palettes: nothing wraps, colour moves no
+/// column, and no glyph leaves the allowed set.
+#[test]
+fn the_ladder_holds_the_grid_with_every_rung_populated() {
+    let (_t, db) = full_ladder_fixture();
+    let args = ["stats", "ladder", "--period", "all", "--min-n", "1"];
+
+    for columns in [80usize, 100] {
+        let plain = render(&db, &args, columns, false);
+        assert!(!plain.trim().is_empty(), "stats ladder rendered nothing");
+        for line in plain.lines() {
+            let w = console::measure_text_width(line);
+            assert!(w <= columns.min(78), "stats ladder at {columns}: line is {w} wide\n{line}");
+        }
+        for c in plain.chars() {
+            assert!(is_allowed(c), "stats ladder ships U+{:04X} ({})", c as u32, c);
+        }
+
+        let plain_unicode = render_with(&db, &args, columns, false, true);
+        let colour = render_with(&db, &args, columns, true, true);
+        assert!(colour.contains('\x1b'), "no colour under CLICOLOR_FORCE");
+        assert_eq!(
+            console::strip_ansi_codes(&colour),
+            plain_unicode,
+            "stats ladder at {columns}: colour and plain disagree on column positions"
+        );
+    }
+}
+
+/// The screen's own claims: six rungs by name, the evidence line between rung 3 and rung 2,
+/// the unflown bottom row, and the one sentence the whole screen is for.
+#[test]
+fn the_ladder_names_every_rung_and_ends_on_the_spend_below_the_line() {
+    let (_t, db) = full_ladder_fixture();
+    let out = render(&db, &["stats", "ladder", "--period", "all", "--min-n", "1"], 80, false);
+
+    for label in [
+        "CI or deployment verified",
+        "commit observed",
+        "test or build passed",
+        "artifact changed",
+        "done claimed",
+        "unflown",
+    ] {
+        assert!(out.contains(label), "the ladder never names {label:?}:\n{out}");
+    }
+    assert!(out.contains("the evidence line"), "no evidence line drawn:\n{out}");
+    assert!(out.contains("BELOW THE LINE"));
+    assert!(out.contains("COST PER VERIFIED OUTCOME"));
+    assert!(out.contains("RECENT VERIFIED"));
+    assert!(
+        out.contains("of spend this period sits below the evidence line."),
+        "the closing sentence is missing:\n{out}"
+    );
+    // A dollar figure that does not say what it is would be the one thing this screen
+    // cannot ship (AGENTS.md: every cost is API-equivalent, and says so).
+    assert!(out.contains("API-equivalent at list prices"), "unlabelled cost:\n{out}");
+    assert!(!out.to_lowercase().contains("real cost"));
+    assert!(!out.to_lowercase().contains("merged pr"));
+}
+
+/// `--json` carries the same three blocks, and a group under the floor comes back with a
+/// null rate rather than a zero pretending to be a measurement.
+#[test]
+fn the_ladder_json_carries_three_blocks_and_nulls_below_the_floor() {
+    let (_t, db) = full_ladder_fixture();
+    let raw = render(&db, &["stats", "ladder", "--period", "all", "--json"], 80, false);
+    let v: serde_json::Value = serde_json::from_str(raw.trim()).unwrap();
+
+    assert_eq!(v["cost_basis"], "api_list_price_equivalent");
+    assert_eq!(v["period"], "all");
+    assert_eq!(v["group_by"], "model");
+
+    let rungs = v["rungs"].as_array().expect("rungs array");
+    assert_eq!(rungs.len(), 6, "always six rows");
+    assert_eq!(rungs[0]["outcome"], "ci_or_deployment_verified");
+    assert_eq!(rungs[0]["sessions"], 1);
+    assert_eq!(rungs[5]["outcome"], "unflown");
+    assert_eq!(rungs[5]["sessions"], 1);
+    assert!(v["below_line_cost_share"].as_f64().unwrap() > 0.0);
+
+    // Default floor is 20; the fixture has five claimed sessions, so every group is under it.
+    let groups = v["groups"].as_array().expect("groups array");
+    assert!(!groups.is_empty());
+    for g in groups {
+        assert!(g["rate"].is_null(), "a rate under the floor must be null, not 0");
+        assert!(g["cost_per_verified_usd"].is_null());
+        assert!(g["under_floor"].as_bool().unwrap());
+        assert!(g["n"].as_u64().unwrap() > 0, "n always ships");
+    }
+
+    let recent = v["recent_verified"].as_array().expect("recent array");
+    assert_eq!(recent.len(), 3, "rungs 3, 4 and 5 are the verified ones");
+    assert!(recent[0]["rung"].as_u64().unwrap() >= 3);
+    assert!(recent[0]["cost_usd"].as_f64().unwrap() > 0.0);
 }
