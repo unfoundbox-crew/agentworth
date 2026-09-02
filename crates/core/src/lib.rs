@@ -609,6 +609,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
+            ..Default::default()
         };
 
         // Backfill scan: source is unchanged, but the row is missing prompt_preview, so it
