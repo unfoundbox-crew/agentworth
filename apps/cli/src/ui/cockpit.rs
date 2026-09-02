@@ -558,6 +558,21 @@ pub fn row_span(lines: &[String], rows: usize) -> Option<(usize, usize)> {
     None
 }
 
+/// What to type into the sessions filter to get one repository's sessions.
+///
+/// Not the repository name itself. `get_top_repositories` returns the decoded form --
+/// `unfoundbox/agentworth` -- while the column the filter searches, `sessions.source_path`,
+/// holds Claude Code's encoded slug, `-Users-saurabh-code-unfoundbox-agentworth`. A `LIKE`
+/// for `unfoundbox/agentworth` matches nothing at all, because the separator in the path is
+/// a hyphen. The last segment is in both spellings, so that is what gets typed.
+///
+/// It over-matches: two repositories with the same last segment under different owners land
+/// in one list. The alternative is a repository-column query the cockpit does not have, and
+/// a list that is too wide is recoverable by typing -- a list that is silently empty is not.
+pub fn repo_filter_text(repo: &str) -> String {
+    repo.rsplit('/').next().unwrap_or(repo).to_string()
+}
+
 /// A rule is the indented run of `─` (or `-` in the ASCII set) that `Ui::rule_of` draws,
 /// and nothing else on the line.
 fn is_rule(line: &str) -> bool {
@@ -848,9 +863,9 @@ fn event_loop(
                 }
             }
             Cmd::FilterByRepo(row) => {
-                if let Some(repo) = loaded.ids.get(row).cloned() {
+                if let Some(repo) = loaded.ids.get(row) {
                     app.screen = Screen::Sessions;
-                    app.filter = repo;
+                    app.filter = repo_filter_text(repo);
                     app.cursor = 0;
                     app.scroll = 0;
                     loaded = load(screens, &app);
@@ -1201,6 +1216,21 @@ mod tests {
         let mut a = app_with(Screen::Repos, 4);
         a.cursor = 2;
         assert_eq!(a.on_key(Key::Enter), Cmd::FilterByRepo(2));
+    }
+
+    /// The bug this exists to stop: filtering on `unfoundbox/agentworth` searched a
+    /// column that spells it `-Users-saurabh-code-unfoundbox-agentworth`, so Enter on the
+    /// repos screen produced an empty list rather than that repository's sessions.
+    #[test]
+    fn a_repository_is_filtered_by_the_segment_that_appears_in_the_path() {
+        assert_eq!(repo_filter_text("unfoundbox/agentworth"), "agentworth");
+        assert_eq!(repo_filter_text("motionvector/studio"), "studio");
+        assert_eq!(repo_filter_text("agentworth"), "agentworth");
+        assert_eq!(repo_filter_text(""), "");
+        // The encoded slug really does contain it, which is the whole point.
+        let slug = "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/s.jsonl";
+        assert!(slug.contains(&repo_filter_text("unfoundbox/agentworth")));
+        assert!(!slug.contains("unfoundbox/agentworth"));
     }
 
     #[test]
