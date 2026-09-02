@@ -405,14 +405,17 @@ enum Commands {
     /// re-scroll or re-ask because the answer landed several messages later
     Asks {
         /// Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed
-        /// directly if it isn't an indexed session). Defaults to the newest session for this
-        /// directory's repository, same as `--current`.
-        #[arg(long, conflicts_with = "current")]
+        /// directly if it isn't an indexed session). With neither this nor `--last` given
+        /// on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`.
+        #[arg(long, conflicts_with_all = ["current", "last"])]
         session: Option<String>,
 
-        /// Resolve the newest session for this directory's repository. The default when
-        /// `--session` is not given -- this flag exists so an invocation can say that on
-        /// purpose.
+        /// Resolve the newest session for this directory's repository, falling back to the
+        /// newest session anywhere.
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`.
         #[arg(long)]
         current: bool,
 
@@ -945,6 +948,7 @@ pub fn run() -> Result<()> {
         }
         Commands::Asks {
             session,
+            last,
             current,
             since,
             unanswered,
@@ -952,6 +956,7 @@ pub fn run() -> Result<()> {
         } => {
             asks_command::run_asks_command(
                 session,
+                last,
                 current,
                 since,
                 unanswered,
