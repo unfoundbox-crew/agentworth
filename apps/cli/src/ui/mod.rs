@@ -288,11 +288,25 @@ impl Ui {
 
     /// The closing line every screen ends on. A dead end is a design bug.
     pub fn next(&self, command: &str, why: &str) -> String {
+        // "  Next  " + command + "   " is fixed overhead; `why` is the one variable-length
+        // part, so it is the one that gives way. A command long enough to eat the whole
+        // budget on its own (never true today, but this must not go negative and panic if
+        // it ever is) leaves `why` truncated to nothing rather than the line overflowing --
+        // see the #109-class fix history: this line was not width-truncated at all before,
+        // and a long enough `why` (`threat-digest`'s "the full session with secrets
+        // stripped") pushed a screen past `ui/mod.rs`'s own 78-column contract.
+        const PREFIX: &str = "  Next  ";
+        const GAP: &str = "   ";
+        let budget = self
+            .width()
+            .saturating_sub(display_width(PREFIX) + display_width(command) + display_width(GAP));
+        let why = truncate(why, budget);
         format!(
-            "  {}  {}   {}\n",
+            "  {}  {}{}{}\n",
             self.paint(Role::Label, "Next"),
             self.paint(Role::Emphasis, command),
-            self.paint(Role::Label, why)
+            GAP,
+            self.paint(Role::Label, &why)
         )
     }
 }

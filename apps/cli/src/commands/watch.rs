@@ -17,7 +17,6 @@ use agentworth_adapter_sdk::ScanOptions;
 use agentworth_core::Scanner;
 use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
 use anyhow::Result;
-use console::style;
 
 // Loop detection itself now lives in `agentworth_outcomes::loops`, so the scanner can run the
 // same detector while it indexes and persist what it finds (`session_risk`). This command
@@ -34,6 +33,7 @@ pub fn run_watch_command(
     json: bool,
     custom_paths: Vec<PathBuf>,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
@@ -52,17 +52,7 @@ pub fn run_watch_command(
     };
 
     if !json {
-        println!();
-        println!(
-            "{}",
-            style("┌─ 🛡️  AgentWorth Loop Sentinel Active ────────────────────┐").bold().cyan()
-        );
-        println!("│ Polling active agent session transcripts for doom loops...  │");
-        println!(
-            "{}",
-            style("└──────────────────────────────────────────────────────────┘").bold()
-        );
-        println!();
+        print!("{}", crate::ui::views::watch_banner(ui));
     }
 
     loop {
@@ -95,55 +85,37 @@ pub fn run_watch_command(
         if json {
             println!("{}", serde_json::to_string_pretty(&total_alerts)?);
         } else if total_alerts.is_empty() {
-            println!(
-                "{}",
-                style(format!("✓ [{}] All monitored sessions normal (no loops detected).", chrono::Local::now().format("%H:%M:%S"))).dim()
-            );
+            let at = chrono::Local::now().format("%H:%M:%S").to_string();
+            print!("{}", crate::ui::views::watch_clean(ui, &at));
         } else {
-            for alert in &total_alerts {
-                println!(
-                    "{}",
-                    style("┌─ 🚨 LOOP SENTINEL ALERT DETECTED ────────────────────────┐")
-                        .bold()
-                        .red()
-                );
-                println!(
-                    "│ Session: {:<47} │",
-                    style(&alert.session_id).bold().yellow()
-                );
-                println!(
-                    "│ Type:    {:<47} │",
-                    style(match alert.kind {
-                        LoopAlertKind::IdenticalToolLoop => "Identical Consecutive Tool Calls",
-                        LoopAlertKind::FileOscillation => "File Edit Thrashing / Oscillation",
-                    }).red()
-                );
-                println!(
-                    "│ Target:  {:<47} │",
-                    style(&alert.offending_target).cyan()
-                );
-                println!(
-                    "│ Repeats: {:<47} │",
-                    style(format!("{} iterations", alert.repeat_count)).bold()
-                );
-                println!(
-                    "│ Outcome: {:<47} │",
-                    match alert.resolution {
-                        LoopResolution::SelfCorrected =>
-                            style("Self-corrected (no user message first)".to_string()).green(),
-                        LoopResolution::HumanRescued =>
-                            style("Human rescued (a user message interrupted it)".to_string())
-                                .yellow(),
-                        LoopResolution::StillLooping =>
-                            style("Still looping (no resolution observed yet)".to_string()).red(),
+            let rows: Vec<crate::ui::views::WatchAlertRow> = total_alerts
+                .iter()
+                .map(|alert| {
+                    let (outcome, outcome_role) = match alert.resolution {
+                        LoopResolution::SelfCorrected => {
+                            ("self-corrected (no user message first)", crate::ui::Role::Verified)
+                        }
+                        LoopResolution::HumanRescued => {
+                            ("human rescued (a user message interrupted it)", crate::ui::Role::Warn)
+                        }
+                        LoopResolution::StillLooping => {
+                            ("still looping (no resolution observed yet)", crate::ui::Role::Error)
+                        }
+                    };
+                    crate::ui::views::WatchAlertRow {
+                        session_id: &alert.session_id,
+                        kind: match alert.kind {
+                            LoopAlertKind::IdenticalToolLoop => "identical consecutive tool calls",
+                            LoopAlertKind::FileOscillation => "file edit thrashing / oscillation",
+                        },
+                        target: &alert.offending_target,
+                        repeat_count: alert.repeat_count,
+                        outcome,
+                        outcome_role,
                     }
-                );
-                println!(
-                    "{}",
-                    style("└──────────────────────────────────────────────────────────┘").bold()
-                );
-                println!();
-            }
+                })
+                .collect();
+            print!("{}", crate::ui::views::watch_alerts(ui, &rows));
         }
 
         if poll_once {

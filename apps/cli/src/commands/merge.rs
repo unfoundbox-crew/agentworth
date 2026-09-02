@@ -6,7 +6,6 @@
 
 use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
-use console::style;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -331,66 +330,34 @@ pub fn run_merge_command(
     source_db_path: PathBuf,
     json: bool,
     target_db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let resolved_target = match target_db_path {
         Some(p) => p,
         None => agentworth_storage::default_db_dir()?.join("agentworth.db"),
     };
 
-    let stats = merge_sqlite_databases(&resolved_target, &source_db_path)
-        .with_context(|| format!("Failed to merge database from {}", source_db_path.display()))?;
+    let stats = crate::ui::with_status(ui, "merging index", || {
+        merge_sqlite_databases(&resolved_target, &source_db_path)
+    })
+    .with_context(|| format!("Failed to merge database from {}", source_db_path.display()))?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&stats)?);
         return Ok(());
     }
 
-    println!();
-    println!(
-        "{}",
-        style("┌─ 🗄️  AgentWorth Cross-Machine Index Merge ────────────────┐").bold().cyan()
-    );
-    println!(
-        "│ Target Index: {:<43} │",
-        style(resolved_target.file_name().unwrap_or_default().to_string_lossy()).bold()
-    );
-    println!(
-        "│ Source Index: {:<43} │",
-        style(source_db_path.file_name().unwrap_or_default().to_string_lossy()).dim()
-    );
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-    println!(
-        "│ Sessions Inserted: {:<37} │",
-        style(stats.sessions_inserted).bold().green()
-    );
-    println!(
-        "│ Sessions Updated:  {:<37} │",
-        style(stats.sessions_updated).bold().yellow()
-    );
-    println!(
-        "│ Sessions Skipped:  {:<37} │",
-        style(stats.sessions_skipped).dim()
-    );
-    println!(
-        "│ Sources Merged:    {:<37} │",
-        style(stats.sources_merged).cyan()
-    );
-    println!(
-        "│ Files Merged:      {:<37} │",
-        style(stats.files_merged).cyan()
-    );
-    println!(
-        "│ Child Rows Merged: {:<37} │",
-        style(stats.child_rows_merged).cyan()
-    );
-    println!(
-        "{}",
-        style("└──────────────────────────────────────────────────────────┘").bold()
-    );
-    println!();
+    let view = crate::ui::views::MergeView {
+        target_name: &resolved_target.file_name().unwrap_or_default().to_string_lossy(),
+        source_name: &source_db_path.file_name().unwrap_or_default().to_string_lossy(),
+        sessions_inserted: stats.sessions_inserted,
+        sessions_updated: stats.sessions_updated,
+        sessions_skipped: stats.sessions_skipped,
+        sources_merged: stats.sources_merged,
+        files_merged: stats.files_merged,
+        child_rows_merged: stats.child_rows_merged,
+    };
+    print!("{}", crate::ui::views::merge(ui, &view));
 
     Ok(())
 }

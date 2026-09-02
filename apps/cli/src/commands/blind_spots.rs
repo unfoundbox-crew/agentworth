@@ -11,7 +11,6 @@ use agentworth_storage::{
     estimate_total_cost_from_per_model_usage, SessionFilter, SessionOrderBy, Storage,
 };
 use anyhow::Result;
-use console::style;
 use serde::{Deserialize, Serialize};
 
 /// Confidence weight for a `primary_outcome` label, matching the constants
@@ -136,65 +135,38 @@ pub fn run_blind_spots_command(
     limit: usize,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
         None => Storage::open_default()?,
     });
 
-    let report = generate_blind_spots_report(&storage, Some(limit))?;
+    let report = crate::ui::with_status(ui, "scanning sessions", || {
+        generate_blind_spots_report(&storage, Some(limit))
+    })?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    println!();
-    println!(
-        "{}",
-        style("┌─ 🙈 AgentWorth CI Blind-Spot Report ────────────────────────┐").bold().yellow()
-    );
-    println!(
-        "│ Unverified Sessions:  {:<37} │",
-        style(report.total_blind_spots).bold().yellow()
-    );
-    println!(
-        "│ Unverified Token Burn:{:<37} │",
-        style(format!("{} tokens", report.total_unverified_tokens)).bold()
-    );
-    println!(
-        "│ Unverified Spend:     {:<37} │",
-        style(format!("${:.2} USD", report.total_unverified_spend_usd)).bold().magenta()
-    );
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────┤").bold()
-    );
-
-    if report.entries.is_empty() {
-        println!("│ ✓ Excellent! All indexed sessions are verified by CI/tests.│");
-    } else {
-        println!("│ Showing top uncorroborated sessions:                       │");
-        for (i, entry) in report.entries.iter().enumerate() {
-            println!(
-                "│ [{}] {:<24} Adapter: {:<18} │",
-                i + 1,
-                style(&entry.session_id).bold().cyan(),
-                style(&entry.adapter).green()
-            );
-            println!(
-                "│     Claim:  {:<16} Spend:   ${:<18.2} │",
-                style(&entry.primary_outcome).yellow(),
-                entry.spend_usd
-            );
-        }
-    }
-
-    println!(
-        "{}",
-        style("└────────────────────────────────────────────────────────────┘").bold()
-    );
-    println!();
+    let view = crate::ui::views::BlindSpotsView {
+        total_blind_spots: report.total_blind_spots,
+        total_unverified_tokens: report.total_unverified_tokens,
+        total_unverified_spend_usd: report.total_unverified_spend_usd,
+        rows: report
+            .entries
+            .iter()
+            .map(|e| crate::ui::views::BlindSpotRow {
+                session_id: &e.session_id,
+                adapter: &e.adapter,
+                outcome: &e.primary_outcome,
+                spend_usd: e.spend_usd,
+            })
+            .collect(),
+    };
+    print!("{}", crate::ui::views::blind_spots(ui, &view));
 
     Ok(())
 }

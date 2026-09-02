@@ -99,6 +99,13 @@ fn screens() -> Vec<(&'static str, Vec<&'static str>)> {
         ("scan", vec!["scan"]),
         ("doctor", vec!["doctor"]),
         ("matrix", vec!["matrix"]),
+        ("audit", vec!["audit"]),
+        ("blind-spots", vec!["blind-spots"]),
+        ("threat-digest", vec!["threat-digest"]),
+        ("pr-blame", vec!["pr-blame", "crates/storage/src/vector.rs"]),
+        ("watch-once", vec!["watch", "--poll-once"]),
+        ("blunder", vec!["blunder"]),
+        ("blunder-blame", vec!["blunder-blame"]),
     ]
 }
 
@@ -138,7 +145,9 @@ fn colour_never_moves_a_column() {
     let (_t, db) = fixture();
     for (name, args) in screens() {
         // `scan` reports elapsed-dependent counts on a second run; skip its re-render.
-        if name == "scan" {
+        // `watch-once` prints the wall-clock second it polled at, which can tick over
+        // between the plain and coloured invocations below -- same class of flake.
+        if name == "scan" || name == "watch-once" {
             continue;
         }
         for columns in [80usize, 120] {
@@ -472,6 +481,17 @@ fn export_and_receipt_resolve_a_unique_prefix() {
 #[test]
 fn json_payloads_are_untouched_by_the_redesign() {
     let (_t, db) = fixture();
+    let id = session_id(&db);
+    for args in [
+        vec!["bisect".to_string(), id.clone(), "--json".to_string()],
+        vec!["cache-doctor".to_string(), id.clone(), "--json".to_string()],
+    ] {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = render(&db, &args, 80, false);
+        serde_json::from_str::<serde_json::Value>(out.trim())
+            .unwrap_or_else(|e| panic!("{:?} is no longer valid JSON: {}", args, e));
+        assert!(!out.contains('\x1b'), "{:?} leaked an escape into --json", args);
+    }
     for args in [
         vec!["stats", "--json"],
         vec!["traces", "--json"],
@@ -479,10 +499,100 @@ fn json_payloads_are_untouched_by_the_redesign() {
         vec!["blame", "crates/storage/src/vector.rs", "--json"],
         vec!["doctor", "--json"],
         vec!["matrix", "--json"],
+        vec!["audit", "--json"],
+        vec!["blind-spots", "--json"],
+        vec!["threat-digest", "--json"],
+        vec!["pr-blame", "crates/storage/src/vector.rs", "--json"],
+        vec!["blunder", "--json"],
+        vec!["blunder-blame", "--json"],
     ] {
         let out = render(&db, &args, 80, false);
         serde_json::from_str::<serde_json::Value>(out.trim())
             .unwrap_or_else(|e| panic!("{:?} is no longer valid JSON: {}", args, e));
         assert!(!out.contains('\x1b'), "{:?} leaked an escape into --json", args);
+    }
+}
+
+/// `bisect` and `cache-doctor` need a real session id from the fixture, so they cannot ride
+/// the static `screens()` list -- same reason `receipt`/`inspect` get their own tests above.
+/// Same three grid rules as `screens()`: nothing wraps, colour never moves a column, no
+/// glyph outside the allowed set.
+#[test]
+fn bisect_and_cache_doctor_hold_the_grid() {
+    let (_t, db) = fixture();
+    let id = session_id(&db);
+
+    for args in [vec!["bisect", id.as_str()], vec!["cache-doctor", id.as_str()]] {
+        for columns in [80usize, 120] {
+            let plain = render(&db, &args, columns, false);
+            assert!(!plain.trim().is_empty(), "{:?} rendered nothing", args);
+            for line in plain.lines() {
+                let w = console::measure_text_width(line);
+                assert!(w <= columns.min(78), "{:?} at {columns}: line is {w} wide\n{line}", args);
+            }
+
+            let plain_unicode = render_with(&db, &args, columns, false, true);
+            let colour = render_with(&db, &args, columns, true, true);
+            assert_eq!(
+                console::strip_ansi_codes(&colour),
+                plain_unicode,
+                "{:?} at {columns}: colour and plain disagree on column positions",
+                args
+            );
+        }
+        for c in render(&db, &args, 80, false).chars() {
+            assert!(is_allowed(c), "{:?} ships U+{:04X} ({})", args, c as u32, c);
+        }
+    }
+}
+
+/// `merge` needs a second, real SQLite index to merge from, so it cannot ride the shared
+/// single-db `screens()` list. Same three grid rules as `screens()`.
+#[test]
+fn merge_holds_the_grid() {
+    let (_t, db) = fixture();
+
+    // A second, independent index with one more session, to actually merge something.
+    let temp2 = tempdir().unwrap();
+    let dir2 = temp2.path().join(".claude").join("projects").join("proj2");
+    fs::create_dir_all(&dir2).unwrap();
+    let mut h = File::create(dir2.join("session_other.jsonl")).unwrap();
+    writeln!(h, r#"{{"type":"user","timestamp":"2026-08-31T09:00:00Z","content":"add a cache"}}"#).unwrap();
+    writeln!(h, r#"{{"type":"assistant","timestamp":"2026-08-31T09:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"text","text":"Added the cache layer."}}]}}"#).unwrap();
+    let db2 = temp2.path().join("index2.db");
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db2)
+        .arg("scan")
+        .arg(temp2.path())
+        .arg("--json")
+        .assert()
+        .success();
+
+    let db2_arg = db2.to_string_lossy().to_string();
+    let args = vec!["merge", db2_arg.as_str()];
+
+    for columns in [80usize, 120] {
+        // Each run re-merges the same source db into the target -- idempotent (sessions
+        // already present just get skipped/updated), so rendering twice at two widths is
+        // safe, unlike `scan`'s elapsed-dependent counts.
+        let plain = render(&db, &args, columns, false);
+        assert!(!plain.trim().is_empty(), "merge rendered nothing");
+        for line in plain.lines() {
+            let w = console::measure_text_width(line);
+            assert!(w <= columns.min(78), "merge at {columns}: line is {w} wide\n{line}");
+        }
+
+        let plain_unicode = render_with(&db, &args, columns, false, true);
+        let colour = render_with(&db, &args, columns, true, true);
+        assert_eq!(
+            console::strip_ansi_codes(&colour),
+            plain_unicode,
+            "merge at {columns}: colour and plain disagree on column positions"
+        );
+    }
+    for c in render(&db, &args, 80, false).chars() {
+        assert!(is_allowed(c), "merge ships U+{:04X} ({})", c as u32, c);
     }
 }

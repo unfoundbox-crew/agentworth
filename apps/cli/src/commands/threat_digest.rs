@@ -49,7 +49,6 @@ use agentworth_schema::AgentWorthTrace;
 use agentworth_storage::{SessionFilter, Storage};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use console::style;
 use serde::{Deserialize, Serialize};
 
 /// Cap on findings kept per session so one extremely noisy session (e.g. hundreds of
@@ -416,6 +415,7 @@ pub fn run_threat_digest_command(
     min_severity: &str,
     json: bool,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = Arc::new(match db_path {
         Some(p) => Storage::open_path(&p)?,
@@ -423,127 +423,63 @@ pub fn run_threat_digest_command(
     });
 
     let min_severity = ThreatSeverity::parse(min_severity)?;
-    let report = generate_threat_digest(&storage, Some(limit), min_severity)?;
+    let report = if json {
+        generate_threat_digest(&storage, Some(limit), min_severity)?
+    } else {
+        crate::ui::with_status(ui, "scanning sessions for secrets", || {
+            generate_threat_digest(&storage, Some(limit), min_severity)
+        })?
+    };
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    render_ascii_threat_digest(&report);
+    print!("{}", render_threat_digest_view(ui, &report));
     Ok(())
 }
 
-fn render_ascii_threat_digest(report: &ThreatDigestReport) {
-    println!();
-    println!(
-        "{}",
-        style("┌─ 🔐 AgentWorth Threat Digest: Secret Exposure Report ───────┐")
-            .bold()
-            .red()
-    );
-    println!(
-        "│ Sessions Scanned:  {:<42} │",
-        style(report.sessions_scanned).bold()
-    );
-    println!(
-        "│ Exposure Found In: {:<42} │",
-        style(format!("{} sessions", report.sessions_with_exposure))
-            .bold()
-            .yellow()
-    );
-    println!(
-        "│ Clean Sessions:    {:<42} │",
-        style(report.sessions_clean).green()
-    );
-    if report.sessions_unreadable > 0 {
-        println!(
-            "│ Unreadable:        {:<42} │",
-            style(format!(
-                "{} (source file moved/removed)",
-                report.sessions_unreadable
-            ))
-            .dim()
-        );
-    }
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────┤").bold()
-    );
+fn render_threat_digest_view(ui: &crate::ui::Ui, report: &ThreatDigestReport) -> String {
+    let categories: Vec<(String, usize)> = report
+        .totals
+        .breakdown_by_category
+        .iter()
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
 
-    let crit = *report
-        .sessions_by_highest_severity
-        .get("CRITICAL")
-        .unwrap_or(&0);
-    let high = *report.sessions_by_highest_severity.get("HIGH").unwrap_or(&0);
-    let med = *report
-        .sessions_by_highest_severity
-        .get("MEDIUM")
-        .unwrap_or(&0);
-    let low = *report.sessions_by_highest_severity.get("LOW").unwrap_or(&0);
-    println!(
-        "│ By Peak Severity:  {} Critical  {} High  {} Medium  {} Low{:>7} │",
-        style(crit).bold().red(),
-        style(high).bold().yellow(),
-        style(med).bold().cyan(),
-        style(low).dim(),
-        ""
-    );
-
-    if !report.totals.breakdown_by_category.is_empty() {
-        println!(
-            "{}",
-            style("├────────────────────────────────────────────────────────────┤").bold()
-        );
-        println!("│ Category Breakdown (all qualifying sessions):               │");
-        for (category, count) in &report.totals.breakdown_by_category {
-            println!("│   {:<44} {:>16} │", category, count);
-        }
-    }
-
-    println!(
-        "{}",
-        style("├────────────────────────────────────────────────────────────┤").bold()
-    );
-
-    if report.top_sessions.is_empty() {
-        println!("│ ✓ No exposure at or above the requested severity threshold.│");
-    } else {
-        println!("│ Top Sessions by Risk (rotate these first):                 │");
-        for (i, s) in report.top_sessions.iter().enumerate() {
-            let sev_styled = match s.highest_severity {
-                ThreatSeverity::Critical => style("[CRITICAL]").bold().red(),
-                ThreatSeverity::High => style("[HIGH]").bold().yellow(),
-                ThreatSeverity::Medium => style("[MEDIUM]").bold().cyan(),
-                ThreatSeverity::Low => style("[LOW]").dim(),
-            };
-            println!(
-                "│ [{:02}] {:<11} {:<24} Risk:{:>6} │",
-                i + 1,
-                sev_styled,
-                style(&s.session_id).bold(),
-                s.risk_score
-            );
-            println!(
-                "│      Adapter: {:<15} Findings: {:<24} │",
-                style(&s.adapter).green(),
-                s.report.total()
-            );
-            let cats: Vec<String> = s
+    let top_sessions: Vec<crate::ui::views::ThreatDigestSessionRow> = report
+        .top_sessions
+        .iter()
+        .map(|s| crate::ui::views::ThreatDigestSessionRow {
+            severity: s.highest_severity.as_str(),
+            session_id: &s.session_id,
+            risk_score: s.risk_score,
+            adapter: &s.adapter,
+            findings: s.report.total(),
+            categories: s
                 .report
                 .breakdown_by_category
                 .iter()
                 .map(|(k, v)| format!("{}:{}", k, v))
-                .collect();
-            println!("│      {:<56} │", style(cats.join(", ")).dim());
-        }
-    }
+                .collect::<Vec<_>>()
+                .join(", "),
+        })
+        .collect();
 
-    println!(
-        "{}",
-        style("└────────────────────────────────────────────────────────────┘").bold()
-    );
-    println!();
+    let view = crate::ui::views::ThreatDigestView {
+        sessions_scanned: report.sessions_scanned,
+        sessions_with_exposure: report.sessions_with_exposure,
+        sessions_clean: report.sessions_clean,
+        sessions_unreadable: report.sessions_unreadable,
+        critical: *report.sessions_by_highest_severity.get("CRITICAL").unwrap_or(&0),
+        high: *report.sessions_by_highest_severity.get("HIGH").unwrap_or(&0),
+        medium: *report.sessions_by_highest_severity.get("MEDIUM").unwrap_or(&0),
+        low: *report.sessions_by_highest_severity.get("LOW").unwrap_or(&0),
+        categories: &categories,
+        top_sessions,
+    };
+    crate::ui::views::threat_digest(ui, &view)
 }
 
 #[cfg(test)]
