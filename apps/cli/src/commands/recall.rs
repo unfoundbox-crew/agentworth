@@ -241,6 +241,7 @@ mod tests {
                 &ScanOptions {
                     custom_paths: vec![session_file.path().to_path_buf()],
                     force: true,
+                    ..Default::default()
                 },
                 |_, _| {},
             )

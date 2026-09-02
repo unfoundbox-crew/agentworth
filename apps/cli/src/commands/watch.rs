@@ -237,9 +237,15 @@ pub fn run_watch_command(
         None => Storage::open_default()?,
     });
     let scanner = Scanner::new(storage.clone());
+    // include_stubs: true -- Watch polls a still-growing transcript to catch a doom loop as
+    // it happens, and queries below with the matching `include_stubs: Some(true)` to see
+    // that session even while it's thin. If the scanner skipped storing it as a stub, that
+    // query would never find it until it grew past the predicate -- too late for the whole
+    // point of watching live.
     let scan_opts = ScanOptions {
         custom_paths,
         force: false,
+        include_stubs: true,
     };
 
     if !json {

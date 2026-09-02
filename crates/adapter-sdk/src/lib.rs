@@ -14,6 +14,12 @@ pub struct ScanOptions {
     pub custom_paths: Vec<PathBuf>,
     /// Force full re-parsing even if file fingerprint has not changed.
     pub force: bool,
+    /// Explicit opt-out from stub filtering during scanning. When `false` (the default),
+    /// a parsed trace that would fail the storage layer's stub predicate (near-empty, no
+    /// real activity) is not written to the index, and a full unscoped scan prunes
+    /// already-indexed stub rows the same way. Set `true` to keep storing/prune-skipping
+    /// stub rows, e.g. for debugging what a since-tightened adapter is filtering out.
+    pub include_stubs: bool,
 }
 
 /// Result of probing the system for an agent's presence.

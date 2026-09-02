@@ -654,6 +654,7 @@ async fn test_api_get_pacing_endpoint() {
         prov1,
         now - Duration::hours(1),
     );
+    trace1.stats.total_events = 10;
     trace1.stats.token_usage = TokenUsage::new(5000, 1000, 20000, 500);
     trace1.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
     storage.upsert_trace(&trace1).expect("upsert trace1");
@@ -672,6 +673,7 @@ async fn test_api_get_pacing_endpoint() {
         prov2,
         now - Duration::hours(10),
     );
+    trace2.stats.total_events = 10;
     trace2.stats.token_usage = TokenUsage::new(8000, 2000, 0, 0);
     trace2.stats.models_used = vec!["gpt-4o".to_string()];
     storage.upsert_trace(&trace2).expect("upsert trace2");
