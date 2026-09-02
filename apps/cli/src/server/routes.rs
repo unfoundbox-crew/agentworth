@@ -15,7 +15,7 @@ use agentworth_adapters::{
 };
 use agentworth_core::Scanner;
 use agentworth_outcomes::{OutcomeDetector, RecoveryDetector};
-use agentworth_schema::{AgentWorthTrace, OutcomeEvidence};
+use agentworth_schema::{AgentWorthTrace, NormalizedEvent, OutcomeEvidence};
 use agentworth_scoring::{TraceScore, TraceScorer};
 use agentworth_storage::{
     BlameMatch, PacingSummary, SessionFilter, SessionOrderBy, SessionSummary, Storage,
@@ -32,6 +32,7 @@ use serde_json::json;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tokio_stream::{Stream, StreamExt};
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
@@ -121,10 +122,72 @@ pub struct AdapterMatrixResponse {
 /// Detailed response for inspecting a full trace session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceDetailResponse {
+    /// `trace.events` is sliced per `events_offset`/`events_limit` (see `EventsPageQuery`);
+    /// every other field on `trace` (stats, provenance, metadata) is always the full,
+    /// unsliced value.
     pub trace: AgentWorthTrace,
     pub score: TraceScore,
     pub outcomes: Vec<OutcomeEvidence>,
     pub recoveries: Vec<agentworth_outcomes::RecoverySignal>,
+    /// Total number of events on this trace, independent of how many `trace.events` carries
+    /// in this response -- lets a caller tell "sliced" from "this session genuinely has few
+    /// events" and know how far there is left to page.
+    pub events_total: usize,
+    /// The offset actually applied (0 when the query supplied none), echoed back so a caller
+    /// doesn't have to remember what it asked for.
+    pub events_offset: usize,
+}
+
+/// Query parameters for paging through a trace's events, shared by `GET /api/traces/:id` (which
+/// slices the embedded `trace.events`) and `GET /api/traces/:id/events` (which returns just the
+/// slice). Both `offset` and `limit` are optional; omitting both reproduces the pre-pagination
+/// behavior of returning every event, so no existing caller breaks.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub struct EventsPageQuery {
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+/// Response for `GET /api/traces/:id/events` -- just the event slice, for a dashboard to fetch
+/// lazily after the initial `/api/traces/:id` load.
+#[derive(Debug, Clone, Serialize)]
+pub struct EventsPageResponse {
+    pub events: Vec<NormalizedEvent>,
+    pub events_total: usize,
+    pub events_offset: usize,
+}
+
+/// Slices `events` to the requested page. `offset` defaults to 0; `limit` of `None` returns
+/// everything from `offset` onward, so calling this with both params `None` is a no-op that
+/// reproduces the pre-pagination behavior exactly. `Some(0)` is rejected -- a caller asking
+/// for zero events almost certainly mistyped `limit`, and silently returning an empty page
+/// would look like "session has no events" rather than "bad request".
+///
+/// Consumes `events` rather than borrowing, since every caller already owns a freshly loaded
+/// `AgentWorthTrace` and slicing in place avoids cloning a payload that can run to tens of
+/// thousands of entries.
+pub fn paginate_events(
+    events: Vec<NormalizedEvent>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<(Vec<NormalizedEvent>, usize, usize), String> {
+    if limit == Some(0) {
+        return Err("limit must be greater than 0".to_string());
+    }
+
+    let total = events.len();
+    let offset = offset.unwrap_or(0);
+
+    if offset >= total {
+        return Ok((Vec::new(), total, offset));
+    }
+
+    let page = match limit {
+        Some(l) => events.into_iter().skip(offset).take(l).collect(),
+        None => events.into_iter().skip(offset).collect(),
+    };
+
+    Ok((page, total, offset))
 }
 
 /// Optional payload to configure scan execution.
@@ -160,6 +223,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/stats", get(get_stats_handler))
         .route("/traces", get(get_traces_handler))
         .route("/traces/:id", get(get_trace_by_id_handler))
+        .route("/traces/:id/events", get(get_trace_events_handler))
         .route("/usage", get(get_usage_handler))
         .route("/pacing", get(get_pacing_handler))
         .route("/blame", get(get_blame_handler))
@@ -179,6 +243,12 @@ pub fn create_router(state: AppState) -> Router {
         })
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+        // gzip + brotli, negotiated per-request off the client's `Accept-Encoding` -- the
+        // /api/traces/:id trace payload can run tens of MB uncompressed on a large session,
+        // and JSON compresses very well (repeated keys, tool-call boilerplate). Applied
+        // outermost so it compresses the final response body regardless of which route
+        // produced it, static SPA assets included.
+        .layer(CompressionLayer::new())
         .with_state(state)
 }
 
@@ -355,10 +425,63 @@ async fn get_traces_handler(
 }
 
 /// GET /api/traces/:id -> full trace details (metadata, stats, 5-factor score, outcome evidence, timeline)
+///
+/// `?offset=&limit=` page the embedded `trace.events` (see `paginate_events`); with neither
+/// param this returns exactly what it always has -- the full event list -- so existing callers
+/// are unaffected. Score, outcomes, and recoveries are always computed from the full,
+/// unsliced trace first, since detection accuracy shouldn't depend on which page was requested.
 async fn get_trace_by_id_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(page): Query<EventsPageQuery>,
 ) -> Result<Json<TraceDetailResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let scanner = state.scanner.clone();
+    let id_clone = id.clone();
+    let trace_res = tokio::task::spawn_blocking(move || scanner.load_trace(&id_clone))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Task joining failed: {}", e) })),
+            )
+        })?;
+
+    let mut trace = trace_res.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Trace session '{}' not found: {}", id, e) })),
+        )
+    })?;
+
+    let scorer = TraceScorer::default();
+    let score = scorer.score(&trace);
+    let outcomes = OutcomeDetector::new().detect_outcomes(&trace);
+    let recoveries = RecoveryDetector::new().detect_recoveries(&trace);
+
+    let (events, events_total, events_offset) =
+        paginate_events(std::mem::take(&mut trace.events), page.offset, page.limit).map_err(
+            |e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))),
+        )?;
+    trace.events = events;
+
+    Ok(Json(TraceDetailResponse {
+        trace,
+        score,
+        outcomes,
+        recoveries,
+        events_total,
+        events_offset,
+    }))
+}
+
+/// GET /api/traces/:id/events -> just the paginated event slice, for a dashboard to fetch
+/// lazily after the initial `/api/traces/:id` load instead of ever re-fetching the (potentially
+/// huge) trace metadata/score/outcomes just to page through events.
+async fn get_trace_events_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(page): Query<EventsPageQuery>,
+) -> Result<Json<EventsPageResponse>, (StatusCode, Json<serde_json::Value>)> {
     let scanner = state.scanner.clone();
     let id_clone = id.clone();
     let trace_res = tokio::task::spawn_blocking(move || scanner.load_trace(&id_clone))
@@ -377,16 +500,14 @@ async fn get_trace_by_id_handler(
         )
     })?;
 
-    let scorer = TraceScorer::default();
-    let score = scorer.score(&trace);
-    let outcomes = OutcomeDetector::new().detect_outcomes(&trace);
-    let recoveries = RecoveryDetector::new().detect_recoveries(&trace);
+    let (events, events_total, events_offset) =
+        paginate_events(trace.events, page.offset, page.limit)
+            .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
 
-    Ok(Json(TraceDetailResponse {
-        trace,
-        score,
-        outcomes,
-        recoveries,
+    Ok(Json(EventsPageResponse {
+        events,
+        events_total,
+        events_offset,
     }))
 }
 

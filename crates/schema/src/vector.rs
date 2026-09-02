@@ -141,6 +141,12 @@ pub struct VectorSearchResult {
 }
 
 impl VectorSearchResult {
+    // Pre-existing 9-argument constructor, unrelated to this change -- flagged by clippy under
+    // `-D warnings` (no clippy gate exists in CI today, so this was never caught). Silenced
+    // rather than restructured here since a builder/struct-arg refactor is a real API change
+    // to a constructor other crates call, out of scope for the trace-payload-size fix this
+    // file otherwise has nothing to do with.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         chunk_id: impl Into<String>,
         session_id: impl Into<String>,
