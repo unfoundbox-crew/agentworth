@@ -207,6 +207,28 @@ pub struct SessionHandoffParams {
     pub include_raw: bool,
 }
 
+/// Parameters for the `forgotten_context` tool.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct ForgottenContextParams {
+    /// Session to diff. Defaults to the most recent indexed session for the repository this
+    /// server process is running in, which is what an agent asking "what did I forget here"
+    /// means; pass one explicitly to reach any other session.
+    pub session_id: Option<String>,
+    /// One 1-based compaction round. Defaults to every round.
+    pub round: Option<u32>,
+    /// Any of `decision`, `rejected`, `reason`. Defaults to all three. An unknown name is an
+    /// error, not an ignored filter.
+    pub classes: Option<Vec<String>>,
+    /// How many statements to return, newest first. Defaults to 20, hard ceiling 200. The
+    /// totals in the response describe the whole session regardless of this.
+    pub limit: Option<usize>,
+    /// Return unredacted sentences, paths and evidence labels. Defaults to false -- everything
+    /// this tool returns is transcript text (docs/specs/mcp-server.md, "What it must not
+    /// expose").
+    #[serde(default)]
+    pub include_raw: bool,
+}
+
 /// Parameters for the `carry_forward` tool.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct CarryForwardParams {

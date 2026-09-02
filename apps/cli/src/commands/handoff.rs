@@ -243,6 +243,16 @@ pub fn run_loose_ends_command(
 fn render_terminal(report: &HandoffReport, ui: &Ui) -> String {
     let mut sections = Vec::new();
 
+    if !report.forgotten.is_empty() {
+        sections.push(section(
+            "Decided, then compacted away",
+            report.forgotten_total,
+            report
+                .forgotten
+                .iter()
+                .map(|s| (format!("r{} seq {}", s.round, s.sequence), s.text.clone())),
+        ));
+    }
     if !report.loose_ends.is_empty() {
         sections.push(section(
             "Said it would, no evidence it did",

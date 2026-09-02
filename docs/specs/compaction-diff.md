@@ -1,6 +1,33 @@
 # Compaction diff
 
-Status: proposed, measured 2026-09-02.
+Status: built, PR #83 (2026-09-02). Measured 2026-09-02. Shipped as the
+`forgotten_context` MCP tool, `agentworth forgotten`, and the handoff's
+"Decided, then compacted away" section.
+
+Four things the build settled that this document left open:
+
+- **The survival threshold is 0.6 Jaccard over stopword-stripped tokens**, and
+  the spec named none. It is nowhere near the decision boundary on real data:
+  re-measured over 452c23fd's eight rounds, the highest overlap between any
+  dropped sentence and any surviving one is **0.29**, and five rounds peak
+  below 0.10. Summaries paraphrase; they do not quote. The threshold earns its
+  place only on the case that does quote, which is a manual `/compact` carrying
+  a verbatim instruction.
+- **A round's span starts after the previous round's *summary*, not its
+  boundary.** The summary was never part of the conversation the next round
+  dropped, and folding it in makes every round after the first quote the
+  previous summary back at the caller.
+- **`limit` defaults to 20, not 40.** The output is read by a session that has
+  a context budget; the totals still describe the whole session.
+- **The three "I don't know" cases are named strings**, not shapes a caller has
+  to infer from an empty array: `no_compactions_in_this_session`,
+  `nothing_decision_shaped_was_dropped`, and
+  `every_dropped_decision_survived_in_a_summary`.
+
+Still open, and unchanged by shipping: the false-positive rate of `because`,
+whether 400 characters is the right ceiling, and whether a reversed decision
+should still come back. The sequencing's step 4 -- precision measured by hand
+on 50 returned sentences -- has not been done.
 
 ## The one-line version
 
@@ -152,14 +179,18 @@ Revisit when there is a measured precision number for the regex to beat.
 
 ## New work
 
+All three built in #83.
+
 1. Compaction round boundaries as a stored artifact. `compaction_count` and
    `compaction_tokens_dropped` exist since #62; the line offsets of each round
    do not, and re-scanning a 68 MB JSONL per call is not acceptable. One table:
    `session_compaction(session_id, round, start_seq, end_seq, summary_seq,
-   tokens_before, summary_tokens)`.
+   tokens_before, summary_tokens)`, written by the scanner and backfilled once
+   for sessions indexed before it existed (`Storage::needs_backfill`, #74).
+   Derivation is `agentworth_schema::compaction_rounds`, not an adapter's job.
 2. The extractor, in `agentworth-outcomes` beside the loose-ends detector. Same
    sentence splitter, same length bounds — one implementation, not two.
-3. The MCP tool.
+3. The MCP tool, plus `agentworth forgotten` and a handoff section.
 
 Extraction runs on demand from the raw trace, not at scan time. Storing 402
 sentences per compacted session in SQLite would duplicate transcript content

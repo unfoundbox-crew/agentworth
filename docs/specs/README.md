@@ -19,7 +19,7 @@
 | `suspect-commits.md` | proposed, measured | — |
 | `handoff.md` | built | #77 — `session_handoff`, `carry_forward`, `agentworth handoff`; `prompt_preview` turned out to be filled since #47, only the pre-#47 rows are null |
 | `loose-ends.md` | built | #77 — `agentworth loose-ends`, the dashboard's detector ported to Rust |
-| `compaction-diff.md` | proposed, measured | — |
+| `compaction-diff.md` | built | #83 — `forgotten_context`, `agentworth forgotten`, stored round boundaries, and a handoff section |
 | `market-autofix.md` | research doc, not a build item | — |
 
 Seventeen specs sit beside this file. They are independent of each other but not of
@@ -127,7 +127,7 @@ worth drawing.
 | B | `verified-outcome-rate.md` | `outcome_rate` | one aggregate query |
 | C | `handoff.md` — **built, #TBD** | `session_handoff`, `carry_forward` | nothing left: loose ends are ported, and `prompt_preview` has been populated since #47 |
 | D | `suspect-commits.md` | `suspect_commits` | absolute-path filtering, then a `session_risk` table |
-| E | `compaction-diff.md` | `forgotten_context` | stored compaction round boundaries |
+| E | `compaction-diff.md` — **built, #83** | `forgotten_context` | nothing left: the round boundaries are stored and backfilled |
 
 ### Why that order
 

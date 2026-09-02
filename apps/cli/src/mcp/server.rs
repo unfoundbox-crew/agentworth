@@ -26,9 +26,10 @@ use serde_json::json;
 
 use super::params::{
     parse_rfc3339_opt, BlameFindParams, CarryForwardParams, CoverageStatsParams,
-    OutcomeRateParams, PacingWindowParams, SessionGetParams, SessionHandoffParams,
-    SessionsFindParams, UsagePeriodParam, UsageSummaryParams,
+    ForgottenContextParams, OutcomeRateParams, PacingWindowParams, SessionGetParams,
+    SessionHandoffParams, SessionsFindParams, UsagePeriodParam, UsageSummaryParams,
 };
+use crate::forgotten::{self, ForgottenOptions, ForgottenReport};
 use crate::handoff::{
     self, render_markdown, HandoffOptions, HandoffReport, DEFAULT_MAX_LINES, MAX_LINES_CEILING,
 };
@@ -152,6 +153,30 @@ impl AgentWorthMcpServer {
     fn cwd_repo() -> Option<String> {
         let cwd = std::env::current_dir().ok()?;
         Some(extract_repository_or_workspace(&cwd.to_string_lossy()))
+    }
+
+    /// The session a tool means when the caller names none: the newest one indexed for the repo
+    /// this server runs in. Shared by `session_handoff` and `forgotten_context` so both fail
+    /// with the same sentence when there is nothing to fall back to.
+    fn newest_session_for_cwd(storage: &Storage) -> anyhow::Result<String> {
+        let repo = Self::cwd_repo().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no session_id given and this server's working directory could not be read; \
+                 pass session_id explicitly"
+            )
+        })?;
+        storage
+            .list_sessions_for_repo(&repo, 1)?
+            .sessions
+            .into_iter()
+            .next()
+            .map(|s| s.session_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no indexed session for repo '{repo}' (this server's working directory); \
+                     pass session_id explicitly, or run `agentworth scan`"
+                )
+            })
     }
 }
 
@@ -485,6 +510,7 @@ impl AgentWorthMcpServer {
         let max_lines = Self::validated_max_lines(params.max_lines)?;
         let options = HandoffOptions {
             include_loose_ends: params.include_loose_ends.unwrap_or(true),
+            ..HandoffOptions::default()
         };
 
         let storage = self.storage.clone();
@@ -495,25 +521,7 @@ impl AgentWorthMcpServer {
         let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
             let session_id = match explicit_id {
                 Some(id) => id,
-                None => {
-                    let repo = Self::cwd_repo().ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "no session_id given and this server's working directory could not \
-                             be read; pass session_id explicitly"
-                        )
-                    })?;
-                    let page = storage.list_sessions_for_repo(&repo, 1)?;
-                    page.sessions
-                        .into_iter()
-                        .next()
-                        .map(|s| s.session_id)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "no indexed session for repo '{repo}' (this server's working \
-                                 directory); pass session_id explicitly, or run `agentworth scan`"
-                            )
-                        })?
-                }
+                None => Self::newest_session_for_cwd(&storage)?,
             };
             Self::render_one(&storage, &scanner, &session_id, max_lines, options, include_raw)
         })
@@ -595,6 +603,74 @@ impl AgentWorthMcpServer {
 
         Self::json_result(&value)
     }
+
+    #[tool(
+        description = "The decisions this session's compaction rounds threw away, quoted \
+                        verbatim with a receipt on each. Compaction replaces the conversation \
+                        with a summary in the model's view while the full transcript stays on \
+                        disk, so the dropped span and the summary that replaced it both exist \
+                        and can be diffed. Measured on one real 8-round session \
+                        (docs/specs/compaction-diff.md): 402 decision-shaped sentences went in \
+                        and 28 came out -- conclusions survive at 15%, reasons at 1.7%, which \
+                        is the shape that makes a session re-propose something it already \
+                        rejected. Filter with round (1-based) and classes (decision, rejected, \
+                        reason); limit defaults to 20, ceiling 200, and the totals describe the \
+                        whole session regardless of it. Every statement carries its round, \
+                        source sequence, and what the session did in the next few events, so a \
+                        stated decision that was acted on can be told from one that was only \
+                        claimed. Three answers are kept distinct and none is padded: never \
+                        compacted, compacted with nothing decision-shaped dropped, and a real \
+                        list. No model is involved -- three regexes return the sentence \
+                        verbatim, because a paraphrase would make this a second summariser. \
+                        Refuses if the raw session file is gone. Redacted by default; \
+                        include_raw=true opts out, per call."
+    )]
+    pub(crate) async fn forgotten_context(
+        &self,
+        Parameters(params): Parameters<ForgottenContextParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = params.limit.unwrap_or(forgotten::DEFAULT_LIMIT);
+        if limit == 0 || limit > forgotten::LIMIT_CEILING {
+            return Err(McpError::invalid_params(
+                format!(
+                    "limit must be between 1 and {} (got {limit})",
+                    forgotten::LIMIT_CEILING
+                ),
+                None,
+            ));
+        }
+        let classes = forgotten::parse_classes(params.classes.as_deref().unwrap_or(&[]))
+            .map_err(|e| McpError::invalid_params(format!("{e:#}"), None))?;
+        let options = ForgottenOptions {
+            round: params.round,
+            classes,
+            limit,
+        };
+
+        let storage = self.storage.clone();
+        let scanner = self.scanner.clone();
+        let explicit_id = params.session_id.clone();
+        let include_raw = params.include_raw;
+
+        let report = tokio::task::spawn_blocking(move || -> anyhow::Result<ForgottenReport> {
+            let session_id = match explicit_id {
+                Some(id) => id,
+                None => Self::newest_session_for_cwd(&storage)?,
+            };
+            let (report, trace) =
+                forgotten::load_forgotten(&storage, &scanner, &session_id, &options)?;
+            Ok(if include_raw {
+                report
+            } else {
+                report.redacted(&Redactor::new().for_trace(&trace))
+            })
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::resource_not_found(format!("{e:#}"), None))?;
+
+        Self::json_result(&report)
+    }
 }
 
 #[tool_handler]
@@ -606,9 +682,12 @@ impl ServerHandler for AgentWorthMcpServer {
             .with_instructions(
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  sessions_find, session_get, blame_find, usage_summary, pacing_window, \
-                 coverage_stats, outcome_rate, session_handoff, carry_forward. Start a \
+                 coverage_stats, outcome_rate, session_handoff, carry_forward, \
+                 forgotten_context. Start a \
                  session in a repo with carry_forward to read what recent sessions there \
-                 actually did; end one with session_handoff. Redacted output is the default \
+                 actually did; end one with session_handoff. If a session has compacted, \
+                 forgotten_context returns the decisions its own summaries dropped. Redacted \
+                 output is the default \
                  everywhere event or file content is returned; include_raw is the only opt-in \
                  to raw content, and it is per-call, never global. Run `agentworth scan` first \
                  if the index looks stale -- this server never scans on its own."

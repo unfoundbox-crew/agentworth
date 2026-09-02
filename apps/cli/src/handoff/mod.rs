@@ -23,7 +23,9 @@ mod markdown;
 mod statements;
 
 use agentworth_core::Scanner;
-use agentworth_outcomes::{outcome_rank, LooseEnd, OutcomeDetector};
+use agentworth_outcomes::{
+    outcome_rank, Evidence, ForgottenStatement, LooseEnd, OutcomeDetector,
+};
 use agentworth_redaction::Redactor;
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, OutcomeEvidence, OutcomeKind, extract_repository_or_workspace,
@@ -62,6 +64,7 @@ pub mod gap {
     pub const NO_COMMANDS_RECORDED: &str = "no_commands_recorded";
     pub const NO_DECISIONS_STATED: &str = "no_decisions_stated";
     pub const LOOSE_ENDS_NOT_REQUESTED: &str = "loose_ends_not_requested";
+    pub const FORGOTTEN_NOT_REQUESTED: &str = "forgotten_context_not_requested";
 }
 
 /// The two lines at the bottom of every handoff, and they are not optional.
@@ -148,6 +151,13 @@ pub struct HandoffReport {
     pub ran_total: usize,
     pub decided: Vec<Statement>,
     pub loose_ends: Vec<LooseEnd>,
+    /// Decisions this session's own compaction rounds dropped -- empty for the ~96% of sessions
+    /// that never compacted. `docs/specs/compaction-diff.md` is why this is in a handoff at
+    /// all: a compacted session hands over a summary of a summary, and these are the sentences
+    /// that summary no longer contains. `agentworth forgotten` and the `forgotten_context` MCP
+    /// tool are the full view; this is the same extraction, capped.
+    pub forgotten: Vec<ForgottenStatement>,
+    pub forgotten_total: usize,
     pub gaps: Vec<String>,
 }
 
@@ -159,6 +169,7 @@ impl HandoffReport {
             && self.ran.is_empty()
             && self.decided.is_empty()
             && self.loose_ends.is_empty()
+            && self.forgotten.is_empty()
             && self.outcome.is_none()
     }
 
@@ -215,6 +226,22 @@ impl HandoffReport {
                     ..e.clone()
                 })
                 .collect(),
+            forgotten: self
+                .forgotten
+                .iter()
+                .map(|s| ForgottenStatement {
+                    text: redactor.redact_text(&s.text),
+                    followed_by: s
+                        .followed_by
+                        .iter()
+                        .map(|e| Evidence {
+                            what: redactor.redact_text(&e.what),
+                            sequence: e.sequence,
+                        })
+                        .collect(),
+                    ..s.clone()
+                })
+                .collect(),
             ..self.clone()
         }
     }
@@ -224,12 +251,16 @@ impl HandoffReport {
 #[derive(Debug, Clone, Copy)]
 pub struct HandoffOptions {
     pub include_loose_ends: bool,
+    /// Include the decisions compaction dropped. Costs nothing on a session that never
+    /// compacted, which is almost all of them: the extraction is skipped outright.
+    pub include_forgotten: bool,
 }
 
 impl Default for HandoffOptions {
     fn default() -> Self {
         Self {
             include_loose_ends: true,
+            include_forgotten: true,
         }
     }
 }
@@ -284,6 +315,20 @@ pub fn build_handoff(
         Vec::new()
     };
 
+    // Derived from the trace rather than read from `session_compaction`, so `build_handoff`
+    // keeps needing nothing but what is already in memory. The stored boundaries exist to spare
+    // `forgotten_context` a re-read of a 68 MB JSONL; here the trace is already parsed.
+    let (mut forgotten, forgotten_total) = if options.include_forgotten && trace.stats.compaction_count > 0
+    {
+        let rounds = agentworth_schema::compaction_rounds(trace);
+        let diff = agentworth_outcomes::diff_compaction_rounds(trace, &rounds, None);
+        let total = diff.forgotten_total();
+        (diff.forgotten, total)
+    } else {
+        (Vec::new(), 0)
+    };
+    forgotten.truncate(SECTION_HARD_CAP);
+
     let outcome = strongest_outcome_line(outcomes);
 
     let task = summary
@@ -312,6 +357,9 @@ pub fn build_handoff(
     if !options.include_loose_ends {
         gaps.push(gap::LOOSE_ENDS_NOT_REQUESTED.to_string());
     }
+    if !options.include_forgotten {
+        gaps.push(gap::FORGOTTEN_NOT_REQUESTED.to_string());
+    }
 
     HandoffReport {
         receipt: HandoffReceipt {
@@ -338,6 +386,8 @@ pub fn build_handoff(
         ran_total,
         decided,
         loose_ends,
+        forgotten,
+        forgotten_total,
         gaps,
     }
 }

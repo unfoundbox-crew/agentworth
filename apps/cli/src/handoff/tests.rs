@@ -299,6 +299,7 @@ fn loose_ends_can_be_switched_off_and_the_gap_says_so() {
         None,
         HandoffOptions {
             include_loose_ends: false,
+            ..HandoffOptions::default()
         },
     );
     assert!(report.loose_ends.is_empty());
