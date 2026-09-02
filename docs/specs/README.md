@@ -11,7 +11,7 @@
 | `compaction.md` | built | #57 (dashboard pane), #62 (per-session tracking) — session list still doesn't show "compacted N times" |
 | `dropped-commitments.md` | built | #44 (dashboard), #TBD — detector in Rust, `agentworth loose-ends`, and carry-forward over MCP |
 | `mcp-server.md` | built | #56 |
-| `local-search.md` | draft, not built | precondition met — MCP server shipped 2026-09-02 (#56) |
+| `local-search.md` | draft, not built | precondition met — MCP server shipped 2026-09-02 (#56); zvec measured 2026-09-03 and declined (dynamic C++ library, no x86_64 macOS asset); hybrid = FTS5 + cosine + RRF in-process when built |
 | `archie.md` | proposed (umbrella spec) | — |
 | `desktop-app.md` | proposal, not started | — |
 | `questions.md` | proposed | — |

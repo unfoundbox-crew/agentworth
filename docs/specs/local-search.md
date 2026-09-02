@@ -209,6 +209,73 @@ re-chunk and re-embed just that session — both `TrajectoryChunker::extract`
 and `LocalEmbedder::embed_batch` already take a single trace, so this is
 wiring, not new extraction logic.
 
+## zvec, measured 2026-09-03
+
+**What was asked:** could `zvec-rust` (github.com/alibaba/zvec, an in-process
+C++ vector database, Rust crate 0.7.0) ship inside `cargo install
+agentworth-cli` and the four release tarballs, and would it beat today's
+brute-force cosine.
+
+Today's search path, unchanged: `SqliteVectorStore::search_filtered`
+(`crates/storage/src/vector/sqlite_store.rs`) runs one SQL query against
+`trajectory_chunks` filtered by adapter and kind, then scores every row
+that query returns with `cosine_similarity` in a Rust loop and sorts after
+— a brute-force linear scan, exactly as the section above describes.
+
+**What was measured** on lenovo (x86_64 Linux) and air (x86_64 macOS), in a
+scratch crate, 10,000 x 384-dim vectors:
+
+| query | store | p50 ms | p95 ms |
+| --- | --- | --- | --- |
+| dense top-10 | zvec HNSW | 1.78 | 2.19 |
+| filtered (int ==) | zvec HNSW + filter | 6.67 | 8.87 |
+| hybrid dense + full-text, RRF | zvec multi_query | 1.87 | 2.51 |
+| dense top-10 | brute-force cosine, in memory, 10k | 6.57 | 7.66 |
+| dense top-10 | brute-force cosine, in memory, 100k | 66.4 | 71.5 |
+
+The real path also pays a SQLite blob read per scored row, so production
+brute force is somewhat slower than the in-memory numbers above. This
+machine's index holds 46,307 rows in `trajectory_chunks`.
+
+**The install finding, which decides it.** zvec-rust 0.7.0 dynamically
+links a separate C++ shared library (`libzvec_c_api`, about 36 MB
+uncompressed, 8 to 13 MB compressed) that its build script downloads as a
+prebuilt from GitHub Releases with no checksum check. `cargo install` does
+not place that library where the loader finds it, and the installed binary
+fails with "cannot open shared object file" (observed on lenovo). No
+prebuilt exists for x86_64 macOS at all; a from-source build there needs
+cmake and C++17, and air has no cmake, so that leg could not be exercised.
+`cargo check` passes on air because it never links — a false green for
+this crate. Static linking is not offered.
+
+**The decision: not now.** AgentWorth stays one native binary with no
+runtime library to ship. Hybrid search, when it is built, uses what is
+already in the process: SQLite FTS5 for the keyword side (**not
+confirmed** whether the bundled `rusqlite` build enables FTS5 — the
+builder checks `PRAGMA compile_options` first), the existing brute-force
+cosine for the dense side, and reciprocal-rank fusion in our own code.
+Revisit zvec when either (a) the Rust crate offers static linking and
+prebuilt or buildable assets for all four targets, or (b) the chunk count
+on a typical machine passes roughly 500k, where brute force is over
+300 ms.
+
+**The hybrid API shape zvec offered**, for reference — what ours should
+feel like (probed 2026-09-03):
+
+```
+let sub = SubQuery::vector("embedding", &query_vec, 10);
+let fts = SubQuery::text("text_content", "rm -rf", 10);
+let results = MultiQuery::new()
+    .add(sub)
+    .add(fts)
+    .set_rerank_rrf(60)
+    .multi_query(&collection)?;
+```
+
+`session search --min-rung N` (a semantic query filtered by evidence rung)
+is the first consumer of hybrid search and needs no new dependency: it is
+a `WHERE` clause on the existing ranking.
+
 ## The local model — small, on-device, translating questions into tool calls
 
 The piece from the brief that's genuinely new: a 2-5B model running locally
