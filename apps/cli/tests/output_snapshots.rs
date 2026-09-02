@@ -457,6 +457,7 @@ fn picker_json_listing_is_well_formed_and_exits_2() {
 fn export_and_receipt_resolve_a_unique_prefix() {
     let (_t, db) = fixture();
     let full_id = session_id(&db);
+    #[allow(clippy::string_slice, reason = "full_id is an ASCII test fixture id (e.g. session_tested)")]
     let prefix = &full_id[..full_id.len() - 1];
 
     let out = render(&db, &["export", prefix, "--format", "json"], 80, false);
