@@ -265,3 +265,24 @@ pub struct CarryForwardParams {
     #[serde(default)]
     pub include_raw: bool,
 }
+
+/// Parameters for the `session_asks` tool (`docs/specs/asks.md`).
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct SessionAsksParams {
+    /// Session to index. Defaults to the most recent indexed session for the repository this
+    /// server process is running in, same default `session_handoff` uses.
+    pub session_id: Option<String>,
+    /// RFC 3339 timestamp; only questions asked at or after this instant.
+    pub since: Option<String>,
+    /// Only questions that are not `answered` -- still open, or handed back to the user.
+    /// Defaults to false.
+    #[serde(default)]
+    pub unanswered_only: bool,
+    /// How many questions to return, newest first. Defaults to 50, hard ceiling 500. The
+    /// totals in the response describe the whole session regardless of this.
+    pub limit: Option<usize>,
+    /// Return unredacted questions and answer excerpts. Defaults to false -- everything this
+    /// tool returns is transcript text (docs/specs/mcp-server.md, "What it must not expose").
+    #[serde(default)]
+    pub include_raw: bool,
+}

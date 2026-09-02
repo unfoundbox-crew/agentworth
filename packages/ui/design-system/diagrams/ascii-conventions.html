@@ -1,0 +1,518 @@
+<!-- @dsCard group="Diagrams" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentWorth DS — ASCII / box-drawing conventions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+
+:root {
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --mv-ground: #ffffff;
+  --mv-surface: #f4f4f5;
+  --mv-surface-2: #efeff1;
+  --mv-surface-3: #e4e4e7;
+  --mv-border: #e4e4e7;
+  --mv-border-soft: #ececee;
+  --mv-ink: #111113;
+  --mv-text: #3f3f46;
+  --mv-muted: #52525b;
+  --mv-faint: #a1a1aa;
+  --mv-accent: #7c6bb3;
+
+  --mv-cat-1: #6b7fc7;
+  --mv-cat-2: #c78a4a;
+  --mv-cat-3: #4f9d76;
+  --mv-cat-4: #b06a94;
+  --mv-cat-5: #5b9bb5;
+  --mv-cat-6: #a3843f;
+  --mv-cat-7: #8b74c4;
+  --mv-cat-8: #9a9aa4;
+  --mv-accent-soft: rgba(124, 107, 179, 0.08);
+  --mv-accent-border: rgba(124, 107, 179, 0.28);
+  --mv-accent-contrast: #ffffff;
+
+  --mv-success: #15803d;
+  --mv-success-soft: rgba(21, 128, 61, 0.08);
+  --mv-success-border: rgba(21, 128, 61, 0.28);
+  --mv-warn: #b45309;
+  --mv-warn-soft: rgba(180, 83, 9, 0.08);
+  --mv-warn-border: rgba(180, 83, 9, 0.28);
+  --mv-danger: #b91c1c;
+  --mv-danger-soft: rgba(185, 28, 28, 0.08);
+  --mv-danger-border: rgba(185, 28, 28, 0.28);
+
+  --mv-rise: 10px;
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 220ms;
+  --motion-slower: 300ms;
+  --motion-exit: 120ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-enter-scale: 0.98;
+  --stagger-step: 40ms;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --mv-ground: #000000;
+    --mv-surface: #18181b;
+    --mv-surface-2: #1d1d20;
+    --mv-surface-3: #27272a;
+    --mv-border: #2a2a2d;
+    --mv-border-soft: #1c1c1f;
+    --mv-ink: #ffffff;
+    --mv-text: #d4d4d8;
+    --mv-muted: #a1a1aa;
+    --mv-faint: #52525b;
+    --mv-accent: #a396d6;
+    --mv-accent-soft: rgba(163, 150, 214, 0.1);
+    --mv-accent-border: rgba(163, 150, 214, 0.3);
+    --mv-accent-contrast: #0d0d0f;
+
+    --mv-success: #34d399;
+    --mv-success-soft: rgba(52, 211, 153, 0.1);
+    --mv-success-border: rgba(52, 211, 153, 0.3);
+    --mv-warn: #fbbf24;
+    --mv-warn-soft: rgba(251, 191, 36, 0.1);
+    --mv-warn-border: rgba(251, 191, 36, 0.3);
+    --mv-danger: #f87171;
+    --mv-danger-soft: rgba(248, 113, 113, 0.1);
+    --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+    --mv-cat-1: #8b9ee0;
+    --mv-cat-2: #dda86a;
+    --mv-cat-3: #6fbf95;
+    --mv-cat-4: #cd8ab2;
+    --mv-cat-5: #7bb9d2;
+    --mv-cat-6: #c3a45c;
+    --mv-cat-7: #a996dd;
+    --mv-cat-8: #b4b4bd;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --mv-ground: #000000;
+  --mv-surface: #18181b;
+  --mv-surface-2: #1d1d20;
+  --mv-surface-3: #27272a;
+  --mv-border: #2a2a2d;
+  --mv-border-soft: #1c1c1f;
+  --mv-ink: #ffffff;
+  --mv-text: #d4d4d8;
+  --mv-muted: #a1a1aa;
+  --mv-faint: #52525b;
+  --mv-accent: #a396d6;
+  --mv-accent-soft: rgba(163, 150, 214, 0.1);
+  --mv-accent-border: rgba(163, 150, 214, 0.3);
+  --mv-accent-contrast: #0d0d0f;
+
+  --mv-success: #34d399;
+  --mv-success-soft: rgba(52, 211, 153, 0.1);
+  --mv-success-border: rgba(52, 211, 153, 0.3);
+  --mv-warn: #fbbf24;
+  --mv-warn-soft: rgba(251, 191, 36, 0.1);
+  --mv-warn-border: rgba(251, 191, 36, 0.3);
+  --mv-danger: #f87171;
+  --mv-danger-soft: rgba(248, 113, 113, 0.1);
+  --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+  --mv-cat-1: #8b9ee0;
+  --mv-cat-2: #dda86a;
+  --mv-cat-3: #6fbf95;
+  --mv-cat-4: #cd8ab2;
+  --mv-cat-5: #7bb9d2;
+  --mv-cat-6: #c3a45c;
+  --mv-cat-7: #a996dd;
+  --mv-cat-8: #b4b4bd;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --mv-rise: 0px;
+    --motion-enter-scale: 1;
+    --stagger-step: 0ms;
+  }
+}
+
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--mv-ground);
+  color: var(--mv-text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--mv-accent-soft); }
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
+  border-radius: 4px;
+}
+
+a { color: var(--mv-accent); }
+
+.card-shell {
+  max-width: 1080px;
+  margin-inline: auto;
+  padding: 0 clamp(18px, 4vw, 40px) 72px;
+}
+
+.card-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px clamp(18px, 4vw, 40px);
+  border-bottom: 0.5px solid var(--mv-border);
+  background: var(--mv-ground);
+}
+
+.card-eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+
+.card-eyebrow .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mv-accent);
+  display: inline-block;
+  flex: none;
+}
+
+.card-eyebrow .group { color: var(--mv-muted); }
+.card-eyebrow a { color: var(--mv-faint); text-decoration: none; }
+.card-eyebrow a:hover { color: var(--mv-text); }
+
+.card-title {
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  color: var(--mv-ink);
+  margin: 28px 0 10px;
+  text-wrap: balance;
+}
+
+.card-dek {
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 66ch;
+  margin: 0 0 8px;
+}
+
+.card-rule-note {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--mv-muted);
+  max-width: 66ch;
+  margin: 4px 0 0;
+  border-left: 2px solid var(--mv-accent-border);
+  padding-left: 12px;
+}
+
+.sec {
+  padding: 36px 0;
+  border-top: 0.5px solid var(--mv-border);
+}
+.sec:first-of-type { border-top: none; padding-top: 28px; }
+
+.sec-eyebrow {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mv-muted);
+  margin-bottom: 14px;
+}
+
+.sec-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mv-ink);
+  margin: 0 0 12px;
+}
+
+.sec-lede {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 62ch;
+  margin: 0 0 20px;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--mv-border);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.swatch {
+  background: var(--mv-surface);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
+.swatch .chip {
+  width: 100%;
+  height: 44px;
+  border-radius: 8px;
+  border: 0.5px solid var(--mv-border);
+}
+
+.swatch .name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--mv-ink);
+}
+
+.swatch .hex {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+  margin-top: 2px;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.mini-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--mv-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  padding: 0 12px 8px 0;
+  border-bottom: 0.5px solid var(--mv-border);
+}
+.mini-table td {
+  padding: 9px 12px 9px 0;
+  color: var(--mv-text);
+  border-bottom: 0.5px solid var(--mv-border-soft);
+  vertical-align: top;
+}
+.mini-table tr:last-child td { border-bottom: none; }
+.mini-table td.dim { color: var(--mv-muted); }
+
+.code-block {
+  background: var(--mv-surface);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--mv-text);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-muted);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 5px;
+  padding: 2px 7px;
+}
+
+@media (max-width: 640px) {
+  .swatch-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+}
+
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 0.5px solid var(--mv-border);
+  border-radius: 8px;
+  background: var(--mv-surface);
+  flex: none;
+}
+.theme-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.theme-toggle button:hover { color: var(--mv-ink); }
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--mv-surface-3);
+  color: var(--mv-ink);
+}
+
+
+.term {
+  background: #0d0d0f;
+  color: #d4d4d8;
+  border-radius: 10px;
+  padding: 18px 20px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
+}
+.term .chrome { color: #3f3f46; }
+.term .label { color: #a1a1aa; }
+.term .value { color: #d4d4d8; }
+.term .emphasis { color: #ffffff; font-weight: 700; }
+.term .verified { color: #a396d6; }
+.term .unverified { color: #71717a; }
+.term .warn { color: #fbbf24; }
+.term .error { color: #f87171; }
+
+</style>
+</head>
+<body>
+<div class="card-topbar">
+  <div class="card-eyebrow"><a href="../index.html">&larr; Index</a><span class="dot"></span><span class="group">Diagrams</span></div>
+  <div class="theme-toggle" role="group" aria-label="Theme">
+  <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+  <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+  <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+</div>
+</div>
+<div class="card-shell">
+  <h1 class="card-title">ASCII / box-drawing conventions</h1>
+  <p class="card-dek">The exact glyph set, role colors, and evidence meter the CLI renders every screen through.</p>
+  
+<section class="sec">
+  <span class="sec-eyebrow">01 — The allowed glyph set</span>
+  <h2 class="sec-title">Nothing outside this list, ever</h2>
+  <p class="sec-lede">Verbatim from <code>apps/cli/src/ui/mod.rs</code>'s own header comment — the CLI enforces this with a test (<code>no_output_glyph_falls_outside_the_allowed_set</code>).</p>
+  <table class="mini-table">
+    <tr><th>Set</th><th>Glyphs</th></tr>
+    <tr><td>ASCII</td><td class="dim">the full range</td></tr>
+    <tr><td>Box drawing</td><td class="dim">U+2500&ndash;257F &mdash; &#9472; &#9474; &#9484; &#9488; &#9492; &#9496; &#9500; &#9508;</td></tr>
+    <tr><td>Block elements</td><td class="dim">U+2580&ndash;259F &mdash; &#9608; &#9617; &#9602; &#9604;</td></tr>
+    <tr><td>Exactly five more</td><td class="dim">&#9679; &#9675; (the evidence meter) &middot; &middot; (U+00B7) &mdash; (U+2014) &rarr; (U+2192)</td></tr>
+  </table>
+  <p class="card-rule-note">No emoji, ever. Geist Mono and SF Mono both lack &#9968; &#9971; &#9673; &#10003; &#10007; — a missing glyph silently falls back to a different face at a different advance width and shifts every column to its right. That's why the set is this narrow.</p>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">02 — Role colors</span>
+  <h2 class="sec-title">What a piece of text is, not what color it should be</h2>
+  <div class="term"><span class="emphasis">agentworth stats</span>                                   <span class="label">~/.agentworth/agentworth.db</span>
+<span class="chrome">------------------------------------------------------------------------</span>
+  <span class="label">Evidence</span>                                                         <span class="label">Sessions</span>
+  <span class="chrome">------------------------------------------------------------------------</span>
+  <span class="verified">CI verified   </span> <span class="chrome">..........................................</span> <span class="value">1,204</span>
+  <span class="unverified">Claim only    </span> <span class="chrome">..........................................</span> <span class="value">  210</span>
+  <span class="warn">Cache re-created</span> <span class="chrome">.......................................</span> <span class="value">  72K</span>
+  <span class="error">Overclaimed   </span> <span class="chrome">..........................................</span> <span class="value">   14</span>
+
+  <span class="label">Next</span>  <span class="emphasis">agentworth verdict --session 4f2a</span>   <span class="label">see the evidence trail</span></div>
+  <table class="mini-table">
+    <tr><th>Role</th><th>Truecolor</th><th>ANSI-16 fallback</th><th>Meaning</th></tr>
+    <tr><td>Chrome</td><td class="dim">38;2;63;63;70</td><td class="dim">90 (bright black)</td><td class="dim">Rules, dot leaders</td></tr>
+    <tr><td>Label</td><td class="dim">38;2;161;161;170</td><td class="dim">39</td><td class="dim">Column heads, prose</td></tr>
+    <tr><td>Value</td><td class="dim">38;2;212;212;216</td><td class="dim">39</td><td class="dim">Ordinary numbers/text</td></tr>
+    <tr><td>Emphasis</td><td class="dim">1;38;2;255;255;255</td><td class="dim">1 (bold)</td><td class="dim">Totals, command echo</td></tr>
+    <tr><td>Verified</td><td class="dim">38;2;163;150;214</td><td class="dim">35 (magenta)</td><td class="dim">Rungs 3&ndash;5, the one primary number per screen</td></tr>
+    <tr><td>Unverified</td><td class="dim">38;2;113;113;122</td><td class="dim">90</td><td class="dim">Rung 0, empty meter cells</td></tr>
+    <tr><td>Warn / Error</td><td class="dim">amber / #f87171</td><td class="dim">33 / 31</td><td class="dim">&mdash;</td></tr>
+  </table>
+  <p class="card-rule-note">Violet has no ANSI-16 equivalent; magenta is the honest substitute rather than a made-up mapping. NO_COLOR, <code>--no-color</code>, <code>--plain</code>, or a non-TTY stdout all resolve to no color at all — the meter and rules still read correctly because filled cells come first.</p>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">03 — The evidence meter</span>
+  <h2 class="sec-title">Five cells, filled first</h2>
+  <div class="term"><span class="verified">&#9679;&#9679;&#9679;</span><span class="unverified">&#9675;&#9675;</span>  rung 3 of 5
+<span class="chrome">##...</span>  same meter, NO_COLOR / --plain / piped output</div>
+  <p class="card-rule-note">ASCII mode turns on by itself when stdout is not a TTY — a piped or redirected stream carries no glyph a downstream tool has to guess the width of. Color and glyph mode vary independently; a plain terminal with truecolor still gets Unicode dots, colored.</p>
+</section>
+
+</div>
+<script>
+
+(function () {
+  var root = document.documentElement;
+  var STORAGE_KEY = "agentworth-ds-card-theme";
+  var buttons = document.querySelectorAll("[data-theme-choice]");
+
+  function apply(choice) {
+    if (choice === "light" || choice === "dark") {
+      root.setAttribute("data-theme", choice);
+    } else {
+      root.removeAttribute("data-theme");
+    }
+    buttons.forEach(function (btn) {
+      btn.setAttribute("aria-pressed", String(btn.getAttribute("data-theme-choice") === choice));
+    });
+  }
+
+  var stored = "system";
+  try { stored = localStorage.getItem(STORAGE_KEY) || "system"; } catch (e) {}
+  apply(stored);
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var choice = btn.getAttribute("data-theme-choice");
+      apply(choice);
+      try { localStorage.setItem(STORAGE_KEY, choice); } catch (e) {}
+    });
+  });
+})();
+
+
+</script>
+</body>
+</html>

@@ -126,7 +126,9 @@ pub fn run_forgotten_command(
         classes: crate::forgotten::parse_classes(&classes)?,
         limit: limit.unwrap_or(DEFAULT_LIMIT),
     };
-    let (report, trace) = load_forgotten(&storage, &scanner, &resolved, &options)?;
+    let (report, trace) = crate::ui::with_status(ui, "loading session", || {
+        load_forgotten(&storage, &scanner, &resolved, &options)
+    })?;
     let report = if redact {
         report.redacted(&Redactor::new().for_trace(&trace))
     } else {

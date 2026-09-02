@@ -683,7 +683,9 @@ pub fn run_suspect_command(
         window_hours: args.window_hours.unwrap_or(DEFAULT_WINDOW_HOURS),
         max_commits: DEFAULT_MAX_COMMITS,
     };
-    let report = compute_suspect_commits(&storage, &query)?;
+    let report = crate::ui::with_status(ui, "sweeping commits", || {
+        compute_suspect_commits(&storage, &query)
+    })?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);

@@ -3,6 +3,7 @@
 pub mod audit;
 pub mod blunder;
 pub mod blunder_blame;
+pub mod docs;
 pub mod receipt;
 pub mod search;
 pub mod suspect;
@@ -10,6 +11,7 @@ pub mod suspect;
 pub use audit::run_audit_command;
 pub use blunder::run_blunder_command;
 pub use blunder_blame::run_blunder_blame_command;
+pub use docs::run_docs_command;
 pub use receipt::{render_svg_receipt, render_terminal_receipt, run_receipt_command};
 pub use search::run_search_command;
 
