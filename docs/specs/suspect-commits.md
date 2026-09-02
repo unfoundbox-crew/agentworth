@@ -1,6 +1,6 @@
 # Suspect commits
 
-Status: **built, PR #82**, measured 2026-09-02.
+Status: **built, PR #84**, measured 2026-09-02.
 
 Shipped as the MCP tool `suspect_commits` and the CLI `agentworth suspect`, with
 `agentworth suspect --hook` printing the pre-push script. Two things changed
