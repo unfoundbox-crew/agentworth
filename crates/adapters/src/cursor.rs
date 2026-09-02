@@ -29,7 +29,11 @@ impl CursorAdapter {
         Self
     }
 
-    /// Candidate directory paths for Cursor on the host machine.
+    /// Candidate directory paths for Cursor on the host machine, used for presence
+    /// detection only. Broader than `session_roots()`: bare `~/.cursor` also holds the
+    /// editor's `extensions/` bundles (each with its own vendored `node_modules`), and
+    /// bare `Library/Application Support/Cursor` also holds `User/History` -- VS Code's
+    /// local-file-history snapshots, unrelated to any AI chat.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
@@ -68,6 +72,65 @@ impl CursorAdapter {
         roots.push(PathBuf::from(".cursor").join("sessions"));
         roots.push(PathBuf::from(".cursor").join("composer"));
         roots
+    }
+
+    /// Directories that actually hold Cursor chat/composer data, used for the default
+    /// (unscoped) `enumerate()` walk.
+    pub fn session_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(base_dirs) = BaseDirs::new() {
+            let home = base_dirs.home_dir();
+            roots.push(home.join(".cursor").join("sessions"));
+            roots.push(home.join(".cursor").join("composer"));
+            roots.push(home.join(".cursor").join("chats"));
+            roots.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Cursor")
+                    .join("User")
+                    .join("workspaceStorage"),
+            );
+            roots.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Cursor")
+                    .join("User")
+                    .join("globalStorage"),
+            );
+            roots.push(
+                home.join(".config")
+                    .join("Cursor")
+                    .join("User")
+                    .join("workspaceStorage"),
+            );
+        }
+        roots.push(PathBuf::from(".cursor").join("sessions"));
+        roots.push(PathBuf::from(".cursor").join("composer"));
+        roots.push(PathBuf::from(".cursor").join("chats"));
+        roots
+    }
+}
+
+/// Skip directories that are never Cursor chat data: `extensions/` bundles ship their
+/// own `node_modules`, and `User/History` is VS Code's local-file-history feature, not
+/// AI chat data, despite sharing a parent with `workspaceStorage`.
+fn should_skip_cursor_dir(entry: &walkdir::DirEntry) -> bool {
+    if entry.file_type().is_dir() {
+        let name = entry.file_name().to_string_lossy();
+        name == ".git"
+            || name == "node_modules"
+            || name == "target"
+            || name == "dist"
+            || name == ".venv"
+            || name == "extensions"
+            || name == "History"
+            || name == "logs"
+            || name == "Cache"
+            || name == "CachedData"
+            || name == "GPUCache"
+            || name == "Backups"
+    } else {
+        false
     }
 }
 
@@ -149,7 +212,11 @@ impl AgentAdapter for CursorAdapter {
                         }
                     }
                 } else if custom.is_dir() {
-                    for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .into_iter()
+                        .filter_entry(|e| !should_skip_cursor_dir(e))
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         if path.is_file() && is_candidate_cursor_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
@@ -160,7 +227,7 @@ impl AgentAdapter for CursorAdapter {
                 }
             }
         } else {
-            for root in self.candidate_roots() {
+            for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_cursor_file(&root) {
                         if let Ok(source) = SessionSource::from_path(&root, self.name()) {
@@ -168,7 +235,11 @@ impl AgentAdapter for CursorAdapter {
                         }
                     }
                 } else if root.is_dir() {
-                    for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(&root)
+                        .into_iter()
+                        .filter_entry(|e| !should_skip_cursor_dir(e))
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         if path.is_file() && is_candidate_cursor_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
@@ -801,6 +872,49 @@ mod tests {
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
         assert_eq!(enumerated[0].adapter_name, "cursor");
+    }
+
+    /// Regression test: `~/.cursor/extensions/<ext>/node_modules/...` and
+    /// `Library/Application Support/Cursor/User/History/...` (VS Code local file history)
+    /// both matched the old "path contains cursor" + json/jsonl filter. Both must now be
+    /// skipped even when nested under a scanned root.
+    #[test]
+    fn test_enumerate_cursor_skips_extensions_and_history_junk() {
+        let temp = tempdir().unwrap();
+
+        let ext_dir = temp
+            .path()
+            .join(".cursor")
+            .join("extensions")
+            .join("some.ext-1.0.0")
+            .join("node_modules")
+            .join("dep");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+        File::create(ext_dir.join("package.json")).unwrap();
+
+        let history_dir = temp
+            .path()
+            .join("Cursor")
+            .join("User")
+            .join("History")
+            .join("-1f86dea4");
+        std::fs::create_dir_all(&history_dir).unwrap();
+        File::create(history_dir.join("vPbv.json")).unwrap();
+
+        let composer_dir = temp.path().join(".cursor").join("composer");
+        std::fs::create_dir_all(&composer_dir).unwrap();
+        let mut real = File::create(composer_dir.join("composer_001.jsonl")).unwrap();
+        writeln!(real, "{{\"type\":\"user\",\"text\":\"Fix bug in component\"}}").unwrap();
+
+        let adapter = CursorAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+        };
+
+        let enumerated = adapter.enumerate(&options).unwrap();
+        assert_eq!(enumerated.len(), 1, "only the real composer session should be enumerated");
+        assert!(enumerated[0].path.to_string_lossy().ends_with("composer_001.jsonl"));
     }
 
     #[test]

@@ -145,7 +145,7 @@ fn test_scanner_with_all_adapters_end_to_end() {
     // 2. Codex session
     let codex_dir = temp.path().join(".codex");
     fs::create_dir_all(&codex_dir).unwrap();
-    let codex_file = codex_dir.join("codex_session.jsonl");
+    let codex_file = codex_dir.join("rollout-2026-01-01T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl");
     let mut f2 = File::create(&codex_file).unwrap();
     writeln!(f2, r#"{{"role":"user","content":"Fix test"}}"#).unwrap();
     writeln!(
@@ -231,7 +231,7 @@ fn test_scanner_with_all_11_adapters_end_to_end() {
     // 2. Codex
     let codex_dir = temp.path().join(".codex");
     fs::create_dir_all(&codex_dir).unwrap();
-    let f_codex = codex_dir.join("codex.jsonl");
+    let f_codex = codex_dir.join("rollout-2026-01-01T00-00-00-019ee1ad-49fd-7c31-84e0-2679c0c1afc0.jsonl");
     let mut f = File::create(&f_codex).unwrap();
     writeln!(f, r#"{{"role":"user","content":"Hi Codex"}}"#).unwrap();
     writeln!(f, r#"{{"role":"assistant","model":"gpt-4o","usage":{{"prompt_tokens":100,"completion_tokens":50}},"content":"Hi"}}"#).unwrap();

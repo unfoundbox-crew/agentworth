@@ -29,7 +29,10 @@ impl GrokAdapter {
         Self
     }
 
-    /// Candidate directory paths for Grok on the host machine.
+    /// Candidate directory paths for Grok on the host machine, used for presence
+    /// detection only. Broader than `session_roots()`: bare `~/.grok` also holds
+    /// `marketplace-cache/...`, which itself contains other tools' plugin manifests
+    /// (`.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json`, ...).
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
@@ -46,6 +49,32 @@ impl GrokAdapter {
         roots.push(PathBuf::from(".xai"));
         roots.push(PathBuf::from(".xai").join("sessions"));
         roots
+    }
+
+    /// Directories that actually hold Grok CLI session data, used for the default
+    /// (unscoped) `enumerate()` walk.
+    pub fn session_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(base_dirs) = BaseDirs::new() {
+            let home = base_dirs.home_dir();
+            roots.push(home.join(".grok").join("sessions"));
+            roots.push(home.join(".xai").join("sessions"));
+        }
+        roots
+    }
+}
+
+/// Skip directories that are never Grok session data.
+fn should_skip_grok_dir(entry: &walkdir::DirEntry) -> bool {
+    if entry.file_type().is_dir() {
+        let name = entry.file_name().to_string_lossy();
+        name == ".git"
+            || name == "node_modules"
+            || name == "target"
+            || name == "dist"
+            || name == ".venv"
+    } else {
+        false
     }
 }
 
@@ -123,7 +152,11 @@ impl AgentAdapter for GrokAdapter {
                         }
                     }
                 } else if custom.is_dir() {
-                    for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .into_iter()
+                        .filter_entry(|e| !should_skip_grok_dir(e))
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         if path.is_file() && is_candidate_grok_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
@@ -134,7 +167,7 @@ impl AgentAdapter for GrokAdapter {
                 }
             }
         } else {
-            for root in self.candidate_roots() {
+            for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_grok_file(&root) {
                         if let Ok(source) = SessionSource::from_path(&root, self.name()) {
@@ -142,7 +175,11 @@ impl AgentAdapter for GrokAdapter {
                         }
                     }
                 } else if root.is_dir() {
-                    for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(&root)
+                        .into_iter()
+                        .filter_entry(|e| !should_skip_grok_dir(e))
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         if path.is_file() && is_candidate_grok_file(path) {
                             if let Ok(source) = SessionSource::from_path(path, self.name()) {
@@ -298,11 +335,25 @@ fn is_candidate_grok_file(path: &Path) -> bool {
         || lower == "credentials.json"
         || lower == "auth.json"
         || lower == "package.json"
+        // Per-session sidecar metadata written alongside the real `chat_history.jsonl`
+        // in `~/.grok/sessions/<encoded-cwd>/<uuid>/`: state snapshots, not transcripts.
+        || lower == "announcement_state.json"
+        || lower == "prompt_context.json"
+        || lower == "signals.json"
+        || lower == "summary.json"
+        || lower == "resources_state.json"
+        || lower == "active_sessions.json"
     {
         return false;
     }
-    path.extension()
-        .is_some_and(|ext| ext == "jsonl" || ext == "json")
+    if lower == "rewind_points.jsonl" || lower == "updates.jsonl" {
+        return false;
+    }
+    // Real Grok CLI conversation content lives in `chat_history.jsonl`, under
+    // `~/.grok/sessions/<encoded-cwd>/<uuid>/`. Every other `.json`/`.jsonl` sampled
+    // there (rewind_points.jsonl, updates.jsonl, the *_state.json sidecars above, plus
+    // .lock files) was internal bookkeeping, not a transcript.
+    path.extension().is_some_and(|ext| ext == "jsonl")
 }
 
 fn derive_session_id(path: &Path) -> String {
@@ -750,6 +801,39 @@ mod tests {
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
         assert_eq!(enumerated[0].adapter_name, "grok");
+    }
+
+    /// Regression test: a session directory's own sidecar files (`summary.json`,
+    /// `signals.json`, ...) and the top-level `active_sessions.json` manifest all matched
+    /// the old "path contains grok" + json/jsonl filter without carrying any real turns.
+    #[test]
+    fn test_enumerate_grok_skips_sidecar_and_manifest_junk() {
+        let temp = tempdir().unwrap();
+
+        std::fs::create_dir_all(temp.path().join(".grok")).unwrap();
+        File::create(temp.path().join(".grok").join("active_sessions.json")).unwrap();
+
+        let session_dir = temp
+            .path()
+            .join(".grok")
+            .join("sessions")
+            .join("%2FUsers%2Ftest")
+            .join("01a05d4c-c6b2-7c53-828d-3746a179b26b");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        File::create(session_dir.join("summary.json")).unwrap();
+        File::create(session_dir.join("signals.json")).unwrap();
+        let mut real = File::create(session_dir.join("chat_history.jsonl")).unwrap();
+        writeln!(real, "{{\"role\":\"user\",\"content\":\"Run grok coder\"}}").unwrap();
+
+        let adapter = GrokAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+        };
+
+        let enumerated = adapter.enumerate(&options).unwrap();
+        assert_eq!(enumerated.len(), 1, "only chat_history.jsonl should be enumerated");
+        assert!(enumerated[0].path.to_string_lossy().ends_with("chat_history.jsonl"));
     }
 
     #[test]

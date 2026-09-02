@@ -31,7 +31,9 @@ impl ClaudeCodeAdapter {
         Self
     }
 
-    /// Candidate directory paths for Claude Code on the host machine.
+    /// Candidate directory paths for Claude Code on the host machine, used for presence
+    /// detection only. Deliberately broader than `session_roots()`: this may report
+    /// directories (e.g. bare `~/.claude`) that hold plenty of non-session files.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
@@ -40,6 +42,21 @@ impl ClaudeCodeAdapter {
             roots.push(home.join(".claude").join("sessions"));
             roots.push(home.join(".config").join("claude"));
             roots.push(home.join(".claude"));
+        }
+        roots
+    }
+
+    /// Directories that actually hold Claude Code session transcripts, used for the
+    /// default (unscoped) `enumerate()` walk. Unlike `candidate_roots()`, this excludes
+    /// bare `~/.claude` (cache, plugins, jobs, telemetry, ... are all real siblings of
+    /// `projects/` there) and `~/.claude/sessions` (holds PID-keyed lock/auth artifacts,
+    /// not conversation transcripts, despite the name).
+    pub fn session_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(base_dirs) = BaseDirs::new() {
+            let home = base_dirs.home_dir();
+            roots.push(home.join(".claude").join("projects"));
+            roots.push(home.join(".config").join("claude"));
         }
         roots
     }
@@ -133,7 +150,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
             options.custom_paths.clone()
         } else {
             let mut roots = Vec::new();
-            for r in self.candidate_roots() {
+            for r in self.session_roots() {
                 if r.exists() && !roots.iter().any(|existing: &PathBuf| r.starts_with(existing)) {
                     roots.push(r);
                 }
@@ -332,15 +349,19 @@ fn is_candidate_claude_file(path: &Path) -> bool {
         return false;
     }
     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if filename.starts_with('.') && !filename.ends_with(".jsonl") && !filename.ends_with(".json") {
+    if filename.starts_with('.') && !filename.ends_with(".jsonl") {
         return false;
     }
     let lower = filename.to_lowercase();
     if lower == "config.json" || lower == "settings.json" || lower == "credentials.json" {
         return false;
     }
-    path.extension()
-        .is_some_and(|ext| ext == "jsonl" || ext == "json")
+    // Real Claude Code session transcripts are always JSONL. Every non-jsonl `.json`
+    // file found under `~/.claude` on real machines has turned out to be a config,
+    // cache, or plugin-manifest file wrongly indexed as a "session" (measured: 3,429
+    // such rows on one machine, all zero real content) -- so `.json` is no longer
+    // accepted here.
+    path.extension().is_some_and(|ext| ext == "jsonl")
 }
 
 fn derive_session_id(path: &Path) -> String {
@@ -862,7 +883,58 @@ fn parse_claude_record(
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::{tempdir, NamedTempFile};
+
+    /// Regression test for the "config files indexed as sessions" bug: 3,429 rows on a
+    /// real machine were `.claude/{cache,plugins,jobs,...}/*.json` files -- config,
+    /// plugin manifests, telemetry caches -- none of them real transcripts, all
+    /// discovered because bare `~/.claude` was walked wholesale and any `.json`/`.jsonl`
+    /// not on a short denylist was accepted. Only `.claude/projects/*.jsonl` should be
+    /// found by a default (unscoped) enumerate.
+    #[test]
+    fn test_enumerate_claude_skips_non_project_json_and_only_takes_jsonl() {
+        let temp = tempdir().unwrap();
+
+        let cache_dir = temp.path().join(".claude").join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        File::create(cache_dir.join("gh-pr-status-cache.json")).unwrap();
+
+        let plugins_dir = temp
+            .path()
+            .join(".claude")
+            .join("plugins")
+            .join("cache")
+            .join("some-plugin")
+            .join("node_modules")
+            .join("dep");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        File::create(plugins_dir.join("package.json")).unwrap();
+
+        let project_dir = temp
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-Users-test-code-example");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let mut real = File::create(
+            project_dir.join("13761161-221d-4493-8c52-62a18c3400be.jsonl"),
+        )
+        .unwrap();
+        writeln!(real, "{{\"type\":\"user\",\"timestamp\":\"2026-08-29T10:00:00Z\",\"content\":\"hi\"}}").unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+        };
+
+        let enumerated = adapter.enumerate(&options).unwrap();
+        assert_eq!(enumerated.len(), 1, "only the real project transcript should be enumerated");
+        assert!(enumerated[0]
+            .path
+            .to_string_lossy()
+            .ends_with("13761161-221d-4493-8c52-62a18c3400be.jsonl"));
+    }
 
     #[test]
     fn test_parse_standard_claude_jsonl() {

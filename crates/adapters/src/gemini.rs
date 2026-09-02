@@ -31,7 +31,12 @@ impl GeminiAdapter {
         Self
     }
 
-    /// Candidate directory paths for Google Antigravity (agy / Antigravity IDE / Gemini) on the host machine.
+    /// Candidate directory paths for Google Antigravity (agy / Antigravity IDE / Gemini) on
+    /// the host machine, used for presence detection only. Broader than `session_roots()`:
+    /// bare `~/.antigravity` is the Antigravity IDE's own app-config/extensions directory
+    /// (argv.json, VS Code-style `extensions/<ext>/...json`), not session data, and bare
+    /// `~/.gemini` mixes in `config/`, `tmp/`, and OAuth/account files alongside real
+    /// session directories.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
@@ -47,6 +52,39 @@ impl GeminiAdapter {
         }
         roots.push(PathBuf::from(".gemini"));
         roots.push(PathBuf::from(".antigravity"));
+        roots
+    }
+
+    /// Directories that actually hold Gemini/Antigravity session transcripts, used for the
+    /// default (unscoped) `enumerate()` walk. Deliberately narrower than bare
+    /// `antigravity-cli`/`antigravity-ide`, which also hold `mcp/*.json` tool schemas,
+    /// `cache/`, and (in newer Antigravity builds) `conversations/*.db` -- SQLite, not
+    /// JSON at all -- alongside the real `brain/` transcripts and the single rolling
+    /// `history.jsonl`.
+    pub fn session_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(base_dirs) = BaseDirs::new() {
+            let home = base_dirs.home_dir();
+            roots.push(home.join(".gemini").join("antigravity-cli").join("brain"));
+            roots.push(home.join(".gemini").join("antigravity-cli").join("history.jsonl"));
+            roots.push(home.join(".gemini").join("antigravity-ide").join("brain"));
+            // Bare `.gemini/antigravity` (no `-cli`/`-ide` suffix) is a real, currently
+            // populated alternate install layout on at least one real machine, mirroring
+            // `antigravity-cli`'s own directory shape exactly (brain/, playground/,
+            // mcp/, conversations/, ...). Verified: a real 26-event transcript_full.jsonl
+            // lived here and would otherwise go undetected.
+            roots.push(home.join(".gemini").join("antigravity").join("brain"));
+            roots.push(home.join(".gemini").join("antigravity").join("history.jsonl"));
+            roots.push(home.join(".gemini").join("history"));
+            roots.push(home.join(".gemini").join("sessions"));
+            roots.push(home.join(".antigravity").join("sessions"));
+            // Plain Gemini CLI (non-Antigravity) keeps its own per-project session logs
+            // here: `tmp/<project>/chats/session-<ts>-<id>.json[l]` and, in an older
+            // build, a flat `tmp/<project>/logs.json`. Both are real conversation data --
+            // verified by content, not just by path -- unlike everything else sampled
+            // directly under bare `.gemini` (config/, oauth creds, account state).
+            roots.push(home.join(".gemini").join("tmp"));
+        }
         roots
     }
 }
@@ -149,6 +187,10 @@ impl AgentAdapter for GeminiAdapter {
                     || name == "target"
                     || name == "dist"
                     || name == ".venv"
+                    // Antigravity IDE's sandboxed scratch projects: full npm/next.js
+                    // scaffolds (package.json, tsconfig.json, ...) that happen to live
+                    // under `.gemini/antigravity-ide/`.
+                    || name == "playground"
             } else {
                 false
             }
@@ -158,7 +200,7 @@ impl AgentAdapter for GeminiAdapter {
             options.custom_paths.clone()
         } else {
             let mut roots = Vec::new();
-            for r in self.candidate_roots() {
+            for r in self.session_roots() {
                 if r.exists() && !roots.iter().any(|existing: &PathBuf| r.starts_with(existing)) {
                     roots.push(r);
                 }
@@ -304,8 +346,24 @@ fn is_candidate_gemini_file(path: &Path) -> bool {
     {
         return false;
     }
-    path.extension()
-        .is_some_and(|ext| ext == "jsonl" || ext == "json")
+    // Plain Gemini CLI keeps real conversation content in `.json`, not just `.jsonl`:
+    // `tmp/<project>/logs.json` (a flat message array) and `tmp/<project>/chats/
+    // session-<ts>-<id>.json[l]` both carry real turns, confirmed by content. Everywhere
+    // else, a non-jsonl `.json` sampled under `.gemini`/`.antigravity` on a real machine
+    // turned out to be a sidecar (`*.metadata.json`), an MCP tool schema, or IDE/extension
+    // config -- never a transcript -- so `.json` is accepted only for these two shapes.
+    // `starts_with("session-")` alone is too loose here: it also matches Antigravity
+    // planning sidecars like `SESSION-REPORT.md.metadata.json`, so also require the
+    // character right after the prefix to be a digit -- the real filenames always
+    // continue with a year (`session-2026-...`).
+    let is_session_log_name = lower
+        .strip_prefix("session-")
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|c| c.is_ascii_digit());
+    if lower == "logs.json" || is_session_log_name {
+        return filename.ends_with(".jsonl") || filename.ends_with(".json");
+    }
+    filename.ends_with(".jsonl")
 }
 
 fn derive_session_id(path: &Path) -> String {
@@ -911,6 +969,46 @@ mod tests {
 
         let agy_parsed = adapter.parse(agy_src).unwrap();
         assert_eq!(agy_parsed.trace.adapter, "antigravity");
+    }
+
+    /// Regression test: plain Gemini CLI (not Antigravity) keeps real per-project
+    /// conversation logs at `tmp/<project>/chats/session-<ts>-<id>.json[l]` and
+    /// `tmp/<project>/logs.json` -- both real content, confirmed on a live machine --
+    /// which the old bare-`.gemini` recursive walk found only by accident. They must
+    /// still be found now that discovery is scoped to named subdirectories, and the
+    /// `.metadata.json` sidecars plus a filename that merely starts with "session-" but
+    /// isn't the real timestamped shape (e.g. an Antigravity planning doc sidecar) must
+    /// still be rejected.
+    #[test]
+    fn test_enumerate_gemini_finds_plain_cli_tmp_logs_and_rejects_lookalikes() {
+        let temp = tempdir().unwrap();
+
+        let chats_dir = temp.path().join(".gemini").join("tmp").join("my-project").join("chats");
+        std::fs::create_dir_all(&chats_dir).unwrap();
+        let mut real_session = File::create(chats_dir.join("session-2026-01-07T06-44-f969d3b9.json")).unwrap();
+        writeln!(real_session, "{{\"sessionId\":\"f969d3b9\",\"messages\":[]}}").unwrap();
+
+        let logs_json = temp.path().join(".gemini").join("tmp").join("my-project").join("logs.json");
+        let mut logs = File::create(&logs_json).unwrap();
+        writeln!(logs, "[{{\"sessionId\":\"abc\",\"type\":\"user\",\"message\":\"hi\"}}]").unwrap();
+
+        // Lookalike: starts with "session-" but is an Antigravity planning-doc sidecar,
+        // not a timestamped session log -- must NOT be treated as real content.
+        let brain_dir = temp.path().join(".gemini").join("antigravity-cli").join("brain").join("sess-2");
+        std::fs::create_dir_all(&brain_dir).unwrap();
+        File::create(brain_dir.join("SESSION-REPORT.md.metadata.json")).unwrap();
+
+        let adapter = GeminiAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+        };
+
+        let enumerated = adapter.enumerate(&options).unwrap();
+        let paths: Vec<_> = enumerated.iter().map(|s| s.path.clone()).collect();
+        assert!(paths.contains(&chats_dir.join("session-2026-01-07T06-44-f969d3b9.json")));
+        assert!(paths.contains(&logs_json));
+        assert_eq!(enumerated.len(), 2, "the metadata.json lookalike must be rejected");
     }
 
     #[test]

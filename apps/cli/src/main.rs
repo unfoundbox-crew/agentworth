@@ -1831,6 +1831,12 @@ fn print_scan_summary(summary: &ScanSummary, db_path: Option<&std::path::Path>) 
         "│ Total Indexed:  {:>8} sessions in SQLite index        │",
         style(summary.total_indexed_sessions).bold().yellow()
     );
+    if summary.stub_sessions_removed > 0 {
+        println!(
+            "│ Cleaned Up:     {:>8} stub session(s) no longer detected │",
+            style(summary.stub_sessions_removed).dim()
+        );
+    }
     if let Some(path) = db_path {
         let path_str = path.to_string_lossy();
         let display_path = if path_str.len() > 40 {
