@@ -5,8 +5,8 @@
 use std::fmt::Write;
 
 use super::{
-    archie, compact, display_width, duration, eyes, lpad, percent, percent_round, rpad, thousands,
-    truncate, EyeKind, Role, Ui,
+    archie, archie_inline, compact, display_width, duration, lpad, percent, percent_round, rpad,
+    thousands, truncate, Lamp, Role, Ui, ARCHIE_BLOCK_MIN_COLUMNS,
 };
 
 /// Truncate an assembled row to the content width. Every row goes through this, so no
@@ -1157,25 +1157,42 @@ pub fn matrix(ui: &Ui, coverage_pct: &str, rows: &[MatrixRow]) -> String {
 // scan
 // -----------------------------------------------------------------------------
 
-/// One redraw of the three-line progress block. Rendered without a trailing newline on
-/// the last line so the caller can cursor back over exactly three rows.
+/// One redraw of the progress block. Rendered without a trailing newline on the last
+/// line so the caller can cursor back over exactly `scan_progress_lines(ui)` rows.
+///
+/// The lamp is driven off `frame` — the dig loop's four text frames, alternating held
+/// and sweeping. Nothing else in the figure moves.
 pub fn scan_progress(ui: &Ui, frame: u64, what: &str, done: usize, total: usize) -> String {
-    // The meter advances every frame; the face changes every second frame. Two rhythms,
-    // so the block feels alive without either reading as a spinner.
-    let face = if frame.is_multiple_of(2) {
-        eyes(ui, EyeKind::Digging)
-    } else {
-        eyes(ui, EyeKind::Done)
-    };
-    let art = archie(ui, &face);
+    let lamp = Lamp::dig_frame(frame);
     let frac = if total > 0 {
         done as f64 / total as f64
     } else {
         0.0
     };
-    let bar_w = ui.inner().saturating_sub(38).clamp(8, 40);
+    let percent_cell = rpad(&format!("{:.0}%", frac * 100.0), 4);
 
     let mut out = String::new();
+
+    if ui.width() < ARCHIE_BLOCK_MIN_COLUMNS {
+        let bar_w = ui.inner().saturating_sub(30).clamp(6, 20);
+        push(
+            &mut out,
+            ui,
+            format!(
+                " {} {}  {}  {}  {}",
+                ui.paint(Role::Value, &archie_inline(lamp)),
+                ui.paint(Role::Label, "archie"),
+                ui.paint(Role::Verified, &ui.bar(frac, bar_w)),
+                ui.paint(Role::Emphasis, &percent_cell),
+                ui.paint(Role::Label, &format!("{} sessions", thousands(done as u64))),
+            ),
+        );
+        return out;
+    }
+
+    let art = archie(lamp);
+    let bar_w = ui.inner().saturating_sub(38).clamp(8, 40);
+
     push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &art[0])));
     push(
         &mut out,
@@ -1194,7 +1211,7 @@ pub fn scan_progress(ui: &Ui, frame: u64, what: &str, done: usize, total: usize)
             "  {}     {}  {}  {}",
             ui.paint(Role::Chrome, &art[2]),
             ui.paint(Role::Verified, &ui.bar(frac, bar_w)),
-            ui.paint(Role::Emphasis, &rpad(&format!("{:.0}%", frac * 100.0), 4)),
+            ui.paint(Role::Emphasis, &percent_cell),
             ui.paint(
                 Role::Label,
                 &format!("{} / {}", thousands(done as u64), thousands(total as u64))
@@ -1202,6 +1219,16 @@ pub fn scan_progress(ui: &Ui, frame: u64, what: &str, done: usize, total: usize)
         ),
     );
     out
+}
+
+/// How many rows `scan_progress` draws at this width, so the caller knows how far to
+/// cursor back before the next redraw.
+pub fn scan_progress_lines(ui: &Ui) -> usize {
+    if ui.width() < ARCHIE_BLOCK_MIN_COLUMNS {
+        1
+    } else {
+        3
+    }
 }
 
 pub struct ScanView {
@@ -1220,7 +1247,8 @@ pub struct ScanView {
 pub fn scan_summary(ui: &Ui, v: &ScanView) -> String {
     let mut out = String::new();
     let i = ui.inner();
-    let art = archie(ui, &eyes(ui, EyeKind::Done));
+    // The completion frame holds the light: he found it and stopped sweeping.
+    let art = archie(Lamp::On);
 
     // The completion frame keeps the same three lines so nothing jumps.
     push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &art[0])));
@@ -1332,22 +1360,37 @@ pub fn error(
     next: &[(String, String)],
 ) -> String {
     let mut out = String::new();
-    let art = archie(ui, &eyes(ui, EyeKind::Failed));
 
     out.push_str(&ui.header(command, ""));
     out.push('\n');
 
-    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &art[0])));
-    push(
-        &mut out,
-        ui,
-        format!(
-            "  {}   {}",
-            ui.paint(Role::Error, &art[1]),
-            ui.paint(Role::Error, noun)
-        ),
-    );
-    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &art[2])));
+    // The lamp goes out first, and then nothing else moves. Below the block width the
+    // figure collapses to the empty socket rather than crowding the sentence off-screen.
+    if ui.width() < ARCHIE_BLOCK_MIN_COLUMNS {
+        push(
+            &mut out,
+            ui,
+            format!(
+                " {} {}  {}",
+                ui.paint(Role::Error, &archie_inline(Lamp::Off)),
+                ui.paint(Role::Label, "archie"),
+                ui.paint(Role::Error, noun)
+            ),
+        );
+    } else {
+        let art = archie(Lamp::Off);
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &art[0])));
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}   {}",
+                ui.paint(Role::Error, &art[1]),
+                ui.paint(Role::Error, noun)
+            ),
+        );
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &art[2])));
+    }
 
     if !nearest.is_empty() {
         out.push('\n');

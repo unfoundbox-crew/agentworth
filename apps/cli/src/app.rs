@@ -29,8 +29,10 @@ mod recall;
 mod bisect;
 #[path = "commands/pr_blame.rs"]
 mod pr_blame;
+// Public because the local API's /api/config routes write through the same validation
+// and the same file this module owns (see server/routes.rs).
 #[path = "commands/config.rs"]
-mod config;
+pub mod config;
 #[path = "commands/version_info.rs"]
 mod version_info;
 #[path = "commands/self_test.rs"]
@@ -728,7 +730,7 @@ enum ConfigAction {
     },
     /// Print the persisted value for one config key
     Get {
-        /// Config key: json, limit, or period
+        /// Config key: json, limit, period, archie.accessory, or archie.colourway
         key: String,
 
         /// Output as JSON
@@ -737,10 +739,11 @@ enum ConfigAction {
     },
     /// Persist a default value for one config key
     Set {
-        /// Config key: json, limit, or period
+        /// Config key: json, limit, period, archie.accessory, or archie.colourway
         key: String,
 
-        /// Value to store (json: true/false, limit: a number, period: day/week/month)
+        /// Value to store (json: true/false, limit: a number, period: day/week/month,
+        /// archie.accessory: lamp/goggles/none, archie.colourway: C1/C2/C3/C4)
         value: String,
 
         /// Output as JSON
@@ -1228,11 +1231,11 @@ fn run_scan_command(
         include_stubs,
     };
 
-    // Under a non-TTY nothing prints until the summary; the three-line block is redrawn in
-    // place, so a stream that cannot move the cursor would otherwise collect one block per
-    // frame.
-    let animate = !json && console::Term::stdout().is_term();
-    let mut progress = ScanProgress::new(ui, animate);
+    // A stream that cannot move the cursor gets frame 1 once and nothing after it: a
+    // loop that scrolls is a loop that lies. --json gets nothing at all.
+    // --plain asks for the same treatment a pipe gets, so it is part of the test.
+    let repaints = console::Term::stdout().is_term() && !ui.ascii();
+    let mut progress = ScanProgress::new(ui, !json, repaints);
 
     let summary = scanner.run_scan(&options, |current, total| {
         progress.tick(current, total);
@@ -1252,20 +1255,23 @@ fn run_scan_command(
 /// redraw on every terminal on the machine.
 struct ScanProgress<'a> {
     ui: &'a crate::ui::Ui,
-    animate: bool,
+    /// False under --json: Archie never appears on machine-readable output.
+    show: bool,
+    /// Whether the terminal can repaint in place. When it cannot, frame 1 prints once.
+    repaints: bool,
     frame: u64,
     drawn: bool,
     last: std::time::Instant,
 }
 
 const SCAN_FRAME_MS: u64 = 125;
-const SCAN_BLOCK_LINES: usize = 3;
 
 impl<'a> ScanProgress<'a> {
-    fn new(ui: &'a crate::ui::Ui, animate: bool) -> Self {
+    fn new(ui: &'a crate::ui::Ui, show: bool, repaints: bool) -> Self {
         ScanProgress {
             ui,
-            animate,
+            show,
+            repaints,
             frame: 0,
             drawn: false,
             last: std::time::Instant::now() - std::time::Duration::from_millis(SCAN_FRAME_MS),
@@ -1273,13 +1279,26 @@ impl<'a> ScanProgress<'a> {
     }
 
     fn tick(&mut self, current: usize, total: usize) {
-        if !self.animate || self.last.elapsed().as_millis() < SCAN_FRAME_MS as u128 {
+        if !self.show {
+            return;
+        }
+        if !self.repaints {
+            if !self.drawn {
+                println!(
+                    "{}",
+                    crate::ui::views::scan_progress(self.ui, 0, "agent histories", current, total)
+                );
+                self.drawn = true;
+            }
+            return;
+        }
+        if self.last.elapsed().as_millis() < SCAN_FRAME_MS as u128 {
             return;
         }
         self.last = std::time::Instant::now();
         let term = console::Term::stdout();
         if self.drawn {
-            let _ = term.move_cursor_up(SCAN_BLOCK_LINES);
+            let _ = term.move_cursor_up(crate::ui::views::scan_progress_lines(self.ui));
             let _ = term.clear_to_end_of_screen();
         }
         print!(
@@ -1292,11 +1311,12 @@ impl<'a> ScanProgress<'a> {
         self.drawn = true;
     }
 
-    /// The progress line is cleared in one frame, per --motion-exit.
+    /// The progress line is cleared in one frame, per --motion-exit. A stream that cannot
+    /// repaint keeps its one printed frame -- there is nothing there to clear.
     fn clear(&mut self) {
-        if self.drawn {
+        if self.drawn && self.repaints {
             let term = console::Term::stdout();
-            let _ = term.move_cursor_up(SCAN_BLOCK_LINES);
+            let _ = term.move_cursor_up(crate::ui::views::scan_progress_lines(self.ui));
             let _ = term.clear_to_end_of_screen();
             self.drawn = false;
         }

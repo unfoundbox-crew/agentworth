@@ -28,10 +28,39 @@ pub struct CliConfig {
     /// Default lookback window (`day` | `week` | `month` | `year` | `all`) for `usage --period`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub period: Option<String>,
+    /// How Archie is drawn wherever the product draws him. A TOML table, so it has to
+    /// stay last in this struct -- `toml` refuses to emit a table before a scalar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archie: Option<ArchieConfig>,
 }
 
-const CONFIG_KEYS: &[&str] = &["json", "limit", "period"];
+/// Archie's kit and colourway. See `packages/ui/brand/archie/README.md`; the SVG poses
+/// read `data-accessory` and the colourway is a `.archie-cN` class.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ArchieConfig {
+    /// `lamp` (default) | `goggles` | `none`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accessory: Option<String>,
+    /// `C1` mono | `C2` dark | `C3` AgentWorth, the default | `C4` quiet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub colourway: Option<String>,
+}
+
+const CONFIG_KEYS: &[&str] = &[
+    "json",
+    "limit",
+    "period",
+    "archie.accessory",
+    "archie.colourway",
+];
 const VALID_PERIODS: &[&str] = &["day", "week", "month", "year", "all"];
+const VALID_ACCESSORIES: &[&str] = &["lamp", "goggles", "none"];
+const VALID_COLOURWAYS: &[&str] = &["C1", "C2", "C3", "C4"];
+
+/// What the product draws when `archie.accessory` is unset.
+pub const DEFAULT_ACCESSORY: &str = "lamp";
+/// What the product draws when `archie.colourway` is unset.
+pub const DEFAULT_COLOURWAY: &str = "C3";
 
 /// Canonicalize a `--period` value, accepting the single-letter aliases `d`/`w`/`m`/`y`
 /// alongside the full words. `None` means the input matches none of them -- the caller
@@ -44,6 +73,27 @@ pub fn normalize_period(raw: &str) -> Option<&'static str> {
         "month" | "m" => Some("month"),
         "year" | "y" => Some("year"),
         "all" => Some("all"),
+        _ => None,
+    }
+}
+
+/// Canonicalize an `archie.accessory` value. Case-insensitive; `None` means no match.
+pub fn normalize_accessory(raw: &str) -> Option<&'static str> {
+    match raw.to_ascii_lowercase().as_str() {
+        "lamp" => Some("lamp"),
+        "goggles" => Some("goggles"),
+        "none" => Some("none"),
+        _ => None,
+    }
+}
+
+/// Canonicalize an `archie.colourway` value. `c3` and `C3` both mean C3.
+pub fn normalize_colourway(raw: &str) -> Option<&'static str> {
+    match raw.to_ascii_uppercase().as_str() {
+        "C1" => Some("C1"),
+        "C2" => Some("C2"),
+        "C3" => Some("C3"),
+        "C4" => Some("C4"),
         _ => None,
     }
 }
@@ -72,6 +122,12 @@ fn load_config_from(path: &Path) -> Result<CliConfig> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read config file at {:?}", path))?;
     toml::from_str(&raw).with_context(|| format!("failed to parse config file at {:?}", path))
+}
+
+/// Persist config to the default location. The local API's `POST /api/config` writes
+/// through here, so it lands in exactly the file `agentworth config set` writes.
+pub fn save_config(cfg: &CliConfig) -> Result<()> {
+    save_config_to(&config_file_path()?, cfg)
 }
 
 fn save_config_to(path: &Path, cfg: &CliConfig) -> Result<()> {
@@ -146,8 +202,102 @@ fn parse_period_value(raw: &str) -> Result<String> {
     })
 }
 
+fn parse_accessory_value(raw: &str) -> Result<String> {
+    normalize_accessory(raw).map(str::to_string).ok_or_else(|| {
+        anyhow!(
+            "invalid value {:?} for 'archie.accessory': expected one of: {}",
+            raw,
+            VALID_ACCESSORIES.join(", ")
+        )
+    })
+}
+
+fn parse_colourway_value(raw: &str) -> Result<String> {
+    normalize_colourway(raw).map(str::to_string).ok_or_else(|| {
+        anyhow!(
+            "invalid value {:?} for 'archie.colourway': expected one of: {}",
+            raw,
+            VALID_COLOURWAYS.join(", ")
+        )
+    })
+}
+
 fn unknown_key_error(key: &str) -> anyhow::Error {
     anyhow!("unknown config key {:?}. Valid keys: {}", key, CONFIG_KEYS.join(", "))
+}
+
+/// Every key a caller may set, for a 400 that names the whole vocabulary.
+pub fn config_keys() -> &'static [&'static str] {
+    CONFIG_KEYS
+}
+
+/// Validate `value` and write it into `cfg`. The single validation path: `config set`
+/// and `POST /api/config` both come through here, so neither can drift from the other.
+pub fn apply_config_value(cfg: &mut CliConfig, key: &str, value: &str) -> Result<()> {
+    match key {
+        "json" => cfg.json = Some(parse_bool_value(value)?),
+        "limit" => cfg.limit = Some(parse_limit_value(value)?),
+        "period" => cfg.period = Some(parse_period_value(value)?),
+        "archie.accessory" => {
+            cfg.archie.get_or_insert_with(Default::default).accessory =
+                Some(parse_accessory_value(value)?)
+        }
+        "archie.colourway" => {
+            cfg.archie.get_or_insert_with(Default::default).colourway =
+                Some(parse_colourway_value(value)?)
+        }
+        other => return Err(unknown_key_error(other)),
+    }
+    Ok(())
+}
+
+/// Clear one key. `POST /api/config` uses this for an explicit JSON `null`, which is how
+/// a caller says "go back to the built-in default" without a second route.
+pub fn clear_config_value(cfg: &mut CliConfig, key: &str) -> Result<()> {
+    match key {
+        "json" => cfg.json = None,
+        "limit" => cfg.limit = None,
+        "period" => cfg.period = None,
+        "archie.accessory" => {
+            if let Some(a) = cfg.archie.as_mut() {
+                a.accessory = None;
+            }
+        }
+        "archie.colourway" => {
+            if let Some(a) = cfg.archie.as_mut() {
+                a.colourway = None;
+            }
+        }
+        other => return Err(unknown_key_error(other)),
+    }
+    Ok(())
+}
+
+/// Read one key back as the string form `config get` prints. `None` is "not set".
+pub fn config_value(cfg: &CliConfig, key: &str) -> Result<Option<String>> {
+    let value = match key {
+        "json" => cfg.json.map(|v| v.to_string()),
+        "limit" => cfg.limit.map(|v| v.to_string()),
+        "period" => cfg.period.clone(),
+        "archie.accessory" => cfg.archie.as_ref().and_then(|a| a.accessory.clone()),
+        "archie.colourway" => cfg.archie.as_ref().and_then(|a| a.colourway.clone()),
+        other => return Err(unknown_key_error(other)),
+    };
+    Ok(value)
+}
+
+/// The whole config as JSON, one key per line of `config list`, unset values as `null`
+/// rather than absent -- a client reading this should not have to tell "not set" from
+/// "key I have never heard of". `config list --json` and `GET /api/config` both use it.
+pub fn config_as_json(path: &Path, cfg: &CliConfig) -> serde_json::Value {
+    json!({
+        "config_path": path.to_string_lossy(),
+        "json": cfg.json,
+        "limit": cfg.limit,
+        "period": cfg.period,
+        "archie.accessory": cfg.archie.as_ref().and_then(|a| a.accessory.clone()),
+        "archie.colourway": cfg.archie.as_ref().and_then(|a| a.colourway.clone()),
+    })
 }
 
 /// Execute `agentworth config list`.
@@ -159,30 +309,22 @@ fn run_config_list_at(path: &Path, json: bool) -> Result<()> {
     let cfg = load_config_from(path)?;
 
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "config_path": path.to_string_lossy(),
-                "json": cfg.json,
-                "limit": cfg.limit,
-                "period": cfg.period,
-            }))?
-        );
+        println!("{}", serde_json::to_string_pretty(&config_as_json(path, &cfg))?);
         return Ok(());
     }
 
     println!("Config file: {}", path.display());
     println!();
-    print_kv("json", cfg.json.map(|v| v.to_string()));
-    print_kv("limit", cfg.limit.map(|v| v.to_string()));
-    print_kv("period", cfg.period.clone());
+    for key in CONFIG_KEYS {
+        print_kv(key, config_value(&cfg, key)?);
+    }
     Ok(())
 }
 
 fn print_kv(key: &str, value: Option<String>) {
     match value {
-        Some(v) => println!("  {:<8} = {}", key, v),
-        None => println!("  {:<8} = (not set)", key),
+        Some(v) => println!("  {:<16} = {}", key, v),
+        None => println!("  {:<16} = (not set)", key),
     }
 }
 
@@ -193,12 +335,7 @@ pub fn run_config_get(key: &str, json: bool) -> Result<()> {
 
 fn run_config_get_at(path: &Path, key: &str, json: bool) -> Result<()> {
     let cfg = load_config_from(path)?;
-    let value: Option<String> = match key {
-        "json" => cfg.json.map(|v| v.to_string()),
-        "limit" => cfg.limit.map(|v| v.to_string()),
-        "period" => cfg.period.clone(),
-        other => return Err(unknown_key_error(other)),
-    };
+    let value = config_value(&cfg, key)?;
 
     if json {
         println!(
@@ -221,21 +358,19 @@ pub fn run_config_set(key: &str, value: &str, json: bool) -> Result<()> {
 
 fn run_config_set_at(path: &Path, key: &str, value: &str, json: bool) -> Result<()> {
     let mut cfg = load_config_from(path)?;
-    match key {
-        "json" => cfg.json = Some(parse_bool_value(value)?),
-        "limit" => cfg.limit = Some(parse_limit_value(value)?),
-        "period" => cfg.period = Some(parse_period_value(value)?),
-        other => return Err(unknown_key_error(other)),
-    }
+    apply_config_value(&mut cfg, key, value)?;
     save_config_to(path, &cfg)?;
+
+    // Report what was stored, not what was typed: `set archie.colourway c3` saves "C3".
+    let stored = config_value(&cfg, key)?.unwrap_or_else(|| value.to_string());
 
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&json!({ "key": key, "value": value, "status": "saved" }))?
+            serde_json::to_string_pretty(&json!({ "key": key, "value": stored, "status": "saved" }))?
         );
     } else {
-        println!("Saved {} = {}", key, value);
+        println!("Saved {} = {}", key, stored);
     }
     Ok(())
 }
@@ -254,6 +389,10 @@ mod tests {
             json: Some(true),
             limit: Some(42),
             period: Some("week".to_string()),
+            archie: Some(ArchieConfig {
+                accessory: Some("goggles".to_string()),
+                colourway: Some("C2".to_string()),
+            }),
         };
 
         save_config_to(&path, &cfg).unwrap();
@@ -336,6 +475,52 @@ mod tests {
         run_config_get_at(&path, "limit", false).unwrap();
         run_config_list_at(&path, false).unwrap();
         run_config_list_at(&path, true).unwrap();
+    }
+
+    #[test]
+    fn test_archie_keys_round_trip_and_normalize_case() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        run_config_set_at(&path, "archie.accessory", "GOGGLES", false).unwrap();
+        run_config_set_at(&path, "archie.colourway", "c4", false).unwrap();
+
+        let cfg = load_config_from(&path).unwrap();
+        assert_eq!(config_value(&cfg, "archie.accessory").unwrap().as_deref(), Some("goggles"));
+        assert_eq!(config_value(&cfg, "archie.colourway").unwrap().as_deref(), Some("C4"));
+
+        // Setting one archie key must not wipe the other.
+        run_config_set_at(&path, "archie.accessory", "none", false).unwrap();
+        let cfg = load_config_from(&path).unwrap();
+        assert_eq!(config_value(&cfg, "archie.colourway").unwrap().as_deref(), Some("C4"));
+    }
+
+    #[test]
+    fn test_archie_keys_reject_invalid_values() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        assert!(run_config_set_at(&path, "archie.accessory", "monocle", false).is_err());
+        assert!(run_config_set_at(&path, "archie.colourway", "C9", false).is_err());
+    }
+
+    #[test]
+    fn test_config_as_json_names_every_key_even_unset() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let value = config_as_json(&path, &CliConfig::default());
+        for key in CONFIG_KEYS {
+            assert!(value.get(*key).is_some_and(|v| v.is_null()), "{} missing or not null", key);
+        }
+    }
+
+    #[test]
+    fn test_clear_config_value_unsets_without_touching_its_sibling() {
+        let mut cfg = CliConfig::default();
+        apply_config_value(&mut cfg, "archie.accessory", "goggles").unwrap();
+        apply_config_value(&mut cfg, "archie.colourway", "C2").unwrap();
+        clear_config_value(&mut cfg, "archie.accessory").unwrap();
+        assert_eq!(config_value(&cfg, "archie.accessory").unwrap(), None);
+        assert_eq!(config_value(&cfg, "archie.colourway").unwrap().as_deref(), Some("C2"));
     }
 
     #[test]

@@ -217,3 +217,76 @@ fn test_explicit_limit_flag_overrides_persisted_config_limit() {
         "expected explicit --limit 4 to override the persisted config default of 2"
     );
 }
+
+#[test]
+fn test_archie_config_keys_round_trip_via_binary() {
+    let temp = tempdir().unwrap();
+    let config_path = temp.path().join("config.toml");
+
+    // Typed lowercase, stored canonical: the reply names what was saved, not what was typed.
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .env("AGENTWORTH_CONFIG_PATH", &config_path)
+        .args(["config", "set", "archie.colourway", "c4"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Saved archie.colourway = C4"));
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .env("AGENTWORTH_CONFIG_PATH", &config_path)
+        .args(["config", "set", "archie.accessory", "goggles"])
+        .assert()
+        .success();
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .env("AGENTWORTH_CONFIG_PATH", &config_path)
+        .args(["config", "get", "archie.accessory"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("goggles"));
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .env("AGENTWORTH_CONFIG_PATH", &config_path)
+        .args(["config", "list", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"archie.accessory\": \"goggles\""))
+        .stdout(predicate::str::contains("\"archie.colourway\": \"C4\""));
+}
+
+/// The committed fixture is a hand-written config.toml in the shape a real one takes.
+/// It is here so a serde rename or a field reorder that silently stops parsing an
+/// existing user's file fails a test instead of shipping.
+#[test]
+fn test_reads_a_hand_written_config_file() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/config-with-archie.toml");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .env("AGENTWORTH_CONFIG_PATH", &fixture)
+        .args(["config", "list", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"limit\": 25"))
+        .stdout(predicate::str::contains("\"period\": \"week\""))
+        .stdout(predicate::str::contains("\"archie.accessory\": \"goggles\""))
+        .stdout(predicate::str::contains("\"archie.colourway\": \"C2\""));
+}
+
+#[test]
+fn test_archie_config_rejects_a_kit_that_does_not_exist() {
+    let temp = tempdir().unwrap();
+    let config_path = temp.path().join("config.toml");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .env("AGENTWORTH_CONFIG_PATH", &config_path)
+        .args(["config", "set", "archie.accessory", "monocle"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
+}

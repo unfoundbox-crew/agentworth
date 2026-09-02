@@ -30,6 +30,8 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
+use crate::app::config;
+
 use super::archaeology::{compute_archaeology_highlights, ArchaeologyHighlights};
 use super::live_tail::LiveTailEvent;
 use super::static_files::serve_static_or_spa;
@@ -345,6 +347,20 @@ pub fn route_entries() -> Vec<RouteEntry> {
             description: "Trigger a scanner background sync (body: paths, force)",
             query_params: &[],
             handler: post(post_scan_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/config",
+            description: "Persisted CLI defaults from config.toml, every key present and unset ones null",
+            query_params: &[],
+            handler: get(get_config_handler),
+        },
+        RouteEntry {
+            method: "POST",
+            path: "/config",
+            description: "Write a partial set of persisted CLI defaults (body: any of json, limit, period, archie.accessory, archie.colourway; null clears a key)",
+            query_params: &[],
+            handler: post(post_config_handler),
         },
         RouteEntry {
             method: "POST",
@@ -1199,6 +1215,80 @@ async fn post_scan_handler(
     })?;
 
     Ok(Json(summary))
+}
+
+/// GET /api/config -> the persisted CLI defaults, every key present and unset ones null
+async fn get_config_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
+{
+    let (path, cfg) = read_config().map_err(config_read_error)?;
+    Ok(Json(config::config_as_json(&path, &cfg)))
+}
+
+/// POST /api/config -> writes a partial set of keys into the same config.toml
+/// `agentworth config set` writes, through the same validation. Unknown keys are a 400
+/// rather than a silent no-op: this is the only write route that persists a preference,
+/// and a typo that appears to succeed is worse than one that fails.
+async fn post_config_handler(
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let object = body.as_object().ok_or_else(|| {
+        bad_request("body must be a JSON object of config keys")
+    })?;
+
+    let (path, mut cfg) = read_config().map_err(config_read_error)?;
+
+    for (key, value) in object {
+        // GET returns config_path alongside the keys; accepting it back unchanged means a
+        // client can round-trip the whole object without stripping a field first.
+        if key == "config_path" {
+            continue;
+        }
+        if !config::config_keys().contains(&key.as_str()) {
+            return Err(bad_request(&format!(
+                "unknown config key {:?}. Valid keys: {}",
+                key,
+                config::config_keys().join(", ")
+            )));
+        }
+
+        let outcome = match value {
+            serde_json::Value::Null => config::clear_config_value(&mut cfg, key),
+            serde_json::Value::Bool(b) => config::apply_config_value(&mut cfg, key, &b.to_string()),
+            serde_json::Value::Number(n) => config::apply_config_value(&mut cfg, key, &n.to_string()),
+            serde_json::Value::String(s) => config::apply_config_value(&mut cfg, key, s),
+            _ => Err(anyhow::anyhow!(
+                "invalid value for {:?}: expected a string, number, boolean or null",
+                key
+            )),
+        };
+        outcome.map_err(|e| bad_request(&e.to_string()))?;
+    }
+
+    config::save_config(&cfg).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed to write config: {}", e) })),
+        )
+    })?;
+
+    Ok(Json(config::config_as_json(&path, &cfg)))
+}
+
+fn read_config() -> Result<(PathBuf, config::CliConfig)> {
+    let path = config::config_file_path()?;
+    let cfg = config::load_config()?;
+    Ok((path, cfg))
+}
+
+fn config_read_error(e: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": format!("Failed to read config: {}", e) })),
+    )
+}
+
+fn bad_request(message: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": message })))
 }
 
 /// POST /api/export/:id -> exports trace with optional redaction in JSON or ATIF format
