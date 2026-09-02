@@ -135,6 +135,7 @@ worth drawing.
 | F | `beliefs.md` | `claim_check` | D's absolute-path anchoring, which the same-file claims reuse |
 | G | `efficiency-receipts.md` | `repeat_check`, `fanout_reads` | nothing — the P0 experiment is done and it picked the detector |
 | H | `cli-grammar.md` | every tool renamed to match the CLI noun | the open CLI branches, which the rename would otherwise sit under |
+| I | `spacepilot-loop.md` | `--route`, `--resolve-entities`, `--summarize` (each a call to SpacePilot) | the contract, then `asks.md`'s tier 2 |
 
 ### Why that order
 
