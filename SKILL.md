@@ -232,9 +232,11 @@ agentworth receipt session_8f12ac --format svg --output ./receipt.svg
 - `agentworth search <QUERY> [--kind <category>] [--min-score <0.0-1.0>]`: Semantic vector search across trajectory turns.
 - `agentworth usage [--period <day|week|month>] [--pacing] [--hours N]`: Detailed token burn rate and 5-hour pacing analysis.
 - `agentworth blame <FILE_PATH>`: Reverse-traces file modifications back to the exact agent prompt and session that authored them.
+- `agentworth handoff [SESSION_ID | --last] [--markdown] [--redact] [--json]`: Hands a session over — what it said it would do and never did, what it said it decided, which files changed, which commands ran and how they ended, the outcome rung reached, and how often the context was compacted. Every line carries a sequence number or a timestamp. Defaults to the newest session indexed for the current directory's repository. `--markdown` emits exactly what the `session_handoff` MCP tool returns.
+- `agentworth loose-ends [SESSION_ID | --last] [--prompt] [--json]`: The handoff's loose-ends section alone. `--prompt` prints a copyable brief for whatever agent already has the repository open — AgentWorth reports the gap and never writes the fix.
 - `agentworth doctor`: Validates local adapter source paths, SQLite schema integrity, and parser health.
 - `agentworth serve [--port 3000] [--open]`: Launches the local forensic API server and Web UI.
-- `agentworth mcp`: Starts a read-only MCP server over stdio (`sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`), so a coding agent can query this machine's session index mid-session. Register once with `claude mcp add agentworth --scope user -- agentworth mcp`.
+- `agentworth mcp`: Starts a read-only MCP server over stdio (`sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `session_handoff`, `carry_forward`), so a coding agent can query this machine's session index mid-session — and open a session with `carry_forward` or end one with `session_handoff`. Register once with `claude mcp add agentworth --scope user -- agentworth mcp`.
 
 ---
 

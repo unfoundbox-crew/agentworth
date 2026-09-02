@@ -1,6 +1,13 @@
 # Handoff
 
-Status: proposed, measured 2026-09-02.
+Status: built, PR #TBD (2026-09-02). Shipped as the `session_handoff` and
+`carry_forward` MCP tools, `agentworth handoff` and `agentworth loose-ends` on
+the CLI, and `agentworth_outcomes::loose_ends` — the TypeScript detector ported
+to Rust. What was designed below and what actually shipped differ in four
+places; they are marked **Shipped:** in place rather than rewritten, so the
+design record still reads as it was written.
+
+The rest of this document is the design as measured on 2026-09-02.
 
 ## The one-line version
 
@@ -165,6 +172,47 @@ answer to one `repo` value, which is what carry-forward wants and what a
    this; the index does not.
 4. A markdown renderer with a real line budget — 60 lines means truncating the
    file list, not emitting 200 lines and apologising.
+
+**Shipped:**
+
+1. Still empty, and a separate branch is filling it. The tool does not wait: an
+   absent prompt renders as "first prompt not indexed yet" and puts
+   `prompt_preview_empty` in `gaps`.
+2. Done — `crates/outcomes/src/loose_ends.rs`, verified sentence-for-sentence
+   against the TypeScript in node. Two things the port had to get right: the
+   25..=240 length window is measured in UTF-16 units, because Rust byte length
+   would move the window for any non-ASCII transcript; and the `(?<=[.!?])\s+`
+   split is hand-rolled, because `regex` has no lookbehind. The TypeScript is
+   still there and still the dashboard's path — deleting it needs an `/api`
+   route the dashboard can call, which is not in this change.
+3. **Not built, and the premise was wrong.** "The events hold this" is not true
+   for Claude Code: `crates/adapters/src/claude.rs` builds every `ShellCommand`
+   with `exit_code: None`, because a `Bash` tool call records the command that
+   was requested and its result arrives as a separate event. Persisting an
+   index of a field that is always null buys nothing. Instead the "Ran" section
+   correlates tool call to tool result at read time and falls back to the
+   harness's own `is_error` flag, which is a weaker receipt than an exit code
+   and says so on the line: "reported an error, no exit code recorded". Getting
+   real exit codes is adapter work, not index work.
+4. Done — `apps/cli/src/handoff/markdown.rs`. The budget is allocated before
+   anything is written: every section gets one row before any gets a second,
+   truncated sections say how many rows they dropped, and a section that could
+   not be afforded at all is named rather than vanishing.
+
+### Also shipped, not in the design above
+
+- **A "Said it decided" section.** Sentences that state a choice was made,
+  quoted verbatim with their sequence number. It does not contradict "the human
+  owns the judgment" below: it decides nothing, summarises nothing, and claims
+  nothing is current. The heading says "said it decided" for that reason, and
+  the "Not in this handoff" note still ships underneath it.
+- **`agentworth handoff` and `agentworth loose-ends` on the CLI.** The spec is
+  MCP-only. `README.md` and `SKILL.md` had claimed `agentworth loose-ends`
+  existed since #44 when nothing on the CLI could reach the detector; it exists
+  now.
+- **`Storage::list_sessions_for_repo`**, backing `carry_forward` and the
+  cwd-relative default. `repo` is still not a stored column — the scan is
+  bounded and reports `scan_exhausted` when the bound was hit.
 
 ## Deliberately not built
 

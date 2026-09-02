@@ -9,8 +9,7 @@
 | `cache-economics.md` | built | #42 |
 | `context-composition.md` | built | #46 |
 | `compaction.md` | built | #57 (dashboard pane), #62 (per-session tracking) — session list still doesn't show "compacted N times" |
-| `dropped-commitments.md` | built | #44, `agentworth loose-ends` — carry-forward over MCP not yet done |
-| `loose-ends.md` | built | #44, describes the shipped `agentworth loose-ends` command |
+| `dropped-commitments.md` | built | #44 (dashboard), #TBD — detector in Rust, `agentworth loose-ends`, and carry-forward over MCP |
 | `mcp-server.md` | built | #56 |
 | `local-search.md` | draft, not built | precondition met — MCP server shipped 2026-09-02 (#56) |
 | `archie.md` | proposed (umbrella spec) | — |
@@ -18,7 +17,7 @@
 | `questions.md` | proposed | — |
 | `verified-outcome-rate.md` | proposed, measured | — |
 | `suspect-commits.md` | proposed, measured | — |
-| `handoff.md` | proposed, measured | — |
+| `handoff.md` | built | #TBD — `session_handoff`, `carry_forward`, `agentworth handoff`; `prompt_preview` still unfilled and reported as a gap |
 | `compaction-diff.md` | proposed, measured | — |
 | `market-autofix.md` | research doc, not a build item | — |
 
@@ -120,7 +119,7 @@ worth drawing.
 | :-- | :--- | :--- | :--- |
 | A | `capability-matrix.md` (in `docs/`, not here) | — | nothing, it is written |
 | B | `verified-outcome-rate.md` | `outcome_rate` | one aggregate query |
-| C | `handoff.md` | `session_handoff`, `carry_forward` | `prompt_preview`, and loose ends ported to Rust |
+| C | `handoff.md` — **built, #TBD** | `session_handoff`, `carry_forward` | loose ends are ported; `prompt_preview` is still empty and now shows as a `gaps` entry rather than blocking the tool |
 | D | `suspect-commits.md` | `suspect_commits` | absolute-path filtering, then a `session_risk` table |
 | E | `compaction-diff.md` | `forgotten_context` | stored compaction round boundaries |
 
@@ -138,9 +137,16 @@ across models, which says the codebase matters more than the model — the
 opposite of what a model leaderboard would suggest.
 
 **C is third because it removes the daily chore.** 338 hand-written handoff
-files sit under `~/code`, 78 in the last eight days. It is third rather than
-first because it is gated on `prompt_preview` — item 2 of the table above,
-never filled, and the one field a handoff cannot open without.
+files sit under `~/code`, 78 in the last eight days. It was sequenced third
+because it looked gated on `prompt_preview` — item 2 of the table above, never
+filled, and the one field a handoff cannot open without.
+
+**Built anyway, and the gate turned out to be softer than it read.** An empty
+`prompt_preview` renders as "first prompt not indexed yet" and lands in `gaps`
+as `prompt_preview_empty`, so the document is honest about the line it is
+missing instead of being blocked on it. Everything else the spec asked for is
+assembled from rows. Fill `prompt_preview` and every handoff gets its title
+with no further work here.
 
 **D is fourth because its naive version is wrong.** Measured on this repo's
 main, the obvious join flags 33% of commits and nine of ten sampled flags are
