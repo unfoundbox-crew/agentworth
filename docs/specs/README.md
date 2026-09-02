@@ -23,6 +23,7 @@
 | `market-autofix.md` | research doc, not a build item | — |
 | `beliefs.md` | proposed, measured | — |
 | `efficiency-receipts.md` | proposed, measured | — |
+| `cli-grammar.md` | decided 2026-09-02, not built | — |
 
 Nineteen specs sit beside this file. They are independent of each other but not of
 the backend, and two of them are worth less than they look until a bug lands
@@ -132,6 +133,7 @@ worth drawing.
 | E | `compaction-diff.md` — **built, #83** | `forgotten_context` | nothing left: the round boundaries are stored and backfilled |
 | F | `beliefs.md` | `claim_check` | D's absolute-path anchoring, which the same-file claims reuse |
 | G | `efficiency-receipts.md` | `repeat_check`, `fanout_reads` | nothing — the P0 experiment is done and it picked the detector |
+| H | `cli-grammar.md` | every tool renamed to match the CLI noun | the open CLI branches, which the rename would otherwise sit under |
 
 ### Why that order
 
@@ -182,6 +184,11 @@ child) and `repeat_check`'s `SIBLING_HAS_IT` verdict (called before one
 re-read); the person gets one line in the receipt, nothing more. Nothing
 blocks it, but F is smaller and G's own experiment says the
 urgency is lower than the question sounded.
+
+**H builds nothing new — it makes the thirty-two commands guessable.** Nouns
+first, then completions over them, then a TUI that is the same grammar with a
+cursor. It waits on the open CLI branches because the rename touches every
+dispatch arm, and rebasing four branches onto it costs more than waiting.
 
 **E is last because it needs a new table and serves 4% of sessions.** It is
 also the only one nothing else can do: 402 decision-shaped sentences went into
