@@ -3510,11 +3510,11 @@ mod tests {
         assert_eq!(studio_row.input_tokens, 500);
     }
 
-    /// Reproduces the truncation bug a real 0.1.14 run hit: `--period day` reported "13 days
-    /// * 910 sessions" when 40 days were actually indexed, because the old row-count `LIMIT`
-    /// let multi-adapter days consume the row budget meant for whole periods. Two adapters,
-    /// one session each, every day for 40 days -- so every period has 2 rows, and the default
-    /// day limit of 30 must keep the 30 *newest days* (60 rows), not the first 30 rows (15 days).
+    /// Reproduces the truncation bug a real 0.1.14 run hit: `--period day` reported "13 days,
+    /// 910 sessions" when 40 days were actually indexed, because the old row-count `LIMIT` let
+    /// multi-adapter days consume the row budget meant for whole periods. Two adapters, one
+    /// session each, every day for 40 days -- so every period has 2 rows, and the default day
+    /// limit of 30 must keep the 30 newest days (60 rows), not the first 30 rows (15 days).
     #[test]
     fn test_usage_report_limit_counts_periods_not_rows() {
         let storage = Storage::open_in_memory().expect("open storage");
