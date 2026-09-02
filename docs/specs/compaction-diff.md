@@ -1,6 +1,6 @@
 # Compaction diff
 
-Status: built, PR #79 (2026-09-02). Measured 2026-09-02. Shipped as the
+Status: built, PR #83 (2026-09-02). Measured 2026-09-02. Shipped as the
 `forgotten_context` MCP tool, `agentworth forgotten`, and the handoff's
 "Decided, then compacted away" section.
 
@@ -179,7 +179,7 @@ Revisit when there is a measured precision number for the regex to beat.
 
 ## New work
 
-All three built in #79.
+All three built in #83.
 
 1. Compaction round boundaries as a stored artifact. `compaction_count` and
    `compaction_tokens_dropped` exist since #62; the line offsets of each round

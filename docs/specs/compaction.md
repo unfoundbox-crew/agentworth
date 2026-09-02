@@ -2,7 +2,7 @@
 
 Status: built, #57 (dashboard pane) and #62 (per-session tracking). The
 asymmetry this document asserts as an observation — summaries keep conclusions
-and lose reasons — was measured in `compaction-diff.md` and acted on in #79:
+and lose reasons — was measured in `compaction-diff.md` and acted on in #83:
 the dropped decisions are recoverable now, via `forgotten_context`.
 Follow-up: the session list does not yet show "compacted N times".
 
