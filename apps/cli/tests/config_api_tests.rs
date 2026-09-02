@@ -157,9 +157,11 @@ async fn only_a_page_served_from_this_machine_may_read_the_api_cross_origin() {
     let refused = [
         "https://evil.example",
         "http://evil.example",
+        // The two that a naive `contains("localhost")` or a bad port split would let in.
         "http://localhost.evil.example",
         "http://notlocalhost",
         "https://localhost:5174",
+        "http://localhost:",
         "null",
     ];
 

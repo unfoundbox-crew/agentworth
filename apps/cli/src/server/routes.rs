@@ -389,9 +389,13 @@ fn is_local_origin(origin: &axum::http::HeaderValue) -> bool {
     let Some(authority) = origin.strip_prefix("http://") else {
         return false;
     };
+    // Split a trailing `:port` off, and only that. A bare IPv6 literal is full of
+    // colons, but the text after its last one always ends in `]` -- so "everything
+    // after the last colon is digits" is what separates `[::1]:8080` (a port to strip)
+    // from `[::1]` (no port). An empty port cannot pass: `all` on nothing is true, so
+    // that is checked first.
     let host = match authority.rsplit_once(':') {
-        // An IPv6 literal ends in `]`, so a colon inside one is not a port separator.
-        Some((head, port)) if !head.ends_with(']') && port.chars().all(|c| c.is_ascii_digit()) => head,
+        Some((head, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => head,
         _ => authority,
     };
     matches!(host, "localhost" | "127.0.0.1" | "[::1]")
