@@ -3175,7 +3175,15 @@ mod tests {
         )
         .unwrap();
 
-        let scanner = Scanner::new(storage.clone());
+        // `Scanner::new` registers every adapter, and more than one of them can match this
+        // same generic-looking JSONL well enough to also index it under its own derived
+        // session_id -- scoping to the one adapter this fixture is actually shaped for is
+        // what keeps this a single-session fixture (mirrors
+        // `pr_blame::tests::test_annotate_pr_files_prices_non_sonnet_model_correctly`).
+        let scanner = Scanner::with_adapters(
+            vec![Box::new(agentworth_adapters::ClaudeCodeAdapter::new())],
+            storage.clone(),
+        );
         let summary = scanner
             .run_scan(
                 &ScanOptions { custom_paths: vec![session_path.clone()], force: true, ..Default::default() },
