@@ -7,13 +7,13 @@ A dashboard needs a human to open it, read it, and retype what mattered. That
 human is the bottleneck. A nicer chart does not remove a person from the loop —
 it gives them a nicer screen to transcribe from.
 
-`agentworth mcp` is a read-only stdio MCP server. The next session asks
+`archie mcp` is a read-only stdio MCP server. The next session asks
 directly, in the same turn it needs the answer, and gets structured data back.
 
 ## Claude Code
 
 ```bash
-claude mcp add agentworth --scope user -- agentworth mcp
+claude mcp add agentworth --scope user -- archie mcp
 ```
 
 `--scope user` matters more here than for a typical MCP server. The point is a
@@ -53,18 +53,18 @@ session logs.
 
 | Tool | What it answers |
 | :--- | :--- |
-| `sessions_find` | Filter the index by adapter, model, repo, time or outcome. |
-| `session_get` | One session with its events, tokens and outcome rung. |
-| `blame_find` | Which session, model and prompt produced a line of code. |
-| `usage_summary` | Tokens and cost rolled up by day, week or month. |
-| `pacing_window` | Throughput over a moving window. |
-| `coverage_stats` | Which adapters are detected and what they yield. |
-| `outcome_rate` | Verified-outcome rate by model, adapter or repo, with an `n` floor. |
+| `session_list` | Filter the index by adapter, model, repo, time or outcome. |
+| `session_show` | One session with its events, tokens and outcome rung. |
+| `repo_blame` | Which session, model and prompt produced a line of code. |
+| `stats_usage` | Tokens and cost rolled up by day, week or month. |
+| `window_show` | Throughput over a moving window. |
+| `agent_list` | Which adapters are detected and what they yield. |
+| `stats_outcomes` | Verified-outcome rate by model, adapter or repo, with an `n` floor. |
 | `session_handoff` | What a session promised, decided and did not finish. |
-| `carry_forward` | What the previous sessions in this repo left for this one. |
-| `forgotten_context` | Decisions compaction dropped, returned verbatim with receipts. |
+| `session_carry_forward` | What the previous sessions in this repo left for this one. |
+| `session_forgotten` | Decisions compaction dropped, returned verbatim with receipts. |
 | `session_asks` | Where a question's answer already landed. |
-| `suspect_commits` | Commits whose session never proved anything. |
+| `repo_suspect` | Commits whose session never proved anything. |
 
 Full schemas: the [Reference](/docs/reference/).
 
@@ -75,22 +75,22 @@ Redacted output is the default everywhere event or file content comes back.
 
 ## A session's first and last tool call
 
-Open with `carry_forward`, so the session starts knowing what the last few did.
+Open with `session_carry_forward`, so the session starts knowing what the last few did.
 Close with `session_handoff`, so the next one does. If the session compacted in
-between, `forgotten_context` recovers what its own summaries dropped.
+between, `session_forgotten` recovers what its own summaries dropped.
 
-No tool scans. Run `agentworth scan` yourself if the index looks stale.
+No tool scans. Run `archie scan` yourself if the index looks stale.
 
 ## What to run
 
 ```bash
-claude mcp add agentworth --scope user -- agentworth mcp
-agentworth mcp
-agentworth scan
-agentworth doctor --self-test
+claude mcp add agentworth --scope user -- archie mcp
+archie mcp
+archie scan
+archie doctor --self-test
 ```
 
-`agentworth mcp` on its own speaks the protocol on stdin and stdout, which is
+`archie mcp` on its own speaks the protocol on stdin and stdout, which is
 how you check the binary is reachable. `doctor --self-test` runs the real
 workflow end to end, including an MCP round trip, and exits non-zero if any step
 fails.

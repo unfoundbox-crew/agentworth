@@ -7,7 +7,7 @@ You merge work you did not watch. Subagents write most of it, and by the time
 you look, the diff reads fine and the session behind it is 20,000 events you
 will never read.
 
-`agentworth suspect` does not review the diff. It asks a different question:
+`archie repo suspect` does not review the diff. It asks a different question:
 which of these commits were written by a session that never got above rung 2?
 
 ## How a commit gets flagged
@@ -53,15 +53,15 @@ something is actually suspect. A silent hook means a clean branch.
 separately when you want it different from `--since`. `--repo` points at a
 checkout other than the current directory.
 
-Over MCP the same report is `suspect_commits`.
+Over MCP the same report is `repo_suspect`.
 
 ## What to run
 
 ```bash
-agentworth suspect
-agentworth suspect --since origin/main
-agentworth suspect --repo ~/code/example --branch feat/x
-agentworth suspect --hook
-agentworth suspect --quiet
-agentworth suspect --json
+archie repo suspect
+archie repo suspect --since origin/main
+archie repo suspect --repo ~/code/example --branch feat/x
+archie repo suspect --hook
+archie repo suspect --quiet
+archie repo suspect --json
 ```

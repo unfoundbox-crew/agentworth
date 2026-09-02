@@ -21,13 +21,13 @@ curl -fsSL https://agentworth.dev/install.sh | sh
 cargo install agentworth-cli
 ```
 
-`agwt` is a shorter alias for `agentworth`. Every command below accepts either
+`archie` is a shorter alias for `agentworth`. Every command below accepts either
 name.
 
 ## The first scan
 
 ```bash
-agentworth scan
+archie scan
 ```
 
 `scan` walks the adapter directories, fingerprints each source file, and indexes
@@ -35,7 +35,7 @@ what changed. Run it again tomorrow and it only reads the files that moved.
 `--force` re-reads everything, which you want after an upgrade that adds a new
 field.
 
-If nothing shows up, `agentworth doctor` prints what it looked for and what it
+If nothing shows up, `archie doctor` prints what it looked for and what it
 found.
 
 ## The first three commands
@@ -43,7 +43,7 @@ found.
 **Where the tokens went.**
 
 ```bash
-agentworth stats
+archie stats
 ```
 
 One screen: sessions indexed, adapters detected, tokens in and out, cache
@@ -52,8 +52,8 @@ reads, estimated spend, and the highest outcome rung reached.
 **Which sessions exist.**
 
 ```bash
-agentworth traces --limit 20
-agentworth traces --adapter claude_code --model opus
+archie session list --limit 20
+archie session list --adapter claude_code --model opus
 ```
 
 The newest sessions, with their repo, model, event count and outcome. Filter by
@@ -62,7 +62,7 @@ adapter or by a substring of the model name.
 **The explorer.**
 
 ```bash
-agentworth serve --open
+archie serve --open
 ```
 
 A local server on port 3000, and a browser tab pointed at it. Prompts, thinking
@@ -79,8 +79,8 @@ step.
 
 ```bash
 npx -y agentworth scan
-agentworth stats
-agentworth traces --limit 20
-agentworth serve --open
-agentworth doctor
+archie stats
+archie session list --limit 20
+archie serve --open
+archie doctor
 ```

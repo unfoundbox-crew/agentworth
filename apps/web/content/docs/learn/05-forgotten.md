@@ -15,7 +15,7 @@ Compaction is destructive from inside the harness and lossless from outside.
 The model's view is replaced by a summary; the full JSONL is untouched on disk.
 
 So the span that got dropped and the summary that replaced it both exist, side
-by side, in a file nothing reads. `agentworth forgotten` diffs them.
+by side, in a file nothing reads. `archie session forgotten` diffs them.
 
 ## What the loss looks like
 
@@ -58,15 +58,15 @@ have to interpret:
 - `nothing_decision_shaped_was_dropped`
 - `every_dropped_decision_survived_in_a_summary`
 
-Over MCP the same diff is `forgotten_context`, and the handoff carries it as its
+Over MCP the same diff is `session_forgotten`, and the handoff carries it as its
 "Decided, then compacted away" section.
 
 ## What to run
 
 ```bash
-agentworth forgotten --last
-agentworth forgotten --last --class reason
-agentworth forgotten --last --round 3 --limit 20
-agentworth forgotten --last --redact
-agentworth forgotten --last --json
+archie session forgotten --last
+archie session forgotten --last --class reason
+archie session forgotten --last --round 3 --limit 20
+archie session forgotten --last --redact
+archie session forgotten --last --json
 ```
