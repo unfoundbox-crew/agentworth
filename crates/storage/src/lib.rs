@@ -42,11 +42,37 @@ pub struct AggregateStats {
     pub last_session_at: Option<DateTime<Utc>>,
 }
 
-/// SQL predicate identifying a "stub" session: near-empty, no real activity. Single source of
-/// truth for both `list_sessions_filtered` and `get_aggregate_stats` so the two can't drift on
-/// what counts as a stub the way `total_sessions` and the traces list drifted before this const
-/// existed (docs/DECISION-INBOX.md, stats/stub-count-mismatch entry).
+/// SQL predicate identifying a "stub" session for *aggregate reporting*: near-empty, no real
+/// activity. Single source of truth for `list_sessions_filtered`, `get_aggregate_stats`, the
+/// usage views/rollups, and the pacing window, so none of them can drift on what counts as a
+/// stub the way `total_sessions` and the traces list drifted before this const existed
+/// (docs/DECISION-INBOX.md, stats/stub-count-mismatch entry).
+///
+/// Deliberately NOT used to decide whether the scanner stores a row at all (see
+/// `NEAR_EMPTY_EVENTS_SQL_PREDICATE` for that) -- excluding a session from a count and
+/// deleting it from the index outright are very different stakes. A real, multi-event session
+/// can legitimately carry zero recorded tokens (an adapter that doesn't capture usage, or a
+/// model invocation whose response never reported one) without being any less real: it still
+/// needs to be findable by `agentworth audit`/`autopsy`/`blind-spots`, which query with
+/// `include_stubs: true` specifically to see this population. Only `total_tokens` (not
+/// `total_events`) is allowed to make that call.
 const NON_STUB_SQL_PREDICATE: &str = "total_events > 1 AND total_tokens > 0";
+
+/// SQL predicate identifying a session as too near-empty to keep indexed at all, independent
+/// of token telemetry -- 0 or 1 normalized events total. This is the scanner's own, narrower
+/// bar for whether to store/prune a row (see `Storage::stub_sessions` and
+/// `Scanner::run_scan`), separate from `NON_STUB_SQL_PREDICATE`'s broader aggregate-reporting
+/// definition. The real-world shape this targets: a non-session file (config, cache, telemetry
+/// dump) or a truly-abandoned session with at most one normalized event -- not a genuine
+/// conversation that simply lacks captured usage numbers.
+const NEAR_EMPTY_EVENTS_SQL_PREDICATE: &str = "total_events <= 1";
+
+/// Rust-side mirror of `NEAR_EMPTY_EVENTS_SQL_PREDICATE`, for the scanner to apply the same
+/// "too thin to index" test to an in-memory trace before it ever reaches a row in `sessions`.
+/// Keep this in lockstep with the SQL string above.
+pub fn is_near_empty_session(total_events: usize) -> bool {
+    total_events <= 1
+}
 
 /// Ordering options when querying session traces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -504,7 +530,22 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_file_modifications_session ON file_modifications(session_id);
             CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
 
-            CREATE VIEW IF NOT EXISTS v_daily_usage AS
+            "#,
+        )?;
+
+        // The three usage views are dropped and recreated on every open rather than
+        // `CREATE VIEW IF NOT EXISTS` so a schema-definition change (like the stub
+        // predicate added here) actually takes effect on a database that already has them
+        // -- SQLite has no `CREATE OR REPLACE VIEW`, and `IF NOT EXISTS` would leave an
+        // existing view's SQL text frozen at whatever it was when first created. Same
+        // stub predicate as `list_sessions_filtered`/`get_aggregate_stats`
+        // (`NON_STUB_SQL_PREDICATE`): a session that fails it contributes zero tokens
+        // anyway (`total_tokens > 0` is part of the predicate), so only `session_count`
+        // actually changes here, not the token sums.
+        conn.execute_batch(&format!(
+            r#"
+            DROP VIEW IF EXISTS v_daily_usage;
+            CREATE VIEW v_daily_usage AS
             SELECT
                 DATE(started_at) AS period,
                 adapter,
@@ -517,11 +558,12 @@ impl Storage {
                 COALESCE(SUM(total_tokens), 0) AS total_tokens,
                 COALESCE(SUM(duration_seconds), 0.0) AS total_duration_seconds
             FROM sessions
-            WHERE started_at > '2020-01-01'
+            WHERE started_at > '2020-01-01' AND {NON_STUB_SQL_PREDICATE}
             GROUP BY DATE(started_at), adapter
             ORDER BY period DESC, total_tokens DESC;
 
-            CREATE VIEW IF NOT EXISTS v_weekly_usage AS
+            DROP VIEW IF EXISTS v_weekly_usage;
+            CREATE VIEW v_weekly_usage AS
             SELECT
                 strftime('%Y-W%W', started_at) AS period,
                 adapter,
@@ -534,11 +576,12 @@ impl Storage {
                 COALESCE(SUM(total_tokens), 0) AS total_tokens,
                 COALESCE(SUM(duration_seconds), 0.0) AS total_duration_seconds
             FROM sessions
-            WHERE started_at > '2020-01-01'
+            WHERE started_at > '2020-01-01' AND {NON_STUB_SQL_PREDICATE}
             GROUP BY strftime('%Y-W%W', started_at), adapter
             ORDER BY period DESC, total_tokens DESC;
 
-            CREATE VIEW IF NOT EXISTS v_monthly_usage AS
+            DROP VIEW IF EXISTS v_monthly_usage;
+            CREATE VIEW v_monthly_usage AS
             SELECT
                 strftime('%Y-%m', started_at) AS period,
                 adapter,
@@ -551,11 +594,11 @@ impl Storage {
                 COALESCE(SUM(total_tokens), 0) AS total_tokens,
                 COALESCE(SUM(duration_seconds), 0.0) AS total_duration_seconds
             FROM sessions
-            WHERE started_at > '2020-01-01'
+            WHERE started_at > '2020-01-01' AND {NON_STUB_SQL_PREDICATE}
             GROUP BY strftime('%Y-%m', started_at), adapter
             ORDER BY period DESC, total_tokens DESC;
             "#,
-        )?;
+        ))?;
 
         Ok(())
     }
@@ -614,16 +657,23 @@ impl Storage {
         Ok(false)
     }
 
-    /// Returns `(session_id, adapter, source_path)` for every indexed session with zero
-    /// recorded events and zero recorded tokens -- the shape left behind when a
-    /// non-session file (config, cache, telemetry dump, ...) was accepted as a session by
-    /// a since-tightened adapter. Used by the scanner to prune stubs whose source no
-    /// longer passes the adapter's current detection.
-    pub fn zero_activity_sessions(&self) -> Result<Vec<(String, String, String)>> {
+    /// Returns `(session_id, adapter, source_path)` for every indexed session that fails
+    /// `NEAR_EMPTY_EVENTS_SQL_PREDICATE` -- 0 or 1 normalized events total, the shape left
+    /// behind when a non-session file (config, cache, telemetry dump, ...) was accepted as a
+    /// session by a since-tightened adapter, or a real session that was abandoned after at
+    /// most one turn. Used by the scanner to prune stubs whose source no longer passes the
+    /// adapter's current detection. Broader than a plain zero-events check (catches the
+    /// one-event shape too), but deliberately does NOT look at `total_tokens` the way
+    /// `NON_STUB_SQL_PREDICATE` does for aggregate reporting -- a real multi-event session
+    /// with no captured token telemetry is still real and must stay indexed and findable by
+    /// `agentworth audit`/`autopsy`/`blind-spots` (which query with `include_stubs: true`
+    /// precisely to see it), even though it's excluded from `agentworth stats`/`usage`
+    /// aggregates by the separate, stricter predicate.
+    pub fn stub_sessions(&self) -> Result<Vec<(String, String, String)>> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut stmt = conn.prepare(
-            "SELECT session_id, adapter, source_path FROM sessions WHERE total_events = 0 AND total_tokens = 0",
-        )?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT session_id, adapter, source_path FROM sessions WHERE {NEAR_EMPTY_EVENTS_SQL_PREDICATE}",
+        ))?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
         })?;
@@ -1604,7 +1654,7 @@ impl Storage {
                 COALESCE(SUM(smu.input_tokens + smu.output_tokens + smu.cache_read_tokens + smu.cache_creation_tokens), 0) AS total_tokens
             FROM session_model_usage smu
             JOIN sessions s ON s.session_id = smu.session_id
-            WHERE s.started_at > '2020-01-01'
+            WHERE s.started_at > '2020-01-01' AND {NON_STUB_SQL_PREDICATE}
             GROUP BY {period_expr}, smu.model
             ORDER BY period DESC, total_tokens DESC
             LIMIT ?1
@@ -1667,7 +1717,11 @@ impl Storage {
         let window_start = anchor_time - chrono::Duration::hours(hours);
         let start_str = window_start.to_rfc3339();
 
-        let mut stmt = conn.prepare(
+        // Same stub exclusion as everywhere else (`NON_STUB_SQL_PREDICATE`): this window's
+        // `session_count` must describe the same population `agentworth stats`/`agentworth
+        // usage` do, and the token sums are unaffected since a stub contributes zero tokens
+        // by definition of the predicate.
+        let mut stmt = conn.prepare(&format!(
             r#"
             SELECT
                 COUNT(*),
@@ -1678,9 +1732,9 @@ impl Storage {
                 COALESCE(SUM(cache_creation_tokens), 0),
                 COALESCE(SUM(total_tokens), 0)
             FROM sessions
-            WHERE started_at >= ?1
+            WHERE started_at >= ?1 AND {NON_STUB_SQL_PREDICATE}
             "#,
-        )?;
+        ))?;
 
         let mut rows = stmt.query(params![start_str])?;
         let (session_count, total_events, input, output, cache_read, cache_creation, total) =
@@ -1698,18 +1752,20 @@ impl Storage {
                 (0, 0, 0, 0, 0, 0, 0)
             };
 
-        // Query active adapters in this window
-        let mut ad_stmt = conn.prepare(
-            "SELECT DISTINCT adapter FROM sessions WHERE started_at >= ?1 ORDER BY adapter",
-        )?;
+        // Query active adapters in this window -- same stub exclusion as the count above so
+        // an adapter doesn't show as "active" solely because of stub rows.
+        let mut ad_stmt = conn.prepare(&format!(
+            "SELECT DISTINCT adapter FROM sessions WHERE started_at >= ?1 AND {NON_STUB_SQL_PREDICATE} ORDER BY adapter",
+        ))?;
         let mut ad_rows = ad_stmt.query(params![start_str])?;
         let mut active_adapters = Vec::new();
         while let Some(r) = ad_rows.next()? {
             active_adapters.push(r.get(0)?);
         }
 
-        let mut mod_stmt =
-            conn.prepare("SELECT models_used FROM sessions WHERE started_at >= ?1")?;
+        let mut mod_stmt = conn.prepare(&format!(
+            "SELECT models_used FROM sessions WHERE started_at >= ?1 AND {NON_STUB_SQL_PREDICATE}",
+        ))?;
         let mut mod_rows = mod_stmt.query(params![start_str])?;
         let mut model_set = std::collections::BTreeSet::new();
         while let Some(r) = mod_rows.next()? {
@@ -2277,6 +2333,7 @@ mod tests {
         let prov1 = Provenance::new("/path/s1.jsonl", "claude_code", 100, 100, "fp1");
         let mut trace1 =
             AgentWorthTrace::new("sess_recent", "claude_code", prov1, now - Duration::hours(1));
+        trace1.stats.total_events = 10;
         trace1.stats.token_usage = TokenUsage::new(5000, 1000, 20000, 0);
         trace1.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
         storage.upsert_trace(&trace1).expect("upsert 1");
@@ -2284,6 +2341,7 @@ mod tests {
         let prov2 = Provenance::new("/path/s2.jsonl", "codex", 100, 100, "fp2");
         let mut trace2 =
             AgentWorthTrace::new("sess_old", "codex", prov2, now - Duration::hours(10));
+        trace2.stats.total_events = 10;
         trace2.stats.token_usage = TokenUsage::new(10000, 2000, 0, 0);
         trace2.stats.models_used = vec!["gpt-4o".to_string()];
         storage.upsert_trace(&trace2).expect("upsert 2");
@@ -3128,6 +3186,81 @@ mod tests {
             stats_incl.verified_outcomes_count, 2,
             "including stubs, both real_1 and stub_verified count as verified"
         );
+    }
+
+    /// `agentworth stats` and `agentworth usage` used to disagree on how many sessions were
+    /// indexed because `get_aggregate_stats` excluded stubs (`NON_STUB_SQL_PREDICATE`) while
+    /// the usage views (`v_daily_usage`/`v_weekly_usage`/`v_monthly_usage`) and
+    /// `get_model_usage` only filtered `started_at > '2020-01-01'` -- same word ("sessions"),
+    /// two different populations. Seeds one real session and two stub shapes (one event with
+    /// zero tokens; zero events and zero tokens) and asserts every one of these surfaces --
+    /// `get_aggregate_stats`, `get_daily_usage`, `get_monthly_usage`, and `get_model_usage` --
+    /// counts exactly the one real session, not three.
+    #[test]
+    fn test_stats_and_usage_surfaces_agree_on_non_stub_population() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let started_at = DateTime::parse_from_rfc3339("2026-09-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // Real session: multiple events, real token usage, one model.
+        let real_prov = Provenance::new("/path/real.jsonl", "claude_code", 100, 100, "fp_real");
+        let mut real = AgentWorthTrace::new("real_session", "claude_code", real_prov, started_at);
+        real.stats.total_events = 8;
+        real.stats.token_usage = TokenUsage::new(500, 100, 0, 0);
+        real.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
+        real.stats
+            .per_model_token_usage
+            .insert("claude-3-5-sonnet".to_string(), TokenUsage::new(500, 100, 0, 0));
+        storage.upsert_trace(&real).expect("upsert real session");
+
+        // Stub shape 1: exactly one event, zero tokens -- the shape PR #68's zero-events-only
+        // scanner prune left behind, and that the plain `started_at > '2020-01-01'` usage
+        // views counted before this fix.
+        let one_event_prov =
+            Provenance::new("/path/one_event.jsonl", "claude_code", 100, 100, "fp_one_event");
+        let mut one_event_stub =
+            AgentWorthTrace::new("one_event_stub", "claude_code", one_event_prov, started_at);
+        one_event_stub.stats.total_events = 1;
+        one_event_stub.stats.token_usage = TokenUsage::new(0, 0, 0, 0);
+        // Also carries a per-model usage row (a model was invoked but produced no usable
+        // tokens) -- without the predicate fix, `get_model_usage`'s JOIN would still pick
+        // this up via `COUNT(DISTINCT smu.session_id)` and inflate session_count to 2 even
+        // though this row is exactly the stub the other assertions in this test exclude.
+        one_event_stub.stats.models_used = vec!["claude-3-5-sonnet".to_string()];
+        one_event_stub
+            .stats
+            .per_model_token_usage
+            .insert("claude-3-5-sonnet".to_string(), TokenUsage::new(0, 0, 0, 0));
+        storage.upsert_trace(&one_event_stub).expect("upsert one-event stub");
+
+        // Stub shape 2: zero events, zero tokens.
+        let zero_event_prov =
+            Provenance::new("/path/zero_event.jsonl", "claude_code", 100, 100, "fp_zero_event");
+        let mut zero_event_stub =
+            AgentWorthTrace::new("zero_event_stub", "claude_code", zero_event_prov, started_at);
+        zero_event_stub.stats.total_events = 0;
+        zero_event_stub.stats.token_usage = TokenUsage::new(0, 0, 0, 0);
+        storage.upsert_trace(&zero_event_stub).expect("upsert zero-event stub");
+
+        // Fixture sanity check: 3 rows are actually indexed, stubs included.
+        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 3);
+
+        let stats = storage.get_aggregate_stats(false).expect("aggregate stats");
+        assert_eq!(stats.total_sessions, 1, "stats must count only the real session");
+
+        let daily = storage.get_daily_usage(None).expect("daily usage");
+        assert_eq!(daily.len(), 1, "one adapter/day bucket, for the real session only");
+        assert_eq!(daily[0].session_count, 1);
+
+        let monthly = storage.get_monthly_usage(None).expect("monthly usage");
+        assert_eq!(monthly.len(), 1);
+        assert_eq!(monthly[0].session_count, 1);
+
+        let model_usage = storage.get_model_usage("day", 10).expect("model usage");
+        assert_eq!(model_usage.len(), 1, "one model bucket, for the real session only");
+        assert_eq!(model_usage[0].session_count, 1);
+        assert_eq!(model_usage[0].model, "claude-3-5-sonnet");
     }
 
     /// Seeds one non-stub session for `get_outcome_rate` fixtures: real events/tokens (so it

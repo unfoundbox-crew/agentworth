@@ -1039,6 +1039,7 @@ async fn post_scan_handler(
     let options = ScanOptions {
         custom_paths: req.paths.unwrap_or_default(),
         force: req.force.unwrap_or(false),
+        ..Default::default()
     };
 
     let scanner = state.scanner.clone();

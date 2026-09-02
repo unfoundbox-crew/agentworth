@@ -957,6 +957,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
+            ..Default::default()
         };
 
         let detection = adapter.detect(&options).unwrap();
@@ -1010,6 +1011,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
+            ..Default::default()
         };
 
         let enumerated = adapter.enumerate(&options).unwrap();

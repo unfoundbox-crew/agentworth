@@ -883,6 +883,7 @@ mod tests {
             let options = ScanOptions {
                 custom_paths: vec![temp.path().to_path_buf()],
                 force: true,
+                ..Default::default()
             };
             let summary = scanner.run_scan(&options, |_, _| {}).expect("scan run");
             assert_eq!(summary.scanned_sessions, 1);
@@ -950,6 +951,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: true,
+            ..Default::default()
         };
         scanner.run_scan(&options, |_, _| {}).expect("scan run");
 
@@ -981,6 +983,7 @@ mod tests {
             let options = ScanOptions {
                 custom_paths: vec![temp.path().to_path_buf()],
                 force: true,
+                ..Default::default()
             };
             scanner.run_scan(&options, |_, _| {}).expect("scan run");
         }
@@ -1039,6 +1042,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: true,
+            ..Default::default()
         };
         let summary = seed_scanner
             .run_scan(&options, |_, _| {})

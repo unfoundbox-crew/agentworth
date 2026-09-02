@@ -7,7 +7,7 @@ use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
 use agentworth_outcomes::{outcome_kind_name, OutcomeHierarchyDetector};
 use agentworth_schema::AgentWorthTrace;
 use agentworth_scoring::TraceScorer;
-use agentworth_storage::{AggregateStats, Storage};
+use agentworth_storage::{is_near_empty_session, AggregateStats, Storage};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
@@ -92,13 +92,18 @@ impl Scanner {
         Ok(parse_result.trace)
     }
 
-    /// Deletes indexed sessions with zero events and zero tokens whose `(adapter,
-    /// source_path)` is not in `valid_sources` -- i.e. sessions no adapter's current
-    /// detection would produce again. Returns the number removed; individual delete
+    /// Deletes indexed sessions with at most one normalized event (see
+    /// `agentworth_storage::Storage::stub_sessions`) whose `(adapter, source_path)` is not in
+    /// `valid_sources` -- i.e. sessions no adapter's current detection would produce again.
+    /// Broader than the original zero-events-only check (a row with exactly one event is also
+    /// this thin, and previously survived this pass), but keeps #68's restriction to
+    /// undetectable sources: a source still actively enumerated is presumed a real, if thin,
+    /// session and left alone rather than deleted out from under the index. Returns the
+    /// number removed; individual delete
     /// failures are logged and skipped rather than aborting the pass.
-    fn prune_zero_activity_stubs(&self, valid_sources: &HashSet<(&str, String)>) -> usize {
+    fn prune_stub_sessions(&self, valid_sources: &HashSet<(&str, String)>) -> usize {
         let mut removed = 0;
-        match self.storage.zero_activity_sessions() {
+        match self.storage.stub_sessions() {
             Ok(stubs) => {
                 for (session_id, adapter_name, source_path) in stubs {
                     let key = (adapter_name.as_str(), source_path.clone());
@@ -112,12 +117,12 @@ impl Scanner {
                 }
                 if removed > 0 {
                     tracing::info!(
-                        "Removed {} zero-activity stub session(s) whose source no longer passes detection",
+                        "Removed {} stub session(s) whose source no longer passes detection",
                         removed
                     );
                 }
             }
-            Err(e) => warn!("Failed listing zero-activity sessions for cleanup: {}", e),
+            Err(e) => warn!("Failed listing stub sessions for cleanup: {}", e),
         }
         removed
     }
@@ -208,8 +213,8 @@ impl Scanner {
                     // A file that normalizes to zero events is not a session -- most
                     // often a non-session file an adapter's discovery still let through
                     // (config, cache, telemetry). Skip storing it rather than indexing a
-                    // permanent zero-activity stub; see `zero_activity_sessions` for the
-                    // matching cleanup of rows already stored under looser past detection.
+                    // permanent zero-activity stub, regardless of `include_stubs`: this
+                    // isn't a thin-but-real session, it's not a session at all.
                     if parse_result.trace.events.is_empty() {
                         if is_backfill {
                             // The row still has no derivable prompt_preview (no user
@@ -217,6 +222,24 @@ impl Scanner {
                             // too -- see the doc comment on `needs_backfill`.
                             skipped_unchanged += 1;
                         }
+                        continue;
+                    }
+
+                    // Beyond that parse-time backstop, also skip a session with exactly one
+                    // normalized event and nothing more -- still not a real conversation, just
+                    // one turn short of the zero-event case above. Deliberately narrower than
+                    // `agentworth stats`/`usage`'s own stub definition (`NON_STUB_SQL_PREDICATE`
+                    // also requires zero tokens): dropping a row from the index entirely is a
+                    // much bigger stakes than excluding it from an aggregate count, and a real,
+                    // multi-event session that simply has no captured token telemetry (an
+                    // adapter that doesn't report usage, or a model invocation whose response
+                    // never included one) must stay indexed -- `agentworth audit`/`autopsy`/
+                    // `blind-spots` all depend on exactly that population, querying with
+                    // `include_stubs: true` to see it. See `stub_sessions` for the matching
+                    // cleanup of rows already indexed under looser past filtering.
+                    // `ScanOptions::include_stubs` is the explicit opt-out for callers that
+                    // want even one-event rows kept.
+                    if !options.include_stubs && is_near_empty_session(parse_result.trace.stats.total_events) {
                         continue;
                     }
 
@@ -249,13 +272,15 @@ impl Scanner {
             }
         }
 
-        // Prune zero-activity stub sessions (config files, telemetry dumps, ... that an
-        // adapter's discovery previously accepted) whose source no longer passes any
-        // registered adapter's current detection. Only run on a full, unscoped scan:
-        // `all_sources` is the complete set of currently-valid sources in that case, so
-        // "not in it" reliably means "detection no longer accepts this file" rather than
-        // "outside today's narrower --path scope."
-        let stub_sessions_removed = if options.custom_paths.is_empty() {
+        // Prune stub sessions (config files, telemetry dumps, ... that an adapter's discovery
+        // previously accepted, or genuine sessions that never accrued real activity) whose
+        // source no longer passes any registered adapter's current detection. Only run on a
+        // full, unscoped scan (#68's escape hatch): `all_sources` is the complete set of
+        // currently-valid sources in that case, so "not in it" reliably means "detection no
+        // longer accepts this file" rather than "outside today's narrower --path scope." Also
+        // skipped when `include_stubs` was explicitly requested -- the caller wants the raw
+        // rows left alone.
+        let stub_sessions_removed = if options.custom_paths.is_empty() && !options.include_stubs {
             let valid_sources: HashSet<(&str, String)> = all_sources
                 .iter()
                 .map(|(adapter_idx, source)| {
@@ -265,7 +290,7 @@ impl Scanner {
                     )
                 })
                 .collect();
-            self.prune_zero_activity_stubs(&valid_sources)
+            self.prune_stub_sessions(&valid_sources)
         } else {
             0
         };
@@ -318,6 +343,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
+            ..Default::default()
         };
 
         let summary = scanner.run_scan(&options, |_, _| {}).expect("scan run");
@@ -327,12 +353,96 @@ mod tests {
         assert_eq!(summary.total_indexed_sessions, 0, "a zero-event file must not be stored");
     }
 
-    /// Item-4 cleanup: a zero-activity row left over from before an adapter's discovery
-    /// was tightened (or whose source file was simply deleted) should be pruned once its
-    /// `(adapter, source_path)` no longer appears among currently-valid sources. A row
-    /// still backed by a currently-valid source must survive.
+    /// A session with a single user message and no model response normalizes to one event --
+    /// it survives the zero-event backstop above but still fails `NEAR_EMPTY_EVENTS_SQL_PREDICATE`
+    /// (`total_events <= 1`). By default the scanner must not store it either, so the raw index
+    /// doesn't keep accumulating rows this thin. `include_stubs: true` is the explicit opt-out
+    /// that keeps storing it anyway.
+    ///
+    /// Also proves the boundary that matters most: a session with *more than one* event but
+    /// zero recorded tokens (an adapter that never captured usage) is a completely different
+    /// case and must still be stored by default -- `agentworth audit`/`autopsy`/`blind-spots`
+    /// all depend on exactly this population being indexed, even though it's excluded from
+    /// `agentworth stats`/`usage` aggregates by the separate, stricter `NON_STUB_SQL_PREDICATE`.
+    /// A regression here (checking `total_tokens` in this store-time gate too, not just
+    /// `total_events`) was caught by three existing tests going red: `autopsy`'s and the CLI
+    /// safety-audit tests' own real-session fixtures are exactly this shape (multiple events,
+    /// zero tokens because the fixture's assistant messages carry no `usage` field).
     #[test]
-    fn test_prune_zero_activity_stubs_removes_only_undetectable_rows() {
+    fn test_scanner_does_not_store_one_event_stub_by_default_but_keeps_tokenless_multi_event_sessions() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        let mut one_event_temp = tempfile::Builder::new()
+            .suffix(".jsonl")
+            .tempfile()
+            .unwrap();
+        let one_event_sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"hello"}
+"#;
+        one_event_temp.write_all(one_event_sample.as_bytes()).unwrap();
+
+        let options = ScanOptions {
+            custom_paths: vec![one_event_temp.path().to_path_buf()],
+            force: false,
+            ..Default::default()
+        };
+        let summary = scanner.run_scan(&options, |_, _| {}).expect("scan run");
+        assert_eq!(
+            summary.scanned_sessions, 0,
+            "a one-event session must not be stored by default"
+        );
+        assert_eq!(summary.total_indexed_sessions, 0);
+
+        let include_stubs_options = ScanOptions {
+            custom_paths: vec![one_event_temp.path().to_path_buf()],
+            force: true,
+            include_stubs: true,
+        };
+        let summary2 = scanner
+            .run_scan(&include_stubs_options, |_, _| {})
+            .expect("scan run with include_stubs");
+        assert_eq!(
+            summary2.scanned_sessions, 1,
+            "include_stubs: true must store it anyway"
+        );
+        assert_eq!(summary2.total_indexed_sessions, 1);
+
+        // A real, multi-event exchange whose assistant reply carries no `usage` field at all
+        // (no tokens ever recorded) -- must still be stored by default.
+        let mut tokenless_temp = tempfile::Builder::new()
+            .suffix(".jsonl")
+            .tempfile()
+            .unwrap();
+        let tokenless_sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"revert that change"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:02Z","content":[{"type":"text","text":"Reverted."}]}
+"#;
+        tokenless_temp.write_all(tokenless_sample.as_bytes()).unwrap();
+        let tokenless_options = ScanOptions {
+            custom_paths: vec![tokenless_temp.path().to_path_buf()],
+            force: false,
+            ..Default::default()
+        };
+        let tokenless_summary =
+            scanner.run_scan(&tokenless_options, |_, _| {}).expect("scan run");
+        assert_eq!(
+            tokenless_summary.scanned_sessions, 1,
+            "a multi-event session with zero recorded tokens must still be stored by default"
+        );
+    }
+
+    /// Item-4 cleanup: a stub row left over from before an adapter's discovery was
+    /// tightened (or whose source file was simply deleted) should be pruned once its
+    /// `(adapter, source_path)` no longer appears among currently-valid sources. A row
+    /// still backed by a currently-valid source must survive. Broader than the original
+    /// zero-events-only check: a one-event row is also this thin
+    /// (`NEAR_EMPTY_EVENTS_SQL_PREDICATE` is `total_events <= 1`) and must be pruned the
+    /// same way once its source is no longer detected -- regardless of token count, unlike
+    /// `agentworth stats`/`usage`'s separate, stricter stub definition.
+    #[test]
+    fn test_prune_stub_sessions_removes_only_undetectable_rows() {
         let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
         let scanner =
             Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
@@ -347,6 +457,26 @@ mod tests {
         let stale_trace = AgentWorthTrace::new("stale-stub", "claude_code", stale_provenance, Utc::now());
         storage.upsert_session(&stale_trace, None, None).expect("seed stale stub");
 
+        // Stale, but one event / zero tokens rather than fully empty -- must still be
+        // caught by the broadened predicate, not just the original zero-only check.
+        let stale_one_event_provenance = Provenance::new(
+            "/tmp/agentworth-test-stub/one-event.jsonl".to_string(),
+            "claude_code",
+            12,
+            0,
+            "deadbeef",
+        );
+        let mut stale_one_event_trace = AgentWorthTrace::new(
+            "stale-one-event-stub",
+            "claude_code",
+            stale_one_event_provenance,
+            Utc::now(),
+        );
+        stale_one_event_trace.stats.total_events = 1;
+        storage
+            .upsert_session(&stale_one_event_trace, None, None)
+            .expect("seed stale one-event stub");
+
         let live_provenance = Provenance::new(
             "/tmp/agentworth-test-stub/still-valid.jsonl".to_string(),
             "claude_code",
@@ -357,18 +487,19 @@ mod tests {
         let live_trace = AgentWorthTrace::new("live-stub", "claude_code", live_provenance, Utc::now());
         storage.upsert_session(&live_trace, None, None).expect("seed live stub");
 
-        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 2);
+        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 3);
 
         let mut valid_sources = HashSet::new();
         valid_sources.insert(("claude_code", "/tmp/agentworth-test-stub/still-valid.jsonl".to_string()));
 
-        let removed = scanner.prune_zero_activity_stubs(&valid_sources);
+        let removed = scanner.prune_stub_sessions(&valid_sources);
 
-        assert_eq!(removed, 1);
+        assert_eq!(removed, 2);
         let remaining = storage.get_aggregate_stats(true).unwrap();
         assert_eq!(remaining.total_sessions, 1);
         assert!(storage.get_session_by_id("live-stub").unwrap().is_some());
         assert!(storage.get_session_by_id("stale-stub").unwrap().is_none());
+        assert!(storage.get_session_by_id("stale-one-event-stub").unwrap().is_none());
     }
 
     #[test]
@@ -390,6 +521,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
+            ..Default::default()
         };
 
         // First scan: should scan 1 session
@@ -477,6 +609,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: false,
+            ..Default::default()
         };
 
         // Backfill scan: source is unchanged, but the row is missing prompt_preview, so it
@@ -518,6 +651,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: true,
+            ..Default::default()
         };
 
         let summary = scanner.run_scan(&options, |_, _| {}).expect("scan run");
@@ -557,6 +691,7 @@ mod tests {
         let options = ScanOptions {
             custom_paths: vec![temp.path().to_path_buf()],
             force: true,
+            ..Default::default()
         };
 
         let summary = scanner.run_scan(&options, |_, _| {}).expect("scan run");

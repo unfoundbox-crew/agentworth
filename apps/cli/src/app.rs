@@ -89,6 +89,10 @@ enum Commands {
         #[arg(short, long)]
         force: bool,
 
+        /// Keep storing/pruning near-empty stub sessions instead of filtering them out
+        #[arg(long)]
+        include_stubs: bool,
+
         /// Output scan results as formatted JSON
         #[arg(long)]
         json: bool,
@@ -536,8 +540,8 @@ pub fn run() -> Result<()> {
     let ui = crate::ui::Ui::detect(cli.no_color, cli.plain);
 
     match cli.command {
-        Commands::Scan { paths, force, json } => {
-            run_scan_command(paths, force, resolve_json(json), cli.db_path, &ui)?;
+        Commands::Scan { paths, force, include_stubs, json } => {
+            run_scan_command(paths, force, include_stubs, resolve_json(json), cli.db_path, &ui)?;
         }
         Commands::Stats { json } => {
             run_stats_command(resolve_json(json), cli.db_path, &ui)?;
@@ -753,6 +757,7 @@ fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
 fn run_scan_command(
     paths: Vec<PathBuf>,
     force: bool,
+    include_stubs: bool,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &crate::ui::Ui,
@@ -762,6 +767,7 @@ fn run_scan_command(
     let options = ScanOptions {
         custom_paths: paths,
         force,
+        include_stubs,
     };
 
     // Under a non-TTY nothing prints until the summary; the three-line block is redrawn in
@@ -2400,6 +2406,7 @@ mod tests {
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
         };
+        trace.stats.total_events = 2;
 
         trace.events.push(NormalizedEvent::new(
             1,

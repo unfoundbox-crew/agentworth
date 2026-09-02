@@ -63,6 +63,7 @@ fn test_scanner_with_nested_claude_project_directory() {
     let options = ScanOptions {
         custom_paths: vec![temp.path().to_path_buf()],
         force: false,
+        ..Default::default()
     };
 
     // 1. Initial scan
@@ -119,6 +120,7 @@ fn test_scanner_with_nested_claude_project_directory() {
     let force_options = ScanOptions {
         custom_paths: vec![temp.path().to_path_buf()],
         force: true,
+        ..Default::default()
     };
     let summary3 = scanner.run_scan(&force_options, |_, _| {}).unwrap();
     assert_eq!(summary3.discovered_sources, 2);
@@ -183,6 +185,7 @@ fn test_scanner_with_all_adapters_end_to_end() {
     let options = ScanOptions {
         custom_paths: vec![temp.path().to_path_buf()],
         force: false,
+        ..Default::default()
     };
 
     let summary = scanner.run_scan(&options, |_, _| {}).unwrap();
@@ -316,6 +319,7 @@ fn test_scanner_with_all_11_adapters_end_to_end() {
     let options = ScanOptions {
         custom_paths: vec![temp.path().to_path_buf()],
         force: false,
+        ..Default::default()
     };
 
     let summary = scanner.run_scan(&options, |_, _| {}).unwrap();
