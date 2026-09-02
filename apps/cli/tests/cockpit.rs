@@ -259,26 +259,37 @@ fn rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
 
 /// Opening must not scan.
 ///
-/// Measured end to end through the real binary, process start included, against an index
-/// with more sessions than any screen shows. What actually makes a 10k-session index open
-/// fast is the shape asserted below it -- every list screen reads a bounded slice -- and
-/// this is the timing that catches a screen that stops doing that. A 10k-file fixture is
-/// not built here: scanning ten thousand transcripts would dominate the test's own runtime
-/// and measure the scanner rather than the cockpit.
+/// Measured as the *marginal* cost: the same binary printing `--help`, which touches no
+/// index at all, against the same binary drawing the first screen. Subtracting the
+/// baseline takes process start, dynamic linking and clap out of the number, so this
+/// measures the index work and stays honest on a slow CI runner.
+///
+/// A ten-thousand-session fixture is not built here -- scanning ten thousand transcripts
+/// would dominate the test's own runtime and measure the scanner. What actually makes a
+/// large index open fast is the bound asserted below this, and this is the timing that
+/// catches a screen that stops honouring it.
 #[test]
 fn the_cockpit_opens_without_reading_the_index() {
     let (_t, db) = fixture(400);
 
-    // Warm the page cache the way a second run would find it.
+    // Warm the page cache and the binary the way a second run would find them.
+    let _ = run(&db, &["--help"], &[]);
     let _ = run(&db, &[], &[]);
 
     let start = Instant::now();
+    let _ = run(&db, &["--help"], &[]);
+    let baseline = start.elapsed();
+
+    let start = Instant::now();
     let out = run(&db, &[], &[]);
-    let elapsed = start.elapsed();
+    let total = start.elapsed();
     assert!(out.status.success());
+
+    let marginal = total.saturating_sub(baseline);
     assert!(
-        elapsed < OPEN_BUDGET,
-        "the overview took {elapsed:?}, over the {OPEN_BUDGET:?} budget"
+        marginal < OPEN_BUDGET,
+        "the first screen cost {marginal:?} of index work ({total:?} total against a \
+         {baseline:?} baseline), over the {OPEN_BUDGET:?} budget"
     );
 }
 

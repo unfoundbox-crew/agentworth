@@ -30,8 +30,9 @@ pub const LIST_LIMIT: usize = 50;
 pub const WINDOW_COUNT: usize = 12;
 pub const WINDOW_HOURS: i64 = 5;
 
-/// How long the cockpit is allowed to take to draw its first screen. Asserted against a
-/// fixture index in `apps/cli/tests/cockpit.rs`, the same shape as the Tab budget.
+/// How much index work the cockpit is allowed before its first screen, over and above what
+/// the same binary costs to start at all. Asserted against a fixture index in
+/// `apps/cli/tests/cockpit.rs`, the same shape as the Tab budget.
 pub const OPEN_BUDGET_MS: u128 = 900;
 
 // -----------------------------------------------------------------------------
