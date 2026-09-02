@@ -188,3 +188,21 @@ pub struct OutcomeRateParams {
     #[serde(default)]
     pub include_stubs: Option<bool>,
 }
+
+/// Parameters for the `session_handoff` tool (`docs/specs/handoff.md`).
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct SessionHandoffParams {
+    /// Session to hand over. Defaults to the most recent indexed session for the repository
+    /// this server process is running in, which is what an agent asking "what did I just do
+    /// here" means; pass one explicitly to reach any other session or repo.
+    pub session_id: Option<String>,
+    /// Line budget for the rendered markdown. Defaults to 60, hard ceiling 120.
+    pub max_lines: Option<usize>,
+    /// Include the "said it would, no evidence it did" section. Defaults to true.
+    pub include_loose_ends: Option<bool>,
+    /// Return unredacted paths, commands and quoted sentences. Defaults to false -- redacted
+    /// is the default for every tool that can carry event or file content
+    /// (docs/specs/mcp-server.md, "What it must not expose").
+    #[serde(default)]
+    pub include_raw: bool,
+}

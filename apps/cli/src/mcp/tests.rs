@@ -564,3 +564,181 @@ async fn test_outcome_rate_end_to_end_suppression_and_reason() {
     assert_eq!(value["baseline"]["n"], 5);
     assert_eq!(value["baseline"]["verified"], 3);
 }
+
+// -----------------------------------------------------------------------------
+// session_handoff (docs/specs/handoff.md)
+// -----------------------------------------------------------------------------
+
+use super::params::SessionHandoffParams;
+
+/// A real Claude Code transcript for one working session: a stated decision, a file edit, a
+/// test run and a commit (each a `Bash` tool call plus its result, which is how Claude Code
+/// records them), and a commitment that was stated and then handed straight back to the user.
+///
+/// Written to a real `projects/-Users-...` directory so `extract_repository_or_workspace`
+/// derives a stable repo key from it, the same key the handoff receipt reports.
+fn write_fixture_session(dir: &std::path::Path, session_id: &str, day: &str) -> std::path::PathBuf {
+    let project = dir.join("projects").join("-Users-x-code-unfoundbox-agentworth");
+    std::fs::create_dir_all(&project).expect("create project dir");
+
+    let lines = [
+        format!(r#"{{"type":"user","timestamp":"{day}T14:02:00Z","content":"port the loose-ends detector to Rust"}}"#),
+        format!(r#"{{"type":"assistant","timestamp":"{day}T14:03:00Z","model":"claude-opus-5","usage":{{"input_tokens":500,"output_tokens":120,"cache_read_input_tokens":200,"cache_creation_input_tokens":50}},"content":[{{"type":"text","text":"We decided to keep the exit-code index out of SQLite for now."}}]}}"#),
+        format!(r#"{{"type":"assistant","timestamp":"{day}T14:05:00Z","content":[{{"type":"tool_use","id":"t1","name":"Edit","input":{{"file_path":"crates/storage/src/lib.rs","old_string":"a","new_string":"b"}}}}]}}"#),
+        format!(r#"{{"type":"assistant","timestamp":"{day}T14:07:00Z","content":[{{"type":"tool_use","id":"t2","name":"Bash","input":{{"command":"cargo test -p agentworth-storage"}}}}]}}"#),
+        format!(r#"{{"type":"user","timestamp":"{day}T14:08:00Z","content":[{{"type":"tool_result","tool_use_id":"t2","content":"test result: ok. 12 passed; 0 failed"}}]}}"#),
+        format!(r#"{{"type":"assistant","timestamp":"{day}T14:09:00Z","content":[{{"type":"tool_use","id":"t3","name":"Bash","input":{{"command":"git commit -m 'feat: repo-scoped lookup'"}}}}]}}"#),
+        format!(r#"{{"type":"user","timestamp":"{day}T14:10:00Z","content":[{{"type":"tool_result","tool_use_id":"t3","content":"[main 9f3e1a2] feat: repo-scoped lookup"}}]}}"#),
+        format!(r#"{{"type":"assistant","timestamp":"{day}T14:12:00Z","content":[{{"type":"text","text":"I'll delete the stale worktree sk-ant-abcdefghijklmnopqrstuvwxyz012345 before the next scan."}}]}}"#),
+        format!(r#"{{"type":"user","timestamp":"{day}T14:13:00Z","content":"thanks, stop there"}}"#),
+    ];
+
+    let path = project.join(format!("{session_id}.jsonl"));
+    std::fs::write(&path, lines.join("\n")).expect("write fixture transcript");
+    path
+}
+
+/// Seeds one fixture session into `storage` and returns its id.
+fn seed_fixture_session(storage: &Storage, dir: &std::path::Path, session_id: &str, day: &str) {
+    let path = write_fixture_session(dir, session_id, day);
+    let prov = Provenance::new(
+        path.to_string_lossy().to_string(),
+        "claude_code",
+        4096,
+        1_756_000_000,
+        format!("sha256:{session_id}"),
+    );
+    let mut trace = AgentWorthTrace::new(
+        session_id,
+        "claude_code",
+        prov,
+        chrono::DateTime::parse_from_rfc3339(&format!("{day}T14:02:00Z"))
+            .unwrap()
+            .with_timezone(&Utc),
+    );
+    trace.stats.total_events = 9;
+    trace.stats.token_usage = TokenUsage::new(500, 120, 200, 50);
+    storage.upsert_trace(&trace).expect("seed fixture session");
+}
+
+fn handoff_params(session_id: &str) -> SessionHandoffParams {
+    SessionHandoffParams {
+        session_id: Some(session_id.to_string()),
+        max_lines: None,
+        include_loose_ends: None,
+        include_raw: false,
+    }
+}
+
+#[test]
+fn test_session_handoff_include_raw_defaults_false() {
+    let params: SessionHandoffParams =
+        serde_json::from_value(serde_json::json!({ "session_id": "abc" })).unwrap();
+    assert!(
+        !params.include_raw,
+        "redacted is the default for every tool that can carry event or file content"
+    );
+    assert_eq!(params.max_lines, None);
+    assert_eq!(params.include_loose_ends, None);
+}
+
+#[tokio::test]
+async fn test_session_handoff_unknown_session_is_not_found() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let err = server
+        .session_handoff(Parameters(handoff_params("no-such-session")))
+        .await
+        .expect_err("an unknown session id must not resolve to a blank handoff");
+    assert!(
+        err.message.contains("no-such-session"),
+        "the error must name the session that was asked for: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn test_session_handoff_assembles_the_whole_document_from_a_real_transcript() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd";
+    seed_fixture_session(&storage, dir.path(), id, "2026-09-01");
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let value = call_result_json(
+        server
+            .session_handoff(Parameters(SessionHandoffParams {
+                include_raw: true,
+                ..handoff_params(id)
+            }))
+            .await
+            .expect("handoff for a seeded session"),
+    );
+    let markdown = value["markdown"].as_str().expect("markdown");
+
+    assert!(markdown.contains("unfoundbox/agentworth"), "{markdown}");
+    assert!(markdown.contains("rung 4, commit_observed"), "{markdown}");
+    assert!(markdown.contains("crates/storage/src/lib.rs"), "{markdown}");
+    assert!(markdown.contains("cargo test -p agentworth-storage"), "{markdown}");
+    assert!(markdown.contains("out of SQLite"), "the stated decision is quoted: {markdown}");
+    assert!(markdown.contains("delete the stale worktree"), "the dropped commitment: {markdown}");
+    assert!(markdown.contains("## Not in this handoff"), "{markdown}");
+    assert!(markdown.contains(&format!("session {id}")), "the receipt names the session");
+    assert!(markdown.lines().count() <= 60, "the default budget is 60 lines");
+
+    // `prompt_preview` is not filled by the scanner yet, so the one line a handoff most needs
+    // is a stated gap rather than a guess.
+    let gaps: Vec<&str> = value["gaps"].as_array().unwrap().iter().map(|g| g.as_str().unwrap()).collect();
+    assert!(gaps.contains(&"prompt_preview_empty"), "{gaps:?}");
+    assert_eq!(value["receipt"]["redacted"], false);
+}
+
+#[tokio::test]
+async fn test_session_handoff_is_redacted_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd";
+    seed_fixture_session(&storage, dir.path(), id, "2026-09-01");
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let value = call_result_json(
+        server
+            .session_handoff(Parameters(handoff_params(id)))
+            .await
+            .expect("handoff for a seeded session"),
+    );
+    let markdown = value["markdown"].as_str().expect("markdown");
+
+    assert!(
+        !markdown.contains("sk-ant-abcdefghijklmnopqrstuvwxyz012345"),
+        "an API key quoted inside a loose end must not survive the default:\n{markdown}"
+    );
+    assert!(
+        !markdown.contains("unfoundbox/agentworth"),
+        "the session's own repository identity must be masked by default:\n{markdown}"
+    );
+    assert!(markdown.contains("delete the stale worktree"), "the claim itself survives");
+    assert_eq!(value["receipt"]["redacted"], true);
+    assert!(
+        !value["receipt"]["source_path"].as_str().unwrap().contains("unfoundbox/agentworth"),
+        "the receipt's own path is redacted too, on the same redactor instance"
+    );
+}
+
+#[tokio::test]
+async fn test_session_handoff_rejects_a_max_lines_out_of_range() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    for bad in [0usize, 121] {
+        let err = server
+            .session_handoff(Parameters(SessionHandoffParams {
+                max_lines: Some(bad),
+                ..handoff_params("anything")
+            }))
+            .await
+            .expect_err("out-of-range max_lines is rejected, not clamped");
+        assert!(err.message.contains("between 1 and 120"), "{}", err.message);
+    }
+}

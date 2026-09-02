@@ -94,14 +94,18 @@ fn js_length(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-/// Splits assistant text into sentences the way the TypeScript original's
-/// `text.split(/(?<=[.!?])\s+|\n+/)` does.
+/// Splits assistant text into sentences. Public because it is the one sentence splitter in
+/// the product -- anything else quoting a transcript verbatim (the handoff renderer's
+/// decision quotes, for one) has to cut on the same boundaries, or two surfaces quote the
+/// same message differently.
+///
+/// Cuts exactly where the TypeScript original's `text.split(/(?<=[.!?])\s+|\n+/)` cuts.
 ///
 /// Hand-rolled because the `regex` crate has no lookbehind: at each position, a whitespace run
 /// preceded by `.`/`!`/`?` is a delimiter (matching the first alternative, which is greedy over
 /// all whitespace including newlines), and otherwise a run of newlines is. Segments are trimmed
 /// and empties dropped, same as the `.map(trim).filter(Boolean)` that follows the split there.
-fn split_sentences(text: &str) -> Vec<&str> {
+pub fn split_sentences(text: &str) -> Vec<&str> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut out = Vec::new();
     let mut start = 0usize;

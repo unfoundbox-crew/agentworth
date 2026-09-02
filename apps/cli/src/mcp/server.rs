@@ -26,8 +26,11 @@ use serde_json::json;
 
 use super::params::{
     parse_rfc3339_opt, BlameFindParams, CoverageStatsParams, OutcomeRateParams,
-    PacingWindowParams, SessionGetParams, SessionsFindParams, UsagePeriodParam,
-    UsageSummaryParams,
+    PacingWindowParams, SessionGetParams, SessionHandoffParams, SessionsFindParams,
+    UsagePeriodParam, UsageSummaryParams,
+};
+use crate::handoff::{
+    self, render_markdown, HandoffOptions, HandoffReport, DEFAULT_MAX_LINES, MAX_LINES_CEILING,
 };
 
 /// Hard ceiling on `sessions_find`'s `limit`, so a remote model is forced to state how much
@@ -92,6 +95,58 @@ impl AgentWorthMcpServer {
 
     fn join_error(e: tokio::task::JoinError) -> McpError {
         McpError::internal_error(format!("tool task panicked or was cancelled: {e}"), None)
+    }
+
+    /// Loads and renders one session's handoff, applying the redaction default.
+    ///
+    /// Split out so the next tool to render a handoff cannot drift on the thing
+    /// that matters most here: `include_raw: false` builds one `Redactor::for_trace` instance
+    /// from the session's own trace and runs every field of the report through that same
+    /// instance, which is what makes the session's repository identity get masked across
+    /// paths, commands and quoted sentences rather than only one of them.
+    fn render_one(
+        storage: &Storage,
+        scanner: &Scanner,
+        session_id: &str,
+        max_lines: usize,
+        options: HandoffOptions,
+        include_raw: bool,
+    ) -> anyhow::Result<serde_json::Value> {
+        let (report, trace) = handoff::load_handoff(storage, scanner, session_id, options)?;
+        let report: HandoffReport = if include_raw {
+            report
+        } else {
+            report.redacted(&Redactor::new().for_trace(&trace))
+        };
+
+        Ok(json!({
+            "markdown": render_markdown(&report, max_lines),
+            "receipt": report.receipt,
+            "gaps": report.gaps,
+        }))
+    }
+
+    /// Validates a caller-supplied line budget rather than clamping it.
+    ///
+    /// Out of range is an error, not a silent clamp -- the same choice `sessions_find`'s
+    /// `limit` already makes, and for the same reason: a clamped answer looks complete.
+    fn validated_max_lines(max_lines: Option<usize>) -> Result<usize, McpError> {
+        match max_lines {
+            None => Ok(DEFAULT_MAX_LINES),
+            Some(n) if n == 0 || n > MAX_LINES_CEILING => Err(McpError::invalid_params(
+                format!("max_lines must be between 1 and {MAX_LINES_CEILING} (got {n})"),
+                None,
+            )),
+            Some(n) => Ok(n),
+        }
+    }
+
+    /// The repository this server process is running in, used when `session_handoff` is called
+    /// with no `session_id`. Derived the same way every other repo key in the product is, so a
+    /// worktree resolves to the repo it belongs to rather than to itself.
+    fn cwd_repo() -> Option<String> {
+        let cwd = std::env::current_dir().ok()?;
+        Some(extract_repository_or_workspace(&cwd.to_string_lossy()))
     }
 }
 
@@ -404,6 +459,65 @@ impl AgentWorthMcpServer {
 
         Self::json_result(&result)
     }
+
+    #[tool(
+        description = "The handoff for one session, written from rows rather than by a model: \
+                        what it said it would do and never did, what it said it decided, which \
+                        files changed, which commands ran and with what exit code, the outcome \
+                        rung reached, and how often the context was compacted. Returns \
+                        markdown under a line budget (max_lines, default 60, ceiling 120), the \
+                        receipt every claim traces back to, and `gaps` -- the machine-readable \
+                        list of what this session could not answer, which is never padded over. \
+                        Open decisions, PR/CI state and environment traps are NOT in the index \
+                        and the output says so. Defaults to the newest session for the repo \
+                        this server runs in. Redacted by default; include_raw=true opts out, \
+                        per call."
+    )]
+    pub(crate) async fn session_handoff(
+        &self,
+        Parameters(params): Parameters<SessionHandoffParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let max_lines = Self::validated_max_lines(params.max_lines)?;
+        let options = HandoffOptions {
+            include_loose_ends: params.include_loose_ends.unwrap_or(true),
+        };
+
+        let storage = self.storage.clone();
+        let scanner = self.scanner.clone();
+        let explicit_id = params.session_id.clone();
+        let include_raw = params.include_raw;
+
+        let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+            let session_id = match explicit_id {
+                Some(id) => id,
+                None => {
+                    let repo = Self::cwd_repo().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no session_id given and this server's working directory could not \
+                             be read; pass session_id explicitly"
+                        )
+                    })?;
+                    let page = storage.list_sessions_for_repo(&repo, 1)?;
+                    page.sessions
+                        .into_iter()
+                        .next()
+                        .map(|s| s.session_id)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "no indexed session for repo '{repo}' (this server's working \
+                                 directory); pass session_id explicitly, or run `agentworth scan`"
+                            )
+                        })?
+                }
+            };
+            Self::render_one(&storage, &scanner, &session_id, max_lines, options, include_raw)
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::resource_not_found(format!("{e:#}"), None))?;
+
+        Self::json_result(&value)
+    }
 }
 
 #[tool_handler]
@@ -415,10 +529,11 @@ impl ServerHandler for AgentWorthMcpServer {
             .with_instructions(
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  sessions_find, session_get, blame_find, usage_summary, pacing_window, \
-                 coverage_stats, outcome_rate. Redacted output is the default everywhere event \
-                 or file content is returned; session_get's include_raw is the only opt-in to raw \
-                 content, and it is per-call, never global. Run `agentworth scan` first if the \
-                 index looks stale -- this server never scans on its own."
+                 coverage_stats, outcome_rate, session_handoff. End a session by asking \
+                 session_handoff what it actually did. Redacted output is the default \
+                 everywhere event or file content is returned; include_raw is the only opt-in \
+                 to raw content, and it is per-call, never global. Run `agentworth scan` first \
+                 if the index looks stale -- this server never scans on its own."
                     .to_string(),
             )
     }
