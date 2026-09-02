@@ -173,6 +173,26 @@ impl From<OutcomeRateGroupByParam> for agentworth_storage::OutcomeRateGroupBy {
     }
 }
 
+/// Parameters for the `suspect_commits` tool. See `docs/specs/suspect-commits.md`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SuspectCommitsParams {
+    /// Absolute path to a git checkout on this machine. Anything inside it works — the
+    /// repository root is resolved with `git rev-parse --show-toplevel`.
+    pub repo: String,
+    /// Branch to walk. Defaults to `HEAD`.
+    pub branch: Option<String>,
+    /// Ref to diff against. Defaults to the branch's own upstream, then `origin/main`, then
+    /// `origin/master`, then the most recent `max_commits` commits.
+    pub base: Option<String>,
+    /// RFC 3339 timestamp. Only consulted when `base` is absent.
+    pub since: Option<String>,
+    /// How long before a commit a session's file touch still counts as having authored it.
+    /// Defaults to 24.
+    pub window_hours: Option<i64>,
+    /// Ceiling on commits walked. Defaults to 200, hard-capped at 1000.
+    pub max_commits: Option<usize>,
+}
+
 /// Parameters for the `outcome_rate` tool. See `docs/specs/verified-outcome-rate.md`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct OutcomeRateParams {

@@ -5,6 +5,7 @@ pub mod blunder;
 pub mod blunder_blame;
 pub mod receipt;
 pub mod search;
+pub mod suspect;
 
 pub use audit::run_audit_command;
 pub use blunder::run_blunder_command;

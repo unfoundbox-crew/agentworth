@@ -15,6 +15,8 @@ use agentworth_redaction::{repository_identity_rule, Redactor};
 use agentworth_schema::extract_repository_or_workspace;
 use agentworth_scoring::TraceScorer;
 use agentworth_storage::{SessionFilter, Storage};
+
+use crate::commands::suspect;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -27,7 +29,8 @@ use serde_json::json;
 use super::params::{
     parse_rfc3339_opt, BlameFindParams, CarryForwardParams, CoverageStatsParams,
     ForgottenContextParams, OutcomeRateParams, PacingWindowParams, SessionGetParams,
-    SessionHandoffParams, SessionsFindParams, UsagePeriodParam, UsageSummaryParams,
+    SessionHandoffParams, SessionsFindParams, SuspectCommitsParams, UsagePeriodParam,
+    UsageSummaryParams,
 };
 use crate::forgotten::{self, ForgottenOptions, ForgottenReport};
 use crate::handoff::{
@@ -671,6 +674,69 @@ impl AgentWorthMcpServer {
 
         Self::json_result(&report)
     }
+
+    #[tool(
+        description = "Which commits on this branch came out of a session that never proved \
+                        anything. Walks `git log` over the range, joins each commit's changed \
+                        paths to indexed sessions that touched them within window_hours before \
+                        it, and reports each session's risk signals: no_test_run (the session \
+                        never got past artifact_changed), no_outcome_detected (the adapter \
+                        extracted no outcome at all -- weaker), demoted_claim (verification \
+                        contradicted a claim, with the event sequence), and loop (the sentinel \
+                        caught repetition). Returns a list and a copyable prompt -- never a \
+                        patch, a diff, or a PR: a trajectory says the session was going badly, \
+                        not what the code does wrong. Two counts are load-bearing and must be \
+                        reported to the user, not dropped: `unattributed` commits had no \
+                        indexed session at all (unknown, not clean), and `unanchored_blame_rows` \
+                        is evidence that could not be placed in any repository. Paths and \
+                        session source paths are redacted."
+    )]
+    pub(crate) async fn suspect_commits(
+        &self,
+        Parameters(params): Parameters<SuspectCommitsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let since = parse_rfc3339_opt(params.since.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let window_hours = params.window_hours.unwrap_or(suspect::DEFAULT_WINDOW_HOURS);
+        if window_hours < 0 {
+            return Err(McpError::invalid_params(
+                "window_hours must not be negative".to_string(),
+                None,
+            ));
+        }
+        let max_commits = params
+            .max_commits
+            .unwrap_or(suspect::DEFAULT_MAX_COMMITS)
+            .clamp(1, suspect::MAX_COMMITS_CEILING);
+
+        let query = suspect::SuspectQuery {
+            repo: std::path::PathBuf::from(&params.repo),
+            branch: params.branch.clone(),
+            base: params.base.clone(),
+            since,
+            window_hours,
+            max_commits,
+        };
+
+        let storage = self.storage.clone();
+        let mut report = tokio::task::spawn_blocking(move || {
+            suspect::compute_suspect_commits(&storage, &query)
+        })
+        .await
+        .map_err(Self::join_error)?
+        // A bad repo path or an unresolvable ref is the caller's mistake, not a server fault,
+        // and the message names the failing noun -- so it comes back as invalid_params.
+        .map_err(|e| McpError::invalid_params(format!("suspect_commits failed: {e}"), None))?;
+
+        report.repo = Self::redact_path(&report.repo);
+        for commit in &mut report.suspect {
+            for session in &mut commit.sessions {
+                session.evidence_path = Self::redact_path(&session.evidence_path);
+            }
+        }
+
+        Self::json_result(&report)
+    }
 }
 
 #[tool_handler]
@@ -683,10 +749,12 @@ impl ServerHandler for AgentWorthMcpServer {
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  sessions_find, session_get, blame_find, usage_summary, pacing_window, \
                  coverage_stats, outcome_rate, session_handoff, carry_forward, \
-                 forgotten_context. Start a \
+                 forgotten_context, suspect_commits. Start a \
                  session in a repo with carry_forward to read what recent sessions there \
                  actually did; end one with session_handoff. If a session has compacted, \
-                 forgotten_context returns the decisions its own summaries dropped. Redacted \
+                 forgotten_context returns the decisions its own summaries dropped. Before \
+                 pushing, suspect_commits names the commits whose authoring session never \
+                 proved anything -- a list and a prompt, never a patch. Redacted \
                  output is the default \
                  everywhere event or file content is returned; include_raw is the only opt-in \
                  to raw content, and it is per-call, never global. Run `agentworth scan` first \
