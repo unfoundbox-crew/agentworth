@@ -830,7 +830,13 @@ fn draw(
             let absolute = app.scroll + i;
             let mut line = to_line(raw);
             if Some(absolute) == selected {
-                line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                // Reversed video rather than a colour, so the cursor is just as visible
+                // under `--no-color`. Set on every span as well as on the line: a span
+                // that carries its own foreground would otherwise patch over the line's
+                // style and lose the modifier on exactly the coloured cells.
+                let hl = Style::default().add_modifier(Modifier::REVERSED);
+                line.spans = line.spans.into_iter().map(|s| s.patch_style(hl)).collect();
+                line = line.style(hl);
             }
             rows.push(line);
         }
