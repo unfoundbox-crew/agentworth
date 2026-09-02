@@ -263,6 +263,7 @@ agentworth export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | `agentworth receipt <ID>` | Renders a Flight Receipt for a session: an ANSI box for the terminal or a shareable 1200x630 SVG card (`--format terminal\|svg\|json`, `--output <PATH>`). |
 | `agentworth handoff [ID \| --last]` | What a session promised, decided, changed, ran, and proved — the same report the `session_handoff` MCP tool returns (`--markdown`, `--redact`, `--json`). |
 | `agentworth loose-ends [ID \| --last]` | The handoff's loose-ends section alone: what a session said it would do and didn't (`--prompt` prints a copyable brief). |
+| `agentworth suspect [OPTIONS]` | Lists commits on this branch whose authoring session never proved anything, so you know where to look twice before pushing (`--repo`, `--since`, `--json`). `--hook` prints a pre-push script that prints and never blocks. |
 | `agentworth doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
 | `agentworth mcp` | Starts the read-only MCP server over stdio, so a coding agent can query this machine's session index mid-session (see below). |
 
@@ -280,7 +281,7 @@ claude mcp add agentworth --scope user -- agentworth mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-Ten read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `outcome_rate`, plus the two handoff tools and `forgotten_context` below. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+Eleven read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `outcome_rate`, plus the two handoff tools, `forgotten_context`, and `suspect_commits` below. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
 
 ### The handoff, over MCP
 
@@ -308,6 +309,14 @@ Three answers stay distinct and none is padded: never compacted, compacted with 
 **No model, on purpose.** Three regexes return the sentence verbatim with a sequence number. A model paraphrasing the dropped span would make this a second summariser — the exact lossy step the feature exists to undo — and the receipt would stop pointing at words anyone said. Full design: `docs/specs/compaction-diff.md`.
 
 On the CLI, the same diff is `agentworth forgotten [SESSION_ID | prefix] [--round N] [--class CLASS] [--json]`, and a compacted session's handoff carries it as its first section.
+
+### Which commits to look at twice
+
+`suspect_commits(repo, branch?, base?, since?, window_hours?)` walks `git log` over a range, joins each commit's changed paths to the sessions that touched them, and reports which of those sessions never proved anything -- no test run, a claim verification contradicted, a loop the sentinel caught. It returns a list, session ids, and a copyable prompt. **Never a patch**: a trajectory can say the session was going badly, but only the diff says what the code does wrong.
+
+Two counts in its answer are load-bearing and worth reading every time: `unattributed` (commits with no indexed session at all -- unknown, never clean) and `unanchored_blame_rows` (evidence that could not be placed in any repository). Measured on this repo's own main, anchoring the join to the repo root takes the flag rate from 28.8% to 2.3%, and every one of the first ten flags it removes is false. Full design and measurement: `docs/specs/suspect-commits.md`.
+
+On the CLI this is `agentworth suspect [--repo PATH] [--since REF|DATE] [--json]`, and `agentworth suspect --hook` prints a pre-push script that prints and exits 0, always.
 
 ---
 
