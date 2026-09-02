@@ -134,3 +134,39 @@ pub struct CoverageStatsParams {
     #[serde(default)]
     pub include_matrix: bool,
 }
+
+/// Mirrors `agentworth_storage::OutcomeRateGroupBy` with the same snake_case wire values -- a
+/// local copy for the same reason `SessionsOrderBy` is one (see its doc comment above).
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OutcomeRateGroupByParam {
+    Model,
+    Adapter,
+    Repo,
+}
+
+impl From<OutcomeRateGroupByParam> for agentworth_storage::OutcomeRateGroupBy {
+    fn from(value: OutcomeRateGroupByParam) -> Self {
+        match value {
+            OutcomeRateGroupByParam::Model => agentworth_storage::OutcomeRateGroupBy::Model,
+            OutcomeRateGroupByParam::Adapter => agentworth_storage::OutcomeRateGroupBy::Adapter,
+            OutcomeRateGroupByParam::Repo => agentworth_storage::OutcomeRateGroupBy::Repo,
+        }
+    }
+}
+
+/// Parameters for the `outcome_rate` tool. See `docs/specs/verified-outcome-rate.md`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct OutcomeRateParams {
+    pub group_by: OutcomeRateGroupByParam,
+    /// RFC 3339 timestamp; only sessions started at or after this instant.
+    pub since: Option<String>,
+    /// RFC 3339 timestamp; only sessions started at or before this instant.
+    pub until: Option<String>,
+    /// Groups with fewer than this many claimed sessions are suppressed (counted in
+    /// `suppressed_groups`) rather than returned as a row. Defaults to 20.
+    pub min_n: Option<usize>,
+    /// Include near-empty session stubs in the population. Defaults to false.
+    #[serde(default)]
+    pub include_stubs: Option<bool>,
+}

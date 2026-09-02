@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use agentworth_adapter_sdk::SessionSource;
-use agentworth_schema::{AgentWorthTrace, EventPayload, FileActionType, TokenUsage};
+use agentworth_outcomes::outcome_rank;
+use agentworth_schema::{AgentWorthTrace, EventPayload, FileActionType, OutcomeKind, TokenUsage};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use directories::BaseDirs;
@@ -125,6 +126,91 @@ pub struct CompactionOutcomeBucket {
     pub outcome: String,
     pub session_count: usize,
 }
+
+/// Grouping dimension for `Storage::get_outcome_rate`. See `docs/specs/verified-outcome-rate.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutcomeRateGroupBy {
+    Model,
+    Adapter,
+    Repo,
+}
+
+/// The since/until bounds actually applied to an `outcome_rate` query. `until` always names a
+/// concrete instant -- the caller's own value, or the moment the query ran when left open --
+/// so a printed window never reads as "whenever this happened to run."
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutcomeRateWindow {
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+}
+
+/// The caller's own verified-outcome rate over the same window, for comparison against
+/// individual rows. There is no cross-user baseline, now or later -- see
+/// docs/specs/verified-outcome-rate.md.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutcomeRateBaseline {
+    pub n: usize,
+    pub verified: usize,
+    pub rate: f64,
+}
+
+/// One group's row in `Storage::get_outcome_rate`'s result.
+///
+/// `n` and `verified` count "claimed" sessions only (non-null `primary_outcome`), within the
+/// non-stub population unless `include_stubs` was set. `rate` and `delta_vs_baseline` are
+/// `None` in exactly one case: `n == 0`, and then `reason` is `Some("no_outcome_detection")`.
+/// A group with `n` between 1 and `min_n - 1` is not returned as a row at all -- it is folded
+/// into `OutcomeRateResult::suppressed_groups` instead. These are deliberately different
+/// signals: "zero outcomes detected for this group" is not the same claim as "too little data
+/// to be sure," and collapsing them would make an adapter's total non-detection (`codex`,
+/// `gemini`, ...) read as a small sample instead of a parsing gap.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutcomeRateRow {
+    pub key: String,
+    pub n: usize,
+    pub verified: usize,
+    pub rate: Option<f64>,
+    pub delta_vs_baseline: Option<f64>,
+    /// Claimed-session count by rung ("1".."5", `agentworth_outcomes::outcome_rank`'s scale),
+    /// summing to `n`.
+    pub rungs: BTreeMap<String, usize>,
+    pub reason: Option<String>,
+    /// Session IDs behind this row's `n`, capped at `OUTCOME_RATE_SESSION_IDS_CAP` -- see
+    /// `session_ids_truncated`. What makes the row checkable instead of a bare assertion.
+    pub session_ids: Vec<String>,
+    pub session_ids_truncated: bool,
+}
+
+/// What a `get_outcome_rate` answer can be checked against: which index, computed when, using
+/// which stub/verification predicate, and how stale that index was at the moment of counting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutcomeRateReceipt {
+    pub counted_at: DateTime<Utc>,
+    /// The most recent `started_at` across the *whole* index, independent of this query's own
+    /// window or stub filter -- lets a caller notice a stale index without a separate call.
+    /// `None` only for a genuinely empty index.
+    pub index_last_session_at: Option<DateTime<Utc>>,
+    pub db_path: String,
+    /// The literal predicate `get_outcome_rate` applies when `include_stubs` is false (see
+    /// `NON_STUB_SQL_PREDICATE`), named here so the answer can be checked against a fresh SQL
+    /// query rather than trusted blind.
+    pub non_stub_predicate: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutcomeRateResult {
+    pub group_by: OutcomeRateGroupBy,
+    pub min_n: usize,
+    pub window: OutcomeRateWindow,
+    pub baseline: OutcomeRateBaseline,
+    pub rows: Vec<OutcomeRateRow>,
+    pub suppressed_groups: usize,
+    pub receipt: OutcomeRateReceipt,
+}
+
+/// Cap on `OutcomeRateRow::session_ids` -- see `OutcomeRateRow::session_ids_truncated`.
+const OUTCOME_RATE_SESSION_IDS_CAP: usize = 50;
 
 /// Usage aggregation rollup for a time period (Day, Week, Month).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1104,6 +1190,245 @@ impl Storage {
         }
 
         Ok(results)
+    }
+
+    /// Verified-outcome rate per model, adapter, or repo -- see
+    /// `docs/specs/verified-outcome-rate.md`.
+    ///
+    /// Fetches every session in `[since, until]` (non-stub unless `include_stubs`), then groups
+    /// in Rust: a straight `adapter` group, `extract_repository_or_workspace(source_path)` for
+    /// `repo`, and a fan-out over each session's `models_used` for `model` (a session that used
+    /// two models counts once per model -- the same fan the spec's own ad hoc `json_each` SQL
+    /// gives) -- the same fetch-then-filter shape `list_sessions_filtered`'s `repo` post-filter
+    /// already uses. "Claimed" is any session with a non-null `primary_outcome`; "verified" is
+    /// rung 3 (`TestOrBuildPassed`) or higher via `agentworth_outcomes::outcome_rank`, the one
+    /// place this ladder is defined -- not re-typed as a second SQL CASE ladder here.
+    ///
+    /// A group is included even when zero of its sessions are claimed (`n: 0, reason:
+    /// Some("no_outcome_detection")`) -- that is a different, and more informative, signal than
+    /// "too little data," which is what `min_n` suppression means instead. See
+    /// `OutcomeRateRow`'s doc comment.
+    pub fn get_outcome_rate(
+        &self,
+        group_by: OutcomeRateGroupBy,
+        since: Option<DateTime<Utc>>,
+        until: Option<DateTime<Utc>>,
+        min_n: usize,
+        include_stubs: bool,
+    ) -> Result<OutcomeRateResult> {
+        let counted_at = Utc::now();
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        let mut sql = String::from(
+            "SELECT session_id, adapter, source_path, primary_outcome, models_used FROM sessions WHERE 1=1",
+        );
+        let mut param_values: Vec<Box<dyn ToSql>> = Vec::new();
+
+        if !include_stubs {
+            sql.push_str(&format!(" AND ({NON_STUB_SQL_PREDICATE})"));
+        }
+        if let Some(since) = since {
+            sql.push_str(" AND started_at >= ?");
+            param_values.push(Box::new(since.to_rfc3339()));
+        }
+        if let Some(until) = until {
+            sql.push_str(" AND started_at <= ?");
+            param_values.push(Box::new(until.to_rfc3339()));
+        }
+
+        struct FetchedRow {
+            session_id: String,
+            adapter: String,
+            source_path: String,
+            claimed_rung: Option<u8>,
+            models_used: Vec<String>,
+        }
+
+        let mut fetched = Vec::new();
+        {
+            let mut stmt = conn.prepare(&sql)?;
+            let params_refs: Vec<&dyn ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+            let mut rows = stmt.query(params_refs.as_slice())?;
+
+            while let Some(row) = rows.next()? {
+                let session_id: String = row.get(0)?;
+                let adapter: String = row.get(1)?;
+                let source_path: String = row.get(2)?;
+                let primary_outcome: Option<String> = row.get(3)?;
+                let models_str: String = row.get(4)?;
+                let models_used =
+                    serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default();
+                let claimed_rung = primary_outcome.as_deref().and_then(|s| {
+                    serde_json::from_value::<OutcomeKind>(serde_json::Value::String(s.to_string()))
+                        .ok()
+                        .map(outcome_rank)
+                });
+                fetched.push(FetchedRow {
+                    session_id,
+                    adapter,
+                    source_path,
+                    claimed_rung,
+                    models_used,
+                });
+            }
+        }
+
+        // The whole index's newest session, not just this query's window/stub slice of it --
+        // see `OutcomeRateReceipt::index_last_session_at`'s doc comment.
+        let index_last_session_at: Option<String> = conn
+            .query_row("SELECT MAX(started_at) FROM sessions", [], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .ok()
+            .flatten();
+        let index_last_session_at = index_last_session_at.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
+        drop(conn);
+
+        // Baseline: distinct sessions, never fanned by model -- a session using two models
+        // must not count twice toward the caller's own overall rate.
+        let mut baseline_n = 0usize;
+        let mut baseline_verified = 0usize;
+        for r in &fetched {
+            if let Some(rung) = r.claimed_rung {
+                baseline_n += 1;
+                if rung >= 3 {
+                    baseline_verified += 1;
+                }
+            }
+        }
+        let baseline_rate = if baseline_n > 0 {
+            baseline_verified as f64 / baseline_n as f64
+        } else {
+            0.0
+        };
+
+        struct GroupAcc {
+            n: usize,
+            verified: usize,
+            rungs: BTreeMap<u8, usize>,
+            session_ids: Vec<String>,
+        }
+
+        let mut groups: BTreeMap<String, GroupAcc> = BTreeMap::new();
+        let mut push = |key: String, rung: Option<u8>, session_id: &str| {
+            let acc = groups.entry(key).or_insert_with(|| GroupAcc {
+                n: 0,
+                verified: 0,
+                rungs: BTreeMap::new(),
+                session_ids: Vec::new(),
+            });
+            if let Some(rung) = rung {
+                acc.n += 1;
+                if rung >= 3 {
+                    acc.verified += 1;
+                }
+                *acc.rungs.entry(rung).or_insert(0) += 1;
+                if acc.session_ids.len() < OUTCOME_RATE_SESSION_IDS_CAP {
+                    acc.session_ids.push(session_id.to_string());
+                }
+            }
+        };
+
+        for r in &fetched {
+            match group_by {
+                OutcomeRateGroupBy::Adapter => {
+                    push(r.adapter.clone(), r.claimed_rung, &r.session_id);
+                }
+                OutcomeRateGroupBy::Repo => {
+                    let repo = extract_repository_or_workspace(&r.source_path);
+                    push(repo, r.claimed_rung, &r.session_id);
+                }
+                OutcomeRateGroupBy::Model => {
+                    for model in &r.models_used {
+                        push(model.clone(), r.claimed_rung, &r.session_id);
+                    }
+                }
+            }
+        }
+
+        let mut rows_out = Vec::new();
+        let mut suppressed_groups = 0usize;
+
+        for (key, acc) in groups {
+            let rungs: BTreeMap<String, usize> = (1..=5u8)
+                .map(|i| (i.to_string(), *acc.rungs.get(&i).unwrap_or(&0)))
+                .collect();
+
+            if acc.n == 0 {
+                rows_out.push(OutcomeRateRow {
+                    key,
+                    n: 0,
+                    verified: 0,
+                    rate: None,
+                    delta_vs_baseline: None,
+                    rungs,
+                    reason: Some("no_outcome_detection".to_string()),
+                    session_ids: Vec::new(),
+                    session_ids_truncated: false,
+                });
+                continue;
+            }
+
+            if acc.n < min_n {
+                suppressed_groups += 1;
+                continue;
+            }
+
+            let rate = acc.verified as f64 / acc.n as f64;
+            let truncated = acc.n > acc.session_ids.len();
+            rows_out.push(OutcomeRateRow {
+                key,
+                n: acc.n,
+                verified: acc.verified,
+                rate: Some(rate),
+                delta_vs_baseline: Some(rate - baseline_rate),
+                rungs,
+                reason: None,
+                session_ids: acc.session_ids,
+                session_ids_truncated: truncated,
+            });
+        }
+
+        rows_out.sort_by(|a, b| match (a.rate, b.rate) {
+            (Some(ra), Some(rb)) => rb
+                .partial_cmp(&ra)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.key.cmp(&b.key)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.key.cmp(&b.key),
+        });
+
+        let db_path = self
+            .db_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| ":memory:".to_string());
+
+        Ok(OutcomeRateResult {
+            group_by,
+            min_n,
+            window: OutcomeRateWindow {
+                since,
+                until: Some(until.unwrap_or(counted_at)),
+            },
+            baseline: OutcomeRateBaseline {
+                n: baseline_n,
+                verified: baseline_verified,
+                rate: baseline_rate,
+            },
+            rows: rows_out,
+            suppressed_groups,
+            receipt: OutcomeRateReceipt {
+                counted_at,
+                index_last_session_at,
+                db_path,
+                non_stub_predicate: NON_STUB_SQL_PREDICATE.to_string(),
+            },
+        })
     }
 
     /// Extract and rank top repository / workspace paths from indexed sessions.
@@ -2650,5 +2975,222 @@ mod tests {
             stats_incl.verified_outcomes_count, 2,
             "including stubs, both real_1 and stub_verified count as verified"
         );
+    }
+
+    /// Seeds one non-stub session for `get_outcome_rate` fixtures: real events/tokens (so it
+    /// clears `NON_STUB_SQL_PREDICATE`), a chosen adapter/repo/model set, and a snake_case
+    /// `primary_outcome` (or `None` for "claimed nothing").
+    fn seed_outcome_session(
+        storage: &Storage,
+        session_id: &str,
+        adapter: &str,
+        source_path: &str,
+        models: &[&str],
+        primary_outcome: Option<&str>,
+        started_at: DateTime<Utc>,
+    ) {
+        let prov = Provenance::new(source_path, adapter, 100, 12345, format!("fp_{session_id}"));
+        let mut trace = AgentWorthTrace::new(session_id, adapter, prov, started_at);
+        trace.stats.total_events = 5;
+        trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+        trace.stats.models_used = models.iter().map(|m| m.to_string()).collect();
+        storage
+            .upsert_session(&trace, primary_outcome, None)
+            .expect("seed outcome session");
+    }
+
+    /// Fixtures across two models and two repos: `get_outcome_rate` must compute the right
+    /// n/verified/rate per group, suppress a group under `min_n` (folding it into
+    /// `suppressed_groups` rather than showing a row), and return a real `n: 0,
+    /// reason: "no_outcome_detection"` row for a group whose sessions never claimed an
+    /// outcome at all -- a different signal than suppression (docs/specs/verified-outcome-rate.md).
+    #[test]
+    fn test_get_outcome_rate_across_models_and_repos_with_n_floor_suppression() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let t0 = Utc::now();
+
+        // repo-a / model-x: 4 claimed (2 verified, 2 not) + 1 never-claimed session.
+        seed_outcome_session(
+            &storage, "sess-a1", "claude_code", "/home/u/code/org-a/repo-a/s1.jsonl",
+            &["model-x"], Some("test_or_build_passed"), t0,
+        );
+        seed_outcome_session(
+            &storage, "sess-a2", "claude_code", "/home/u/code/org-a/repo-a/s2.jsonl",
+            &["model-x"], Some("commit_observed"), t0 + Duration::seconds(1),
+        );
+        seed_outcome_session(
+            &storage, "sess-a3", "claude_code", "/home/u/code/org-a/repo-a/s3.jsonl",
+            &["model-x"], Some("done_claimed"), t0 + Duration::seconds(2),
+        );
+        seed_outcome_session(
+            &storage, "sess-a4", "claude_code", "/home/u/code/org-a/repo-a/s4.jsonl",
+            &["model-x"], Some("artifact_changed"), t0 + Duration::seconds(3),
+        );
+        seed_outcome_session(
+            &storage, "sess-a5", "claude_code", "/home/u/code/org-a/repo-a/s5.jsonl",
+            &["model-x"], None, t0 + Duration::seconds(4),
+        );
+
+        // repo-b / model-y: 2 claimed (1 verified) -- below a min_n of 3.
+        seed_outcome_session(
+            &storage, "sess-b1", "claude_code", "/home/u/code/org-b/repo-b/s1.jsonl",
+            &["model-y"], Some("ci_or_deployment_verified"), t0 + Duration::seconds(5),
+        );
+        seed_outcome_session(
+            &storage, "sess-b2", "claude_code", "/home/u/code/org-b/repo-b/s2.jsonl",
+            &["model-y"], Some("done_claimed"), t0 + Duration::seconds(6),
+        );
+
+        // repo-c / model-z / adapter codex: sessions exist, none ever claimed an outcome.
+        seed_outcome_session(
+            &storage, "sess-c1", "codex", "/home/u/code/org-c/repo-c/s1.jsonl",
+            &["model-z"], None, t0 + Duration::seconds(7),
+        );
+        seed_outcome_session(
+            &storage, "sess-c2", "codex", "/home/u/code/org-c/repo-c/s2.jsonl",
+            &["model-z"], None, t0 + Duration::seconds(8),
+        );
+
+        let min_n = 3;
+
+        // -- repo --
+        let by_repo = storage
+            .get_outcome_rate(OutcomeRateGroupBy::Repo, None, None, min_n, false)
+            .expect("get_outcome_rate by repo");
+
+        assert_eq!(by_repo.suppressed_groups, 1, "repo-b's n=2 must be suppressed under min_n=3");
+        assert_eq!(by_repo.rows.len(), 2, "repo-a (a real row) and repo-c (a reason row)");
+
+        let repo_a = by_repo.rows.iter().find(|r| r.key == "org-a/repo-a").expect("repo-a row");
+        assert_eq!(repo_a.n, 4);
+        assert_eq!(repo_a.verified, 2);
+        assert!((repo_a.rate.unwrap() - 0.5).abs() < 1e-9);
+        assert_eq!(repo_a.reason, None);
+        assert_eq!(repo_a.rungs.get("1"), Some(&1));
+        assert_eq!(repo_a.rungs.get("2"), Some(&1));
+        assert_eq!(repo_a.rungs.get("3"), Some(&1));
+        assert_eq!(repo_a.rungs.get("4"), Some(&1));
+        assert_eq!(repo_a.rungs.get("5"), Some(&0));
+        let mut session_ids = repo_a.session_ids.clone();
+        session_ids.sort();
+        assert_eq!(
+            session_ids,
+            vec!["sess-a1", "sess-a2", "sess-a3", "sess-a4"],
+            "session_ids must be exactly the 4 claimed sessions, not the never-claimed sess-a5"
+        );
+        assert!(!repo_a.session_ids_truncated);
+
+        assert!(
+            by_repo.rows.iter().all(|r| r.key != "org-b/repo-b"),
+            "a suppressed group must not appear as a row"
+        );
+
+        let repo_c = by_repo.rows.iter().find(|r| r.key == "org-c/repo-c").expect("repo-c row");
+        assert_eq!(repo_c.n, 0);
+        assert_eq!(repo_c.verified, 0);
+        assert_eq!(repo_c.rate, None);
+        assert_eq!(repo_c.delta_vs_baseline, None);
+        assert_eq!(repo_c.reason.as_deref(), Some("no_outcome_detection"));
+        assert!(repo_c.session_ids.is_empty());
+
+        // baseline: distinct claimed sessions across the whole window, not fanned by model --
+        // 5 claimed (a1..a4, b1, b2) minus... a1-a4 (4) + b1,b2 (2) = 6 claimed, 3 verified
+        // (a1 test_or_build_passed, a2 commit_observed, b1 ci_or_deployment_verified).
+        assert_eq!(by_repo.baseline.n, 6);
+        assert_eq!(by_repo.baseline.verified, 3);
+        assert!((by_repo.baseline.rate - 0.5).abs() < 1e-9);
+        assert!((repo_a.delta_vs_baseline.unwrap()).abs() < 1e-9, "repo-a's rate equals baseline");
+
+        // receipt: checkable against the real index.
+        assert_eq!(by_repo.receipt.non_stub_predicate, NON_STUB_SQL_PREDICATE);
+        let expected_last = t0 + Duration::seconds(8);
+        let actual_last = by_repo
+            .receipt
+            .index_last_session_at
+            .expect("index_last_session_at must be set for a non-empty index");
+        assert!(
+            (actual_last - expected_last).num_milliseconds().abs() < 1000,
+            "index_last_session_at should be sess-c2's started_at (round-tripped through RFC \
+             3339 text storage): expected ~{expected_last}, got {actual_last}"
+        );
+        assert!(storage.db_path().is_none(), "sanity: this fixture is in-memory");
+        assert_eq!(by_repo.receipt.db_path, ":memory:");
+
+        // -- model: model-x clears the floor, model-y is suppressed, model-z is a reason row.
+        let by_model = storage
+            .get_outcome_rate(OutcomeRateGroupBy::Model, None, None, min_n, false)
+            .expect("get_outcome_rate by model");
+        assert_eq!(by_model.suppressed_groups, 1);
+        let model_x = by_model.rows.iter().find(|r| r.key == "model-x").expect("model-x row");
+        assert_eq!(model_x.n, 4);
+        assert_eq!(model_x.verified, 2);
+        assert!(by_model.rows.iter().all(|r| r.key != "model-y"));
+        let model_z = by_model.rows.iter().find(|r| r.key == "model-z").expect("model-z row");
+        assert_eq!(model_z.reason.as_deref(), Some("no_outcome_detection"));
+
+        // -- adapter: claude_code (repo-a + repo-b sessions) clears the floor; codex is a
+        // reason row (2 sessions, zero claimed).
+        let by_adapter = storage
+            .get_outcome_rate(OutcomeRateGroupBy::Adapter, None, None, min_n, false)
+            .expect("get_outcome_rate by adapter");
+        let claude_code = by_adapter
+            .rows
+            .iter()
+            .find(|r| r.key == "claude_code")
+            .expect("claude_code row");
+        assert_eq!(claude_code.n, 6);
+        assert_eq!(claude_code.verified, 3);
+        let codex = by_adapter.rows.iter().find(|r| r.key == "codex").expect("codex row");
+        assert_eq!(codex.n, 0);
+        assert_eq!(codex.reason.as_deref(), Some("no_outcome_detection"));
+    }
+
+    /// `since`/`until` narrow the population `get_outcome_rate` counts, the same way they do
+    /// for `list_sessions_filtered`; a session outside the window must not appear in any
+    /// group's `n`, `rungs`, `session_ids`, or the baseline.
+    #[test]
+    fn test_get_outcome_rate_since_until_window() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let t0 = Utc::now();
+
+        seed_outcome_session(
+            &storage, "sess-old", "claude_code", "/home/u/code/org-a/repo-a/old.jsonl",
+            &["model-x"], Some("done_claimed"), t0,
+        );
+        seed_outcome_session(
+            &storage, "sess-in-window", "claude_code", "/home/u/code/org-a/repo-a/in.jsonl",
+            &["model-x"], Some("test_or_build_passed"), t0 + Duration::hours(1),
+        );
+        seed_outcome_session(
+            &storage, "sess-too-new", "claude_code", "/home/u/code/org-a/repo-a/new.jsonl",
+            &["model-x"], Some("commit_observed"), t0 + Duration::hours(5),
+        );
+
+        let result = storage
+            .get_outcome_rate(
+                OutcomeRateGroupBy::Repo,
+                Some(t0 + Duration::minutes(30)),
+                Some(t0 + Duration::hours(2)),
+                1,
+                false,
+            )
+            .expect("get_outcome_rate with a window");
+
+        assert_eq!(result.baseline.n, 1, "only sess-in-window falls inside [since, until]");
+        assert_eq!(result.rows.len(), 1, "only one repo has any session inside the window");
+        let repo_a = &result.rows[0];
+        assert_eq!(repo_a.n, 1);
+        assert_eq!(repo_a.session_ids, vec!["sess-in-window"]);
+        assert_eq!(result.window.since, Some(t0 + Duration::minutes(30)));
+        assert_eq!(result.window.until, Some(t0 + Duration::hours(2)));
+
+        // Omitting `until` reports the effective upper bound as the moment the query ran,
+        // not a bare `null` -- the window should never read as "whenever this happened to run."
+        let open_ended = storage
+            .get_outcome_rate(OutcomeRateGroupBy::Repo, None, None, 1, false)
+            .expect("get_outcome_rate with no window");
+        assert!(open_ended.window.since.is_none());
+        assert!(open_ended.window.until.is_some());
+        assert_eq!(open_ended.baseline.n, 3, "no window means every claimed session counts");
     }
 }

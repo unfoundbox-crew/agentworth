@@ -274,7 +274,7 @@ claude mcp add agentworth --scope user -- agentworth mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-Six read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`. Redacted output is the default everywhere event or file content is returned; `session_get`'s `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`.
+Seven read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `outcome_rate`. Redacted output is the default everywhere event or file content is returned; `session_get`'s `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
 
 ---
 

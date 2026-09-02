@@ -65,6 +65,7 @@ async fn test_stdio_tools_list_and_sessions_find() {
         "usage_summary",
         "pacing_window",
         "coverage_stats",
+        "outcome_rate",
     ] {
         assert!(
             tool_names.contains(&expected),
