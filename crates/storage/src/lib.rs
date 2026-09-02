@@ -71,6 +71,12 @@ pub enum BackfillReason {
     /// The adapter's parse output has changed since this row was written, so what is indexed
     /// is what an older, wronger parser produced from bytes that never changed.
     StaleParserVersion,
+    /// A backfill or reparse is warranted, but `source_path` does not exist on this machine --
+    /// the shape left behind by `agentworth merge` pulling in a row whose file lives on a
+    /// different machine's disk. There is nothing to reparse it from here, so a caller should
+    /// count it and move on rather than trying (and failing) to open the path. See the
+    /// existence check at the end of `needs_backfill`.
+    SourceUnavailable,
 }
 
 /// SQL predicate identifying a session as too near-empty to keep indexed at all, independent
@@ -536,6 +542,7 @@ impl Storage {
                 compaction_count INTEGER NOT NULL DEFAULT 0,
                 compaction_tokens_dropped INTEGER NOT NULL DEFAULT 0,
                 parser_version INTEGER NOT NULL DEFAULT 0,
+                backfilled_version INTEGER,
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
 
@@ -631,6 +638,12 @@ impl Storage {
                     "ALTER TABLE sessions ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0",
                     [],
                 );
+            }
+            // NULL, not 0: distinct from "confirmed backfilled at version 0". A row that
+            // predates this column has never been through a backfill pass under this scheme,
+            // regardless of what its own `parser_version` already says -- see `needs_backfill`.
+            if !columns.contains(&"backfilled_version".to_string()) {
+                let _ = conn.execute("ALTER TABLE sessions ADD COLUMN backfilled_version INTEGER", []);
             }
         }
 
@@ -783,16 +796,31 @@ impl Storage {
     /// unchanged source is unchanged forever, so a row stuck in this state would otherwise
     /// never get rescanned.
     ///
-    /// Two conditions, both unambiguous:
+    /// Two conditions, one of them gated on `backfilled_version`:
     ///
-    /// - `prompt_preview` is null or empty. It's nullable and every real user-initiated session
-    ///   has a non-empty first user message, so "missing" means "the extractor didn't exist
-    ///   when this row was written."
+    /// - `prompt_preview` is null or empty, **and** no backfill pass has run for this row at
+    ///   `current_parser_version` yet. It's nullable, and a real user-initiated session has a
+    ///   non-empty first user message -- but a session with *no* user message at all (a
+    ///   subagent run, a tool-only session) never will, no matter how many times it's
+    ///   reparsed. Without the gate, "missing" would mean "reparse this on every single scan
+    ///   forever," for a field it will never gain -- the actual bug behind finding #1 in #85's
+    ///   own follow-up, where every one of 10,329 rows had an empty `prompt_preview` and was
+    ///   reparsed on every scan regardless. `backfilled_version` records the parser version
+    ///   active the last time this row went through a full upsert (every `upsert_session` call
+    ///   sets it to the `parser_version` it was given, in the same transaction as everything
+    ///   else). Once it's at or past `current_parser_version`, the row has already had its one
+    ///   shot at deriving `prompt_preview` under today's code, and this check is skipped even
+    ///   if the field is still empty -- that emptiness is the real, permanent answer. A row
+    ///   with no `backfilled_version` yet (NULL -- predates this column, or was never
+    ///   upserted) is always checked.
     /// - `compaction_count > 0` with no `session_compaction` rows. The round-boundary table
-    ///   (this PR) is populated in the same transaction as the count, so a row that has the
-    ///   count and not the boundaries predates the table. This fires at most once per session:
-    ///   the reparse writes the rows, and a session that genuinely compacted always derives at
-    ///   least one round from the same events the count came from.
+    ///   (#37-ish) is populated in the same transaction as the count, so a row that has the
+    ///   count and not the boundaries predates the table. Deliberately *not* gated on
+    ///   `backfilled_version`: unlike `prompt_preview`, this one can't stay permanently true --
+    ///   a session that genuinely compacted always derives at least one round from the same
+    ///   events the count came from, so a reparse always clears it on its own, and gating it
+    ///   would let a row from before `backfilled_version` existed (but already at today's
+    ///   parser version) hide a real missing table forever.
     ///
     /// `compaction_count` alone still can't drive this, for the reason it couldn't before:
     /// its column is `NOT NULL DEFAULT 0`, so the `ALTER TABLE` that added it stamped every
@@ -803,51 +831,82 @@ impl Storage {
     /// entry at all. A caller that reparses here backfills everything anyway, since parsing
     /// is all-or-nothing.
     ///
-    /// Two further triggers, both of which also terminate on their own:
+    /// Two further triggers, deliberately *not* gated on `backfilled_version` -- each is
+    /// unconditional and terminates on its own:
     ///
     /// - `composite_score IS NULL` -- the row was written without ever being scored. Scoring
     ///   always yields a number (`clamp01` maps even NaN to 0.0), so a rescored row is never
-    ///   NULL again and this fires at most once per row. Deliberately *not* keyed on
-    ///   `primary_outcome IS NULL`: a NULL outcome is the correct, permanent answer for a
-    ///   session that produced no outcome evidence at all, so reparsing on it would rescan
-    ///   thousands of rows on every single scan, forever.
+    ///   NULL again and this fires at most once per row regardless of what `backfilled_version`
+    ///   says. Deliberately *not* keyed on `primary_outcome IS NULL`: a NULL outcome is the
+    ///   correct, permanent answer for a session that produced no outcome evidence at all, so
+    ///   reparsing on it would rescan thousands of rows on every single scan, forever.
     /// - `parser_version < current_parser_version` -- the adapter has since changed what it
     ///   extracts from a file of this shape, so the stored row is stale even though its bytes
     ///   are not. This is what re-derives outcomes and scores after a parse fix (#81) without
-    ///   `--force`. The reparse writes the current version, so it also fires at most once.
+    ///   `--force`. The reparse writes the current version (to both `parser_version` and
+    ///   `backfilled_version`), so it also fires at most once.
+    ///
+    /// Finally: if any of the above would fire but `source_path` doesn't exist on this
+    /// machine, the answer is `SourceUnavailable` instead of the real reason. This is the
+    /// shape a row left by `agentworth merge` takes when its source lives on another
+    /// machine -- there's no file here to reparse it from, so flagging the real reason would
+    /// just mean it's flagged on every scan forever with nothing anyone here can do about it.
+    /// A row that needs nothing is still `None` regardless of whether its source exists.
     pub fn needs_backfill(
         &self,
         source_path: &str,
         current_parser_version: i64,
     ) -> Result<Option<BackfillReason>> {
-        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut stmt = conn.prepare(
-            "SELECT s.prompt_preview, s.compaction_count,
-                    (SELECT COUNT(*) FROM session_compaction c WHERE c.session_id = s.session_id),
-                    s.composite_score, s.parser_version
-             FROM sessions s WHERE s.source_path = ?1",
-        )?;
-        let mut rows = stmt.query(params![source_path])?;
-        while let Some(row) = rows.next()? {
-            let parser_version: i64 = row.get(4)?;
-            if parser_version < current_parser_version {
-                return Ok(Some(BackfillReason::StaleParserVersion));
+        let reason = {
+            let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut stmt = conn.prepare(
+                "SELECT s.prompt_preview, s.compaction_count,
+                        (SELECT COUNT(*) FROM session_compaction c WHERE c.session_id = s.session_id),
+                        s.composite_score, s.parser_version, s.backfilled_version
+                 FROM sessions s WHERE s.source_path = ?1",
+            )?;
+            let mut rows = stmt.query(params![source_path])?;
+            let mut found = None;
+            while let Some(row) = rows.next()? {
+                let parser_version: i64 = row.get(4)?;
+                if parser_version < current_parser_version {
+                    found = Some(BackfillReason::StaleParserVersion);
+                    break;
+                }
+                let composite_score: Option<f64> = row.get(3)?;
+                if composite_score.is_none() {
+                    found = Some(BackfillReason::MissingDerivedField);
+                    break;
+                }
+                let backfilled_version: Option<i64> = row.get(5)?;
+                let already_backfilled = backfilled_version.is_some_and(|v| v >= current_parser_version);
+                if !already_backfilled {
+                    let prompt_preview: Option<String> = row.get(0)?;
+                    if prompt_preview.as_deref().unwrap_or("").trim().is_empty() {
+                        found = Some(BackfillReason::MissingDerivedField);
+                        break;
+                    }
+                }
+                // Deliberately ungated: unlike prompt_preview, this one can't stay
+                // permanently true. A session that genuinely compacted always derives at
+                // least one round from the same events `compaction_count` came from, so a
+                // reparse always clears it -- gating it would let a row from before
+                // `backfilled_version` existed (but at or past today's parser version) hide a
+                // real missing table forever, exactly the bug this column exists to fix.
+                let compaction_count: i64 = row.get(1)?;
+                let stored_rounds: i64 = row.get(2)?;
+                if compaction_count > 0 && stored_rounds == 0 {
+                    found = Some(BackfillReason::MissingDerivedField);
+                    break;
+                }
             }
-            let prompt_preview: Option<String> = row.get(0)?;
-            if prompt_preview.as_deref().unwrap_or("").trim().is_empty() {
-                return Ok(Some(BackfillReason::MissingDerivedField));
-            }
-            let composite_score: Option<f64> = row.get(3)?;
-            if composite_score.is_none() {
-                return Ok(Some(BackfillReason::MissingDerivedField));
-            }
-            let compaction_count: i64 = row.get(1)?;
-            let stored_rounds: i64 = row.get(2)?;
-            if compaction_count > 0 && stored_rounds == 0 {
-                return Ok(Some(BackfillReason::MissingDerivedField));
-            }
+            found
+        };
+
+        if reason.is_some() && !std::path::Path::new(source_path).exists() {
+            return Ok(Some(BackfillReason::SourceUnavailable));
         }
-        Ok(None)
+        Ok(reason)
     }
 
     /// Returns `(session_id, adapter, source_path)` for every indexed session that fails
@@ -965,9 +1024,9 @@ impl Storage {
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata, scanned_at,
                 primary_outcome, composite_score, prompt_preview,
-                compaction_count, compaction_tokens_dropped, parser_version
+                compaction_count, compaction_tokens_dropped, parser_version, backfilled_version
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
             ON CONFLICT(session_id) DO UPDATE SET
                 adapter = excluded.adapter,
                 source_path = excluded.source_path,
@@ -993,7 +1052,8 @@ impl Storage {
                 prompt_preview = excluded.prompt_preview,
                 compaction_count = excluded.compaction_count,
                 compaction_tokens_dropped = excluded.compaction_tokens_dropped,
-                parser_version = excluded.parser_version;
+                parser_version = excluded.parser_version,
+                backfilled_version = excluded.backfilled_version;
             "#,
             params![
                 trace.session_id,
@@ -1021,6 +1081,9 @@ impl Storage {
                 prompt_preview,
                 trace.stats.compaction_count as i64,
                 trace.stats.compaction_tokens_dropped as i64,
+                parser_version,
+                // Every upsert is a full reparse under `parser_version`, so it doubles as
+                // proof that a backfill pass ran at that version -- see `needs_backfill`.
                 parser_version,
             ],
         )?;
@@ -3750,6 +3813,16 @@ mod tests {
         assert_eq!(none_summary.prompt_preview, None);
     }
 
+    /// A real (empty) file, plus its path as a string. `needs_backfill` treats an otherwise
+    /// real reason as `SourceUnavailable` when `source_path` doesn't exist on disk, so any
+    /// test asserting a real `BackfillReason` needs a path that actually exists. Keep the
+    /// returned file alive for as long as the path is used -- it deletes itself on drop.
+    fn real_source_path() -> (tempfile::NamedTempFile, String) {
+        let file = tempfile::NamedTempFile::new().expect("create temp source file");
+        let path = file.path().to_string_lossy().to_string();
+        (file, path)
+    }
+
     /// Seeds one row with a user message (so `prompt_preview` is derivable) at the given
     /// score and parser version.
     fn seed_backfill_row(
@@ -3776,14 +3849,18 @@ mod tests {
 
     /// `needs_backfill` is the predicate the scanner uses to reparse an unchanged source
     /// whose row predates a derived-field extractor. It must say yes for a row with an
-    /// empty/missing `prompt_preview`, no for a row that already has one, and no for a
-    /// source_path with no row at all (a brand-new source is a normal scan, not a backfill).
+    /// empty/missing `prompt_preview` that hasn't been through a backfill pass yet, no for a
+    /// row that already has one, no for a row that's already had its pass (see
+    /// `test_needs_backfill_terminates_for_a_session_with_no_user_message` for why that
+    /// matters), and no for a source_path with no row at all (a brand-new source is a normal
+    /// scan, not a backfill).
     #[test]
     fn test_needs_backfill_predicate() {
         let storage = Storage::open_in_memory().expect("open storage");
         let start = Utc::now();
 
-        let prov_missing = Provenance::new("/path/missing.jsonl", "claude_code", 100, 100, "fp_missing");
+        let (_missing_file, missing_path) = real_source_path();
+        let prov_missing = Provenance::new(missing_path.as_str(), "claude_code", 100, 100, "fp_missing");
         let mut trace_missing = AgentWorthTrace::new("missing", "claude_code", prov_missing, start);
         trace_missing.stats.total_events = 1;
         trace_missing.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
@@ -3795,10 +3872,22 @@ mod tests {
         storage
             .upsert_session(&trace_missing, None, Some(0.4), 1)
             .expect("upsert missing");
+        // Simulate the legacy shape: a row indexed before `backfilled_version` existed, whose
+        // prompt_preview is empty. A row freshly written under today's code (the case just
+        // above, before this UPDATE) needs nothing even with an empty prompt_preview -- that's
+        // the fix for finding #1, and its own test covers it directly.
+        {
+            let conn = storage.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            conn.execute(
+                "UPDATE sessions SET backfilled_version = NULL WHERE session_id = 'missing'",
+                [],
+            )
+            .expect("simulate pre-migration row");
+        }
         assert_eq!(
-            storage.needs_backfill("/path/missing.jsonl", 1).unwrap(),
+            storage.needs_backfill(&missing_path, 1).unwrap(),
             Some(BackfillReason::MissingDerivedField),
-            "a row with no prompt_preview needs backfill"
+            "a row with no prompt_preview and no recorded backfill pass needs backfill"
         );
 
         seed_backfill_row(&storage, "complete", "/path/complete.jsonl", Some(0.5), 1);
@@ -3812,6 +3901,72 @@ mod tests {
             storage.needs_backfill("/path/never-indexed.jsonl", 1).unwrap(),
             None,
             "no existing row is a normal new-source scan, not a backfill"
+        );
+    }
+
+    /// The real bug behind finding #1 in #85's own follow-up: a session with no user message
+    /// at all (a subagent run, a tool-only session) can never gain a `prompt_preview`, no
+    /// matter how many times it's reparsed. On the real index, this was every one of 10,329
+    /// rows, reparsed on every single scan forever. `backfilled_version` is what makes it
+    /// terminate: flagged once per parser version, quiet after that, empty field or not.
+    #[test]
+    fn test_needs_backfill_terminates_for_a_session_with_no_user_message() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let start = Utc::now();
+        let (_file, path) = real_source_path();
+        let prov = Provenance::new(path.as_str(), "claude_code", 100, 100, "fp_no_user_msg");
+        let mut trace = AgentWorthTrace::new("no_user_msg", "claude_code", prov, start);
+        trace.stats.total_events = 2;
+        trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::AssistantMessage { content: "on it".to_string(), thinking: None },
+        ));
+        trace.events.push(NormalizedEvent::new(
+            2,
+            start + Duration::seconds(1),
+            EventPayload::AssistantMessage { content: "done".to_string(), thinking: None },
+        ));
+
+        storage
+            .upsert_session(&trace, Some("done_claimed"), Some(0.6), 1)
+            .expect("seed row written like a fresh scan would");
+        assert_eq!(
+            storage.needs_backfill(&path, 1).unwrap(),
+            None,
+            "a row already written under the current parser version needs nothing, empty prompt_preview or not"
+        );
+
+        // Reproduce the pre-`backfilled_version` shape: a row indexed before this column
+        // existed, whose prompt_preview is empty because the session genuinely has no user
+        // message -- not because it predates the extractor.
+        {
+            let conn = storage.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            conn.execute(
+                "UPDATE sessions SET backfilled_version = NULL WHERE session_id = 'no_user_msg'",
+                [],
+            )
+            .expect("simulate pre-migration row");
+        }
+        assert_eq!(
+            storage.needs_backfill(&path, 1).unwrap(),
+            Some(BackfillReason::MissingDerivedField),
+            "an empty prompt_preview with no backfill pass recorded yet must be flagged once"
+        );
+
+        storage
+            .upsert_session(&trace, Some("done_claimed"), Some(0.6), 1)
+            .expect("reparse");
+        assert_eq!(
+            storage.needs_backfill(&path, 1).unwrap(),
+            None,
+            "the reparse recorded backfilled_version -- the still-empty prompt_preview must not re-flag it"
+        );
+        assert_eq!(
+            storage.needs_backfill(&path, 1).unwrap(),
+            None,
+            "and it must stay quiet on a third check -- this is what 'never loops' means"
         );
     }
 
@@ -3888,7 +4043,8 @@ mod tests {
     #[test]
     fn test_needs_backfill_flags_a_compacted_session_with_no_round_rows_once() {
         let storage = Storage::open_in_memory().expect("open storage");
-        let trace = compacted_trace("sess_backfill", "/path/backfill.jsonl");
+        let (_file, path) = real_source_path();
+        let trace = compacted_trace("sess_backfill", &path);
         // Written the way a scan writes it -- scored, and stamped with the parser version --
         // so the only thing this test can trip is the round-boundary condition.
         storage
@@ -3896,7 +4052,7 @@ mod tests {
             .expect("upsert");
 
         assert_eq!(
-            storage.needs_backfill("/path/backfill.jsonl", 1).unwrap(),
+            storage.needs_backfill(&path, 1).unwrap(),
             None,
             "a freshly written row has its rounds already"
         );
@@ -3911,7 +4067,7 @@ mod tests {
             .expect("drop round rows");
         }
         assert_eq!(
-            storage.needs_backfill("/path/backfill.jsonl", 1).unwrap(),
+            storage.needs_backfill(&path, 1).unwrap(),
             Some(BackfillReason::MissingDerivedField),
             "compaction_count > 0 with no round rows is a row that predates the table"
         );
@@ -3920,7 +4076,7 @@ mod tests {
             .upsert_session(&trace, None, Some(0.5), 1)
             .expect("reparse");
         assert_eq!(
-            storage.needs_backfill("/path/backfill.jsonl", 1).unwrap(),
+            storage.needs_backfill(&path, 1).unwrap(),
             None,
             "the reparse must settle it -- this predicate fires at most once per session"
         );
@@ -3932,17 +4088,18 @@ mod tests {
     #[test]
     fn test_needs_backfill_flags_an_unscored_row_once() {
         let storage = Storage::open_in_memory().expect("open storage");
+        let (_file, path) = real_source_path();
 
-        seed_backfill_row(&storage, "unscored", "/path/unscored.jsonl", None, 1);
+        seed_backfill_row(&storage, "unscored", &path, None, 1);
         assert_eq!(
-            storage.needs_backfill("/path/unscored.jsonl", 1).unwrap(),
+            storage.needs_backfill(&path, 1).unwrap(),
             Some(BackfillReason::MissingDerivedField),
             "a row with a NULL composite_score was never scored and must be rescanned"
         );
 
-        seed_backfill_row(&storage, "unscored", "/path/unscored.jsonl", Some(0.0), 1);
+        seed_backfill_row(&storage, "unscored", &path, Some(0.0), 1);
         assert_eq!(
-            storage.needs_backfill("/path/unscored.jsonl", 1).unwrap(),
+            storage.needs_backfill(&path, 1).unwrap(),
             None,
             "a score of 0.0 is still a score -- rescanning must stop after one pass"
         );
@@ -3981,22 +4138,23 @@ mod tests {
     #[test]
     fn test_needs_backfill_flags_a_stale_parser_version_once() {
         let storage = Storage::open_in_memory().expect("open storage");
+        let (_file, path) = real_source_path();
 
-        seed_backfill_row(&storage, "v1row", "/path/v1.jsonl", Some(0.7), 1);
+        seed_backfill_row(&storage, "v1row", &path, Some(0.7), 1);
         assert_eq!(
-            storage.needs_backfill("/path/v1.jsonl", 1).unwrap(),
+            storage.needs_backfill(&path, 1).unwrap(),
             None,
             "a row at the adapter's current version is up to date"
         );
         assert_eq!(
-            storage.needs_backfill("/path/v1.jsonl", 2).unwrap(),
+            storage.needs_backfill(&path, 2).unwrap(),
             Some(BackfillReason::StaleParserVersion),
             "the adapter now parses this file differently, so the row is stale"
         );
 
-        seed_backfill_row(&storage, "v1row", "/path/v1.jsonl", Some(0.7), 2);
+        seed_backfill_row(&storage, "v1row", &path, Some(0.7), 2);
         assert_eq!(
-            storage.needs_backfill("/path/v1.jsonl", 2).unwrap(),
+            storage.needs_backfill(&path, 2).unwrap(),
             None,
             "the reparse recorded the new version, so it must not repeat"
         );
@@ -4009,7 +4167,8 @@ mod tests {
     fn test_rows_predating_the_parser_version_column_are_stale() {
         let storage = Storage::open_in_memory().expect("open storage");
         let start = Utc::now();
-        let prov = Provenance::new("/path/legacy.jsonl", "claude_code", 100, 100, "fp_legacy");
+        let (_file, path) = real_source_path();
+        let prov = Provenance::new(path.as_str(), "claude_code", 100, 100, "fp_legacy");
         let mut trace = AgentWorthTrace::new("legacy", "claude_code", prov, start);
         trace.stats.total_events = 2;
         trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
@@ -4022,8 +4181,48 @@ mod tests {
         storage.upsert_trace(&trace).expect("seed legacy row");
 
         assert_eq!(
-            storage.needs_backfill("/path/legacy.jsonl", 1).unwrap(),
+            storage.needs_backfill(&path, 1).unwrap(),
             Some(BackfillReason::StaleParserVersion)
+        );
+    }
+
+    /// Finding #2's other half: a row pulled in by `agentworth merge` from another machine's
+    /// index needs reparsing (its `parser_version` didn't travel, or it's genuinely missing a
+    /// derived field) but its `source_path` was never on this disk to begin with. Flagging the
+    /// real reason here would mean it's reported as actionable backfill work on every scan
+    /// forever, with no file here to ever act on it. `needs_backfill` must say so distinctly.
+    #[test]
+    fn test_needs_backfill_reports_source_unavailable_for_a_missing_source() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let start = Utc::now();
+        let foreign_path = "/definitely/not/on/this/machine/session.jsonl";
+        let prov = Provenance::new(foreign_path, "claude_code", 100, 100, "fp_foreign");
+        let mut trace = AgentWorthTrace::new("foreign", "claude_code", prov, start);
+        trace.stats.total_events = 2;
+        trace.stats.token_usage = TokenUsage::new(100, 10, 0, 0);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            start,
+            EventPayload::UserMessage { content: "hello from another machine".to_string() },
+        ));
+        // upsert_trace stamps parser_version 0 -- always stale relative to a real adapter
+        // version, exactly the shape a merged row with no carried parser_version takes.
+        storage.upsert_trace(&trace).expect("seed row as if merged from elsewhere");
+
+        assert_eq!(
+            storage.needs_backfill(foreign_path, 1).unwrap(),
+            Some(BackfillReason::SourceUnavailable),
+            "a row that needs reparsing but whose source isn't here must be reported distinctly, \
+             not as an ordinary backfill reason"
+        );
+
+        // A row that needs nothing stays `None` regardless of whether its source exists --
+        // the existence check only ever downgrades an actionable reason, never invents one.
+        seed_backfill_row(&storage, "foreign_complete", "/also/not/on/this/machine.jsonl", Some(0.5), 1);
+        assert_eq!(
+            storage.needs_backfill("/also/not/on/this/machine.jsonl", 1).unwrap(),
+            None,
+            "a fully up-to-date row needs nothing, whether or not its source is local"
         );
     }
 
