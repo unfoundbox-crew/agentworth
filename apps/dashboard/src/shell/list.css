@@ -141,6 +141,15 @@
   white-space: nowrap;
 }
 
+.shell-root .shell-row-compaction {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-faint);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .shell-root .shell-row-agent {
   font-size: 10.5px;
   color: var(--mv-muted);
