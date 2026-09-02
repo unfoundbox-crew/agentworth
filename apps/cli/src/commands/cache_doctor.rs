@@ -215,6 +215,7 @@ mod tests {
                 },
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         ));
 
@@ -232,6 +233,7 @@ mod tests {
                 },
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         ));
 

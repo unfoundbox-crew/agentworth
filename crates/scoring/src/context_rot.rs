@@ -769,6 +769,7 @@ mod tests {
                     token_usage: TokenUsage::new(2000, 400, 100, 50),
                     cost_usd: None,
                     latency_ms: Some(900),
+                    effort: None,
                 },
             );
             seq += 1;
@@ -1124,6 +1125,7 @@ mod tests {
                 token_usage: TokenUsage::new(50_000, 0, 0, 0),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         );
         for seq in 2..=15u64 {

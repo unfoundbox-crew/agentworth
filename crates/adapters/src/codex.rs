@@ -1,9 +1,11 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use agentworth_adapter_sdk::{
-    AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
+    compute_fast_fingerprint, AgentAdapter, DetectionResult, ParseResult, ScanOptions,
+    SessionSource,
 };
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
@@ -26,6 +28,16 @@ impl Default for CodexAdapter {
 }
 
 impl CodexAdapter {
+    /// 2: version 1 read a shape Codex rollouts do not use. Every field lives under a
+    /// `payload` object keyed by a top-level `type` (`session_meta`, `turn_context`,
+    /// `event_msg`, `response_item`), so the top-level `usage`/`model` lookups version 1
+    /// made never matched, and every real session was indexed with no tokens and no model.
+    /// Version 2 reads `turn_context` (model, effort), the `token_count` event's
+    /// cumulative counters, and `session_meta.cwd` for the repository key. The bytes of
+    /// those files never changed, so without this bump an incremental scan would keep
+    /// serving the empty answer.
+    pub const PARSER_VERSION: i64 = 2;
+
     pub fn new() -> Self {
         Self
     }
@@ -59,6 +71,141 @@ impl CodexAdapter {
     }
 }
 
+/// Separates a synthetic, repo-anchored path prefix from the real file path needed to read
+/// the session.
+///
+/// `extract_repository_or_workspace` (agentworth-schema) resolves a session's repository
+/// purely by pattern-matching `Provenance.source_path`, and per the adapter/storage split no
+/// Codex-specific knowledge may be added to it. Every Codex rollout lives under
+/// `~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-*.jsonl`, a path that names no repository at
+/// all -- worse, its `.codex` segment matches that function's hidden-directory fallback rule
+/// and resolves to the *home directory*, which is why all 874 indexed Codex sessions shared
+/// one bogus repo key. The real workspace is recoverable: `session_meta.cwd` is on the first
+/// line of all 448 rollout files on the development machine. So enumeration builds a
+/// source_path that looks like a real file living inside that directory, with the real path
+/// tucked behind this marker -- invisible to `extract_repository_or_workspace`'s
+/// substring/component rules, which only ever see a '/'-delimited path up to the marker, but
+/// still recoverable in `parse()`. `SessionSource.path` and `Provenance.source_path` are
+/// always the same string (never diverged): `Storage::should_scan_source` and
+/// `AgentWorthCore::prune_stub_sessions` compare the enumerate-time path against the stored
+/// parse-time one, and a mismatch would make every Codex session look permanently changed.
+/// Same mechanism, and the same reasoning, as `OPENCODE_REPO_MARKER`.
+const CODEX_REPO_MARKER: &str = "::codex-repo::";
+
+/// Invented path segment placed under the resolved workspace directory. It exists only so
+/// `extract_repository_or_workspace`'s hidden-directory-boundary rule has something to anchor
+/// on for a workspace that is not itself under a recognized `/code/` or `/projects/-` root;
+/// without it that rule would keep scanning rightward past the marker and match the real
+/// path's own `.codex` segment, reproducing the bug this exists to fix.
+const CODEX_REPO_LEAF: &str = ".codex-session.jsonl";
+
+/// Wrap `real_path` behind [`CODEX_REPO_MARKER`] so it resolves to `workspace` through
+/// `extract_repository_or_workspace`'s existing generic rules. Returns `real_path` unchanged
+/// when no usable workspace is known, which is the pre-existing (wrong, but no worse)
+/// behavior.
+fn wrap_with_repo_marker(workspace: Option<&str>, real_path: &str) -> String {
+    match workspace
+        .map(str::trim)
+        .map(|d| d.trim_end_matches('/'))
+        .filter(|d| d.starts_with('/') && d.len() > 1)
+    {
+        Some(dir) => format!("{dir}/{CODEX_REPO_LEAF}{CODEX_REPO_MARKER}{real_path}"),
+        None => real_path.to_string(),
+    }
+}
+
+/// Recover the real file path from a possibly-wrapped source path. Absent the marker (an
+/// index row written before this landed, or a session whose workspace could not be read), the
+/// whole string already is the real path.
+#[allow(
+    clippy::string_slice,
+    reason = "idx comes from rfind() on an ASCII marker, offset by its own byte length: always a char boundary"
+)]
+fn strip_repo_marker(path_str: &str) -> &str {
+    match path_str.rfind(CODEX_REPO_MARKER) {
+        Some(idx) => &path_str[idx + CODEX_REPO_MARKER.len()..],
+        None => path_str,
+    }
+}
+
+/// Bytes of a rollout file enumeration will read looking for the session's workspace.
+///
+/// Measured over 448 real rollout files: the first line is a `session_meta` record of 7-48 KB
+/// (it carries the full base-instructions text) and `"cwd"` appears within its first 334
+/// bytes. This budget is two orders of magnitude clear of that and still bounded, so a
+/// truncated or malformed file costs a bounded read rather than a scan of a multi-GB log.
+const CODEX_WORKSPACE_SCAN_BYTES: u64 = 1024 * 1024;
+
+/// Read the workspace directory a Codex session ran in, from the head of its rollout file.
+///
+/// `session_meta.cwd` is the answer in all 448 files measured; `turn_context.cwd` is read as a
+/// fallback for a rollout whose first record is missing or malformed. Returns `None` rather
+/// than failing: a session with no readable workspace still indexes, it just keeps the old
+/// path-derived repository key.
+fn read_codex_workspace(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::new(file).take(CODEX_WORKSPACE_SCAN_BYTES);
+    let mut fallback = None;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        let Ok(val) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let cwd = val
+            .get("payload")
+            .and_then(|p| p.get("cwd"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        match val.get("type").and_then(|v| v.as_str()) {
+            Some("session_meta") => {
+                if let Some(cwd) = cwd {
+                    return Some(cwd.to_string());
+                }
+            }
+            Some("turn_context") => {
+                if fallback.is_none() {
+                    fallback = cwd.map(str::to_string);
+                }
+            }
+            _ => {}
+        }
+    }
+    fallback
+}
+
+/// Build a `SessionSource` whose identity path carries the session's workspace (see
+/// [`CODEX_REPO_MARKER`]). Size, mtime and fingerprint always come from the real file --
+/// only the identity string embeds the synthetic prefix.
+fn build_codex_source(path: &Path, adapter_name: &str) -> Result<SessionSource> {
+    let metadata = std::fs::metadata(path)?;
+    let file_size_bytes = metadata.len();
+    let mtime_epoch_secs = metadata
+        .modified()?
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let fingerprint = compute_fast_fingerprint(path, file_size_bytes, mtime_epoch_secs)?;
+
+    let real_path = path.to_string_lossy().to_string();
+    let workspace = read_codex_workspace(path);
+    let identity = wrap_with_repo_marker(workspace.as_deref(), &real_path);
+
+    Ok(SessionSource {
+        path: PathBuf::from(identity),
+        adapter_name: adapter_name.to_string(),
+        file_size_bytes,
+        mtime_epoch_secs,
+        fingerprint,
+    })
+}
+
 /// Skip directories that are never Codex session data but can appear under a Codex
 /// root: cloned repos under `~/.codex/worktrees/<hash>/<repo>/...` carry their own
 /// `node_modules`, `.git`, and build output, none of which is session data.
@@ -78,6 +225,17 @@ fn should_skip_codex_dir(entry: &walkdir::DirEntry) -> bool {
 impl AgentAdapter for CodexAdapter {
     fn name(&self) -> &'static str {
         "codex"
+    }
+
+    fn parser_version(&self) -> i64 {
+        Self::PARSER_VERSION
+    }
+
+    /// A Codex `SessionSource.path` is a synthetic identity string, not a real path (see
+    /// [`CODEX_REPO_MARKER`]), so the default `path.exists()` would report every session as
+    /// gone.
+    fn source_exists(&self, source: &SessionSource) -> bool {
+        Path::new(strip_repo_marker(&source.path.to_string_lossy())).exists()
     }
 
     fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
@@ -150,7 +308,7 @@ impl AgentAdapter for CodexAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_codex_file(custom) {
-                        if let Ok(source) = SessionSource::from_path(custom, self.name()) {
+                        if let Ok(source) = build_codex_source(custom, self.name()) {
                             sources.push(source);
                         }
                     }
@@ -162,7 +320,7 @@ impl AgentAdapter for CodexAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_codex_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                            if let Ok(source) = build_codex_source(path, self.name()) {
                                 sources.push(source);
                             }
                         }
@@ -173,7 +331,7 @@ impl AgentAdapter for CodexAdapter {
             for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_codex_file(&root) {
-                        if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                        if let Ok(source) = build_codex_source(&root, self.name()) {
                             sources.push(source);
                         }
                     }
@@ -185,7 +343,7 @@ impl AgentAdapter for CodexAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_codex_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                            if let Ok(source) = build_codex_source(path, self.name()) {
                                 sources.push(source);
                             }
                         }
@@ -202,12 +360,14 @@ impl AgentAdapter for CodexAdapter {
     }
 
     fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
-        let file = File::open(&source.path)?;
+        let identity = source.path.to_string_lossy().to_string();
+        let real_path = PathBuf::from(strip_repo_marker(&identity));
+        let file = File::open(&real_path)?;
         let reader = BufReader::new(file);
 
-        let session_id = derive_session_id(&source.path);
+        let session_id = derive_session_id(&real_path);
         let provenance = Provenance::new(
-            source.path.to_string_lossy().to_string(),
+            identity,
             self.name(),
             source.file_size_bytes,
             source.mtime_epoch_secs,
@@ -218,7 +378,7 @@ impl AgentAdapter for CodexAdapter {
         let mut malformed_lines = 0;
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
-        let mut last_model: Option<String> = None;
+        let mut state = CodexSessionState::default();
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -256,9 +416,13 @@ impl AgentAdapter for CodexAdapter {
                 latest_ts = Some(timestamp);
             }
 
-            let events = parse_codex_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+            let events = parse_codex_record(&val, &mut sequence, timestamp, line_num, &mut state);
             trace.events.extend(events);
         }
+
+        trace
+            .events
+            .extend(flush_pending_usage(&mut state, &mut sequence));
 
         if let Some(earliest) = earliest_ts {
             trace.started_at = earliest;
@@ -372,15 +536,282 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
     )
 }
 
+/// Codex's own cumulative token counters, as carried by `info.total_token_usage` on every
+/// `token_count` event.
+///
+/// The same event also carries `info.last_token_usage`, the counts for the turn that just
+/// finished, and summing those is the obvious way to total a session -- but it is wrong. Over
+/// 425 real rollout files that carry token events, summing `last_token_usage` matches the
+/// final `total_token_usage` in 339 and overshoots it in 86: Codex re-emits a turn's counts
+/// more than once. `total_token_usage` is monotonic in 447 of 448 files, so this adapter
+/// tracks it and attributes each event the *delta* since the previous one. The deltas then
+/// sum to exactly the session's real total, and no turn is counted twice.
+#[derive(Default, Clone, Copy)]
+struct CodexCumulativeTokens {
+    input: u64,
+    output: u64,
+    cached: u64,
+    cache_write: u64,
+}
+
+impl CodexCumulativeTokens {
+    fn read(usage: &Value) -> Self {
+        let field = |name: &str| usage.get(name).and_then(Value::as_u64).unwrap_or(0);
+        Self {
+            input: field("input_tokens"),
+            output: field("output_tokens"),
+            cached: field("cached_input_tokens"),
+            cache_write: field("cache_write_input_tokens"),
+        }
+    }
+
+    /// Tokens spent since `prev`, mapped onto `TokenUsage`'s four disjoint buckets.
+    ///
+    /// Codex nests where AgentWorth separates. Measured over 36,334 usage records: every one
+    /// satisfies `total_tokens == input_tokens + output_tokens`, `cached_input_tokens <=
+    /// input_tokens` and `reasoning_output_tokens <= output_tokens` -- so `input_tokens` is
+    /// the whole prompt with the cached part inside it, and reasoning tokens are already
+    /// inside `output_tokens`. Cache reads are therefore subtracted out of input rather than
+    /// added alongside it, and `reasoning_output_tokens` is deliberately not read at all:
+    /// OpenAI bills it as output and adding it again would double-count. `saturating_sub`
+    /// throughout so the one file whose counters are not monotonic yields a zero delta
+    /// instead of wrapping.
+    fn delta_since(self, prev: Self) -> TokenUsage {
+        let input = self.input.saturating_sub(prev.input);
+        let cached = self.cached.saturating_sub(prev.cached);
+        TokenUsage::new(
+            input.saturating_sub(cached),
+            self.output.saturating_sub(prev.output),
+            cached,
+            // Never observed non-zero in any of the 36,334 records measured, so whether it
+            // nests inside `input_tokens` the way `cached_input_tokens` does is unverified.
+            // Carried through as its own bucket rather than guessed at.
+            self.cache_write.saturating_sub(prev.cache_write),
+        )
+    }
+}
+
+/// Token usage measured before any record named a model. 25 of 448 real rollouts open with a
+/// `token_count` ahead of their first `turn_context`; holding those counts back and
+/// attributing them to the first model that does appear keeps a phantom "unknown" model out
+/// of `models_used` and out of per-model usage.
+struct PendingCodexUsage {
+    usage: TokenUsage,
+    timestamp: DateTime<Utc>,
+    raw_ref: String,
+    effort: Option<String>,
+}
+
+/// Session-scoped parse state threaded through `parse_codex_record`.
+#[derive(Default)]
+struct CodexSessionState {
+    /// Model named by the most recent `turn_context` / `thread_settings_applied` record.
+    /// Includes `codex-auto-review`, Codex's own reviewer sub-thread, when that is the model
+    /// actually running: its tokens are real and belong to it. Which of a session's models is
+    /// "the" session model is a question for the query side, not for the parser.
+    current_model: Option<String>,
+    /// Reasoning effort in force for the current turn.
+    current_effort: Option<String>,
+    /// Model of the last emitted `ModelInvocation`, for `ModelSwitch` detection.
+    last_invoked_model: Option<String>,
+    cumulative: CodexCumulativeTokens,
+    pending: Option<PendingCodexUsage>,
+}
+
+/// Emit a `ModelInvocation` (preceded by a `ModelSwitch` when the model changed) for `usage`,
+/// or bank it in `state.pending` when no model has been named yet.
+fn push_model_invocation(
+    state: &mut CodexSessionState,
+    usage: TokenUsage,
+    effort: Option<String>,
+    seq: &mut u64,
+    ts: DateTime<Utc>,
+    raw_ref: &str,
+    events: &mut Vec<NormalizedEvent>,
+) {
+    // A flush of banked usage carries the effort captured when it was banked; if none was
+    // known then, the first one the session declares is the better answer than nothing.
+    let effort = effort.or_else(|| state.current_effort.clone());
+    let Some(model) = state.current_model.clone() else {
+        match &mut state.pending {
+            Some(pending) => pending.usage += usage,
+            None => {
+                state.pending = Some(PendingCodexUsage {
+                    usage,
+                    timestamp: ts,
+                    raw_ref: raw_ref.to_string(),
+                    effort,
+                });
+            }
+        }
+        return;
+    };
+
+    if state.last_invoked_model.as_deref() != Some(model.as_str()) {
+        if let Some(prev) = state.last_invoked_model.take() {
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::ModelSwitch(ModelSwitch {
+                        from_model: Some(prev),
+                        to_model: model.clone(),
+                        reason: None,
+                    }),
+                )
+                .with_raw_ref(raw_ref),
+            );
+        }
+        state.last_invoked_model = Some(model.clone());
+    }
+
+    *seq += 1;
+    events.push(
+        NormalizedEvent::new(
+            *seq,
+            ts,
+            EventPayload::ModelInvocation {
+                model,
+                token_usage: usage,
+                cost_usd: None,
+                latency_ms: None,
+                effort,
+            },
+        )
+        .with_raw_ref(raw_ref),
+    );
+}
+
+/// Emit any usage still banked at end of file. Reached only by a rollout that spends tokens
+/// and never names a model in any record; `unknown` is then the honest label.
+fn flush_pending_usage(state: &mut CodexSessionState, seq: &mut u64) -> Vec<NormalizedEvent> {
+    let Some(pending) = state.pending.take() else {
+        return Vec::new();
+    };
+    let mut events = Vec::new();
+    if state.current_model.is_none() {
+        state.current_model = Some("unknown".to_string());
+    }
+    push_model_invocation(
+        state,
+        pending.usage,
+        pending.effort,
+        seq,
+        pending.timestamp,
+        &pending.raw_ref,
+        &mut events,
+    );
+    events
+}
+
+/// A trimmed, non-empty string field, or `None`. Codex writes `""` where a setting is
+/// unset, and an empty model name is worse than no model name at all.
+fn non_empty_str(parent: &Value, key: &str) -> Option<String> {
+    parent
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Track the model and reasoning effort a Codex rollout declares, and turn its `token_count`
+/// events into per-invocation token usage.
+///
+/// Everything Codex writes sits under `payload`, keyed by a top-level `type`:
+/// `turn_context` carries `model`, `effort` and `cwd` for the turn about to run;
+/// `event_msg` wraps a second-level `payload.type`, of which `token_count` carries the
+/// counters and `thread_settings_applied` restates model and `reasoning_effort`;
+/// `session_meta` opens the file with `cwd`, `originator` and `cli_version`.
+fn absorb_codex_metadata(
+    val: &Value,
+    state: &mut CodexSessionState,
+    seq: &mut u64,
+    ts: DateTime<Utc>,
+    raw_ref: &str,
+    events: &mut Vec<NormalizedEvent>,
+) {
+    let Some(payload) = val.get("payload") else {
+        return;
+    };
+
+    match val.get("type").and_then(|v| v.as_str()) {
+        Some("session_meta") => {
+            // Not present in any of the 448 rollouts measured (the model lives on
+            // `turn_context`), but read as a fallback for a rollout that opens with one.
+            if state.current_model.is_none() {
+                state.current_model = non_empty_str(payload, "model");
+            }
+        }
+        Some("turn_context") => {
+            if let Some(model) = non_empty_str(payload, "model") {
+                state.current_model = Some(model);
+            }
+            if let Some(effort) = non_empty_str(payload, "effort") {
+                state.current_effort = Some(effort);
+            }
+        }
+        Some("event_msg") => match payload.get("type").and_then(|v| v.as_str()) {
+            Some("thread_settings_applied") => {
+                let Some(settings) = payload.get("thread_settings") else {
+                    return;
+                };
+                if let Some(model) = non_empty_str(settings, "model") {
+                    state.current_model = Some(model);
+                }
+                if let Some(effort) = non_empty_str(settings, "reasoning_effort") {
+                    state.current_effort = Some(effort);
+                }
+            }
+            Some("token_count") => {
+                let Some(total) = payload
+                    .get("info")
+                    .and_then(|info| info.get("total_token_usage"))
+                else {
+                    return;
+                };
+                let cumulative = CodexCumulativeTokens::read(total);
+                let usage = cumulative.delta_since(state.cumulative);
+                state.cumulative = cumulative;
+                if usage.total() > 0 {
+                    let effort = state.current_effort.clone();
+                    push_model_invocation(state, usage, effort, seq, ts, raw_ref, events);
+                }
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+}
+
 fn parse_codex_record(
     val: &Value,
     seq: &mut u64,
     ts: DateTime<Utc>,
     line_num: usize,
-    last_model: &mut Option<String>,
+    state: &mut CodexSessionState,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
+
+    absorb_codex_metadata(val, state, seq, ts, &raw_ref, &mut events);
+
+    // A model named by a `turn_context` can be the first one this session has seen, which
+    // releases usage banked before any model was known.
+    if state.current_model.is_some() {
+        if let Some(pending) = state.pending.take() {
+            push_model_invocation(
+                state,
+                pending.usage,
+                pending.effort,
+                seq,
+                pending.timestamp,
+                &pending.raw_ref,
+                &mut events,
+            );
+        }
+    }
 
     let role = val
         .get("role")
@@ -404,8 +835,8 @@ fn parse_codex_record(
                 .unwrap_or("gpt-4o")
                 .to_string();
 
-            if last_model.as_deref() != Some(model.as_str()) {
-                if let Some(prev) = last_model.take() {
+            if state.last_invoked_model.as_deref() != Some(model.as_str()) {
+                if let Some(prev) = state.last_invoked_model.take() {
                     *seq += 1;
                     events.push(
                         NormalizedEvent::new(
@@ -420,7 +851,7 @@ fn parse_codex_record(
                         .with_raw_ref(&raw_ref),
                     );
                 }
-                *last_model = Some(model.clone());
+                state.last_invoked_model = Some(model.clone());
             }
 
             *seq += 1;
@@ -436,6 +867,7 @@ fn parse_codex_record(
                             .get("duration_ms")
                             .or_else(|| val.get("latency_ms"))
                             .and_then(|d| d.as_u64()),
+                        effort: None,
                     },
                 )
                 .with_raw_ref(&raw_ref),
@@ -843,6 +1275,78 @@ mod tests {
         let enumerated = adapter.enumerate(&options).unwrap();
         assert_eq!(enumerated.len(), 1);
         assert_eq!(enumerated[0].adapter_name, "codex");
+    }
+
+    /// 25 of 448 real rollout files emit a `token_count` before any record names a model.
+    /// Those tokens are held back and attributed to the first model that does appear, rather
+    /// than inventing an "unknown" bucket that would then show up in `models_used` and in
+    /// per-model usage for a session that only ever ran one model.
+    #[test]
+    fn test_tokens_before_the_first_turn_context_go_to_the_first_model_named() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = concat!(
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30,"total_tokens":130}}}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:01Z","type":"turn_context","payload":{"model":"gpt-5.6-sol","effort":"medium","cwd":"/w"}}"#,
+            "\n",
+        );
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CodexAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let trace = adapter.parse(&source).expect("parse failed").trace;
+
+        assert_eq!(trace.stats.models_used, vec!["gpt-5.6-sol".to_string()]);
+        assert_eq!(trace.stats.effort.as_deref(), Some("medium"));
+        assert_eq!(
+            trace.stats.per_model_token_usage.get("gpt-5.6-sol"),
+            Some(&TokenUsage::new(80, 30, 20, 0))
+        );
+    }
+
+    /// A session that spends tokens and never names a model anywhere gets `unknown`, which is
+    /// the honest label -- but it must still not lose the tokens.
+    #[test]
+    fn test_tokens_with_no_model_anywhere_are_kept_under_unknown() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = concat!(
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}}"#,
+            "\n",
+        );
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CodexAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let trace = adapter.parse(&source).expect("parse failed").trace;
+
+        assert_eq!(trace.stats.models_used, vec!["unknown".to_string()]);
+        assert_eq!(trace.stats.token_usage.total(), 15);
+    }
+
+    #[test]
+    fn test_repo_marker_round_trips_and_resolves_to_the_workspace() {
+        let real = "/Users/example/.codex/sessions/2026/01/01/rollout-x.jsonl";
+
+        let wrapped = wrap_with_repo_marker(Some("/Users/example/code/acme/widget/"), real);
+        assert_eq!(strip_repo_marker(&wrapped), real);
+        assert_eq!(
+            agentworth_schema::extract_repository_or_workspace(&wrapped),
+            "acme/widget"
+        );
+
+        // A workspace outside any recognized code root still resolves, via the invented leaf.
+        let outside = wrap_with_repo_marker(Some("/srv/deploy/checkout"), real);
+        assert_eq!(strip_repo_marker(&outside), real);
+        assert_eq!(
+            agentworth_schema::extract_repository_or_workspace(&outside),
+            "deploy/checkout"
+        );
+
+        // Unusable workspaces leave the real path alone rather than building a broken prefix.
+        for unusable in [None, Some(""), Some("   "), Some("/"), Some("relative/dir")] {
+            assert_eq!(wrap_with_repo_marker(unusable, real), real);
+        }
+        assert_eq!(strip_repo_marker(real), real);
     }
 
     /// Regression test for the "worktrees full of node_modules" bug: a cloned repo under

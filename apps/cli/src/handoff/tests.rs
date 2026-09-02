@@ -35,6 +35,7 @@ pub(super) fn fixture_trace() -> AgentWorthTrace {
             token_usage: TokenUsage::new(1000, 400, 200, 100),
             cost_usd: None,
             latency_ms: None,
+            effort: None,
         },
     );
     push(

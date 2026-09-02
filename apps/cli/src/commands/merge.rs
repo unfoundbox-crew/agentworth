@@ -181,7 +181,8 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                 duration_seconds, total_events, user_messages_count, assistant_messages_count,
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata,
-                scanned_at, primary_outcome, composite_score, parser_version, backfilled_version
+                scanned_at, primary_outcome, composite_score, parser_version, backfilled_version,
+                effort
              FROM other_db.sessions;",
         )?;
 
@@ -195,10 +196,11 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                 duration_seconds, total_events, user_messages_count, assistant_messages_count,
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata,
-                scanned_at, primary_outcome, composite_score, parser_version, backfilled_version
+                scanned_at, primary_outcome, composite_score, parser_version, backfilled_version,
+                effort
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+                ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
             );",
         )?;
 
@@ -210,7 +212,7 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                 output_tokens = ?13, cache_read_tokens = ?14, cache_creation_tokens = ?15,
                 total_tokens = ?16, models_used = ?17, tools_used = ?18, metadata = ?19,
                 scanned_at = ?20, primary_outcome = ?21, composite_score = ?22,
-                parser_version = ?23, backfilled_version = ?24
+                parser_version = ?23, backfilled_version = ?24, effort = ?25
              WHERE session_id = ?1;",
         )?;
 
@@ -247,6 +249,7 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                         row.get::<_, Option<f64>>(21)?,
                         row.get::<_, i64>(22)?,
                         row.get::<_, Option<i64>>(23)?,
+                        row.get::<_, Option<String>>(24)?,
                     ])?;
                     stats.sessions_updated += 1;
                     sessions_to_refresh_files.push(session_id);
@@ -279,6 +282,7 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                     row.get::<_, Option<f64>>(21)?,
                     row.get::<_, i64>(22)?,
                     row.get::<_, Option<i64>>(23)?,
+                    row.get::<_, Option<String>>(24)?,
                 ])?;
                 stats.sessions_inserted += 1;
                 sessions_to_refresh_files.push(session_id);
@@ -377,6 +381,7 @@ mod tests {
                 token_usage: TokenUsage::new(10, 5, 0, 0),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         )
     }

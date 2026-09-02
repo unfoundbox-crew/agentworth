@@ -39,6 +39,7 @@ fn sample_trace() -> AgentWorthTrace {
             token_usage: TokenUsage::new(200, 100, 50, 10),
             cost_usd: Some(0.015),
             latency_ms: Some(1500),
+            effort: None,
         },
     ));
 

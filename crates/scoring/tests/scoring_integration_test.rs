@@ -88,6 +88,7 @@ fn test_multi_model_session_cost_and_outcome_attribution() {
             token_usage: TokenUsage::new(10_000, 2_000, 0, 0),
             cost_usd: None,
             latency_ms: None,
+            effort: None,
         },
     ));
     trace.events.push(NormalizedEvent::new(
@@ -109,6 +110,7 @@ fn test_multi_model_session_cost_and_outcome_attribution() {
             token_usage: TokenUsage::new(10_000, 2_000, 0, 0),
             cost_usd: None,
             latency_ms: None,
+            effort: None,
         },
     ));
     trace.events.push(NormalizedEvent::new(
@@ -213,6 +215,7 @@ fn test_single_model_session_gets_full_cost_share() {
             token_usage: TokenUsage::new(5_000, 1_000, 0, 0),
             cost_usd: None,
             latency_ms: None,
+            effort: None,
         },
     ));
 

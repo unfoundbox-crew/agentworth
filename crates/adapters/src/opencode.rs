@@ -663,6 +663,7 @@ fn parse_opencode_sqlite_session(
                         token_usage: usage,
                         cost_usd: msg_val.get("cost").and_then(|c| c.as_f64()),
                         latency_ms: None,
+                        effort: None,
                     },
                 ));
             }
@@ -1015,6 +1016,7 @@ fn parse_opencode_record(
                         token_usage: usage,
                         cost_usd: val.get("cost").and_then(|c| c.as_f64()),
                         latency_ms: val.get("latency_ms").and_then(|d| d.as_u64()),
+                        effort: None,
                     },
                 )
                 .with_raw_ref(&raw_ref),

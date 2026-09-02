@@ -479,6 +479,7 @@ mod tests {
                 token_usage: TokenUsage::new(1, 1, 0, 0),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         );
         push(

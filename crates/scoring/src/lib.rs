@@ -55,6 +55,7 @@ mod tests {
                 token_usage: TokenUsage::new(5000, 1500, 200, 100),
                 cost_usd: Some(0.04),
                 latency_ms: Some(850),
+                effort: None,
             },
         ));
 
@@ -181,6 +182,7 @@ mod tests {
                 token_usage: TokenUsage::new(2000, 500, 0, 0),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         ));
 

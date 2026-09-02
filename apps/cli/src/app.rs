@@ -1908,6 +1908,7 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                 token_usage,
                 cost_usd,
                 latency_ms,
+                ..
             } => {
                 let cost_str = cost_usd
                     .map(|c| format!(" (${:.4})", c))

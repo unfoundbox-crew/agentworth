@@ -757,6 +757,7 @@ mod tests {
                 token_usage: TokenUsage::new(1_000_000, 500_000, 0, 0),
                 cost_usd: None,
                 latency_ms: None,
+                effort: None,
             },
         ));
         trace.recalculate_stats();

@@ -958,6 +958,7 @@ fn parse_cline_record(
                     token_usage: TokenUsage::new(tokens_in, tokens_out, cache_reads, cache_writes),
                     cost_usd,
                     latency_ms: None,
+                    effort: None,
                 },
             )
             .with_raw_ref(&raw_ref),

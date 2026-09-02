@@ -145,6 +145,13 @@ pub enum EventPayload {
         cost_usd: Option<f64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         latency_ms: Option<u64>,
+        /// Reasoning-effort setting in force for this invocation, verbatim from the
+        /// harness (Codex writes `low` / `medium` / `high` / `xhigh` on `turn_context`).
+        /// Free-form rather than an enum: harnesses name their tiers differently and add
+        /// new ones, and a closed set here would silently drop an unrecognized value.
+        /// `#[serde(default)]` so a trace stored before this field existed still loads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
     ModelSwitch(ModelSwitch),
     ToolCall(ToolCall),
