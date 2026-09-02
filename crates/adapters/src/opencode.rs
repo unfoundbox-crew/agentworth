@@ -196,6 +196,46 @@ impl AgentAdapter for OpenCodeAdapter {
         "opencode"
     }
 
+    /// `source.path` may be a synthetic identity string (see [`OPENCODE_REPO_MARKER`]) wrapping
+    /// a `db_path#session_id` locator -- that string never exists as a literal path even when
+    /// the session is fully present in the SQLite store, so the default `Path::exists()` always
+    /// says "gone" for every opencode session backed by `opencode.db`. Strip the wrapper, and
+    /// for a SQLite-backed locator check that the database file exists and the session row is
+    /// still in it; for the legacy JSON layout (no `.db#` locator) the real path is a real file,
+    /// so a plain existence check is correct.
+    fn source_exists(&self, source: &SessionSource) -> bool {
+        let full_path_str = source.path.to_string_lossy().to_string();
+        let real_locator = strip_repo_marker(&full_path_str);
+
+        if real_locator.contains(".db#") {
+            let mut parts = real_locator.splitn(2, '#');
+            return match (parts.next(), parts.next()) {
+                (Some(db_str), Some(session_id)) => {
+                    let db_path = Path::new(db_str);
+                    if !db_path.exists() {
+                        return false;
+                    }
+                    match Connection::open_with_flags(
+                        db_path,
+                        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+                    ) {
+                        Ok(conn) => conn
+                            .query_row(
+                                "SELECT 1 FROM session WHERE id = ?1 LIMIT 1",
+                                [session_id],
+                                |_| Ok(()),
+                            )
+                            .is_ok(),
+                        Err(_) => false,
+                    }
+                }
+                _ => false,
+            };
+        }
+
+        Path::new(real_locator).exists()
+    }
+
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
         let mut discovered = Vec::new();
 
@@ -1713,5 +1753,121 @@ mod tests {
         let identity = extract_repository_or_workspace(&result.trace.provenance.source_path);
         assert_eq!(identity, "unfoundbox/agentworth");
         assert_eq!(result.trace.stats.user_messages_count, 1);
+    }
+
+    /// The bug behind `AgentAdapter::source_exists`: a plain `Path::exists()` on a
+    /// SQLite-backed session's virtual identity (`<db_path>#<session_id>`, wrapped in the repo
+    /// marker) is always `false` -- that string never exists as a literal path -- even when the
+    /// session is fully present in `opencode.db`. `source_exists` must say `true` here by
+    /// checking the database and row directly instead.
+    #[test]
+    fn test_source_exists_true_for_a_session_still_in_the_sqlite_store() {
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("opencode.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (id TEXT, time_created INTEGER, time_updated INTEGER);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, time_created, time_updated) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["sess-present", 1_716_000_000i64, 1_716_000_020i64],
+        )
+        .unwrap();
+        drop(conn);
+
+        let real_locator = format!("{}#{}", db_path.display(), "sess-present");
+        let virtual_path = wrap_with_repo_marker(
+            Some("/repo/dir"),
+            ".opencode/session-sess-present.db",
+            &real_locator,
+        );
+        assert!(
+            !Path::new(&virtual_path).exists(),
+            "fixture must be a genuinely non-existent literal path"
+        );
+
+        let source = SessionSource {
+            path: PathBuf::from(&virtual_path),
+            adapter_name: "opencode".to_string(),
+            file_size_bytes: 4096,
+            mtime_epoch_secs: 1_716_000_020,
+            fingerprint: "test-fingerprint".to_string(),
+        };
+
+        let adapter = OpenCodeAdapter::new();
+        assert!(
+            adapter.source_exists(&source),
+            "a session row still present in opencode.db must read as existing"
+        );
+    }
+
+    /// The other side of the same check: a session id no longer in `opencode.db` (deleted, or
+    /// from a stale row left behind by a prior scan) must read as gone, not silently treated as
+    /// present forever.
+    #[test]
+    fn test_source_exists_false_for_a_session_no_longer_in_the_sqlite_store() {
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("opencode.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (id TEXT, time_created INTEGER, time_updated INTEGER);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let real_locator = format!("{}#{}", db_path.display(), "sess-gone");
+        let virtual_path =
+            wrap_with_repo_marker(Some("/repo/dir"), ".opencode/session-sess-gone.db", &real_locator);
+
+        let source = SessionSource {
+            path: PathBuf::from(&virtual_path),
+            adapter_name: "opencode".to_string(),
+            file_size_bytes: 4096,
+            mtime_epoch_secs: 1_716_000_020,
+            fingerprint: "test-fingerprint".to_string(),
+        };
+
+        let adapter = OpenCodeAdapter::new();
+        assert!(
+            !adapter.source_exists(&source),
+            "a session id no longer in opencode.db must read as gone"
+        );
+    }
+
+    /// The database file itself being gone (the whole `~/.local/share/opencode/opencode.db`
+    /// removed, or never scanned from this machine) must also read as gone, without erroring.
+    #[test]
+    fn test_source_exists_false_when_the_backing_database_file_is_missing() {
+        let real_locator = "/definitely/does/not/exist/opencode.db#sess-x".to_string();
+        let virtual_path =
+            wrap_with_repo_marker(Some("/repo/dir"), ".opencode/session-sess-x.db", &real_locator);
+
+        let source = SessionSource {
+            path: PathBuf::from(&virtual_path),
+            adapter_name: "opencode".to_string(),
+            file_size_bytes: 4096,
+            mtime_epoch_secs: 1_716_000_020,
+            fingerprint: "test-fingerprint".to_string(),
+        };
+
+        let adapter = OpenCodeAdapter::new();
+        assert!(!adapter.source_exists(&source));
+    }
+
+    /// The legacy (non-SQLite) JSON layout has no marker to strip: the identity string is
+    /// already a real file path, so `source_exists` must fall back to a plain existence check.
+    #[test]
+    fn test_source_exists_checks_a_real_file_for_the_legacy_json_layout() {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.write_all(b"{\"type\":\"user_message\",\"content\":\"hi\"}\n")
+            .unwrap();
+
+        let adapter = OpenCodeAdapter::new();
+        let source = build_opencode_file_source(temp.path(), adapter.name()).unwrap();
+        assert!(adapter.source_exists(&source));
+
+        drop(temp);
+        assert!(!adapter.source_exists(&source), "a deleted legacy file must read as gone");
     }
 }

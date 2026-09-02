@@ -37,8 +37,10 @@ pub struct MergeStats {
 struct ChildTable {
     name: &'static str,
     /// Every column except an autoincrement surrogate key (`file_modifications.id`), in
-    /// declaration order -- both databases share the exact same `initialize_schema`, so this
-    /// order is guaranteed identical on both sides of the copy.
+    /// declaration order -- both databases are brought to the exact same schema before the
+    /// merge runs (`initialize_schema` plus, for `trajectory_chunks`, a forced
+    /// `Storage::vector_store()` call -- see `merge_sqlite_databases`), so this order is
+    /// guaranteed identical on both sides of the copy.
     columns: &'static [&'static str],
 }
 
@@ -83,6 +85,27 @@ const SESSION_CHILD_TABLES: &[ChildTable] = &[
             "cache_creation_tokens",
         ],
     },
+    // `trajectory_chunks.session_id` has no `FOREIGN KEY` constraint -- SQLite can't add one to
+    // a table that already exists on every user's local index without a full table rebuild, and
+    // this table's rows predate that constraint. That means
+    // `test_session_child_tables_cover_every_session_id_foreign_key`'s `PRAGMA
+    // foreign_key_list` scan can't discover it the way it discovers every other child table, so
+    // it's listed here explicitly instead. See that test's broadened column-based check for the
+    // other half of this fix.
+    ChildTable {
+        name: "trajectory_chunks",
+        columns: &[
+            "chunk_id",
+            "session_id",
+            "adapter",
+            "kind",
+            "turn_index",
+            "timestamp",
+            "text_content",
+            "metadata_json",
+            "embedding",
+        ],
+    },
 ];
 
 /// Merge an external SQLite index database located at `source_db_path` into `target_db_path`.
@@ -100,8 +123,20 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
     // same treatment: it may be an older index (pre-dating `parser_version`/
     // `backfilled_version`), and the cross-database SELECT below names those columns
     // explicitly, so it must exist on both sides before ATTACH.
-    drop(agentworth_storage::Storage::open_path(target_db_path)?);
-    drop(agentworth_storage::Storage::open_path(source_db_path)?);
+    //
+    // `trajectory_chunks` is a further wrinkle: `initialize_schema` doesn't create it --
+    // `SqliteVectorStore` does, lazily, the first time a caller asks for semantic search. Since
+    // it is now one of `SESSION_CHILD_TABLES`, the merge loop below unconditionally runs a
+    // `DELETE`/`INSERT` against it for every session, on both the target and (via `other_db.`)
+    // the source connection -- which fails outright with "no such table" for anyone who has
+    // never run `agentworth search`/`recall` on either index. Forcing the vector store into
+    // existence here keeps the table (and therefore the merge) present unconditionally.
+    let target_storage = agentworth_storage::Storage::open_path(target_db_path)?;
+    drop(target_storage.vector_store()?);
+    drop(target_storage);
+    let source_storage = agentworth_storage::Storage::open_path(source_db_path)?;
+    drop(source_storage.vector_store()?);
+    drop(source_storage);
 
     let mut target_conn = Connection::open(target_db_path)
         .with_context(|| format!("Failed to open target DB: {}", target_db_path.display()))?;
@@ -538,9 +573,12 @@ mod tests {
 
     /// #84 finding 2: merge copied `sources`, `sessions`, and `file_modifications`, but
     /// silently dropped `session_model_usage`, `session_risk`, and `session_compaction` for
-    /// every merged session. This drives one fixture session through all four per-session
-    /// child tables and asserts the merged target ends up with the same row count as the
-    /// source in each -- the exact regression check the finding asked for.
+    /// every merged session. `trajectory_chunks` joined the list later (it has no `FOREIGN
+    /// KEY`, so it slipped past the original fix's own completeness test -- see
+    /// `test_session_child_tables_cover_every_session_id_foreign_key`). This drives one
+    /// fixture session through every per-session child table and asserts the merged target
+    /// ends up with the same row count as the source in each -- the exact regression check
+    /// the finding asked for.
     #[test]
     fn test_merge_carries_every_session_child_table() {
         let db1 = NamedTempFile::new().unwrap();
@@ -612,6 +650,27 @@ mod tests {
             .unwrap();
         }
 
+        // trajectory_chunks is the fifth child table (added alongside its
+        // SESSION_CHILD_TABLES entry above) and, like session_compaction, has no
+        // event-driven write path here -- `trajectory_chunks` is only populated by the
+        // embedding pipeline, not by `upsert_trace`. Force the table into existence via the
+        // vector store first, since `initialize_schema` alone doesn't create it.
+        {
+            let storage2 = agentworth_storage::Storage::open_path(db2.path()).unwrap();
+            let vector_store = storage2.vector_store().unwrap();
+            drop(vector_store);
+            drop(storage2);
+
+            let conn = Connection::open(db2.path()).unwrap();
+            conn.execute(
+                "INSERT INTO trajectory_chunks \
+                 (chunk_id, session_id, adapter, kind, turn_index, timestamp, text_content) \
+                 VALUES ('chunk-1', 'sess-child', 'claude_code', 'user', 1, ?1, 'start')",
+                rusqlite::params![chrono::Utc::now().to_rfc3339()],
+            )
+            .unwrap();
+        }
+
         let stats = merge_sqlite_databases(db1.path(), db2.path()).unwrap();
         assert_eq!(stats.sessions_inserted, 1);
 
@@ -647,10 +706,22 @@ mod tests {
     /// `sessions(session_id)` has to be listed in `SESSION_CHILD_TABLES`, or a future table
     /// added the way `session_risk`/`session_compaction`/`session_model_usage` were will repeat
     /// #84's bug -- silently dropped by every merge, with nothing failing to say so.
+    ///
+    /// FK presence alone isn't the whole story: `trajectory_chunks.session_id` has no
+    /// `FOREIGN KEY` at all -- SQLite can't add one to a table that already exists on every
+    /// user's local index without a full table rebuild -- so a plain `PRAGMA foreign_key_list`
+    /// scan is structurally unable to ever discover it. This test also scans for a plain
+    /// `session_id` column via `PRAGMA table_info`, so a future FK-less child table can't slip
+    /// through the same gap `trajectory_chunks` did.
     #[test]
     fn test_session_child_tables_cover_every_session_id_foreign_key() {
         let db = NamedTempFile::new().unwrap();
-        drop(agentworth_storage::Storage::open_path(db.path()).unwrap());
+        let storage = agentworth_storage::Storage::open_path(db.path()).unwrap();
+        // `trajectory_chunks` is created lazily by the vector store, not by
+        // `initialize_schema` -- force it into existence so this scan actually sees it, the
+        // way a real index does after its first `agentworth search`/`recall`.
+        drop(storage.vector_store().unwrap());
+        drop(storage);
 
         let conn = Connection::open(db.path()).unwrap();
         let mut stmt = conn
@@ -662,6 +733,11 @@ mod tests {
             .filter_map(Result::ok)
             .collect();
         assert!(!table_names.is_empty());
+        assert!(
+            table_names.iter().any(|n| n == "trajectory_chunks"),
+            "fixture setup must actually create trajectory_chunks, or this test isn't exercising \
+             the FK-less case it exists to cover"
+        );
 
         let registered: std::collections::HashSet<&str> =
             SESSION_CHILD_TABLES.iter().map(|t| t.name).collect();
@@ -680,12 +756,22 @@ mod tests {
                 .filter_map(Result::ok)
                 .any(|referenced| referenced == "sessions");
 
-            if references_sessions {
+            // Column 1 of `PRAGMA table_info` output is the column name.
+            let mut col_stmt = conn
+                .prepare(&format!("PRAGMA table_info({table_name})"))
+                .unwrap();
+            let has_session_id_column = col_stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|col| col == "session_id");
+
+            if references_sessions || has_session_id_column {
                 assert!(
                     registered.contains(table_name.as_str()),
-                    "table '{table_name}' has a foreign key into sessions(session_id) but is \
-                     not listed in SESSION_CHILD_TABLES -- merge_sqlite_databases will silently \
-                     drop its rows for every merged session. Add it to SESSION_CHILD_TABLES.",
+                    "table '{table_name}' has a session_id column (foreign key: {references_sessions}) \
+                     but is not listed in SESSION_CHILD_TABLES -- merge_sqlite_databases will \
+                     silently drop its rows for every merged session. Add it to SESSION_CHILD_TABLES.",
                 );
             }
         }

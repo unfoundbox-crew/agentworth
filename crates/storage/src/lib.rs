@@ -789,6 +789,29 @@ impl Storage {
         Ok(true) // New or modified -> needs scan
     }
 
+    /// Returns the `(file_size, mtime, fingerprint)` recorded for `source_path` in the
+    /// `sources` table, if indexed at all.
+    ///
+    /// Exists so `Scanner::load_trace` can rebuild the exact `SessionSource` a session was
+    /// last scanned with, purely from the index, instead of re-deriving it from a fresh
+    /// `std::fs::metadata` stat of `source_path`. That distinction matters for a virtual
+    /// source (e.g. opencode's `<repo>/.opencode/session-<id>.db::opencode-repo::<db_path>#<id>`
+    /// identity string) -- it never exists as a literal path on disk, so stat'ing it directly
+    /// always fails even though the session is very much present in the backing database.
+    pub fn get_source_metadata(&self, source_path: &str) -> Result<Option<(u64, i64, String)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn
+            .prepare("SELECT file_size, mtime, fingerprint FROM sources WHERE source_path = ?1")?;
+        let mut rows = stmt.query(params![source_path])?;
+        if let Some(row) = rows.next()? {
+            let file_size: i64 = row.get(0)?;
+            let mtime: i64 = row.get(1)?;
+            let fingerprint: String = row.get(2)?;
+            return Ok(Some((file_size.max(0) as u64, mtime, fingerprint)));
+        }
+        Ok(None)
+    }
+
     /// Returns true if the indexed row(s) for `source_path` are missing a field that's
     /// derived from the source content but wasn't computed by the code that produced this
     /// row -- the shape left behind when a session was indexed before a feature like
@@ -846,16 +869,25 @@ impl Storage {
     ///   `--force`. The reparse writes the current version (to both `parser_version` and
     ///   `backfilled_version`), so it also fires at most once.
     ///
-    /// Finally: if any of the above would fire but `source_path` doesn't exist on this
-    /// machine, the answer is `SourceUnavailable` instead of the real reason. This is the
-    /// shape a row left by `agentworth merge` takes when its source lives on another
-    /// machine -- there's no file here to reparse it from, so flagging the real reason would
-    /// just mean it's flagged on every scan forever with nothing anyone here can do about it.
-    /// A row that needs nothing is still `None` regardless of whether its source exists.
+    /// Finally: if any of the above would fire but `source_exists` is `false`, the answer is
+    /// `SourceUnavailable` instead of the real reason. This is the shape a row left by
+    /// `agentworth merge` takes when its source lives on another machine -- there's no file
+    /// here to reparse it from, so flagging the real reason would just mean it's flagged on
+    /// every scan forever with nothing anyone here can do about it. A row that needs nothing
+    /// is still `None` regardless of `source_exists`.
+    ///
+    /// `source_exists` is supplied by the caller rather than checked here with a plain
+    /// `Path::exists()`, because presence isn't always a filesystem fact: an opencode session
+    /// lives at `<repo>/.opencode/session-<id>.db::opencode-repo::<db_path>#<session_id>`, a
+    /// synthetic identity string that never exists as a literal path even when the session is
+    /// very much present in `<db_path>`. Callers iterating adapter-enumerated sources should
+    /// pass `AgentAdapter::source_exists(source)`, which each adapter defines against its own
+    /// notion of presence (default: `source.path.exists()`).
     pub fn needs_backfill(
         &self,
         source_path: &str,
         current_parser_version: i64,
+        source_exists: bool,
     ) -> Result<Option<BackfillReason>> {
         let reason = {
             let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -903,7 +935,7 @@ impl Storage {
             found
         };
 
-        if reason.is_some() && !std::path::Path::new(source_path).exists() {
+        if reason.is_some() && !source_exists {
             return Ok(Some(BackfillReason::SourceUnavailable));
         }
         Ok(reason)
@@ -3885,20 +3917,20 @@ mod tests {
             .expect("simulate pre-migration row");
         }
         assert_eq!(
-            storage.needs_backfill(&missing_path, 1).unwrap(),
+            storage.needs_backfill(&missing_path, 1, std::path::Path::new(&missing_path).exists()).unwrap(),
             Some(BackfillReason::MissingDerivedField),
             "a row with no prompt_preview and no recorded backfill pass needs backfill"
         );
 
         seed_backfill_row(&storage, "complete", "/path/complete.jsonl", Some(0.5), 1);
         assert_eq!(
-            storage.needs_backfill("/path/complete.jsonl", 1).unwrap(),
+            storage.needs_backfill("/path/complete.jsonl", 1, std::path::Path::new("/path/complete.jsonl").exists()).unwrap(),
             None,
             "a row with a non-empty prompt_preview must not be re-flagged"
         );
 
         assert_eq!(
-            storage.needs_backfill("/path/never-indexed.jsonl", 1).unwrap(),
+            storage.needs_backfill("/path/never-indexed.jsonl", 1, std::path::Path::new("/path/never-indexed.jsonl").exists()).unwrap(),
             None,
             "no existing row is a normal new-source scan, not a backfill"
         );
@@ -3933,7 +3965,7 @@ mod tests {
             .upsert_session(&trace, Some("done_claimed"), Some(0.6), 1)
             .expect("seed row written like a fresh scan would");
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             None,
             "a row already written under the current parser version needs nothing, empty prompt_preview or not"
         );
@@ -3950,7 +3982,7 @@ mod tests {
             .expect("simulate pre-migration row");
         }
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             Some(BackfillReason::MissingDerivedField),
             "an empty prompt_preview with no backfill pass recorded yet must be flagged once"
         );
@@ -3959,12 +3991,12 @@ mod tests {
             .upsert_session(&trace, Some("done_claimed"), Some(0.6), 1)
             .expect("reparse");
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             None,
             "the reparse recorded backfilled_version -- the still-empty prompt_preview must not re-flag it"
         );
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             None,
             "and it must stay quiet on a third check -- this is what 'never loops' means"
         );
@@ -4052,7 +4084,7 @@ mod tests {
             .expect("upsert");
 
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             None,
             "a freshly written row has its rounds already"
         );
@@ -4067,7 +4099,7 @@ mod tests {
             .expect("drop round rows");
         }
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             Some(BackfillReason::MissingDerivedField),
             "compaction_count > 0 with no round rows is a row that predates the table"
         );
@@ -4076,7 +4108,7 @@ mod tests {
             .upsert_session(&trace, None, Some(0.5), 1)
             .expect("reparse");
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             None,
             "the reparse must settle it -- this predicate fires at most once per session"
         );
@@ -4092,14 +4124,14 @@ mod tests {
 
         seed_backfill_row(&storage, "unscored", &path, None, 1);
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             Some(BackfillReason::MissingDerivedField),
             "a row with a NULL composite_score was never scored and must be rescanned"
         );
 
         seed_backfill_row(&storage, "unscored", &path, Some(0.0), 1);
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             None,
             "a score of 0.0 is still a score -- rescanning must stop after one pass"
         );
@@ -4126,7 +4158,7 @@ mod tests {
             .expect("seed scored row with no outcome");
 
         assert_eq!(
-            storage.needs_backfill("/path/no-outcome.jsonl", 1).unwrap(),
+            storage.needs_backfill("/path/no-outcome.jsonl", 1, std::path::Path::new("/path/no-outcome.jsonl").exists()).unwrap(),
             None,
             "no outcome evidence is a real answer, not a missing field"
         );
@@ -4142,19 +4174,19 @@ mod tests {
 
         seed_backfill_row(&storage, "v1row", &path, Some(0.7), 1);
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             None,
             "a row at the adapter's current version is up to date"
         );
         assert_eq!(
-            storage.needs_backfill(&path, 2).unwrap(),
+            storage.needs_backfill(&path, 2, std::path::Path::new(&path).exists()).unwrap(),
             Some(BackfillReason::StaleParserVersion),
             "the adapter now parses this file differently, so the row is stale"
         );
 
         seed_backfill_row(&storage, "v1row", &path, Some(0.7), 2);
         assert_eq!(
-            storage.needs_backfill(&path, 2).unwrap(),
+            storage.needs_backfill(&path, 2, std::path::Path::new(&path).exists()).unwrap(),
             None,
             "the reparse recorded the new version, so it must not repeat"
         );
@@ -4181,7 +4213,7 @@ mod tests {
         storage.upsert_trace(&trace).expect("seed legacy row");
 
         assert_eq!(
-            storage.needs_backfill(&path, 1).unwrap(),
+            storage.needs_backfill(&path, 1, std::path::Path::new(&path).exists()).unwrap(),
             Some(BackfillReason::StaleParserVersion)
         );
     }
@@ -4210,7 +4242,7 @@ mod tests {
         storage.upsert_trace(&trace).expect("seed row as if merged from elsewhere");
 
         assert_eq!(
-            storage.needs_backfill(foreign_path, 1).unwrap(),
+            storage.needs_backfill(foreign_path, 1, std::path::Path::new(foreign_path).exists()).unwrap(),
             Some(BackfillReason::SourceUnavailable),
             "a row that needs reparsing but whose source isn't here must be reported distinctly, \
              not as an ordinary backfill reason"
@@ -4220,7 +4252,7 @@ mod tests {
         // the existence check only ever downgrades an actionable reason, never invents one.
         seed_backfill_row(&storage, "foreign_complete", "/also/not/on/this/machine.jsonl", Some(0.5), 1);
         assert_eq!(
-            storage.needs_backfill("/also/not/on/this/machine.jsonl", 1).unwrap(),
+            storage.needs_backfill("/also/not/on/this/machine.jsonl", 1, std::path::Path::new("/also/not/on/this/machine.jsonl").exists()).unwrap(),
             None,
             "a fully up-to-date row needs nothing, whether or not its source is local"
         );

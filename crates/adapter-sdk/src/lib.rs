@@ -171,6 +171,20 @@ pub trait AgentAdapter: Send + Sync {
         vec![self.name()]
     }
 
+    /// Whether `source` is still present and readable, for callers deciding if a previously
+    /// enumerated/indexed source can still be scanned or re-parsed.
+    ///
+    /// Defaults to a plain `source.path.exists()`, which is correct for every adapter whose
+    /// `SessionSource.path` names a real file. It is wrong for an adapter whose sources are
+    /// virtual -- a synthetic identity string built to carry repository/provenance
+    /// information (e.g. opencode's `<repo>/.opencode/session-<id>.db::opencode-repo::<db_path>#<session_id>`)
+    /// that never exists as a literal path on disk even when the session is fully present in
+    /// its backing store. Such an adapter overrides this to check its own notion of presence
+    /// (e.g. the backing database file exists and the row is still in it) instead.
+    fn source_exists(&self, source: &SessionSource) -> bool {
+        source.path.exists()
+    }
+
     /// Detect whether this agent's history directories exist on the local system.
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult>;
 
