@@ -1,0 +1,208 @@
+/* ===========================================================================
+   Archie — colourways and motion.
+   Pairs with the pose SVGs in this folder. Every fill in those files reads a
+   custom property with a hard-coded fallback, so a colourway is a class on any
+   ancestor and never a redraw.
+
+   Motion follows motionvector/studio/docs/design/motion-language.md:
+   exits are faster than entrances and do not travel; reduced motion keeps the
+   time and zeroes the distance.
+   =========================================================================== */
+
+/* ── colourways ───────────────────────────────────────────────────────────
+   C3 is the default and the only one that ships on agentworth.dev. The other
+   three exist for surfaces the default cannot serve: one colour printing, a
+   true-black ground, and chrome where Archie must not out-shout the data. */
+
+.archie-c1 {                      /* Mono — one-colour print, stickers, favicons */
+  --archie-ink: #111113;
+  --archie-body: #ffffff;
+  --archie-mass: #e4e4e7;
+  --archie-accent: #111113;
+  --archie-accent-2: #f4f4f5;
+}
+
+.archie-c2 {                      /* Dark — the true-black ground */
+  --archie-ink: #ffffff;
+  --archie-body: #18181b;
+  --archie-mass: #a396d6;
+  --archie-accent: #a396d6;
+  --archie-accent-2: #3b3455;
+}
+
+.archie-c3,                       /* AgentWorth — the default */
+.archie {
+  --archie-ink: #111113;
+  --archie-body: #ffffff;
+  --archie-mass: #a396d6;
+  --archie-accent: #7c6bb3;
+  --archie-accent-2: #e2ddf0;
+}
+
+.archie-c4 {                      /* Quiet — scan progress, dense chrome */
+  --archie-ink: #52525b;
+  --archie-body: #ffffff;
+  --archie-mass: #e4e4e7;
+  --archie-accent: #a1a1aa;
+  --archie-accent-2: #f4f4f5;
+}
+
+/* C3 and C4 follow the app's theme; C1 and C2 are deliberate, fixed choices. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .archie-c3,
+  :root:not([data-theme="light"]) .archie {
+    --archie-ink: #ffffff;
+    --archie-body: #18181b;
+    --archie-accent: #a396d6;
+    --archie-accent-2: #3b3455;
+  }
+  :root:not([data-theme="light"]) .archie-c4 {
+    --archie-ink: #a1a1aa;
+    --archie-body: #18181b;
+    --archie-mass: #3f3f46;
+    --archie-accent: #52525b;
+    --archie-accent-2: #27272a;
+  }
+}
+:root[data-theme="dark"] .archie-c3,
+:root[data-theme="dark"] .archie {
+  --archie-ink: #ffffff;
+  --archie-body: #18181b;
+  --archie-accent: #a396d6;
+  --archie-accent-2: #3b3455;
+}
+:root[data-theme="dark"] .archie-c4 {
+  --archie-ink: #a1a1aa;
+  --archie-body: #18181b;
+  --archie-mass: #3f3f46;
+  --archie-accent: #52525b;
+  --archie-accent-2: #27272a;
+}
+
+/* ── motion tokens ────────────────────────────────────────────────────────
+   The first three are the studio's existing loop tokens, unchanged. The
+   fourth is new: a gait is not a spinner, a pulse or a shimmer, and forcing
+   it onto one of those clocks makes the run look wrong. Declared here rather
+   than smuggled in as a magic number. */
+
+.archie {
+  --motion-loop-dig: 1400ms;      /* = --motion-loop-pulse. He is working.   */
+  --motion-loop-run: 640ms;       /* NEW. Four-beat gait, 160ms a frame.     */
+  --motion-slow: 220ms;
+  --motion-exit: 120ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* ── the dig loop ─────────────────────────────────────────────────────────
+   Six frames on one 1400ms clock. Nothing here is a sprite swap: the same
+   drawing shears, the beam sweeps, the chips fly and reset. Frames 5 and 6
+   are the recovery, which is why they are quieter than 1 through 4. */
+
+@keyframes archie-dig-body {
+  0%,   100% { transform: rotate(0deg)     translateY(0); }
+  16.6%      { transform: rotate(-3deg)    translateY(1.5%); }
+  33.3%      { transform: rotate(-5deg)    translateY(3%); }
+  50%        { transform: rotate(-2deg)    translateY(1%); }
+  66.6%      { transform: rotate(1deg)     translateY(-1%); }
+  83.3%      { transform: rotate(0.5deg)   translateY(0); }
+}
+
+@keyframes archie-dig-beam {          /* the sweep — this is what he sees with */
+  0%,   100% { transform: rotate(0deg);  opacity: 1; }
+  33.3%      { transform: rotate(-9deg); opacity: 1; }
+  66.6%      { transform: rotate(6deg);  opacity: 0.75; }
+}
+
+@keyframes archie-dig-chips {         /* fly out, fade, reset — never travel back */
+  0%         { transform: translate(0, 0)      scale(0.6); opacity: 0; }
+  20%        { transform: translate(8%, -6%)   scale(1);   opacity: 1; }
+  60%        { transform: translate(22%, -2%)  scale(1);   opacity: 1; }
+  100%       { transform: translate(34%, 10%)  scale(0.8); opacity: 0; }
+}
+
+.archie-dig .archie-base      { animation: archie-dig-body var(--motion-loop-dig) var(--ease-out) infinite;
+                         transform-origin: 30% 70%; }
+.archie-dig .archie-beam { animation: archie-dig-beam var(--motion-loop-dig) var(--ease-out) infinite;
+                         transform-origin: 30% 30%; }
+.archie-dig .archie-chip { animation: archie-dig-chips var(--motion-loop-dig) linear infinite; }
+.archie-dig .archie-chip:nth-of-type(2) { animation-delay: -340ms; }
+.archie-dig .archie-chip:nth-of-type(3) { animation-delay: -700ms; }
+.archie-dig .archie-chip:nth-of-type(4) { animation-delay: -1040ms; }
+
+/* ── the fetch run cycle ──────────────────────────────────────────────────
+   Four frames, 160ms each: reach, gather, drive, extend. The body bobs on
+   half the cycle because a gait has two contacts per stride. */
+
+@keyframes archie-run-fore {
+  0%, 100% { transform: rotate(30deg); }
+  25%      { transform: rotate(-6deg); }
+  50%      { transform: rotate(-20deg); }
+  75%      { transform: rotate(8deg); }
+}
+@keyframes archie-run-hind {
+  0%, 100% { transform: rotate(-24deg); }
+  25%      { transform: rotate(6deg); }
+  50%      { transform: rotate(26deg); }
+  75%      { transform: rotate(-4deg); }
+}
+@keyframes archie-run-bob {
+  0%, 50%, 100% { transform: translateY(0); }
+  25%, 75%      { transform: translateY(-2.5%); }
+}
+
+.archie-run .archie-base        { animation: archie-run-bob var(--motion-loop-run) ease-in-out infinite; }
+.archie-run .archie-fore { animation: archie-run-fore var(--motion-loop-run) ease-in-out infinite;
+                           transform-origin: 50% 8%; }
+.archie-run .archie-hind { animation: archie-run-hind var(--motion-loop-run) ease-in-out infinite;
+                           transform-origin: 50% 8%; }
+.archie-run .archie-fore:nth-of-type(2),
+.archie-run .archie-hind:nth-of-type(2) { animation-delay: calc(var(--motion-loop-run) / -2); }
+
+/* ── the found-it beat ────────────────────────────────────────────────────
+   Rare, and it is Archie handing over evidence, so it gets the spring — one
+   of the two surfaces licensed to bounce. Runs once, never loops. */
+
+@keyframes archie-found-lamp {
+  from { opacity: 0.55; transform: scale(1); }
+  40%  { opacity: 1;    transform: scale(1.35); }
+  to   { opacity: 1;    transform: scale(1); }
+}
+@keyframes archie-found-receipt {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+.archie-found .archie-beam,
+.archie-found .archie-lens { animation: archie-found-lamp var(--motion-slow) var(--ease-out) both;
+                           transform-origin: center; }
+.archie-found .archie-receipt { animation: archie-found-receipt var(--motion-slow) var(--ease-spring) 120ms both; }
+
+/* ── the error beat ───────────────────────────────────────────────────────
+   Exits are faster than entrances and they do not travel. The lamp does not
+   fade out slowly and the ears do not slide — the light stops, then the ears
+   settle. Nothing about failure should feel like a performance. */
+
+@keyframes archie-error-lamp { to { opacity: 0; } }
+@keyframes archie-error-ears { to { transform: rotate(var(--drop, 17deg)); } }
+
+.archie-error .archie-beam { animation: archie-error-lamp var(--motion-exit) var(--ease-out) both; }
+.archie-error .archie-base .archie-ear { animation: archie-error-ears 160ms var(--ease-out) 60ms both;
+                                  transform-origin: 50% 12%; }
+
+/* ── reduced motion ───────────────────────────────────────────────────────
+   Keep the time, zero the distance. The loops stop on their first frame —
+   they are ambience, not information — while the found and error beats keep
+   their duration and cross-fade in place, so the state change still lands. */
+
+@media (prefers-reduced-motion: reduce) {
+  .archie-dig .archie-base,
+  .archie-dig .archie-beam,
+  .archie-dig .archie-chip,
+  .archie-run .archie-base,
+  .archie-run .archie-fore,
+  .archie-run .archie-hind { animation-play-state: paused; animation-delay: 0s; }
+
+  @keyframes archie-found-receipt { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes archie-found-lamp    { from { opacity: 0.55; } to { opacity: 1; } }
+  @keyframes archie-error-ears    { to { transform: none; } }
+}
