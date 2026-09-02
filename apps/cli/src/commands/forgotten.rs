@@ -14,7 +14,7 @@ use agentworth_schema::extract_repository_or_workspace;
 use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
 use anyhow::{Context, Result};
 
-use crate::forgotten::{load_forgotten, ForgottenOptions, ForgottenReport, DEFAULT_LIMIT};
+use crate::forgotten::{note, load_forgotten, ForgottenOptions, ForgottenReport, DEFAULT_LIMIT};
 use crate::ui::views::{HandoffSection, HandoffView};
 use crate::ui::{compact, Ui};
 
@@ -224,14 +224,19 @@ fn render_terminal(report: &ForgottenReport, ui: &Ui) -> String {
 /// The heading for a session with nothing to show, in the reader's words rather than the
 /// machine's. The named note is what `--json` carries; a person gets the sentence.
 fn empty_title(report: &ForgottenReport) -> &'static str {
-    if report.compactions == 0 {
+    // Order matters: an out-of-range `--round` also produces zero dropped sentences, and
+    // reporting that as "nothing decision-shaped was dropped" would answer a question the
+    // caller did not ask.
+    if report.notes.iter().any(|n| n == note::ROUND_OUT_OF_RANGE) {
+        "That round does not exist in this session"
+    } else if report.compactions == 0 {
         "This session never compacted"
     } else if report.dropped_total == 0 {
         "Compacted, but nothing decision-shaped was dropped"
     } else if report.forgotten_total == 0 {
         "Compacted, and every dropped decision survived in a summary"
     } else {
-        "Nothing matched the filters you asked for"
+        "Nothing matched the classes you asked for"
     }
 }
 
