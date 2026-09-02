@@ -566,17 +566,17 @@ async fn test_outcome_rate_end_to_end_suppression_and_reason() {
 }
 
 // -----------------------------------------------------------------------------
-// session_handoff (docs/specs/handoff.md)
+// session_handoff / carry_forward (docs/specs/handoff.md)
 // -----------------------------------------------------------------------------
 
-use super::params::SessionHandoffParams;
+use super::params::{CarryForwardParams, SessionHandoffParams};
 
 /// A real Claude Code transcript for one working session: a stated decision, a file edit, a
 /// test run and a commit (each a `Bash` tool call plus its result, which is how Claude Code
 /// records them), and a commitment that was stated and then handed straight back to the user.
 ///
 /// Written to a real `projects/-Users-...` directory so `extract_repository_or_workspace`
-/// derives a stable repo key from it, the same key the handoff receipt reports.
+/// derives a stable repo key from it, which is what `carry_forward` queries on.
 fn write_fixture_session(dir: &std::path::Path, session_id: &str, day: &str) -> std::path::PathBuf {
     let project = dir.join("projects").join("-Users-x-code-unfoundbox-agentworth");
     std::fs::create_dir_all(&project).expect("create project dir");
@@ -741,4 +741,107 @@ async fn test_session_handoff_rejects_a_max_lines_out_of_range() {
             .expect_err("out-of-range max_lines is rejected, not clamped");
         assert!(err.message.contains("between 1 and 120"), "{}", err.message);
     }
+}
+
+#[tokio::test]
+async fn test_carry_forward_returns_the_last_n_newest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    for (id, day) in [
+        ("aaaaaaaa-0000-0000-0000-000000000001", "2026-08-30"),
+        ("bbbbbbbb-0000-0000-0000-000000000002", "2026-08-31"),
+        ("cccccccc-0000-0000-0000-000000000003", "2026-09-01"),
+    ] {
+        seed_fixture_session(&storage, dir.path(), id, day);
+    }
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let value = call_result_json(
+        server
+            .carry_forward(Parameters(CarryForwardParams {
+                repo: "unfoundbox/agentworth".to_string(),
+                n: Some(2),
+                since: None,
+                max_lines: None,
+                include_raw: true,
+            }))
+            .await
+            .expect("carry_forward for a seeded repo"),
+    );
+
+    let handoffs = value["handoffs"].as_array().unwrap();
+    assert_eq!(handoffs.len(), 2, "n=2 caps the list");
+    assert_eq!(
+        handoffs[0]["receipt"]["session_id"], "cccccccc-0000-0000-0000-000000000003",
+        "newest first"
+    );
+    assert_eq!(handoffs[1]["receipt"]["session_id"], "bbbbbbbb-0000-0000-0000-000000000002");
+    assert!(value["unreadable"].as_array().unwrap().is_empty());
+    assert_eq!(value["scan_exhausted"], false);
+}
+
+#[tokio::test]
+async fn test_carry_forward_unknown_repo_is_empty_not_an_error() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let value = call_result_json(
+        server
+            .carry_forward(Parameters(CarryForwardParams {
+                repo: "nobody/nothing".to_string(),
+                ..Default::default()
+            }))
+            .await
+            .expect("an unknown repo is a legitimate empty answer"),
+    );
+    assert!(value["handoffs"].as_array().unwrap().is_empty());
+    assert_eq!(value["repo"], "nobody/nothing");
+}
+
+#[tokio::test]
+async fn test_carry_forward_rejects_n_over_the_ceiling() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let err = server
+        .carry_forward(Parameters(CarryForwardParams {
+            repo: "unfoundbox/agentworth".to_string(),
+            n: Some(11),
+            ..Default::default()
+        }))
+        .await
+        .expect_err("n=11 is over the ceiling");
+    assert!(err.message.contains("between 1 and 10"), "{}", err.message);
+}
+
+#[tokio::test]
+async fn test_carry_forward_names_a_session_it_could_not_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "dddddddd-0000-0000-0000-000000000004";
+    seed_fixture_session(&storage, dir.path(), id, "2026-09-01");
+    // The transcript is gone but the index row remains -- exactly what a rotated or deleted
+    // history file looks like. "One session, unreadable" is a different answer from "none".
+    std::fs::remove_file(
+        dir.path()
+            .join("projects")
+            .join("-Users-x-code-unfoundbox-agentworth")
+            .join(format!("{id}.jsonl")),
+    )
+    .unwrap();
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let value = call_result_json(
+        server
+            .carry_forward(Parameters(CarryForwardParams {
+                repo: "unfoundbox/agentworth".to_string(),
+                ..Default::default()
+            }))
+            .await
+            .expect("an unreadable session must not fail the whole call"),
+    );
+    assert!(value["handoffs"].as_array().unwrap().is_empty());
+    let unreadable = value["unreadable"].as_array().unwrap();
+    assert_eq!(unreadable.len(), 1);
+    assert_eq!(unreadable[0]["session_id"], id);
 }

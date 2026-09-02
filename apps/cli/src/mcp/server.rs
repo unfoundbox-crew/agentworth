@@ -25,9 +25,9 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler
 use serde_json::json;
 
 use super::params::{
-    parse_rfc3339_opt, BlameFindParams, CoverageStatsParams, OutcomeRateParams,
-    PacingWindowParams, SessionGetParams, SessionHandoffParams, SessionsFindParams,
-    UsagePeriodParam, UsageSummaryParams,
+    parse_rfc3339_opt, BlameFindParams, CarryForwardParams, CoverageStatsParams,
+    OutcomeRateParams, PacingWindowParams, SessionGetParams, SessionHandoffParams,
+    SessionsFindParams, UsagePeriodParam, UsageSummaryParams,
 };
 use crate::handoff::{
     self, render_markdown, HandoffOptions, HandoffReport, DEFAULT_MAX_LINES, MAX_LINES_CEILING,
@@ -47,6 +47,11 @@ const REPO_OVERFETCH_MULTIPLIER: usize = 4;
 /// Default `min_n` floor for `outcome_rate` -- `docs/specs/verified-outcome-rate.md` picks 20
 /// to hide noise, explicitly not a measured value (see the spec's "Open questions").
 const OUTCOME_RATE_DEFAULT_MIN_N: usize = 20;
+
+/// Hard ceiling on `carry_forward`'s `n`, matching `docs/specs/handoff.md`. Ten handoffs is
+/// already more history than a session opening turn can use; past that the caller wants
+/// `sessions_find`.
+const CARRY_FORWARD_CEILING: usize = 10;
 
 /// The `agentworth mcp` tool server. Cheap to construct -- `Scanner::new` only builds the
 /// adapter list, it does no I/O -- so a fresh instance per `run_mcp_server` call is fine.
@@ -99,7 +104,7 @@ impl AgentWorthMcpServer {
 
     /// Loads and renders one session's handoff, applying the redaction default.
     ///
-    /// Split out so the next tool to render a handoff cannot drift on the thing
+    /// Shared by `session_handoff` and `carry_forward` so the two can't drift on the thing
     /// that matters most here: `include_raw: false` builds one `Redactor::for_trace` instance
     /// from the session's own trace and runs every field of the report through that same
     /// instance, which is what makes the session's repository identity get masked across
@@ -518,6 +523,78 @@ impl AgentWorthMcpServer {
 
         Self::json_result(&value)
     }
+
+    #[tool(
+        description = "The last N handoffs for one repository, newest first, so a session's \
+                        first tool call can be \"what happened here recently\" and the answer \
+                        is structured rather than a file it has to find and parse. `repo` is \
+                        the same key session_handoff's receipt reports (e.g. \
+                        `unfoundbox/agentworth`); a repo's worktrees all answer to one value. \
+                        n defaults to 3, ceiling 10. Handoffs are listed, never merged -- \
+                        merging two contradictory facts needs judgment about which is current, \
+                        and that is not in the index. Redacted by default."
+    )]
+    pub(crate) async fn carry_forward(
+        &self,
+        Parameters(params): Parameters<CarryForwardParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let max_lines = Self::validated_max_lines(params.max_lines)?;
+        let n = params.n.unwrap_or(3);
+        if n == 0 || n > CARRY_FORWARD_CEILING {
+            return Err(McpError::invalid_params(
+                format!("n must be between 1 and {CARRY_FORWARD_CEILING} (got {n})"),
+                None,
+            ));
+        }
+        let since = parse_rfc3339_opt(params.since.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+
+        let storage = self.storage.clone();
+        let scanner = self.scanner.clone();
+        let repo = params.repo.clone();
+        let include_raw = params.include_raw;
+
+        let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+            let page = storage.list_sessions_for_repo(&repo, n)?;
+            let mut handoffs = Vec::new();
+            let mut unreadable = Vec::new();
+
+            for summary in page.sessions {
+                if since.is_some_and(|s| summary.started_at < s) {
+                    continue;
+                }
+                match Self::render_one(
+                    &storage,
+                    &scanner,
+                    &summary.session_id,
+                    max_lines,
+                    HandoffOptions::default(),
+                    include_raw,
+                ) {
+                    Ok(value) => handoffs.push(value),
+                    // A session whose source file has been deleted or rotated away can't be
+                    // re-parsed. Name it rather than dropping it: "three sessions, one of them
+                    // unreadable" is a different answer from "two sessions".
+                    Err(e) => unreadable.push(json!({
+                        "session_id": summary.session_id,
+                        "reason": format!("{e:#}"),
+                    })),
+                }
+            }
+
+            Ok(json!({
+                "repo": repo,
+                "handoffs": handoffs,
+                "unreadable": unreadable,
+                "scan_exhausted": page.scan_exhausted,
+            }))
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("carry_forward failed: {e:#}"), None))?;
+
+        Self::json_result(&value)
+    }
 }
 
 #[tool_handler]
@@ -529,8 +606,9 @@ impl ServerHandler for AgentWorthMcpServer {
             .with_instructions(
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  sessions_find, session_get, blame_find, usage_summary, pacing_window, \
-                 coverage_stats, outcome_rate, session_handoff. End a session by asking \
-                 session_handoff what it actually did. Redacted output is the default \
+                 coverage_stats, outcome_rate, session_handoff, carry_forward. Start a \
+                 session in a repo with carry_forward to read what recent sessions there \
+                 actually did; end one with session_handoff. Redacted output is the default \
                  everywhere event or file content is returned; include_raw is the only opt-in \
                  to raw content, and it is per-call, never global. Run `agentworth scan` first \
                  if the index looks stale -- this server never scans on its own."

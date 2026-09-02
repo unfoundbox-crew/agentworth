@@ -206,3 +206,20 @@ pub struct SessionHandoffParams {
     #[serde(default)]
     pub include_raw: bool,
 }
+
+/// Parameters for the `carry_forward` tool.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct CarryForwardParams {
+    /// Repository/workspace key, as `sessions_find`'s `repo` and the handoff receipt report
+    /// it (e.g. `unfoundbox/agentworth`). A repo's worktrees all answer to one value.
+    pub repo: String,
+    /// How many handoffs to return, newest first. Defaults to 3, ceiling 10.
+    pub n: Option<usize>,
+    /// RFC 3339 timestamp; only sessions started at or after this instant.
+    pub since: Option<String>,
+    /// Line budget for each rendered handoff. Defaults to 60, hard ceiling 120.
+    pub max_lines: Option<usize>,
+    /// Same per-call raw opt-in `session_handoff` has, applied to every handoff returned.
+    #[serde(default)]
+    pub include_raw: bool,
+}
