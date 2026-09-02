@@ -299,10 +299,12 @@ Every command accepts `--plain` (no colour, ASCII-only glyphs, same column posit
 `archie stats ladder` is the one screen that answers "of everything I spent, how
 much of it bought something a test, a commit or a CI run can be pointed at."
 Captured at 80 columns from the test fixture — one session on every rung, so the
-whole ladder has something to say:
+whole ladder has something to say. This is the `--plain` rendering, which is what
+a pipe or a redirect gets; on a terminal the meter draws as `● ○` and the rungs
+above the line carry the accent:
 
 ```text
-$ archie stats ladder --period all --min-n 1
+$ archie stats ladder --plain --period all --min-n 1
 
 archie stats ladder                                      all time - 6 sessions
 ------------------------------------------------------------------------------
@@ -310,7 +312,7 @@ archie stats ladder                                      all time - 6 sessions
   cost: API-equivalent at list prices; your account is on
   default_claude_max_20x, so this is not what you paid
 
-  EVIDENCE LADDER                  SESS  SHARE MED TOK  $/SESS   SPEND  %SPEND
+  EVIDENCE LADDER                  SESS  SHARE MED TOK   MED $   SPEND  %SPEND
   ----------------------------------------------------------------------------
   ##### CI or deployment verified     1  16.7%  652.0K   $0.45
   ####. commit observed               1  16.7%  652.0K   $0.45
@@ -328,7 +330,7 @@ archie stats ladder                                      all time - 6 sessions
   ----------------------------------------------------------------------------
   claude-3-5-haiku-20241022             3      33%   652.0K      1       $0.36
   claude-3-5-sonnet-20241022            2     100%   652.0K      1       $0.45
-  claude-unknown                        1     100%      230      2       $0.00
+  claude-unknown                        1     100%      230      2      <$0.01
   ----------------------------------------------------------------------------
 
   RECENT VERIFIED                                                      3 shown
@@ -340,62 +342,18 @@ archie stats ladder                                      all time - 6 sessions
   08-25 10:00 tmp/ladder-fixture    3-5-sonnet          #####  652.0K    $0.45
   ----------------------------------------------------------------------------
 
-  26% of spend this period sits below the evidence line.
+  26.1% of spend this period sits below the evidence line.
   Next  archie session list --unproven   spend that bought nothing provable
 ```
 
 (`--min-n 1` is only there because six sessions is a small fixture. The real
-floor is 20: below it a group's rate and cost render **blank**, never a zero and
+floor is 20 — `agentworth_storage::OUTCOME_RATE_DEFAULT_MIN_N`, the one floor in
+the product: below it a group's rate and cost render **blank**, never a zero and
 never a dash, and the row still carries its `n`.)
 
 The bottom row is *unflown* — no outcome evidence of any kind was found. It is
 not a failure. `OutcomeKind` has no failure value, so nothing on this screen is
 ever coloured as one.
-
----
-
-## The cockpit
-
-Type `archie` with nothing after it and, on a terminal, it opens full screen over the index
-you already scanned. `archie tui` is the explicit spelling of the same thing. Not a
-terminal, or `--plain`, or `TERM=dumb`, or JSON output, and it prints the overview — what
-`archie stats` prints plus the current rolling window — and exits 0, so anything that pipes
-`archie` keeps working.
-
-Six screens, each one a command you can also print:
-
-| Screen | The command it shows |
-| :--- | :--- |
-| overview | `archie stats`, plus `archie window show` |
-| sessions | `archie session list`, with a cursor |
-| one session | `archie session show`, and its handoff, asks, forgotten and receipt |
-| agents | `archie agent list` |
-| repos | `archie repo list` |
-| windows | `archie window list` |
-
-| Key | Does |
-| :--- | :--- |
-| `j` / `k`, arrows | move |
-| `Enter` | drill into the highlighted session |
-| `Esc` | back: out of a reading, out of a session, then out of a filter |
-| `/` | filter the current list; `Esc` clears it |
-| `1` - `6` | jump to a screen |
-| `h` | this session's handoff |
-| `a` | the questions it asked, and where the answers are |
-| `f` | what compaction dropped |
-| `r` | its Flight Receipt |
-| `?` | the key list |
-| `q` | quit |
-
-It is read-only, permanently: no writes, no scan, no config changes, no model calls. `scan`
-and `config` stay commands you type. Colour follows the same rules as every printed screen,
-so `--no-color` and `NO_COLOR` give a monochrome cockpit.
-
-One thing it does share with every other command: a bare `archie` opens the index the same
-way they all do, which creates the database file on a machine that has never scanned. You
-get the "no sessions found" screen, and an empty `~/.agentworth/agentworth.db` beside it.
-`Esc` at the overview does nothing — it walks back, it never quits — and `Ctrl-C` quits from
-anywhere, filter entry included.
 
 ---
 
