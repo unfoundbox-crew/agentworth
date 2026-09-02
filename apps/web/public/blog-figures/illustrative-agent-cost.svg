@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 220" role="img" aria-labelledby="t4 d4">
+  <title id="t4">Illustrative only: lower effort can mean more total agent-loop cost</title>
+  <desc id="d4">Two hatched bars with no real values, shaped to argue that weaker first-pass reasoning can add retries and rework that outweigh the compute the higher effort level would have spent. Neither bar length is a measurement.</desc>
+  <style>
+    .ink{fill:#111113}
+    .muted{fill:#52525b}
+    .faint{fill:#a1a1aa}
+    .track{fill:#f4f4f5}
+    .bar{fill:url(#hatch);stroke:#a1a1aa;stroke-width:1}
+    .hatch-line{stroke:#a1a1aa}
+    text{font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+    .mono{font-family:"Geist Mono",ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .ink{fill:#ffffff}
+      .muted{fill:#a1a1aa}
+      .faint{fill:#52525b}
+      .track{fill:#18181b}
+      .bar{stroke:#52525b}
+      .hatch-line{stroke:#52525b}
+    }
+  </style>
+  <defs>
+    <pattern id="hatch" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+      <rect width="8" height="8" fill="none"/>
+      <line x1="0" y1="0" x2="0" y2="8" class="hatch-line" stroke-width="2"/>
+    </pattern>
+  </defs>
+
+  <text class="muted mono" x="20" y="24" font-size="11">illustrative, not measured</text>
+
+  <text class="ink" x="20" y="56" font-size="14" font-weight="600">medium effort — many mediocre iterations</text>
+  <rect class="track" x="20" y="68" width="600" height="36" rx="6"/>
+  <rect class="bar" x="20" y="68" width="560" height="36" rx="6"/>
+
+  <text class="ink" x="20" y="146" font-size="14" font-weight="600">xhigh effort — fewer, better iterations</text>
+  <rect class="track" x="20" y="158" width="600" height="36" rx="6"/>
+  <rect class="bar" x="20" y="158" width="320" height="36" rx="6"/>
+
+  <text class="faint" x="20" y="212" font-size="12">shape argues a structural point, not a benchmark result</text>
+</svg>

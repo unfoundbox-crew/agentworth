@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 170" role="img" aria-labelledby="t2 d2">
+  <title id="t2">Anthropic's five effort levels, high as the default</title>
+  <desc id="d2">Five points on a track — low, medium, high, xhigh, max — with high enlarged and filled to show it is what you get if you never set the parameter.</desc>
+  <style>
+    .ink{fill:#111113}
+    .muted{fill:#52525b}
+    .track{stroke:#e4e4e7;stroke-width:6}
+    .dot{fill:#ffffff;stroke:#a1a1aa;stroke-width:1.5}
+    .dot-default{fill:#7c6bb3;stroke:#7c6bb3}
+    text{font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+    .mono{font-family:"Geist Mono",ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .ink{fill:#ffffff}
+      .muted{fill:#a1a1aa}
+      .track{stroke:#2a2a2d}
+      .dot{fill:#18181b;stroke:#52525b}
+      .dot-default{fill:#a396d6;stroke:#a396d6}
+    }
+  </style>
+  <line x1="60" y1="70" x2="660" y2="70" class="track" stroke-linecap="round"/>
+  <g class="mono" font-size="13" text-anchor="middle">
+    <circle cx="80" cy="70" r="10" class="dot"/>
+    <text class="ink" x="80" y="105">low</text>
+    <circle cx="270" cy="70" r="10" class="dot"/>
+    <text class="ink" x="270" y="105">medium</text>
+    <circle cx="460" cy="70" r="15" class="dot-default"/>
+    <text class="ink" x="460" y="26" font-weight="700">high</text>
+    <text class="muted" x="460" y="112" font-size="11">default</text>
+    <circle cx="570" cy="70" r="10" class="dot"/>
+    <text class="ink" x="570" y="105">xhigh</text>
+    <circle cx="660" cy="70" r="10" class="dot"/>
+    <text class="ink" x="660" y="105">max</text>
+  </g>
+  <text class="muted" x="60" y="150" font-size="12">plain Claude API call, no effort parameter set → runs at high</text>
+</svg>

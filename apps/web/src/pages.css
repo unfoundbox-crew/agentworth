@@ -457,6 +457,37 @@
   border-bottom-color: var(--mv-accent);
 }
 
+/* Figures — standalone SVGs under /blog-figures/, each themed by its own
+   internal prefers-color-scheme query (an <img>-loaded SVG can't see this
+   page's CSS variables), so the frame around it just needs to sit quietly
+   in either mode. */
+.prose figure {
+  margin: 1.7em 0 1.9em;
+}
+.prose figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--mv-surface);
+  border: 1px solid var(--mv-border);
+  border-radius: 12px;
+  padding: 6px;
+}
+.prose figcaption {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mv-muted);
+}
+.prose figcaption .fig-tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--mv-faint);
+  margin-right: 6px;
+}
+
 /* =========================================================================
    Blog
    ========================================================================= */

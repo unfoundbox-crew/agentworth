@@ -18,6 +18,11 @@ budget." ([Effort](https://platform.claude.com/docs/en/build-with-claude/effort)
 Think of it as a dial on willingness to spend inference-time compute, not a
 dial on intelligence.
 
+<figure>
+  <img src="/blog-figures/effort-three-variables.svg" alt="A task fans out into three separate controls — model, effort, and harness — before recombining into an outcome, with effort highlighted as the one this post is about." width="760" height="300" loading="lazy" />
+  <figcaption><span class="fig-tag">Concept</span>Model, effort, and harness are three independent variables. Changing one doesn't move the others.</figcaption>
+</figure>
+
 ## What we checked
 
 A report someone shared with us — produced with GPT — makes that same
@@ -41,6 +46,11 @@ default.** Confirmed directly on the current docs page:
 Source: [Effort — Claude API docs](https://platform.claude.com/docs/en/build-with-claude/effort).
 Not every model supports `xhigh`; some only go up to `max`.
 
+<figure>
+  <img src="/blog-figures/anthropic-effort-ladder.svg" alt="Five points on a line — low, medium, high, xhigh, max — with high enlarged and filled to mark it as the default." width="720" height="170" loading="lazy" />
+  <figcaption><span class="fig-tag">Verified</span>Anthropic's five effort levels. Leave the parameter out and you get <code>high</code>.</figcaption>
+</figure>
+
 **Effort changes tool-use behavior, not just hidden thinking.** The same
 docs page states it plainly: lower effort means Claude "combines multiple
 operations into fewer tool calls," "makes fewer tool calls," and "proceed[s]
@@ -57,6 +67,11 @@ OpenAI also keeps reasoning effort and answer verbosity as two separate
 controls — you can ask for deep reasoning and a short answer. Source:
 [OpenAI's reasoning guide](https://developers.openai.com/api/docs/guides/reasoning).
 
+<figure>
+  <img src="/blog-figures/reasoning-vs-verbosity.svg" alt="A prompt enters a model box holding two independent sliders, one for reasoning effort and one for answer verbosity, before an answer comes out." width="720" height="240" loading="lazy" />
+  <figcaption><span class="fig-tag">Verified</span>Reasoning effort and answer verbosity are separate dials on OpenAI's API — you can turn one up without turning the other up too.</figcaption>
+</figure>
+
 What we left out: the report's claim that Anthropic explains effort's
 *meaning* more clearly while OpenAI exposes more knobs and telemetry.
 That's a judgment call about two documentation styles, not a measurement,
@@ -64,6 +79,11 @@ and we're not going to launder someone else's opinion as a finding. Its
 "12 mediocre iterations vs. 4 better iterations" cost chart is also labeled
 illustrative in the report itself — we're repeating that label, not the bar
 heights.
+
+<figure>
+  <img src="/blog-figures/illustrative-agent-cost.svg" alt="Two hatched bars, no real values: a long one for medium effort with many iterations, a shorter one for xhigh effort with fewer iterations." width="700" height="220" loading="lazy" />
+  <figcaption><span class="fig-tag">Illustrative, not measured</span>The report's structural point — weak first-pass reasoning can add retries that cost more than the extra reasoning would have — shown as shape, not data. Neither we nor the report have numbers behind these bar lengths.</figcaption>
+</figure>
 
 ## What AgentWorth can see about this today
 
@@ -91,6 +111,11 @@ measured fact from parsing real session files, documented in
 | :--- | :--- |
 | Claude Code | No — not logged at all |
 | Codex CLI | Yes — `turn_context.effort`, every turn |
+
+<figure>
+  <img src="/blog-figures/codex-vs-claude-code-effort-field.svg" alt="Two record cards side by side. Codex CLI's turn_context record carries an effort field alongside model, approval_policy and sandbox_policy, written every turn. Claude Code's assistant record lists sessionId, cwd, gitBranch and message usage, with effort shown as an absent, dashed row." width="720" height="300" loading="lazy" />
+  <figcaption><span class="fig-tag">Measured</span>Parsed from 190,573 records across 618 local session files: Codex writes <code>effort</code> on every turn; Claude Code's records never carry it.</figcaption>
+</figure>
 
 So if you want to correlate effort level with outcome rate, that analysis
 is available today for Codex sessions and not for Claude Code ones. We're

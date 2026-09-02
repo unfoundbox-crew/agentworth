@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" role="img" aria-labelledby="t5 d5">
+  <title id="t5">Codex logs effort on every turn; Claude Code never logs it</title>
+  <desc id="d5">Two record cards side by side. Codex CLI's turn_context record on the left carries an effort field, highlighted, alongside model, approval_policy and sandbox_policy, written every turn. Claude Code's assistant record on the right lists sessionId, cwd, gitBranch and message usage, with no effort field at all — shown as a faint, dashed, absent row.</desc>
+  <style>
+    .ink{fill:#111113}
+    .muted{fill:#52525b}
+    .faint{fill:#a1a1aa}
+    .card{fill:#ffffff;stroke:#e4e4e7;stroke-width:1.5}
+    .row-line{stroke:#ececee;stroke-width:1}
+    .accent-fill{fill:#7c6bb3}
+    .accent-text{fill:#7c6bb3}
+    .accent-stroke{stroke:#7c6bb3}
+    .absent-stroke{stroke:#a1a1aa;stroke-dasharray:3 3}
+    text{font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+    .mono{font-family:"Geist Mono",ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .ink{fill:#ffffff}
+      .muted{fill:#a1a1aa}
+      .faint{fill:#52525b}
+      .card{fill:#18181b;stroke:#2a2a2d}
+      .row-line{stroke:#1c1c1f}
+      .accent-fill{fill:#a396d6}
+      .accent-text{fill:#a396d6}
+      .accent-stroke{stroke:#a396d6}
+      .absent-stroke{stroke:#52525b}
+    }
+  </style>
+
+  <rect class="card" x="20" y="20" width="320" height="260" rx="14"/>
+  <text class="ink" x="44" y="52" font-size="15" font-weight="700">Codex CLI</text>
+  <text class="muted mono" x="44" y="70" font-size="11">turn_context, every turn</text>
+  <line x1="44" y1="84" x2="316" y2="84" class="row-line"/>
+
+  <text class="mono" x="44" y="112" font-size="13"><tspan class="muted">model:</tspan> <tspan class="ink">"gpt-5.6"</tspan></text>
+  <rect class="card accent-stroke" x="36" y="126" width="288" height="30" rx="6" fill="none" stroke-width="1.5"/>
+  <text class="mono" x="44" y="146" font-size="13"><tspan class="accent-text" font-weight="700">effort:</tspan> <tspan class="accent-text" font-weight="700">"xhigh"</tspan></text>
+  <text class="mono" x="44" y="180" font-size="13"><tspan class="muted">approval_policy:</tspan></text>
+  <text class="mono" x="44" y="198" font-size="13"><tspan class="ink">"on-request"</tspan></text>
+  <text class="mono" x="44" y="228" font-size="13"><tspan class="muted">sandbox_policy:</tspan></text>
+  <text class="mono" x="44" y="246" font-size="13"><tspan class="ink">"workspace-write"</tspan></text>
+
+  <rect class="card" x="380" y="20" width="320" height="260" rx="14"/>
+  <text class="ink" x="404" y="52" font-size="15" font-weight="700">Claude Code</text>
+  <text class="muted mono" x="404" y="70" font-size="11">assistant record</text>
+  <line x1="404" y1="84" x2="676" y2="84" class="row-line"/>
+
+  <text class="mono" x="404" y="112" font-size="13"><tspan class="muted">sessionId:</tspan> <tspan class="ink">"…a91f"</tspan></text>
+  <text class="mono" x="404" y="140" font-size="13"><tspan class="muted">cwd:</tspan> <tspan class="ink">"/repo"</tspan></text>
+  <text class="mono" x="404" y="168" font-size="13"><tspan class="muted">gitBranch:</tspan> <tspan class="ink">"main"</tspan></text>
+  <text class="mono" x="404" y="196" font-size="13"><tspan class="muted">message.usage:</tspan></text>
+  <text class="mono" x="404" y="214" font-size="13"><tspan class="ink">{ input_tokens, … }</tspan></text>
+
+  <rect x="396" y="228" width="288" height="30" rx="6" fill="none" class="absent-stroke" stroke-width="1.5"/>
+  <text class="mono faint" x="404" y="248" font-size="13">effort: — not written</text>
+</svg>
