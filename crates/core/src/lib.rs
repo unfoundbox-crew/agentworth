@@ -4,10 +4,17 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
-use agentworth_outcomes::{outcome_kind_name, OutcomeHierarchyDetector};
+use agentworth_outcomes::loops::{
+    evaluate_trace_for_loops, LoopAlertKind, LoopResolution, DEFAULT_MAX_FILE_REVISIONS,
+    DEFAULT_MAX_TOOL_REPEATS,
+};
+use agentworth_outcomes::{outcome_kind_name, outcome_rank, OutcomeHierarchyDetector, RecoveryDetector};
 use agentworth_schema::AgentWorthTrace;
 use agentworth_scoring::TraceScorer;
-use agentworth_storage::{is_near_empty_session, AggregateStats, BackfillReason, Storage};
+use agentworth_storage::{
+    is_near_empty_session, AggregateStats, BackfillReason, DemotedClaim, LoopEvidence, SessionRisk,
+    Storage, SESSION_RISK_EVIDENCE_CAP,
+};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
@@ -260,13 +267,18 @@ impl Scanner {
                     // written by something other than a scan, and `needs_backfill` now pulls
                     // any such row back through here on the next scan.
                     let outcome_detector = OutcomeHierarchyDetector::new();
-                    let outcomes = outcome_detector.detect_outcomes(&parse_result.trace);
+                    // `detect_outcomes` is this same call with the notes thrown away, so
+                    // keeping them costs nothing -- the verification pass already ran.
+                    let (outcomes, verification_notes) =
+                        outcome_detector.detect_outcomes_with_verification(&parse_result.trace);
                     let strongest = outcome_detector.strongest_outcome(&outcomes);
                     let primary_outcome_str = strongest.map(|o| outcome_kind_name(o.kind));
 
                     let scorer = TraceScorer::new();
                     let score = scorer.score(&parse_result.trace);
                     let composite_score = score.composite_score;
+
+                    let risk = compute_session_risk(&parse_result.trace, &verification_notes);
 
                     if let Err(e) = self.storage.upsert_session(
                         &parse_result.trace,
@@ -277,6 +289,12 @@ impl Scanner {
                         error!("Failed storing trace for {:?}: {}", source.path, e);
                         errors_encountered += 1;
                     } else {
+                        // The session row is stored and useful on its own; a failed risk write
+                        // leaves that session reading as "not yet scanned for risk", which is
+                        // exactly what it then is. It must not fail the session's own indexing.
+                        if let Err(e) = self.storage.upsert_session_risk(&risk) {
+                            warn!("Failed storing session risk for {:?}: {}", source.path, e);
+                        }
                         match backfill_reason {
                             Some(BackfillReason::StaleParserVersion) => reparsed_sessions += 1,
                             Some(BackfillReason::MissingDerivedField) => backfilled_sessions += 1,
@@ -334,6 +352,76 @@ impl Scanner {
     }
 }
 
+/// Collect the risk signals for one parsed trace: claims that verification knocked down, loops
+/// the sentinel caught, and recoveries from a broken state.
+///
+/// Every detector here runs over the already-parsed trace in memory. Nothing re-reads the log.
+///
+/// A note counts as a *demotion* only when the claim got weaker — a lower rung, or lower
+/// confidence at the same rung. `verify_outcomes` also writes a note when reality *confirms* a
+/// claim and raises its confidence, and counting those as risk would flag exactly the sessions
+/// that proved the most.
+pub fn compute_session_risk(
+    trace: &AgentWorthTrace,
+    verification_notes: &[agentworth_outcomes::VerificationNote],
+) -> SessionRisk {
+    let demoted: Vec<DemotedClaim> = verification_notes
+        .iter()
+        .filter(|n| {
+            outcome_rank(n.final_kind) < outcome_rank(n.original_kind)
+                || n.final_confidence < n.original_confidence
+        })
+        .map(|n| DemotedClaim {
+            event_sequence: n.event_sequence,
+            original_kind: outcome_kind_name(n.original_kind),
+            final_kind: outcome_kind_name(n.final_kind),
+            original_confidence: n.original_confidence,
+            final_confidence: n.final_confidence,
+            reason: n.reason.clone(),
+        })
+        .collect();
+
+    let alerts = evaluate_trace_for_loops(
+        trace,
+        DEFAULT_MAX_TOOL_REPEATS,
+        DEFAULT_MAX_FILE_REVISIONS,
+    );
+    let unresolved_loops = alerts
+        .iter()
+        .filter(|a| a.resolution != LoopResolution::SelfCorrected)
+        .count();
+    let loop_evidence: Vec<LoopEvidence> = alerts
+        .iter()
+        .take(SESSION_RISK_EVIDENCE_CAP)
+        .map(|a| LoopEvidence {
+            kind: match a.kind {
+                LoopAlertKind::IdenticalToolLoop => "identical_tool_loop".to_string(),
+                LoopAlertKind::FileOscillation => "file_oscillation".to_string(),
+            },
+            target: a.offending_target.clone(),
+            repeat_count: a.repeat_count,
+            resolution: match a.resolution {
+                LoopResolution::SelfCorrected => "self_corrected".to_string(),
+                LoopResolution::HumanRescued => "human_rescued".to_string(),
+                LoopResolution::StillLooping => "still_looping".to_string(),
+            },
+        })
+        .collect();
+
+    let recoveries = RecoveryDetector::new().detect_recoveries(trace).len();
+
+    SessionRisk {
+        session_id: trace.session_id.clone(),
+        demoted_claims: demoted.len(),
+        loop_alerts: alerts.len(),
+        unresolved_loops,
+        recoveries,
+        demoted_evidence: demoted.into_iter().take(SESSION_RISK_EVIDENCE_CAP).collect(),
+        loop_evidence,
+        computed_at: Some(chrono::Utc::now()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,6 +429,154 @@ mod tests {
     use agentworth_schema::Provenance;
     use chrono::Utc;
     use std::io::Write;
+
+    /// A trace with one signal of each kind: a `git commit` that was only ever *requested*
+    /// (verification demotes it), an identical tool call repeated past the loop threshold, and
+    /// a failing command followed by a passing one (a recovery).
+    ///
+    /// The demotable claim is a commit, not a test run, for two reasons that both bite. Since
+    /// #81 a bare `cargo test` tool call classifies as `done_claimed` outright — there is no
+    /// exit code, so it never reaches a rung there is anything to demote *from*. And the
+    /// recovery below needs a real `cargo build` that exits 0, which would corroborate a test
+    /// claim and *raise* its confidence rather than demote it. A commit claim and a build
+    /// success are different rungs, so the two signals stay independent.
+    fn trace_with_every_risk_signal() -> AgentWorthTrace {
+        use agentworth_schema::{EventPayload, NormalizedEvent, ShellCommand, ToolCall};
+
+        let now = Utc::now();
+        let prov = Provenance::new("/tmp/risk.jsonl", "claude_code", 100, 1000, "fp_risk");
+        let mut trace = AgentWorthTrace::new("sess_risk", "claude_code", prov, now);
+
+        // Three identical bash tool calls: one demotable claim per call, and a loop. Nothing
+        // in this trace ever really commits, so each claim is only ever a request.
+        for i in 1..=3 {
+            trace.events.push(NormalizedEvent::new(
+                i,
+                now,
+                EventPayload::ToolCall(ToolCall {
+                    id: Some(format!("call_{i}")),
+                    name: "bash".to_string(),
+                    arguments: serde_json::json!({ "command": "git commit -m \"wip\"" }),
+                }),
+            ));
+        }
+
+        // A real failure followed by a real success on the same command: a recovery.
+        // `RecoveryDetector` reads the *output*, not just the exit code, so the success needs
+        // a line it recognises ("test result: ok.") -- `Finished dev profile` is not one.
+        trace.events.push(NormalizedEvent::new(
+            4,
+            now + chrono::Duration::seconds(10),
+            EventPayload::ShellCommand(ShellCommand {
+                command: "cargo test --workspace".to_string(),
+                exit_code: Some(1),
+                output: Some("test result: FAILED. 3 passed; 1 failed".to_string()),
+                cwd: None,
+            }),
+        ));
+        trace.events.push(NormalizedEvent::new(
+            5,
+            now + chrono::Duration::seconds(20),
+            EventPayload::ShellCommand(ShellCommand {
+                command: "cargo test --workspace".to_string(),
+                exit_code: Some(0),
+                output: Some("test result: ok. 4 passed; 0 failed".to_string()),
+                cwd: None,
+            }),
+        ));
+
+        trace
+    }
+
+    /// Each of the three signals `agentworth suspect` reports has to be produced here, with an
+    /// event sequence behind it -- a count with nothing to look at is an assertion, not a
+    /// receipt.
+    #[test]
+    fn test_compute_session_risk_finds_each_signal_with_evidence() {
+        let trace = trace_with_every_risk_signal();
+        let (_, notes) = OutcomeHierarchyDetector::new().detect_outcomes_with_verification(&trace);
+        let risk = compute_session_risk(&trace, &notes);
+
+        assert!(
+            risk.demoted_claims > 0,
+            "a `git commit` that was only requested must be demoted, got {notes:?}"
+        );
+        let demoted = &risk.demoted_evidence[0];
+        assert_eq!(demoted.original_kind, "commit_observed");
+        assert_eq!(demoted.final_kind, "done_claimed");
+        assert!(demoted.event_sequence > 0, "the demotion must name its event");
+
+        assert!(risk.loop_alerts > 0, "three identical tool calls is a loop");
+        assert_eq!(risk.loop_evidence[0].kind, "identical_tool_loop");
+        assert_eq!(risk.loop_evidence[0].target, "bash");
+
+        assert!(risk.recoveries > 0, "a failing build followed by a passing one is a recovery");
+        assert_eq!(risk.session_id, "sess_risk");
+    }
+
+    /// A clean session must come back with zeroes, not with signals -- the flag has to mean
+    /// something.
+    #[test]
+    fn test_compute_session_risk_is_quiet_on_a_clean_trace() {
+        use agentworth_schema::{EventPayload, NormalizedEvent, ShellCommand};
+
+        let now = Utc::now();
+        let prov = Provenance::new("/tmp/clean.jsonl", "claude_code", 100, 1000, "fp_clean");
+        let mut trace = AgentWorthTrace::new("sess_clean", "claude_code", prov, now);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            now,
+            EventPayload::ShellCommand(ShellCommand {
+                command: "cargo test --workspace".to_string(),
+                exit_code: Some(0),
+                output: Some("test result: ok. 42 passed".to_string()),
+                cwd: None,
+            }),
+        ));
+
+        let (_, notes) = OutcomeHierarchyDetector::new().detect_outcomes_with_verification(&trace);
+        let risk = compute_session_risk(&trace, &notes);
+
+        assert_eq!(risk.demoted_claims, 0);
+        assert_eq!(risk.loop_alerts, 0);
+        assert_eq!(risk.recoveries, 0);
+    }
+
+    /// The scanner has to actually write the row -- a detector nobody persists is a detector
+    /// `agentworth suspect` cannot read.
+    #[test]
+    fn test_scan_persists_session_risk() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let trace = trace_with_every_risk_signal();
+        // The session row first: `session_risk` is a child table and the constraint is
+        // enforced, which is the ordering the scanner already uses.
+        storage.upsert_trace(&trace).expect("seed session");
+
+        let risk = compute_session_risk(
+            &trace,
+            &OutcomeHierarchyDetector::new()
+                .detect_outcomes_with_verification(&trace)
+                .1,
+        );
+        storage.upsert_session_risk(&risk).expect("write risk");
+        storage.upsert_session_risk(&risk).expect("rewrite risk");
+
+        let back = storage
+            .get_session_risks(&["sess_risk".to_string()])
+            .expect("read risk");
+        assert_eq!(back.len(), 1, "a rescan replaces, it does not duplicate");
+        let stored = &back["sess_risk"];
+        assert_eq!(stored.demoted_claims, risk.demoted_claims);
+        assert_eq!(stored.loop_alerts, risk.loop_alerts);
+        assert_eq!(stored.demoted_evidence, risk.demoted_evidence);
+
+        // An unscanned session is absent, not zeroed -- the caller must be able to tell
+        // "no risk found" from "never looked".
+        let missing = storage
+            .get_session_risks(&["sess_never_scanned".to_string()])
+            .expect("read missing risk");
+        assert!(missing.is_empty());
+    }
 
     /// A file that discovery still lets through but which normalizes to zero events
     /// (here: empty content) must not be stored as a session at all -- the scanner should

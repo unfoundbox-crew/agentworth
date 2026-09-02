@@ -1,6 +1,11 @@
 # Suspect commits
 
-Status: proposed, measured 2026-09-02.
+Status: **built, PR #84**, measured 2026-09-02.
+
+Shipped as the MCP tool `suspect_commits` and the CLI `agentworth suspect`, with
+`agentworth suspect --hook` printing the pre-push script. Two things changed
+between this spec and what shipped; both are recorded in "What shipped that this
+spec did not say" at the end.
 
 ## The one-line version
 
@@ -216,3 +221,87 @@ would be turned off within a day, and then it protects nothing.
 - Does the flag correlate with anything real — a later revert, a bug fix
   touching the same lines? Assumed here, unmeasured, and the only thing that
   would prove the tool works.
+
+## What shipped that this spec did not say
+
+### Git worktrees, found while measuring
+
+A linked git worktree normally lives *inside* the main checkout
+(`<repo>/.claude/worktrees/<name>`). Anchoring against the main root alone turns
+an edit made in one into `.claude/worktrees/<name>/crates/a.rs` — a path no
+commit will ever name — so the session attributes to nothing and the commit
+reads as unattributed. Measured on this repository's own index: **58 of 308**
+in-repo blame rows were written from a worktree, and every one of them was lost.
+
+`Storage::blame_for_repo` now takes the linked worktree roots alongside the main
+one, longest first, and `agentworth suspect` collects them with
+`git worktree list --porcelain`. On the last 60 commits of `origin/main` this
+doubled attribution, from 10 commits to 20.
+
+### `no_outcome_detected` is its own reason code
+
+The spec's single signal was "`primary_outcome` below `test_or_build_passed`",
+which folds a null outcome in with a low one. `docs/capability-matrix.md` says
+why that would mislead: several adapters extract no outcomes at all, so a null
+can mean "this session proved nothing" or "this adapter cannot tell us." Those
+are different claims and the reader has to be able to see which one they have —
+the same distinction `outcome_rate` already draws with its `no_outcome_detection`
+reason. Both still flag a commit.
+
+## The measurement, re-run against what shipped
+
+Replicated in SQL plus a python port of the shipped anchoring rule, against a
+copy of the real index (`~/.agentworth/agentworth.db`, 25,206 blame rows). Not
+the binary itself: it was measured on a Mac that cannot run the Linux build.
+Index copy's newest session is 2026-09-01T19:04Z, so commits after that point
+have no session history to check yet.
+
+**Last 60 commits of `origin/main`:**
+
+| | naive suffix | anchored |
+| :--- | ---: | ---: |
+| Attributed | 26 | 20 |
+| Flagged | 0 | 0 |
+
+Zero flags either way. Every session behind those 20 commits reached
+`test_or_build_passed` or higher — a true and boring answer, and the right one.
+
+**All 104 commits of `origin/main`,** which reaches back into the period the
+original measurement covered:
+
+| | naive suffix | anchored |
+| :--- | ---: | ---: |
+| Attributed | 59 | 44 |
+| Flagged | 17 | **1** |
+| Flag rate of attributed | 28.8% | **2.3%** |
+| Unanchored rows dropped | — | 111 |
+
+The spec predicted 2.6%; the shipped rule measures 2.3% on a slightly different
+range. The 26-point gap is the bug this feature exists to avoid.
+
+**The sample.** Only one commit survives anchoring, so all 1 was checked rather
+than 10: `bd84c85a` matched `docs/HANDOFF.md` against
+`/Users/…/agentworth/docs/HANDOFF.md`, written by session `33122482` (claude_code,
+claude-sonnet-5, 1,672 events, 173 tool calls, `artifact_changed`). A real
+absolute path inside this checkout, a real session, a real unproven outcome.
+Correct — and the same commit the original measurement's table marked "yes".
+
+So the 10-flag sample was taken from the other side, which is the more useful
+one: **the first 10 flags anchoring removes.** All ten are false, all ten for the
+same reason — a relative path from an `opencode` session whose own repository
+resolves to `Users/saurabh`, not `unfoundbox/agentworth`:
+
+| commit | matched | evidence path | session repo |
+| :--- | :--- | :--- | :--- |
+| ca746787 | `.gitignore` | `.gitignore` | `Users/saurabh` |
+| ddf62cb4 | `README.md` | `web/README.md` | `Users/saurabh` |
+| 80d9d22a | `README.md` | `web/README.md` | `Users/saurabh` |
+| 6f1c0478 | `AGENTS.md` | `AGENTS.md` | `Users/saurabh` |
+| 1185ce4b | `README.md` | `web/README.md` | `Users/saurabh` |
+| 97e9c6eb | `apps/cli/src/main.rs` | `apps/cli/src/main.rs` | `Users/saurabh` |
+| c245897e | `Cargo.lock` | `Cargo.lock` | `Users/saurabh` |
+| 0dcd2d80 | `.gitignore` | `.gitignore` | `Users/saurabh` |
+| 5b35e4e7 | `Cargo.lock` | `Cargo.lock` | `Users/saurabh` |
+| 947f854a | `crates/adapters/src/claude.rs` | `crates/adapters/src/claude.rs` | `Users/saurabh` |
+
+10 of 10 removed flags false, 1 of 1 kept flag right.

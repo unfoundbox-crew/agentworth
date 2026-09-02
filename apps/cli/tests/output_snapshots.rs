@@ -328,6 +328,66 @@ fn plain_flag_matches_a_piped_stream() {
     assert_eq!(piped, flagged, "--plain is what a pipe already gets");
 }
 
+/// `suspect` needs a real git checkout, so it cannot ride the shared fixture's `screens()`
+/// list. It gets the same three grid rules here instead: nothing wraps, colour never moves a
+/// column, no glyph outside the allowed set.
+#[test]
+fn the_suspect_screen_holds_the_grid() {
+    let (_t, db) = fixture();
+    let repo = tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(out.status.success(), "git {args:?} failed");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "user.email", "test@example.invalid"]);
+    git(&["config", "user.name", "Test"]);
+    git(&["config", "commit.gpgsign", "false"]);
+    fs::write(repo.path().join("a.rs"), "fn a() {}\n").unwrap();
+    git(&["add", "a.rs"]);
+    git(&["commit", "-q", "-m", "feat: a"]);
+
+    let repo_arg = repo.path().to_string_lossy().to_string();
+    let args = vec!["suspect", "--repo", repo_arg.as_str()];
+
+    for columns in [80usize, 120] {
+        let plain = render(&db, &args, columns, false);
+        assert!(!plain.trim().is_empty(), "suspect rendered nothing");
+        for line in plain.lines() {
+            let w = console::measure_text_width(line);
+            assert!(w <= columns.min(78), "suspect at {columns}: line is {w} wide\n{line}");
+        }
+
+        let plain_unicode = render_with(&db, &args, columns, false, true);
+        let colour = render_with(&db, &args, columns, true, true);
+        assert_eq!(
+            console::strip_ansi_codes(&colour),
+            plain_unicode,
+            "suspect at {columns}: colour and plain disagree on column positions"
+        );
+    }
+
+    for c in render(&db, &args, 80, false).chars() {
+        assert!(is_allowed(c), "suspect ships U+{:04X} ({})", c as u32, c);
+    }
+
+    // The honest empty case says what it does not know, rather than reading as clean.
+    let out = render(&db, &args, 80, false);
+    assert!(out.contains("Unknown, not clean"), "{out}");
+    assert!(out.contains("could not be placed"), "{out}");
+
+    // `--hook` prints a script that exits 0 no matter what, and blocks nothing.
+    let hook = render(&db, &["suspect", "--hook"], 80, false);
+    assert!(hook.starts_with("#!/bin/sh"), "{hook}");
+    assert!(hook.contains("exit 0"), "{hook}");
+    assert!(!hook.contains("exit 1"), "a pre-push note must never block a push: {hook}");
+}
+
 #[test]
 fn json_payloads_are_untouched_by_the_redesign() {
     let (_t, db) = fixture();

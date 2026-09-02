@@ -1,3 +1,4 @@
+mod anchoring;
 pub mod chunker;
 pub mod embedder;
 pub mod pricing;
@@ -327,6 +328,98 @@ pub struct BlameMatch {
     pub model: Option<String>,
 }
 
+/// One outcome claim that independent verification knocked down: the agent said something
+/// happened, and the trace's own structured evidence (or real git/filesystem state) disagreed.
+///
+/// `event_sequence` is the receipt. It names the exact event in the session, so a reader can
+/// go look instead of taking the count on faith.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DemotedClaim {
+    pub event_sequence: u64,
+    pub original_kind: String,
+    pub final_kind: String,
+    pub original_confidence: f32,
+    pub final_confidence: f32,
+    pub reason: String,
+}
+
+/// One loop the sentinel caught, flattened for storage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoopEvidence {
+    /// `identical_tool_loop` or `file_oscillation`.
+    pub kind: String,
+    /// The tool name or file path that repeated.
+    pub target: String,
+    pub repeat_count: usize,
+    /// `self_corrected`, `human_rescued`, or `still_looping`.
+    pub resolution: String,
+}
+
+/// How badly a session stumbled, independent of how high it climbed.
+///
+/// `sessions.primary_outcome` records the best thing a session proved. This records the things
+/// that went wrong along the way — a claim reality contradicted, a loop, a recovery from a
+/// broken state. Written by the scanner (see `docs/specs/suspect-commits.md`); a session with
+/// no row here has not been scanned since the table landed, which is not the same as clean.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SessionRisk {
+    pub session_id: String,
+    pub demoted_claims: usize,
+    pub loop_alerts: usize,
+    pub unresolved_loops: usize,
+    pub recoveries: usize,
+    pub demoted_evidence: Vec<DemotedClaim>,
+    pub loop_evidence: Vec<LoopEvidence>,
+    pub computed_at: Option<DateTime<Utc>>,
+}
+
+/// Cap on the evidence lists stored per session. A session that demoted forty claims is
+/// already flagged by the first three; storing all of them would put an unbounded blob in a
+/// row that gets read on every suspect query.
+pub const SESSION_RISK_EVIDENCE_CAP: usize = 5;
+
+/// One recorded file modification that provably happened inside a given repository.
+///
+/// The difference from `BlameMatch` is the whole point of this type: a `BlameMatch` is whatever
+/// substring-matched a pattern, and an `AnchoredBlameRow` has been shown to lie inside one
+/// specific checkout (see `crates/storage/src/anchoring.rs` for the rule and the measured
+/// reason it exists).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnchoredBlameRow {
+    /// `file_path` expressed relative to the repository root — the form `git log --name-only`
+    /// also produces, so the two can be compared directly.
+    pub repo_relative_path: String,
+    /// The path exactly as the adapter recorded it: absolute for most adapters, repository-
+    /// relative for `opencode`.
+    pub file_path: String,
+    pub session_id: String,
+    pub adapter: String,
+    pub source_path: String,
+    pub action: String,
+    pub modified_at: DateTime<Utc>,
+    /// Model active at the time of the modification, if the trace recorded one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub models_used: Vec<String>,
+    pub primary_outcome: Option<String>,
+}
+
+/// Everything `Storage::blame_for_repo` found, plus what it had to throw away.
+///
+/// `unanchored_rows` is not a footnote. It is the count of recorded modifications that could
+/// not be placed in any repository — relative paths from sessions whose own repository does not
+/// match this one. Reporting a result without it would silently pass off "we dropped evidence"
+/// as "there was none."
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnchoredBlame {
+    /// The repository root the rows were anchored to, normalized (no trailing slash).
+    pub repo_root: String,
+    /// The `org/repo` identity that relative paths were matched against.
+    pub repo_identity: String,
+    pub rows: Vec<AnchoredBlameRow>,
+    pub unanchored_rows: usize,
+}
+
 /// Label for a `FileActionType`, matching its `#[serde(rename_all = "snake_case")]` form.
 fn file_action_label(action: FileActionType) -> &'static str {
     match action {
@@ -468,6 +561,27 @@ impl Storage {
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
             );
 
+            -- What went wrong inside a session, as opposed to what it produced.
+            -- `sessions.primary_outcome` already answers "how high did this session climb";
+            -- these four counters answer "did it stumble on the way", which is the question
+            -- `agentworth suspect` asks of a commit's authoring session
+            -- (docs/specs/suspect-commits.md). Written by the scanner from detectors that
+            -- already run over the parsed trace, so a row exists only for sessions indexed
+            -- since this table landed -- absence means "not scanned yet", never "clean".
+            CREATE TABLE IF NOT EXISTS session_risk (
+                session_id TEXT PRIMARY KEY,
+                demoted_claims INTEGER NOT NULL DEFAULT 0,
+                loop_alerts INTEGER NOT NULL DEFAULT 0,
+                unresolved_loops INTEGER NOT NULL DEFAULT 0,
+                recoveries INTEGER NOT NULL DEFAULT 0,
+                -- JSON arrays, capped: the pointers that make a count checkable. A count with
+                -- no event sequence behind it is an assertion, not a receipt.
+                demoted_evidence TEXT,
+                loop_evidence TEXT,
+                computed_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS session_model_usage (
                 session_id TEXT NOT NULL,
                 model TEXT NOT NULL,
@@ -564,6 +678,7 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_file_modifications_path ON file_modifications(file_path);
             CREATE INDEX IF NOT EXISTS idx_file_modifications_session ON file_modifications(session_id);
             CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
+            CREATE INDEX IF NOT EXISTS idx_session_risk_demoted ON session_risk(demoted_claims);
 
             "#,
         )?;
@@ -771,6 +886,11 @@ impl Storage {
         tx.execute("DELETE FROM file_modifications WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM session_model_usage WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM session_compaction WHERE session_id = ?1", params![session_id])?;
+        // Cleared by hand like the three above, so this delete does not depend on whether
+        // foreign-key enforcement happens to be on. It is: the bundled SQLite this crate
+        // builds has it enabled, which `test_session_risk_requires_its_session` pins -- a risk
+        // row for an unknown session is rejected, not silently orphaned.
+        tx.execute("DELETE FROM session_risk WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM sessions WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM sources WHERE source_path = ?1", params![source_path])?;
         tx.commit()?;
@@ -2112,6 +2232,223 @@ impl Storage {
             sessions,
         })
     }
+    /// Record (or replace) one session's risk signals. Idempotent, so a rescan overwrites
+    /// rather than accumulating.
+    pub fn upsert_session_risk(&self, risk: &SessionRisk) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let demoted_json = serde_json::to_string(
+            &risk
+                .demoted_evidence
+                .iter()
+                .take(SESSION_RISK_EVIDENCE_CAP)
+                .collect::<Vec<_>>(),
+        )?;
+        let loop_json = serde_json::to_string(
+            &risk
+                .loop_evidence
+                .iter()
+                .take(SESSION_RISK_EVIDENCE_CAP)
+                .collect::<Vec<_>>(),
+        )?;
+        conn.execute(
+            r#"
+            INSERT INTO session_risk (
+                session_id, demoted_claims, loop_alerts, unresolved_loops, recoveries,
+                demoted_evidence, loop_evidence, computed_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ON CONFLICT(session_id) DO UPDATE SET
+                demoted_claims = excluded.demoted_claims,
+                loop_alerts = excluded.loop_alerts,
+                unresolved_loops = excluded.unresolved_loops,
+                recoveries = excluded.recoveries,
+                demoted_evidence = excluded.demoted_evidence,
+                loop_evidence = excluded.loop_evidence,
+                computed_at = excluded.computed_at;
+            "#,
+            params![
+                risk.session_id,
+                risk.demoted_claims as i64,
+                risk.loop_alerts as i64,
+                risk.unresolved_loops as i64,
+                risk.recoveries as i64,
+                demoted_json,
+                loop_json,
+                risk.computed_at.unwrap_or_else(Utc::now).to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Risk signals for a set of sessions. A session missing from the result has no stored row:
+    /// it has not been scanned since `session_risk` landed, which callers must report as
+    /// unknown rather than as clean.
+    pub fn get_session_risks(&self, session_ids: &[String]) -> Result<BTreeMap<String, SessionRisk>> {
+        if session_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let placeholders = vec!["?"; session_ids.len()].join(",");
+        let sql = format!(
+            r#"
+            SELECT session_id, demoted_claims, loop_alerts, unresolved_loops, recoveries,
+                   demoted_evidence, loop_evidence, computed_at
+            FROM session_risk WHERE session_id IN ({placeholders})
+            "#
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let bound: Vec<&dyn ToSql> = session_ids.iter().map(|s| s as &dyn ToSql).collect();
+        let mut rows = stmt.query(bound.as_slice())?;
+
+        let mut out = BTreeMap::new();
+        while let Some(row) = rows.next()? {
+            let session_id: String = row.get(0)?;
+            let demoted_json: Option<String> = row.get(5)?;
+            let loop_json: Option<String> = row.get(6)?;
+            let computed_str: Option<String> = row.get(7)?;
+            out.insert(
+                session_id.clone(),
+                SessionRisk {
+                    session_id,
+                    demoted_claims: row.get::<_, i64>(1)? as usize,
+                    loop_alerts: row.get::<_, i64>(2)? as usize,
+                    unresolved_loops: row.get::<_, i64>(3)? as usize,
+                    recoveries: row.get::<_, i64>(4)? as usize,
+                    demoted_evidence: demoted_json
+                        .and_then(|j| serde_json::from_str(&j).ok())
+                        .unwrap_or_default(),
+                    loop_evidence: loop_json
+                        .and_then(|j| serde_json::from_str(&j).ok())
+                        .unwrap_or_default(),
+                    computed_at: computed_str.and_then(|s| {
+                        DateTime::parse_from_rfc3339(&s)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
+                    }),
+                },
+            );
+        }
+        Ok(out)
+    }
+
+    /// Every recorded file modification that provably happened inside `repo_root`, plus a count
+    /// of the ones that could not be placed anywhere.
+    ///
+    /// This is `find_sessions_for_blame`'s suffix match replaced by a containment test. The
+    /// suffix match is right for "who touched a file called `engine.rs`" and wrong for "who
+    /// touched a file in *this* checkout" — measured on a real index, a bare `Cargo.lock`
+    /// suffix-matches every Rust repository on the disk, which turned a 2.6% flag rate into a
+    /// 33% one that was 90% false (`docs/specs/suspect-commits.md`). The anchoring rule lives
+    /// in `crate::anchoring` with its own tests.
+    ///
+    /// `additional_roots` are linked git worktrees of the same repository. They matter more than
+    /// they sound: a worktree normally lives *inside* the main checkout
+    /// (`<repo>/.claude/worktrees/<name>`), so without it every edit made in one anchors to
+    /// `.claude/worktrees/<name>/crates/a.rs` — a path no commit will ever name, and the session
+    /// silently attributes to nothing. Measured on this repo's own index, 58 of 308 in-repo
+    /// blame rows were written from a worktree.
+    ///
+    /// `since` bounds `occurred_at`; pass `None` for the whole index. Results are deduplicated
+    /// to one row per (session, path) — the most recent touch — and ordered newest first.
+    pub fn blame_for_repo(
+        &self,
+        repo_root: &str,
+        additional_roots: &[String],
+        since: Option<DateTime<Utc>>,
+    ) -> Result<AnchoredBlame> {
+        let roots = anchoring::sorted_roots(repo_root, additional_roots);
+        let identity = anchoring::repo_identity(repo_root);
+
+        // Candidate sets unioned by SQL so the whole table is never pulled into memory: paths
+        // under any of the roots, and every relative path (relative rows carry no root to filter
+        // on, and there are ~156 of them in a 25,206-row index). Only the outermost root needs a
+        // prefix clause, since every worktree root sits under it — but a worktree placed
+        // elsewhere would not, so each gets its own.
+        let mut clauses = Vec::with_capacity(roots.len());
+        let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
+        for root in &roots {
+            clauses.push(format!(
+                "fm.file_path LIKE ?{} ESCAPE '\\' OR fm.file_path = ?{}",
+                binds.len() + 1,
+                binds.len() + 2
+            ));
+            binds.push(Box::new(format!("{}/%", anchoring::like_prefix_escaped(root))));
+            binds.push(Box::new(root.clone()));
+        }
+        clauses.push("fm.file_path NOT LIKE '/%'".to_string());
+        let since_placeholder = binds.len() + 1;
+        binds.push(Box::new(since.map(|t| t.to_rfc3339())));
+
+        let sql = format!(
+            r#"
+            SELECT fm.file_path, fm.action, fm.occurred_at, fm.model,
+                   s.session_id, s.adapter, s.source_path, s.models_used, s.primary_outcome
+            FROM file_modifications fm
+            JOIN sessions s ON s.session_id = fm.session_id
+            WHERE ({})
+              AND (?{since_placeholder} IS NULL OR fm.occurred_at >= ?{since_placeholder})
+            ORDER BY fm.occurred_at DESC
+            "#,
+            clauses.join(" OR ")
+        );
+
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&sql)?;
+        let bound: Vec<&dyn ToSql> = binds.iter().map(std::convert::AsRef::as_ref).collect();
+        let mut rows = stmt.query(bound.as_slice())?;
+
+        // Keyed by (session, repo-relative path) so a file touched twenty times in one session
+        // contributes one row — the most recent, which the DESC ordering makes the first seen.
+        let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        let mut anchored = Vec::new();
+        let mut unanchored_rows = 0usize;
+
+        while let Some(row) = rows.next()? {
+            let file_path: String = row.get(0)?;
+            let source_path: String = row.get(6)?;
+
+            let (anchor, relative) =
+                anchoring::anchor_path(&file_path, &roots, &identity, &source_path);
+            let relative = match (anchor, relative) {
+                (anchoring::Anchor::Unanchored, _) => {
+                    unanchored_rows += 1;
+                    continue;
+                }
+                (anchoring::Anchor::ElsewhereAbsolute, _) => continue,
+                (_, Some(rel)) => rel,
+                (_, None) => continue,
+            };
+
+            let session_id: String = row.get(4)?;
+            if !seen.insert((session_id.clone(), relative.clone())) {
+                continue;
+            }
+
+            let occurred_str: String = row.get(2)?;
+            let models_str: String = row.get(7)?;
+            anchored.push(AnchoredBlameRow {
+                repo_relative_path: relative,
+                file_path,
+                session_id,
+                adapter: row.get(5)?,
+                source_path,
+                action: row.get(1)?,
+                modified_at: DateTime::parse_from_rfc3339(&occurred_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                model: row.get(3)?,
+                models_used: serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default(),
+                primary_outcome: row.get(8)?,
+            });
+        }
+
+        Ok(AnchoredBlame {
+            repo_root: anchoring::normalize_root(repo_root),
+            repo_identity: identity,
+            rows: anchored,
+            unanchored_rows,
+        })
+    }
 }
 
 /// How many sessions `list_sessions_for_repo` will walk before giving up. Every row is one
@@ -2847,6 +3184,196 @@ mod tests {
             .find_files_for_session("no_such_session_anywhere")
             .expect("files for unknown session");
         assert!(unknown.is_empty());
+    }
+
+    /// Seed one session that touched `path`, with `source_path` deciding which repository the
+    /// session itself belongs to.
+    fn seed_file_touch(
+        storage: &Storage,
+        session_id: &str,
+        source_path: &str,
+        path: &str,
+        at: DateTime<Utc>,
+    ) {
+        use agentworth_schema::NormalizedEvent;
+
+        let prov = Provenance::new(source_path, "claude_code", 100, 100, format!("fp_{session_id}"));
+        let mut trace = AgentWorthTrace::new(session_id, "claude_code", prov, at);
+        trace.stats.models_used = vec!["claude-opus-5".to_string()];
+        trace.events.push(NormalizedEvent::new(
+            1,
+            at,
+            EventPayload::FileAction {
+                path: path.to_string(),
+                action: FileActionType::Edit,
+                diff: None,
+                lines_changed: None,
+            },
+        ));
+        storage.upsert_trace(&trace).expect("upsert");
+    }
+
+    /// The measured trap from `docs/specs/suspect-commits.md`, reproduced end to end: a bare
+    /// relative `Cargo.lock`, written by a session that worked in a *different* repository,
+    /// suffix-matches this repository and must be excluded — and counted, not silently dropped.
+    #[test]
+    fn test_blame_for_repo_excludes_the_cargo_lock_collision() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let root = "/Users/dev/code/unfoundbox/agentworth";
+        let now = Utc::now();
+
+        seed_file_touch(
+            &storage,
+            "sess_here_abs",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/a.jsonl",
+            &format!("{root}/crates/storage/src/lib.rs"),
+            now - Duration::minutes(10),
+        );
+        seed_file_touch(
+            &storage,
+            "sess_elsewhere_rel",
+            "/Users/dev/.local/share/opencode/project/-Users-dev-code-motionvector-studio/b.json",
+            "Cargo.lock",
+            now - Duration::minutes(8),
+        );
+        seed_file_touch(
+            &storage,
+            "sess_elsewhere_abs",
+            "/Users/dev/.claude/projects/-Users-dev-code-motionvector-studio/c.jsonl",
+            "/Users/dev/code/motionvector/studio/Cargo.lock",
+            now - Duration::minutes(6),
+        );
+
+        let found = storage.blame_for_repo(root, &[], None).expect("anchored blame");
+
+        assert_eq!(found.repo_identity, "unfoundbox/agentworth");
+        assert_eq!(
+            found.rows.len(),
+            1,
+            "only the absolute in-repo touch is evidence about this repo, got {:?}",
+            found.rows.iter().map(|r| &r.file_path).collect::<Vec<_>>()
+        );
+        assert_eq!(found.rows[0].session_id, "sess_here_abs");
+        assert_eq!(found.rows[0].repo_relative_path, "crates/storage/src/lib.rs");
+
+        // The other repo's *relative* row could not be placed, so it is reported.
+        assert_eq!(found.unanchored_rows, 1);
+        // The other repo's *absolute* row was placed — just not here — so it is not an
+        // unanchored row. Anchored elsewhere is a different fact from unplaceable.
+    }
+
+    #[test]
+    fn test_blame_for_repo_anchors_a_relative_path_from_this_repos_own_session() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let root = "/Users/dev/code/unfoundbox/agentworth";
+
+        // A transcript that lives inside the checkout, so the session's own identity resolves
+        // to this repository. `opencode`'s real transcript path does not — see
+        // `anchoring::tests::an_opencode_transcript_path_does_not_resolve_to_its_repo`.
+        seed_file_touch(
+            &storage,
+            "sess_here_rel",
+            "/Users/dev/code/unfoundbox/agentworth/.sessions/d.json",
+            "Cargo.lock",
+            Utc::now() - Duration::minutes(3),
+        );
+
+        let found = storage.blame_for_repo(root, &[], None).expect("anchored blame");
+        assert_eq!(found.rows.len(), 1);
+        assert_eq!(found.rows[0].repo_relative_path, "Cargo.lock");
+        assert_eq!(found.unanchored_rows, 0);
+    }
+
+    /// A risk row for a session that does not exist is rejected, not silently orphaned.
+    ///
+    /// Worth pinning because it is easy to assume otherwise: SQLite's own default is to *not*
+    /// enforce foreign keys, and nothing here runs `PRAGMA foreign_keys = ON`. The bundled
+    /// build this crate compiles turns it on, and a comment in `delete_session` now depends on
+    /// that being true.
+    #[test]
+    fn test_session_risk_requires_its_session() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let orphan = SessionRisk {
+            session_id: "sess_that_never_existed".to_string(),
+            demoted_claims: 1,
+            ..Default::default()
+        };
+        assert!(
+            storage.upsert_session_risk(&orphan).is_err(),
+            "a risk row must not outlive or precede its session"
+        );
+    }
+
+    /// An edit made in a linked worktree has to come back as a path a commit can name. Without
+    /// the worktree root it anchors to `.claude/worktrees/…/src/lib.rs`, which matches nothing
+    /// and silently attributes the session to no commit at all.
+    #[test]
+    fn test_blame_for_repo_reads_a_worktree_edit_as_a_repo_relative_path() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let root = "/Users/dev/code/unfoundbox/agentworth";
+        let worktree = format!("{root}/.claude/worktrees/feat-x");
+
+        seed_file_touch(
+            &storage,
+            "sess_in_worktree",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth--claude-worktrees-feat-x/w.jsonl",
+            &format!("{worktree}/crates/storage/src/lib.rs"),
+            Utc::now() - Duration::minutes(5),
+        );
+
+        let without = storage.blame_for_repo(root, &[], None).expect("blame");
+        assert_eq!(
+            without.rows[0].repo_relative_path,
+            ".claude/worktrees/feat-x/crates/storage/src/lib.rs",
+            "without the worktree root the path is unusable for matching commits"
+        );
+
+        let with = storage
+            .blame_for_repo(root, &[worktree], None)
+            .expect("blame with worktree");
+        assert_eq!(with.rows.len(), 1, "the same touch, counted once");
+        assert_eq!(with.rows[0].repo_relative_path, "crates/storage/src/lib.rs");
+    }
+
+    #[test]
+    fn test_blame_for_repo_sibling_prefix_and_since_bound() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let root = "/Users/dev/code/unfoundbox/agentworth";
+        let now = Utc::now();
+
+        // A sibling checkout whose path shares the root as a *string* prefix.
+        seed_file_touch(
+            &storage,
+            "sess_sibling",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth-web/e.jsonl",
+            "/Users/dev/code/unfoundbox/agentworth-web/Cargo.lock",
+            now - Duration::minutes(30),
+        );
+        seed_file_touch(
+            &storage,
+            "sess_old",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/f.jsonl",
+            &format!("{root}/README.md"),
+            now - Duration::hours(48),
+        );
+        seed_file_touch(
+            &storage,
+            "sess_recent",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/g.jsonl",
+            &format!("{root}/README.md"),
+            now - Duration::hours(2),
+        );
+
+        let all = storage.blame_for_repo(root, &[], None).expect("anchored blame");
+        let ids: Vec<&str> = all.rows.iter().map(|r| r.session_id.as_str()).collect();
+        assert!(!ids.contains(&"sess_sibling"), "agentworth-web is a different tree");
+        assert_eq!(ids.len(), 2);
+
+        let recent = storage
+            .blame_for_repo(root, &[], Some(now - Duration::hours(24)))
+            .expect("anchored blame since");
+        assert_eq!(recent.rows.len(), 1);
+        assert_eq!(recent.rows[0].session_id, "sess_recent");
     }
 
     #[test]

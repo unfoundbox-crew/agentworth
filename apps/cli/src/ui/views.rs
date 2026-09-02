@@ -1379,6 +1379,223 @@ pub fn receipt(ui: &Ui, v: &ReceiptView) -> String {
     out
 }
 
+// -----------------------------------------------------------------------------
+// suspect
+// -----------------------------------------------------------------------------
+
+pub struct SuspectSessionRow {
+    pub session_id: String,
+    pub model: String,
+    pub rung: usize,
+    /// Reason codes, already ordered.
+    pub reasons: Vec<String>,
+    pub risk_unknown: bool,
+}
+
+pub struct SuspectCommitRow {
+    pub short_sha: String,
+    pub subject: String,
+    pub sessions: Vec<SuspectSessionRow>,
+}
+
+pub struct SuspectView<'a> {
+    pub repo: &'a str,
+    pub range: &'a str,
+    pub commits_scanned: usize,
+    pub attributed: usize,
+    pub unattributed: usize,
+    pub unanchored_blame_rows: usize,
+    pub sessions_with_unknown_risk: usize,
+    pub rows: Vec<SuspectCommitRow>,
+    pub prompt: &'a str,
+}
+
+/// The screen answers one question — which commits to look at twice — and then hands over a
+/// block to paste. Every number that could make the answer look better than it is (commits with
+/// no session, evidence that could not be placed, sessions never examined) is printed on every
+/// run, including the runs where it is zero: a caveat that only shows up when it bites teaches
+/// a reader to trust the quiet runs.
+pub fn suspect(ui: &Ui, v: &SuspectView<'_>) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header(
+        "agentworth suspect",
+        &format!(
+            "{} of {} commit{}",
+            v.rows.len(),
+            v.commits_scanned,
+            if v.commits_scanned == 1 { "" } else { "s" }
+        ),
+    ));
+    out.push('\n');
+
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(Role::Label, &truncate(&shorten_home(v.repo), i.saturating_sub(2)))
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        format!("  {}", ui.paint(Role::Label, &truncate(v.range, i.saturating_sub(2)))),
+    );
+    out.push('\n');
+
+    if v.commits_scanned == 0 {
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Warn, "No commits in that range.")));
+        return out;
+    }
+
+    if v.rows.is_empty() {
+        let line = if v.attributed == 0 {
+            "No indexed session matched any commit in this range. Unknown, not clean."
+        } else {
+            "No commit in this range came from a session with a risk signal."
+        };
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Value, line)));
+    } else {
+        const SHA: usize = 8;
+        const EV: usize = 6;
+        const SESS: usize = 10;
+        let subject = i.saturating_sub(SHA + EV + SESS + 8).max(10);
+
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Label,
+                    &format!(
+                        "{}  {}  {}  {}",
+                        rpad("COMMIT", SHA),
+                        lpad("EVIDENCE", EV),
+                        rpad("SUBJECT", subject),
+                        rpad("SESSION", SESS),
+                    )
+                )
+            ),
+        );
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+
+        for row in &v.rows {
+            for (n, s) in row.sessions.iter().enumerate() {
+                // A commit with two authoring sessions prints its sha once; the second row is
+                // clearly a continuation rather than a second commit.
+                let (sha, subj) = if n == 0 {
+                    (row.short_sha.as_str(), row.subject.as_str())
+                } else {
+                    ("", "")
+                };
+                push(
+                    &mut out,
+                    ui,
+                    format!(
+                        "  {}  {}  {}  {}",
+                        ui.paint(Role::Emphasis, &rpad(&truncate(sha, SHA), SHA)),
+                        ui.paint(rung_role(s.rung), &lpad(&ui.meter(s.rung), EV)),
+                        ui.paint(Role::Value, &rpad(&truncate(subj, subject), subject)),
+                        ui.paint(Role::Value, &rpad(&truncate(&s.session_id, SESS), SESS)),
+                    ),
+                );
+                let why = format!(
+                    "{} {} {}{}",
+                    s.model,
+                    ui.dash(),
+                    s.reasons.join(", "),
+                    if s.risk_unknown {
+                        " (loops and demoted claims not yet scanned)"
+                    } else {
+                        ""
+                    }
+                );
+                push(
+                    &mut out,
+                    ui,
+                    format!(
+                        "  {}{}",
+                        " ".repeat(SHA + EV + 4),
+                        ui.paint(
+                            Role::Unverified,
+                            &truncate(&why, i.saturating_sub(SHA + EV + 6))
+                        )
+                    ),
+                );
+            }
+        }
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    }
+
+    out.push('\n');
+
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                if v.unattributed > 0 { Role::Warn } else { Role::Label },
+                &format!(
+                    "{} commit{} had no indexed session at all. Unknown, not clean.",
+                    v.unattributed,
+                    if v.unattributed == 1 { "" } else { "s" }
+                )
+            )
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Label,
+                &format!(
+                    "{} blame row{} could not be placed in any repo, and were dropped.",
+                    v.unanchored_blame_rows,
+                    if v.unanchored_blame_rows == 1 { "" } else { "s" }
+                )
+            )
+        ),
+    );
+    if v.sessions_with_unknown_risk > 0 {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Label,
+                    &format!(
+                        "{} session{} never examined for loops or demoted claims. Run a scan.",
+                        v.sessions_with_unknown_risk,
+                        if v.sessions_with_unknown_risk == 1 { " was" } else { "s were" }
+                    )
+                )
+            ),
+        );
+    }
+
+    if !v.rows.is_empty() {
+        out.push('\n');
+        section(&mut out, ui, "COPY THIS TO THE AGENT", "");
+        for line in v.prompt.lines() {
+            push(
+                &mut out,
+                ui,
+                format!("  {}", ui.paint(Role::Value, &truncate(line, i.saturating_sub(2)))),
+            );
+        }
+    }
+
+    out.push_str(&ui.next("agentworth suspect --hook", "install it as a pre-push note"));
+    out
+}
+
 /// The session id, rendered as bars. Deterministic, decorative, and inside the allowed
 /// block-element set.
 fn barcode(ui: &Ui, session_id: &str, width: usize) -> String {

@@ -1103,3 +1103,117 @@ async fn test_forgotten_context_refuses_when_the_transcript_is_gone() {
         .expect_err("a missing transcript must refuse rather than answer from the index");
     assert!(err.message.contains(id), "{}", err.message);
 }
+
+/// The MCP surface, end to end on a real temp git repo: two commits, one written by a session
+/// that never got past `artifact_changed`. Exercises the parameter decoding, the default
+/// window, and the redaction pass — none of which the compute-level tests in
+/// `commands/suspect/tests.rs` go through.
+#[tokio::test]
+async fn test_suspect_commits_flags_the_unproven_commit() {
+    use agentworth_schema::{EventPayload, FileActionType, NormalizedEvent};
+    use std::process::Command;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    // macOS temp dirs live under a symlink; `git rev-parse --show-toplevel` reports the
+    // resolved path, and anchoring compares strings, so the fixture has to resolve it too.
+    let root = std::fs::canonicalize(dir.path()).expect("canonicalize");
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run(&["init", "-q", "-b", "main"]);
+    run(&["config", "user.email", "test@example.invalid"]);
+    run(&["config", "user.name", "Test"]);
+    run(&["config", "commit.gpgsign", "false"]);
+
+    std::fs::write(root.join("first.rs"), "fn a() {}\n").expect("write");
+    run(&["add", "first.rs"]);
+    run(&["commit", "-q", "-m", "feat: first"]);
+    std::fs::write(root.join("second.rs"), "fn b() {}\n").expect("write");
+    run(&["add", "second.rs"]);
+    run(&["commit", "-q", "-m", "feat: second"]);
+
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    // Comfortably inside the attribution window and unambiguously before the commits, so the
+    // test does not lean on `COMMIT_TIME_SLACK` to pass. Git records whole seconds; `Utc::now()`
+    // does not, and an edit stamped in the same second as its commit reads as later.
+    let at = Utc::now() - chrono::Duration::minutes(1);
+    let prov = Provenance::new(
+        format!(
+            "/tmp/claude/projects/{}/s.jsonl",
+            root.to_string_lossy().replace('/', "-")
+        ),
+        "claude_code",
+        100,
+        100,
+        "fp_suspect",
+    );
+    let mut trace = AgentWorthTrace::new("sess_suspect_mcp", "claude_code", prov, at);
+    trace.events.push(NormalizedEvent::new(
+        1,
+        at,
+        EventPayload::FileAction {
+            path: root.join("second.rs").to_string_lossy().to_string(),
+            action: FileActionType::Edit,
+            diff: None,
+            lines_changed: None,
+        },
+    ));
+    storage
+        .upsert_session(&trace, Some("artifact_changed"), Some(0.4), 1)
+        .expect("seed session");
+
+    let server = AgentWorthMcpServer::new(storage);
+    let params = serde_json::json!({ "repo": root.to_string_lossy() });
+    let result = server
+        .suspect_commits(Parameters(serde_json::from_value(params).unwrap()))
+        .await
+        .expect("suspect_commits");
+    let value = call_result_json(result);
+
+    assert_eq!(value["commits_scanned"], 2);
+    assert_eq!(value["attributed"], 1);
+    assert_eq!(
+        value["unattributed"], 1,
+        "a commit with no authoring session is unknown, and says so in its own field"
+    );
+    assert_eq!(value["window_hours"], 24);
+    assert_eq!(value["suspect"].as_array().unwrap().len(), 1);
+    assert_eq!(value["suspect"][0]["subject"], "feat: second");
+    assert_eq!(
+        value["suspect"][0]["sessions"][0]["reasons"][0]["code"],
+        "no_test_run"
+    );
+    assert!(
+        value["receipt"]["anchoring_rule"].is_string(),
+        "the answer states the rule it applied"
+    );
+    assert!(
+        value.get("patch").is_none() && value.get("diff").is_none(),
+        "the output is a list and a prompt, never a change"
+    );
+}
+
+/// A repo path that is not a git checkout comes back as a parameter error naming the missing
+/// noun, not an opaque internal one.
+#[tokio::test]
+async fn test_suspect_commits_rejects_a_non_repo_path() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+    let params = serde_json::json!({ "repo": dir.path().to_string_lossy() });
+    let err = server
+        .suspect_commits(Parameters(serde_json::from_value(params).unwrap()))
+        .await
+        .expect_err("a non-repo path must be rejected");
+    assert!(err.message.contains("git repository"), "got: {}", err.message);
+}
