@@ -7,7 +7,7 @@ use chrono::Utc;
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
-use super::params::{SessionGetParams, SessionsFindParams, SESSION_GET_DEFAULT_EVENTS_LIMIT};
+use super::params::{OutcomeRateParams, SessionGetParams, SessionsFindParams, SESSION_GET_DEFAULT_EVENTS_LIMIT};
 use super::server::AgentWorthMcpServer;
 
 /// Builds `n` minimal single-line Claude Code "user message" events, one per line, so a real
@@ -392,4 +392,175 @@ async fn test_coverage_stats_include_matrix_toggle() {
     let value = call_result_json(with_matrix);
     assert!(value.get("matrix").is_some());
     assert!(value["matrix"]["total_adapters"].as_u64().unwrap() > 0);
+}
+
+fn seed_claimed_session(
+    storage: &Storage,
+    session_id: &str,
+    adapter: &str,
+    source_path: &str,
+    models: &[&str],
+    primary_outcome: Option<&str>,
+) {
+    let prov = Provenance::new(source_path, adapter, 100, 12345, format!("fp_{session_id}"));
+    let mut trace = AgentWorthTrace::new(session_id, adapter, prov, Utc::now());
+    // Non-stub per `NON_STUB_SQL_PREDICATE`: total_events > 1 AND total_tokens > 0.
+    trace.stats.total_events = 5;
+    trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+    trace.stats.models_used = models.iter().map(|m| m.to_string()).collect();
+    storage
+        .upsert_session(&trace, primary_outcome, None)
+        .expect("seed claimed session");
+}
+
+fn outcome_rate_params(
+    group_by: &str,
+    min_n: Option<usize>,
+) -> serde_json::Value {
+    serde_json::json!({ "group_by": group_by, "since": null, "until": null, "min_n": min_n })
+}
+
+#[test]
+fn test_outcome_rate_group_by_rejects_unknown_value() {
+    let params: Result<OutcomeRateParams, _> =
+        serde_json::from_value(outcome_rate_params("worktree", None));
+    assert!(
+        params.is_err(),
+        "group_by must reject anything outside model/adapter/repo"
+    );
+}
+
+#[test]
+fn test_outcome_rate_group_by_accepts_the_three_documented_values() {
+    for value in ["model", "adapter", "repo"] {
+        let params: Result<OutcomeRateParams, _> =
+            serde_json::from_value(outcome_rate_params(value, None));
+        assert!(params.is_ok(), "group_by={value} must deserialize");
+    }
+}
+
+#[tokio::test]
+async fn test_outcome_rate_min_n_defaults_to_20() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let result = server
+        .outcome_rate(Parameters(
+            serde_json::from_value(outcome_rate_params("repo", None)).unwrap(),
+        ))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+    assert_eq!(
+        value["min_n"], 20,
+        "min_n must default to 20 per docs/specs/verified-outcome-rate.md"
+    );
+}
+
+#[tokio::test]
+async fn test_outcome_rate_min_n_explicit_override() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let result = server
+        .outcome_rate(Parameters(
+            serde_json::from_value(outcome_rate_params("repo", Some(3))).unwrap(),
+        ))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+    assert_eq!(value["min_n"], 3);
+}
+
+#[tokio::test]
+async fn test_outcome_rate_end_to_end_suppression_and_reason() {
+    let storage = Storage::open_in_memory().unwrap();
+
+    // repo-a: 3 claimed sessions, 2 verified -- clears a min_n of 3.
+    seed_claimed_session(
+        &storage,
+        "sess-a1",
+        "claude_code",
+        "/home/u/code/org-a/repo-a/s1.jsonl",
+        &["model-x"],
+        Some("test_or_build_passed"),
+    );
+    seed_claimed_session(
+        &storage,
+        "sess-a2",
+        "claude_code",
+        "/home/u/code/org-a/repo-a/s2.jsonl",
+        &["model-x"],
+        Some("commit_observed"),
+    );
+    seed_claimed_session(
+        &storage,
+        "sess-a3",
+        "claude_code",
+        "/home/u/code/org-a/repo-a/s3.jsonl",
+        &["model-x"],
+        Some("done_claimed"),
+    );
+
+    // repo-b: 2 claimed sessions -- below a min_n of 3, must be suppressed.
+    seed_claimed_session(
+        &storage,
+        "sess-b1",
+        "claude_code",
+        "/home/u/code/org-b/repo-b/s1.jsonl",
+        &["model-y"],
+        Some("ci_or_deployment_verified"),
+    );
+    seed_claimed_session(
+        &storage,
+        "sess-b2",
+        "claude_code",
+        "/home/u/code/org-b/repo-b/s2.jsonl",
+        &["model-y"],
+        Some("done_claimed"),
+    );
+
+    // repo-c: sessions exist but none ever claimed a primary_outcome -- a real "no
+    // detection" row, not the same claim as "too little data."
+    seed_claimed_session(
+        &storage,
+        "sess-c1",
+        "codex",
+        "/home/u/code/org-c/repo-c/s1.jsonl",
+        &["model-z"],
+        None,
+    );
+
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+    let result = server
+        .outcome_rate(Parameters(
+            serde_json::from_value(outcome_rate_params("repo", Some(3))).unwrap(),
+        ))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+
+    assert_eq!(value["suppressed_groups"], 1, "repo-b's n=2 must be suppressed under min_n=3");
+
+    let rows = value["rows"].as_array().unwrap();
+    let repo_a = rows
+        .iter()
+        .find(|r| r["key"] == "org-a/repo-a")
+        .expect("repo-a row must be present");
+    assert_eq!(repo_a["n"], 3);
+    assert_eq!(repo_a["verified"], 2);
+    assert!((repo_a["rate"].as_f64().unwrap() - (2.0 / 3.0)).abs() < 1e-9);
+    assert!(rows.iter().all(|r| r["key"] != "org-b/repo-b"), "suppressed rows must not appear");
+
+    let repo_c = rows
+        .iter()
+        .find(|r| r["key"] == "org-c/repo-c")
+        .expect("repo-c must still appear, unsuppressed");
+    assert_eq!(repo_c["n"], 0);
+    assert!(repo_c["rate"].is_null());
+    assert_eq!(repo_c["reason"], "no_outcome_detection");
+
+    // baseline: 5 claimed sessions total (a1..a3, b1, b2), 3 verified (a1, a2, b1).
+    assert_eq!(value["baseline"]["n"], 5);
+    assert_eq!(value["baseline"]["verified"], 3);
 }
