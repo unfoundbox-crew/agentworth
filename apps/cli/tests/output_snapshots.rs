@@ -384,7 +384,7 @@ fn the_scan_line_draws_archie_and_prints_one_frame_to_a_pipe() {
 }
 
 /// Under 48 columns the progress block does not leave room for the label and the track
-/// beside it, so the scan line collapses to the ears and the lamp. The summary that
+/// beside it, so the scan line collapses to the ears and the torch. The summary that
 /// follows is a different screen and keeps its three lines.
 #[test]
 fn the_scan_line_collapses_to_one_line_in_a_narrow_window() {
