@@ -64,6 +64,22 @@ npx -y agentworth scan
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs pre-built native binary to `~/.local/bin`. |
 | **Cargo (Native)** | `cargo install agentworth-cli` | Compiles native binaries (`agentworth` and its short alias `archie`) into `~/.cargo/bin`. |
 
+The standalone script draws its own progress, so a 22 MB download over a slow link no
+longer looks like a hang:
+
+```
+ (*) archie  resolving    v0.1.16  aarch64-apple-darwin
+ (o) archie  downloading  ─────────────────────·······   75%  16.7 / 22.2 MB
+ (*) archie  verifying    sha256 matches
+ (*) archie  extracting   agentworth-v0.1.16-aarch64-apple-darwin.tar.gz
+ (*) archie  installed    agentworth, archie, agwt in ~/.local/bin
+
+  Next  archie --version   confirm the install
+```
+
+Piped into a file or a CI log it prints one line per step and no bar — a loop that
+scrolls is a loop that lies.
+
 ---
 
 ## Workflow

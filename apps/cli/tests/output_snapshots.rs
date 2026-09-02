@@ -380,6 +380,101 @@ fn the_scan_line_draws_archie_and_prints_one_frame_to_a_pipe() {
     assert!(out.contains(",---."), "the crown is missing:\n{}", out);
 }
 
+/// A brand-new machine: one session on disk, nothing indexed. Returns a fresh temp dir
+/// and a db path that does not exist yet, so the caller owns the very first scan.
+fn unscanned() -> (TempDir, std::path::PathBuf) {
+    let temp = tempdir().unwrap();
+    let dir = temp.path().join(".claude").join("projects").join("proj");
+    fs::create_dir_all(&dir).unwrap();
+    let mut f = File::create(dir.join("session_new.jsonl")).unwrap();
+    writeln!(f, r#"{{"type":"user","timestamp":"2026-08-31T09:00:00Z","content":"index my history"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"assistant","timestamp":"2026-08-31T09:00:03Z","model":"claude-3-5-sonnet-20241022","usage":{{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"text","text":"On it."}}]}}"#).unwrap();
+    let db = temp.path().join("first.db");
+    (temp, db)
+}
+
+/// The one screen a brand-new user sees. Archie introduces himself once, before anything
+/// is indexed, and never again -- two figures on one screen are two states and one of them
+/// is lying.
+#[test]
+fn the_first_scan_introduces_archie_and_the_second_does_not() {
+    let (t, db) = unscanned();
+    let root = t.path().display().to_string();
+
+    let first = render(&db, &["scan", &root], 80, false);
+    assert!(first.contains("first run"), "no first-run banner:\n{}", first);
+    assert!(
+        first.contains("nothing indexed here yet"),
+        "the banner does not say why it is here:\n{}",
+        first
+    );
+    assert!(
+        first.contains("reading your agent histories into"),
+        "the banner does not say where the index lands:\n{}",
+        first
+    );
+    assert!(first.contains(",---."), "the figure is missing:\n{}", first);
+
+    let second = render(&db, &["scan", &root], 80, false);
+    assert!(
+        !second.contains("first run"),
+        "the banner printed twice:\n{}",
+        second
+    );
+}
+
+/// He is a state, not a texture: machine-readable output carries no mascot, and the
+/// payload has to stay parseable on the very first run.
+#[test]
+fn the_first_scan_prints_nothing_extra_under_json() {
+    let (t, db) = unscanned();
+    let root = t.path().display().to_string();
+    let out = render(&db, &["scan", &root, "--json"], 80, false);
+    assert!(!out.contains("first run"), "banner leaked into --json:\n{}", out);
+    serde_json::from_str::<serde_json::Value>(out.trim())
+        .unwrap_or_else(|e| panic!("--json is not parseable ({e}):\n{out}"));
+}
+
+/// The banner is on the same grid as every other screen: nothing wraps, nothing outside
+/// the allowed glyph set, and it collapses to the one-line form in a narrow window.
+#[test]
+fn the_first_run_banner_holds_the_grid() {
+    for columns in [40usize, 80, 120] {
+        let (t, db) = unscanned();
+        let root = t.path().display().to_string();
+        let out = render(&db, &["scan", &root], columns, false);
+        for line in out.lines() {
+            let w = console::measure_text_width(line);
+            assert!(
+                w <= columns.min(78),
+                "first run at {} columns: a line is {} wide\n{}",
+                columns,
+                w,
+                line
+            );
+            for c in line.chars() {
+                assert!(is_allowed(c), "first run ships U+{:04X} ({})", c as u32, c);
+            }
+        }
+        let head = out.lines().next().unwrap_or_default();
+        if columns < 48 {
+            assert!(
+                head.trim_start().starts_with("(*) archie"),
+                "the banner should be the one-line form at {} columns, got:\n{}",
+                columns,
+                out
+            );
+        } else {
+            assert!(
+                head.contains(",---."),
+                "the banner should lead with the crown at {} columns, got:\n{}",
+                columns,
+                out
+            );
+        }
+    }
+}
+
 /// Under 48 columns the progress block does not leave room for the label and the track
 /// beside it, so the scan line collapses to the ears and the torch. The summary that
 /// follows is a different screen and keeps its three lines.

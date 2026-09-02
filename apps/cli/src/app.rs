@@ -1728,6 +1728,23 @@ fn run_scan_command(
     ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
+
+    // The first run is the only one with something to introduce, so the banner is gated on
+    // an empty index rather than on a flag. Stubs count: an index holding only stubs has
+    // still been scanned once, and a second introduction is a lie about which run this is.
+    if !json
+        && storage
+            .get_aggregate_stats(true)
+            .map(|s| s.total_sessions == 0)
+            .unwrap_or(false)
+    {
+        let index = storage
+            .db_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "an in-memory index".to_string());
+        print!("{}", crate::ui::views::scan_first_run(ui, &index));
+    }
+
     let scanner = Scanner::new(storage.clone());
     let options = ScanOptions {
         custom_paths: paths,
