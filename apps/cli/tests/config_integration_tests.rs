@@ -57,7 +57,7 @@ fn test_config_set_get_list_round_trip_via_binary() {
     set_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("Saved limit = 42"));
+        .stdout(predicate::str::contains("saved limit = 42"));
 
     let mut get_cmd = Command::cargo_bin("agentworth").unwrap();
     get_cmd
@@ -230,7 +230,7 @@ fn test_archie_config_keys_round_trip_via_binary() {
         .args(["config", "set", "archie.colourway", "c4"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Saved archie.colourway = C4"));
+        .stdout(predicate::str::contains("saved archie.colourway = C4"));
 
     Command::cargo_bin("agentworth")
         .unwrap()

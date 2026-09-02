@@ -2453,7 +2453,7 @@ pub(crate) fn inspect_view(
     let strongest = agentworth_outcomes::highest_outcome(&outcomes);
     let outcome = strongest.map(|s| {
         let rung = outcome_rung(Some(s.kind));
-        let supporting: Vec<(String, f64)> = outcomes
+        let supporting: Vec<(String, f32)> = outcomes
             .iter()
             .filter(|o| o.kind == s.kind)
             .map(|o| (o.summary.clone(), o.confidence))

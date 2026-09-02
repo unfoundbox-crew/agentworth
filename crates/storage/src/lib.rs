@@ -3171,7 +3171,6 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    #[test]
     /// `sessions.metadata` used to be written as the four-character string "null" for every
     /// trace that carried none (`serde_json::to_string(&Value::Null)`), in a nullable column
     /// whose own encoding of "absent" is SQL NULL -- so `WHERE metadata IS NULL` matched no
