@@ -413,7 +413,15 @@ mod tests {
     #[test]
     fn statements_come_back_newest_first_with_their_round() {
         let trace = two_round_trace();
-        let report = build_forgotten(&trace, Vec::new(), None, &ForgottenOptions::default());
+        // Stored rounds, which is what production passes: the fallback path adds a note of its
+        // own, and this test is about the answer rather than about where the boundaries came
+        // from (`boundaries_fall_back_to_the_trace_and_the_receipt_admits_it` covers that).
+        let report = build_forgotten(
+            &trace,
+            compaction_rounds(&trace),
+            None,
+            &ForgottenOptions::default(),
+        );
 
         assert_eq!(report.compactions, 2);
         assert_eq!(report.forgotten_total, 3);
