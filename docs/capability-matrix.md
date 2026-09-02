@@ -111,6 +111,32 @@ wasm-util/dist/tsdoc-metadata.json` indexed as a session, and
 discovery now, so a full rescan prunes these; every row above still includes
 them, which is why the raw counts are stated alongside the non-stub ones.
 
+## Exit codes by adapter
+
+A `ShellCommand` with `exit_code: None` says a command was typed. Only `Some(0)`
+says it ran and passed, and that is what rung 3 is built on. So it matters which
+adapters can actually see the result.
+
+Measured against 20 real Claude Code transcripts (17,981 Bash tool results): no
+transcript carries a numeric exit code field at all. What it carries is the
+harness's pass/fail envelope — `is_error` on every result, plus an "Exit code N"
+line inside 519 of the 659 failures. `crates/adapters/src/exit_status.rs` turns
+that envelope into a code and stitches it onto the command.
+
+| adapter | exit status in the source format | status |
+| :--- | :--- | :--- |
+| claude_code | `is_error` on every `tool_result`; "Exit code N" in the error text; `toolUseResult` sidecar marks backgrounded and interrupted runs | **read, measured.** Backgrounded and interrupted runs stay `None` — launched is not finished |
+| windsurf | explicit `exit_code` field | read (already did) |
+| aider (JSONL) | explicit `exit_code` field | read (already did) |
+| aider (markdown chat history) | **none** | now `None`. It used to hardcode `Some(0)`, manufacturing the exact proof rung 3 asks for |
+| opencode | a `status` string of `error`/`failed` | read (already did) on the primary path; the second path now backfills |
+| antigravity/gemini, cline, codex, cursor, deepseek, goose, grok, herdr, hermes, kimi, manus, minimax, openclaw, pi, qwen, zhipu | an `is_error` flag on the tool result | backfilled by the shared pass. **Unverified** — no sample sessions for these on this machine, so what is proven is that the adapter reads the field it parses, not that real files carry it |
+
+The stitching is a separate pass because every adapter emits its `ShellCommand`
+when it sees the *request*, several records before the answer arrives. It only
+fills gaps, and only where the `ShellCommand` sits directly behind its own
+`ToolCall`, so one command's result cannot land on another's.
+
 ## Honest depth rating
 
 One line each, from what the index shows, not from what the adapter claims.

@@ -2,6 +2,39 @@
 
 Status: proposed, measured 2026-09-02.
 
+## Every rate on this page predates the exit-code fix, and over-counts
+
+Measured 2026-09-02, corrected the same day. Rung 3 used to be granted from the
+command string alone: `is_test_or_build_command("cargo test")` was true, so the
+session was recorded as having passed its tests. Nothing checked whether the run
+exited 0, because the Claude adapter dropped the exit code on the floor before
+the classifier ever saw it. A `cargo test` that died on a compile error and one
+that went green produced the same rung.
+
+Rung 3 now requires `exit_code == Some(0)`. A test command with no captured
+result comes back as `done_claimed` at 0.35, summarised "result unknown".
+
+How much the numbers move, measured by re-running the new rule over the raw
+transcripts of all 779 `claude_code` sessions the index has at rung 3:
+
+| | sessions | share |
+| :--- | ---: | ---: |
+| keep rung 3 — a real test or build run exited 0 | 775 | 99.5% |
+| lose it — every test/build run in the file failed | 3 | 0.4% |
+| lose it — the run's result was never captured | 1 | 0.1% |
+
+So the headline rate barely moves, and it is worth being plain about why: a
+session that runs tests at all usually gets at least one green run somewhere
+before it ends. The defect was in the reasoning, not mostly in the arithmetic —
+the old rule reached the right answer 99.5% of the time for the wrong reason,
+and had no way to tell the other 0.5% apart. Nothing moves *up*: of the 436
+`claude_code` sessions sitting at `artifact_changed`, not one ran a test or
+build command at all.
+
+The `own average: 68.4%` below, the per-model and per-repo rows, and the
+landing page's cleared-the-line figure were all computed under the old rule.
+Re-scan before quoting any of them as current.
+
 ## The one-line version
 
 Of the sessions that claimed done, what share left evidence — per model, per
