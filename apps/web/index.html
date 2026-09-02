@@ -48,14 +48,15 @@
     <!-- Ahrefs Analytics -->
     <script src="https://analytics.ahrefs.com/analytics.js" data-key="a/IpHCJ82ABcZavfMZ6t/A" async></script>
 
-    <!-- Primary Metadata -->
-    <title>AgentWorth — every agent says it's done. Check the git log.</title>
-    <meta name="title" content="AgentWorth — every agent says it's done. Check the git log." />
-    <meta name="description" content="AgentWorth reads the session logs your AI coding agents already left on disk and checks what they claimed against files changed, tests run, commits made and CI. 21 harnesses, 100% local, nothing uploaded." />
-    <meta name="keywords" content="AI coding agents, agent traces, claude code, cursor composer, gemini cli, antigravity, codex, goose, opencode, LLM token analytics, developer tools, trajectory archaeology" />
-    <meta name="author" content="Unfoundbox" />
-    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
-    <link rel="canonical" href="https://agentworth.dev/" />
+    <!-- Page-specific head: title, description, canonical, Open Graph,
+         Twitter card, JSON-LD and feed links are written per route by
+         scripts/prerender.mjs. The dev block below only exists so
+         `npm run dev` has a title; the build strips it. -->
+    <!--@dev-head-->
+    <title>AgentWorth</title>
+    <meta name="description" content="AgentWorth reads the session logs your AI coding agents already left on disk and checks what they claimed against what happened." />
+    <!--/@dev-head-->
+    <!--@head-->
 
     <!-- Theme & Icons -->
     <meta name="theme-color" content="#a396d6" media="(prefers-color-scheme: dark)" />
@@ -67,89 +68,9 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM Knowledge Manifest" />
-
-    <!-- Open Graph / Facebook -->
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://agentworth.dev/" />
-    <meta property="og:title" content="AgentWorth — every agent says it's done. Check the git log." />
-    <meta property="og:description" content="Your agents already wrote down what they did. AgentWorth checks the claims against the git log. 21 harnesses, 100% local, nothing uploaded." />
-    <meta property="og:image" content="https://agentworth.dev/og.png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="AgentWorth - AI Coding Agent Receipts and Archaeology" />
-    <meta property="og:site_name" content="AgentWorth" />
-    <meta property="og:locale" content="en_US" />
-
-    <!-- Twitter Card -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:url" content="https://agentworth.dev/" />
-    <meta name="twitter:title" content="AgentWorth — every agent says it's done. Check the git log." />
-    <meta name="twitter:description" content="Your agents already wrote down what they did. AgentWorth checks the claims against the git log. 21 harnesses, 100% local, nothing uploaded." />
-    <meta name="twitter:image" content="https://agentworth.dev/og.png" />
-    <meta name="twitter:creator" content="@unfoundbox" />
-
-    <!-- Schema.org JSON-LD Structured Data for AI & Search Engines -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@graph": [
-        {
-          "@type": "SoftwareApplication",
-          "@id": "https://agentworth.dev/#software",
-          "name": "AgentWorth",
-          "operatingSystem": "macOS, Linux",
-          "applicationCategory": "DeveloperApplication",
-          "description": "A local-first native Rust tool that reads the session logs AI coding agents leave on disk and grades each claimed outcome against files changed, tests run, commits made and CI results.",
-          "url": "https://agentworth.dev/",
-          "license": "https://github.com/unfoundbox-crew/agentworth/blob/main/LICENSE",
-          "offers": {
-            "@type": "Offer",
-            "price": "0",
-            "priceCurrency": "USD"
-          },
-          "author": {
-            "@type": "Organization",
-            "name": "Unfoundbox Crew",
-            "url": "https://github.com/unfoundbox-crew"
-          }
-        },
-        {
-          "@type": "FAQPage",
-          "@id": "https://agentworth.dev/#faq",
-          "mainEntity": [
-            {
-              "@type": "Question",
-              "name": "Does AgentWorth upload my code or transcripts to the cloud?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "No. AgentWorth is 100% local-first and offline by design. It scans dotfiles on your machine and stores an index in a local SQLite database. Nothing ever leaves your computer."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "Which AI coding agents are supported?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "AgentWorth supports 21 native adapters: Claude Code, Google Antigravity (agy), Cursor Composer, OpenAI Codex, Block Goose, Pi, Herdr, Nous Hermes, OpenClaw, xAI Grok, OpenCode, DeepSeek Code, Kimi Code, MiniMax, Qwen Code, Zhipu/CodeGeeX, Aider, Cline & Roo-Code, Windsurf/Cascade, and Manus."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "How do I run AgentWorth?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "Run 'npx -y agentworth scan' to index the agent logs already on your machine, or install the native binary with 'curl -fsSL https://agentworth.dev/install.sh | sh'."
-              }
-            }
-          ]
-        }
-      ]
-    }
-    </script>
   </head>
   <body class="bg-ground text-ink antialiased">
-    <div id="root"></div>
+    <div id="root"><!--@app--></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
