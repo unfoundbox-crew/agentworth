@@ -328,6 +328,56 @@ pub struct BlameMatch {
     pub model: Option<String>,
 }
 
+/// One outcome claim that independent verification knocked down: the agent said something
+/// happened, and the trace's own structured evidence (or real git/filesystem state) disagreed.
+///
+/// `event_sequence` is the receipt. It names the exact event in the session, so a reader can
+/// go look instead of taking the count on faith.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DemotedClaim {
+    pub event_sequence: u64,
+    pub original_kind: String,
+    pub final_kind: String,
+    pub original_confidence: f32,
+    pub final_confidence: f32,
+    pub reason: String,
+}
+
+/// One loop the sentinel caught, flattened for storage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoopEvidence {
+    /// `identical_tool_loop` or `file_oscillation`.
+    pub kind: String,
+    /// The tool name or file path that repeated.
+    pub target: String,
+    pub repeat_count: usize,
+    /// `self_corrected`, `human_rescued`, or `still_looping`.
+    pub resolution: String,
+}
+
+/// How badly a session stumbled, independent of how high it climbed.
+///
+/// `sessions.primary_outcome` records the best thing a session proved. This records the things
+/// that went wrong along the way — a claim reality contradicted, a loop, a recovery from a
+/// broken state. Written by the scanner (see `docs/specs/suspect-commits.md`); a session with
+/// no row here has not been scanned since the table landed, which is not the same as clean.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SessionRisk {
+    pub session_id: String,
+    pub demoted_claims: usize,
+    pub loop_alerts: usize,
+    pub unresolved_loops: usize,
+    pub recoveries: usize,
+    pub demoted_evidence: Vec<DemotedClaim>,
+    pub loop_evidence: Vec<LoopEvidence>,
+    pub computed_at: Option<DateTime<Utc>>,
+}
+
+/// Cap on the evidence lists stored per session. A session that demoted forty claims is
+/// already flagged by the first three; storing all of them would put an unbounded blob in a
+/// row that gets read on every suspect query.
+pub const SESSION_RISK_EVIDENCE_CAP: usize = 5;
+
 /// One recorded file modification that provably happened inside a given repository.
 ///
 /// The difference from `BlameMatch` is the whole point of this type: a `BlameMatch` is whatever
@@ -511,6 +561,27 @@ impl Storage {
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
             );
 
+            -- What went wrong inside a session, as opposed to what it produced.
+            -- `sessions.primary_outcome` already answers "how high did this session climb";
+            -- these four counters answer "did it stumble on the way", which is the question
+            -- `agentworth suspect` asks of a commit's authoring session
+            -- (docs/specs/suspect-commits.md). Written by the scanner from detectors that
+            -- already run over the parsed trace, so a row exists only for sessions indexed
+            -- since this table landed -- absence means "not scanned yet", never "clean".
+            CREATE TABLE IF NOT EXISTS session_risk (
+                session_id TEXT PRIMARY KEY,
+                demoted_claims INTEGER NOT NULL DEFAULT 0,
+                loop_alerts INTEGER NOT NULL DEFAULT 0,
+                unresolved_loops INTEGER NOT NULL DEFAULT 0,
+                recoveries INTEGER NOT NULL DEFAULT 0,
+                -- JSON arrays, capped: the pointers that make a count checkable. A count with
+                -- no event sequence behind it is an assertion, not a receipt.
+                demoted_evidence TEXT,
+                loop_evidence TEXT,
+                computed_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS session_model_usage (
                 session_id TEXT NOT NULL,
                 model TEXT NOT NULL,
@@ -607,6 +678,7 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_file_modifications_path ON file_modifications(file_path);
             CREATE INDEX IF NOT EXISTS idx_file_modifications_session ON file_modifications(session_id);
             CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
+            CREATE INDEX IF NOT EXISTS idx_session_risk_demoted ON session_risk(demoted_claims);
 
             "#,
         )?;
@@ -814,6 +886,9 @@ impl Storage {
         tx.execute("DELETE FROM file_modifications WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM session_model_usage WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM session_compaction WHERE session_id = ?1", params![session_id])?;
+        // `session_risk` declares ON DELETE CASCADE, but `PRAGMA foreign_keys` is off on this
+        // connection, so every child table is cleared by hand -- same as the three above.
+        tx.execute("DELETE FROM session_risk WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM sessions WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM sources WHERE source_path = ?1", params![source_path])?;
         tx.commit()?;
@@ -2155,6 +2230,105 @@ impl Storage {
             sessions,
         })
     }
+    /// Record (or replace) one session's risk signals. Idempotent, so a rescan overwrites
+    /// rather than accumulating.
+    pub fn upsert_session_risk(&self, risk: &SessionRisk) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let demoted_json = serde_json::to_string(
+            &risk
+                .demoted_evidence
+                .iter()
+                .take(SESSION_RISK_EVIDENCE_CAP)
+                .collect::<Vec<_>>(),
+        )?;
+        let loop_json = serde_json::to_string(
+            &risk
+                .loop_evidence
+                .iter()
+                .take(SESSION_RISK_EVIDENCE_CAP)
+                .collect::<Vec<_>>(),
+        )?;
+        conn.execute(
+            r#"
+            INSERT INTO session_risk (
+                session_id, demoted_claims, loop_alerts, unresolved_loops, recoveries,
+                demoted_evidence, loop_evidence, computed_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ON CONFLICT(session_id) DO UPDATE SET
+                demoted_claims = excluded.demoted_claims,
+                loop_alerts = excluded.loop_alerts,
+                unresolved_loops = excluded.unresolved_loops,
+                recoveries = excluded.recoveries,
+                demoted_evidence = excluded.demoted_evidence,
+                loop_evidence = excluded.loop_evidence,
+                computed_at = excluded.computed_at;
+            "#,
+            params![
+                risk.session_id,
+                risk.demoted_claims as i64,
+                risk.loop_alerts as i64,
+                risk.unresolved_loops as i64,
+                risk.recoveries as i64,
+                demoted_json,
+                loop_json,
+                risk.computed_at.unwrap_or_else(Utc::now).to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Risk signals for a set of sessions. A session missing from the result has no stored row:
+    /// it has not been scanned since `session_risk` landed, which callers must report as
+    /// unknown rather than as clean.
+    pub fn get_session_risks(&self, session_ids: &[String]) -> Result<BTreeMap<String, SessionRisk>> {
+        if session_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let placeholders = vec!["?"; session_ids.len()].join(",");
+        let sql = format!(
+            r#"
+            SELECT session_id, demoted_claims, loop_alerts, unresolved_loops, recoveries,
+                   demoted_evidence, loop_evidence, computed_at
+            FROM session_risk WHERE session_id IN ({placeholders})
+            "#
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let bound: Vec<&dyn ToSql> = session_ids.iter().map(|s| s as &dyn ToSql).collect();
+        let mut rows = stmt.query(bound.as_slice())?;
+
+        let mut out = BTreeMap::new();
+        while let Some(row) = rows.next()? {
+            let session_id: String = row.get(0)?;
+            let demoted_json: Option<String> = row.get(5)?;
+            let loop_json: Option<String> = row.get(6)?;
+            let computed_str: Option<String> = row.get(7)?;
+            out.insert(
+                session_id.clone(),
+                SessionRisk {
+                    session_id,
+                    demoted_claims: row.get::<_, i64>(1)? as usize,
+                    loop_alerts: row.get::<_, i64>(2)? as usize,
+                    unresolved_loops: row.get::<_, i64>(3)? as usize,
+                    recoveries: row.get::<_, i64>(4)? as usize,
+                    demoted_evidence: demoted_json
+                        .and_then(|j| serde_json::from_str(&j).ok())
+                        .unwrap_or_default(),
+                    loop_evidence: loop_json
+                        .and_then(|j| serde_json::from_str(&j).ok())
+                        .unwrap_or_default(),
+                    computed_at: computed_str.and_then(|s| {
+                        DateTime::parse_from_rfc3339(&s)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
+                    }),
+                },
+            );
+        }
+        Ok(out)
+    }
+
     /// Every recorded file modification that provably happened inside `repo_root`, plus a count
     /// of the ones that could not be placed anywhere.
     ///

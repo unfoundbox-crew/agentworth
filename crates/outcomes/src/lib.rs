@@ -5,6 +5,7 @@
 //! fix failing tests, compiler errors, and broken states).
 
 pub mod compaction_diff;
+pub mod loops;
 pub mod loose_ends;
 mod outcome;
 mod recovery;
