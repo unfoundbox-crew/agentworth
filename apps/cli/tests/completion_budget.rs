@@ -16,6 +16,9 @@ use tempfile::{tempdir, TempDir};
 /// catch a completer that starts scanning, not to measure this machine.
 const TAB_BUDGET: Duration = Duration::from_millis(100);
 
+/// A completer, as this test calls one: an index path in, a candidate count out.
+type Completer = fn(&Path) -> usize;
+
 fn fixture() -> (TempDir, std::path::PathBuf) {
     let temp = tempdir().unwrap();
     let dir = temp.path().join(".claude").join("projects").join("proj");
@@ -50,7 +53,7 @@ fn every_completer_answers_within_the_tab_budget() {
     // SQLite file is not what the budget is about.
     let _ = agentworth_cli::completions::session_candidates_for(&db);
 
-    let cases: [(&str, fn(&Path) -> usize); 3] = [
+    let cases: [(&str, Completer); 3] = [
         ("session", |p| {
             agentworth_cli::completions::session_candidates_for(p).len()
         }),
