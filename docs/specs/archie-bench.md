@@ -84,10 +84,14 @@ and still covers 87% of the sessions behind them. At n>=20 it shows 27 and
 covers 79%. Ten is the floor `DESIGN.md` already sets for a rate, so ten is
 what this uses.
 
-**Effort is not stored anywhere.** No column, no `metadata` key, no code:
-`metadata` is the literal string `null` on all 4,841 rows, and the string
-"effort" appears nowhere in `crates/` outside a doc comment. So the third axis
-is empty today, for every adapter, not only for Claude Code.
+**Effort was not stored anywhere** when this was measured: no column, no
+`metadata` key, no code — `metadata` is the literal string `null` on all 4,841
+rows, and the string "effort" appeared nowhere in `crates/` outside a doc
+comment. So the third axis was empty for every adapter, not only for Claude
+Code. Build item 5 below has since landed (#116): `sessions.effort`,
+`TraceStats::effort`, and a per-invocation `effort` on
+`EventPayload::ModelInvocation` that the Codex adapter fills. The rows are still
+empty until a rescan reparses them, and no other adapter fills it.
 
 The source format is not the problem. Measured directly over
 `~/.codex/sessions`, 448 rollout files: **447 carry an `effort` value on a
@@ -307,11 +311,16 @@ in a group means more confidence in the number, never fewer numbers shown.
    in `README.md`'s second table.
 4. **`stats bench`, the CLI verb**, under the grammar, after the rename lands.
 5. **An `effort` column on `sessions`, and the Codex adapter reading it.**
-   `turn_context.effort` is in 447 of 448 rollout files. The same pass has to
-   take `model` from a `turn_context` that is not `codex-auto-review`, the repo
-   from `session_meta.cwd`, and the tokens from the `token_count` events — 435
-   files carry them and the index holds one. Until this lands the third axis is
-   empty and the bench says so on its face.
+   **Landed in #116.** `turn_context.effort` is in 447 of 448 rollout files.
+   The same pass had to take `model` from `turn_context`, the repo from
+   `session_meta.cwd`, and the tokens from the `token_count` events (425 of 448
+   carry them, re-measured; the index held one). All four are read now.
+   Session-level effort is the modal per-invocation value, which is the guess
+   the open question below names. Two things this did not settle: the adapter
+   records every model a session ran, `codex-auto-review` included, so choosing
+   which one is "the" session model stays a query-side decision; and the rows
+   already in the index keep their old values until a scan reparses them, which
+   the adapter's `parser_version` bump makes happen once.
 6. **The opt-in aggregate export**, through the existing export pipeline.
 
 ## What this deliberately does not do
