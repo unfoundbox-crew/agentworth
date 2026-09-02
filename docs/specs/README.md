@@ -27,10 +27,12 @@
 | `cli-grammar.md` | §1, §2 and §4(1) built | #118 — the noun tree, one session resolver, the `archie` name, completions, and a regenerated reference. The cockpit (§3) and `window receipt` are not built. |
 | `archie-bench.md` | the local table built, #124 | #124 — `archie stats ladder` and the `stats_ladder` tool. The opt-in aggregate export is not built |
 | `convergence.md` | proposed, measured | — |
+| `done-gate.md` | proposed, measured | — |
+| `extensions.md` | proposed | — |
 
-Twenty specs sit beside this file. They are independent of each other but not of
-the backend, and two of them are worth less than they look until a bug lands
-first. This is the sequencing.
+Twenty-six specs sit beside this file. They are independent of each other but
+not of the backend, and two of them are worth less than they look until a bug
+lands first. This is the sequencing.
 
 ## Build this first, or the rest measures nothing
 
@@ -140,6 +142,8 @@ worth drawing.
 | I | `spacepilot-loop.md` | `--route`, `--resolve-entities`, `--summarize` (each a call to SpacePilot) | the contract, then `asks.md`'s tier 2 |
 | J | `archie-bench.md` — **the local table built, #124** | `stats_ladder` (the name that shipped, not `stats_bench`) | nothing left for the local table: pricing was refreshed in #115 and the rung ordering is shared. The opt-in aggregate export is still open |
 | K | `convergence.md` | `session_explain` | nothing — the measurement is done |
+| L | `done-gate.md` | `session_gate` | nothing — the measurement is done. The plugins need no core change |
+| M | `extensions.md` | — | L, which is the first row of its own table |
 
 ### Why that order
 
@@ -225,6 +229,33 @@ the top tenth spends over 56%. The stop rule it was written to produce did not
 survive its own data — a threshold on turns-since-progress kills working
 sessions at almost exactly the rate it saves tail spend, so what ships is a
 budget, a coverage warning and a report, not a switch. Nothing blocks it.
+
+**L goes after K because it is K's report moved to the one moment it can still
+change something.** K reads a session after it ended. L stands at the exit and
+asks for the receipt before the turn closes — a plugin inside the harness, not
+a harness, which is the decision this spec records: AgentWorth reaches people
+as an extension inside the loops they already run. It sits after K rather than
+beside it because K settled the shape. A threshold cannot tell a working
+session from a converged one, so nothing here ever ends a session; the gate
+only prevents an ending, at most three times, and prints the receipt either
+way. Measured on this index it would fire on 12.6% of the sessions that claimed
+done, and those sessions hold 2.5% of the corpus's tokens — so it is an
+evidence device, not a cost-saving one, and anyone reading the first number as
+an eighth of the bill has the wrong denominator. Two findings moved the design
+before it was written. Rung 1 is nearly empty — 4 sessions all-time — while
+rung 2 holds 245, so the gate catches the agent that wrote code and never
+checked it, not the agent that said "done" with nothing behind it. And in all
+245 of those sessions no gate command ran at all and none ran and failed, so
+there is one line to say rather than a decision tree for branches that have
+never fired.
+
+**M is not a build item, and it is last for that reason.** It ranks the
+doorways — the gate, a PR check, a prompt segment, an editor, declarative
+adapters, detector plugins, discovery — by reach per token, and says what each
+can honestly know. Two of its rows need nothing from this repo at all: the
+editor extension rides the API that already ships, and listing the MCP server
+in the registries that already exist is an afternoon. It goes after L because
+L is the first row of its own table and the only measured one.
 
 ## What none of these change
 
