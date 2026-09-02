@@ -68,7 +68,6 @@ dependencies = [
  "directories",
  "hex",
  "http-body-util",
- "indicatif",
  "notify",
  "open",
  "predicates",
