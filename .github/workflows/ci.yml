@@ -224,6 +224,28 @@ jobs:
         working-directory: apps/web
         run: npm ci && npm run build
 
+      # install.sh is the first thing most people run and nothing else tests it.
+      # /bin/sh is dash on Ubuntu, so parsing it there catches a bashism that the
+      # developer's zsh or bash would have accepted. The glyph check is the same
+      # rule the CLI enforces on itself in apps/cli/src/ui/mod.rs.
+      - name: Install script is POSIX sh and stays inside the glyph set
+        run: |
+          /bin/sh -n apps/web/public/install.sh
+          python3 - <<'EOF'
+          import sys
+          bad = []
+          with open('apps/web/public/install.sh', encoding='utf-8') as f:
+              for n, line in enumerate(f, 1):
+                  for ch in line:
+                      cp = ord(ch)
+                      ok = cp < 128 or 0x2500 <= cp <= 0x259F or ch in '\u25cf\u25cb\u00b7\u2014\u2192'
+                      if not ok:
+                          bad.append(f"line {n}: U+{cp:04X} ({ch})")
+          if bad:
+              print("install.sh ships a glyph outside the allowed set:", *bad, sep="\n")
+              sys.exit(1)
+          EOF
+
   launcher-tests:
     name: npm launcher tests
     needs: changes

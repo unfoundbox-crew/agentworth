@@ -9,6 +9,80 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// -----------------------------------------------------------------------------
+// The brand line
+// -----------------------------------------------------------------------------
+// The launcher's first run is an onboarding screen, so it prints the same one-line Archie
+// form the CLI and the install script do -- packages/ui/brand/archie/archie-tui.txt:
+//
+//   (o) archie  downloading  ----------.......  68%  15.9 / 22.2 MB
+//
+// The lamp is the state, the label says what is happening, the rest is evidence. Glyph set
+// is docs/DESIGN.md's: ASCII, U+2500-259F, and the five extras. No emoji, no colour: this
+// goes to stderr, which lands in CI logs and pipes with the colour stripped. Everything
+// here writes to stderr so `npx agentworth stats --json | jq` still works.
+
+const BRAND_LABEL_WIDTH = 11;
+
+/** Fixed overhead of the wide layout: the lamp, the name, the label, the percent, the sizes. */
+const BRAND_WIDE_OVERHEAD = 50;
+/** The same for the narrow layout, which drops the label. */
+const BRAND_NARROW_OVERHEAD = 28;
+/** Below this the label gives way -- the CLI's ARCHIE_BLOCK_MIN_COLUMNS rule, same shape. */
+const BRAND_WIDE_MIN = 56;
+
+function brandColumns() {
+  const raw = process.stderr.columns || Number(process.env.COLUMNS) || 80;
+  return Math.min(100, Math.max(46, raw));
+}
+
+/** ` (*) archie  installed    archie in ~/.agentworth/bin/v0.1.16` */
+export function brandLine(lamp, label, rest) {
+  return ` (${lamp}) archie  ${label.padEnd(BRAND_LABEL_WIDTH)}  ${rest}`;
+}
+
+function mib(bytes) {
+  return (bytes / 1048576).toFixed(1);
+}
+
+/**
+ * One redraw of the download line. Pure string building so the layout is testable without
+ * a socket: `cols` and `unicode` are injected rather than read off the terminal.
+ */
+export function downloadLine(done, total, { cols = 80, unicode = true, lamp = 'o' } = {}) {
+  const fill = unicode ? '─' : '-';
+  const track = unicode ? '·' : '.';
+
+  // A server that sent no Content-Length gets bytes and no bar: a bar with a made-up
+  // denominator is a progress indicator that lies.
+  if (!total || total < 100) {
+    return brandLine(lamp, 'downloading', `${mib(done)} MB`);
+  }
+
+  const pct = Math.min(100, Math.floor((done / total) * 100));
+  const pctCell = `${String(pct).padStart(3)}%`;
+
+  if (cols >= BRAND_WIDE_MIN) {
+    const bw = Math.min(28, Math.max(6, cols - BRAND_WIDE_OVERHEAD));
+    const on = Math.round((pct * bw) / 100);
+    return brandLine(
+      lamp,
+      'downloading',
+      `${fill.repeat(on)}${track.repeat(bw - on)}  ${pctCell}  ${mib(done)} / ${mib(total)} MB`,
+    );
+  }
+
+  const bw = Math.min(20, Math.max(6, cols - BRAND_NARROW_OVERHEAD));
+  const on = Math.round((pct * bw) / 100);
+  return ` (${lamp}) archie  ${fill.repeat(on)}${track.repeat(bw - on)}  ${pctCell}  ${mib(done)} MB`;
+}
+
+/** `~/.agentworth/bin/v0.1.16` rather than the expanded home, so the line fits 80 columns. */
+function tilde(p) {
+  const home = os.homedir();
+  return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+}
+
 /**
  * Returns the normalized platform key (e.g. darwin-arm64, linux-x64, win32-x64).
  *
@@ -167,7 +241,7 @@ export function findCargoTargetBinary(startDir, binName = getBinaryName()) {
  * @param {number} [redirects=5]
  * @returns {Promise<void>}
  */
-export function downloadFile(url, destPath, redirects = 5) {
+export function downloadFile(url, destPath, redirects = 5, onProgress = null) {
   return new Promise((resolve, reject) => {
     if (redirects < 0) {
       return reject(new Error('Too many redirects while downloading binary.'));
@@ -175,17 +249,30 @@ export function downloadFile(url, destPath, redirects = 5) {
 
     const request = https.get(url, { headers: { 'User-Agent': 'agentworth-npm-resolver' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return downloadFile(res.headers.location, destPath, redirects - 1).then(resolve, reject);
+        return downloadFile(res.headers.location, destPath, redirects - 1, onProgress).then(resolve, reject);
       }
 
       if (res.statusCode !== 200) {
         return reject(new Error(`Failed to download binary: HTTP ${res.statusCode} from ${url}`));
       }
 
+      // The asset is ~23 MB and the release CDN is often slow, so silence here reads as a
+      // hang. Content-Length comes off the final 200, never the 302 hops above.
+      const total = Number(res.headers['content-length']) || 0;
+      let received = 0;
+      if (onProgress) {
+        onProgress(0, total);
+        res.on('data', (chunk) => {
+          received += chunk.length;
+          onProgress(received, total);
+        });
+      }
+
       const fileStream = fs.createWriteStream(destPath);
       res.pipe(fileStream);
 
       fileStream.on('finish', () => {
+        if (onProgress) onProgress(received, total || received);
         fileStream.close(resolve);
       });
 
@@ -219,6 +306,49 @@ function pathBinaryMatchesVersion(binPath, expected) {
   } catch (_) {
     return false;
   }
+}
+
+/**
+ * Drives the download line: redraws in place on a TTY, prints one line to anything else.
+ *
+ * A pipe or a CI log cannot move the cursor, so it gets the size once and silence after --
+ * a loop that scrolls is a loop that lies. The redraw is throttled to 200ms and the lamp
+ * alternates on each frame, which is the dig loop's rhythm and the only thing that moves
+ * while the first byte is still in flight.
+ */
+function startDownloadProgress() {
+  const tty = Boolean(process.stderr.isTTY);
+  const cols = brandColumns();
+  let frame = 0;
+  let last = 0;
+  let announced = false;
+  let drawn = false;
+
+  const tick = (done, total) => {
+    if (!tty) {
+      if (announced) return;
+      announced = true;
+      console.error(
+        total > 0
+          ? brandLine('*', 'downloading', `${(total / 1048576).toFixed(1)} MB`)
+          : brandLine('*', 'downloading', 'the native binary'),
+      );
+      return;
+    }
+    const now = Date.now();
+    const complete = total > 0 && done >= total;
+    if (!complete && drawn && now - last < 200) return;
+    last = now;
+    const lamp = complete ? '*' : frame++ % 2 === 0 ? '*' : 'o';
+    process.stderr.write(`\r${downloadLine(done, total, { cols, unicode: true, lamp })}\x1b[K`);
+    drawn = true;
+  };
+
+  const done = () => {
+    if (tty && drawn) process.stderr.write('\n');
+  };
+
+  return { tick, done };
 }
 
 /**
@@ -256,13 +386,18 @@ export async function downloadAndExtractBinary(options = {}) {
   const archiveName = `agentworth-v${version}-${targetTriple}.tar.gz`;
   const url = `https://github.com/unfoundbox-crew/agentworth/releases/download/v${version}/${archiveName}`;
 
-  if (!options.silent) {
-    console.error(`\x1b[36m⚡ AgentWorth native binary not found locally. Downloading v${version} for ${platform}-${arch}...\x1b[0m`);
+  const archivePath = path.join(cacheDir, archiveName);
+  const progress = options.silent ? null : startDownloadProgress();
+
+  if (progress) {
+    console.error(brandLine('*', 'resolving', `v${version}  ${targetTriple}`));
   }
 
-  const archivePath = path.join(cacheDir, archiveName);
-
-  await downloadFile(url, archivePath);
+  try {
+    await downloadFile(url, archivePath, 5, progress ? progress.tick : null);
+  } finally {
+    if (progress) progress.done();
+  }
 
   // No --force-local here: it was a Windows-only GNU tar workaround, and Windows
   // support was dropped in 8b837c3. BSD tar (macOS's default) doesn't recognize
@@ -289,7 +424,7 @@ export async function downloadAndExtractBinary(options = {}) {
   }
 
   if (!options.silent) {
-    console.error(`\x1b[32m✔ Successfully installed AgentWorth native binary to ${cachedBinary}\x1b[0m\n`);
+    console.error(brandLine('*', 'installed', `${binName} in ${tilde(cacheDir)}`));
   }
 
   return cachedBinary;
@@ -515,25 +650,19 @@ export function resolveBinary(options = {}) {
  * @returns {string}
  */
 export function formatMissingBinaryMessage(platformKey = getPlatformKey()) {
+  // The error beat: the torch goes out, the failure line prints under it, nothing moves
+  // afterwards. Same voice as the CLI's own screens -- a label, then the command.
   return [
-    `\x1b[31m✖ Error: AgentWorth native binary not found for ${platformKey}.\x1b[0m`,
+    brandLine(' ', 'error', `no native binary for ${platformKey}`),
     '',
-    'AgentWorth requires the native binary to run. You can install or build it via:',
+    '  archie is a Rust binary with an npm launcher in front of it. Install the binary',
+    '  with whichever of these matches how you got here:',
     '',
-    '  \x1b[36m• Standalone install script:\x1b[0m',
-    '      curl -fsSL https://agentworth.dev/install.sh | sh',
-    '',
-    '  \x1b[36m• Cargo:\x1b[0m',
-    '      cargo install agentworth-cli',
-    '',
-    '  \x1b[36m• Zero-install via npx:\x1b[0m',
-    '      npx -y agentworth',
-    '',
-    '  \x1b[36m• Download the release for your platform:\x1b[0m',
-    `      https://github.com/unfoundbox-crew/agentworth/releases/latest`,
-    '',
-    '  \x1b[36m• Set custom binary path:\x1b[0m',
-    '      export AGENTWORTH_BIN=/path/to/agentworth',
+    '    install script   curl -fsSL https://agentworth.dev/install.sh | sh',
+    '    cargo            cargo install agentworth-cli',
+    '    npx              npx -y agentworth',
+    '    release          https://github.com/unfoundbox-crew/agentworth/releases/latest',
+    '    a build you own  export AGENTWORTH_BIN=/path/to/archie',
     '',
   ].join('\n');
 }
@@ -610,7 +739,7 @@ export function run(argv = process.argv.slice(2), options = {}) {
   });
 
   if (result.error) {
-    console.error(`\x1b[31m✖ Failed to execute ${binaryResult.path}:\x1b[0m`, result.error.message);
+    console.error(brandLine(' ', 'error', `could not run ${binaryResult.path}: ${result.error.message}`));
     return 1;
   }
 

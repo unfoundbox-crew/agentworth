@@ -16,6 +16,8 @@ import {
   resolveBinary,
   formatMissingBinaryMessage,
   buildChildEnv,
+  brandLine,
+  downloadLine,
   run,
 } from '../lib/resolver.js';
 
@@ -365,6 +367,61 @@ describe('npm-wrapper / launcher', () => {
       assert.ok(msg.includes('cargo install agentworth-cli'));
       assert.ok(msg.includes('npx -y agentworth'));
       assert.ok(msg.includes('AGENTWORTH_BIN'));
+    });
+
+    it('speaks in the brand line, with no emoji and no glyph outside the CLI set', () => {
+      // docs/DESIGN.md's glyph boundary applies to the launcher too: it is the first
+      // screen a `npx agentworth` user ever sees. The CLI enforces this with its own test
+      // (apps/cli/src/ui/mod.rs); this is the same rule on the Node side.
+      const sample = [
+        formatMissingBinaryMessage('darwin-arm64'),
+        brandLine('*', 'installed', 'archie in ~/.agentworth/bin/v0.1.16'),
+        downloadLine(9_000_000, 23_300_000, { cols: 80 }),
+        downloadLine(9_000_000, 23_300_000, { cols: 80, unicode: false }),
+        downloadLine(0, 0, { cols: 80 }),
+      ].join('\n');
+      for (const ch of sample) {
+        const cp = ch.codePointAt(0);
+        const ok =
+          cp < 128 ||
+          (cp >= 0x2500 && cp <= 0x259f) ||
+          ['●', '○', '·', '—', '→'].includes(ch);
+        assert.ok(ok, `glyph U+${cp.toString(16).padStart(4, '0')} (${ch}) is outside the allowed set`);
+      }
+    });
+  });
+
+  describe('download progress line', () => {
+    it('fits the width it is given, at the narrowest layout and the widest', () => {
+      for (const cols of [46, 50, 56, 70, 80, 100]) {
+        for (const done of [0, 1, 11_650_000, 23_300_000]) {
+          const line = downloadLine(done, 23_300_000, { cols });
+          assert.ok(
+            line.length <= cols,
+            `${cols} columns: ${line.length} wide\n${line}`,
+          );
+        }
+      }
+    });
+
+    it('keeps the column count when it drops to ASCII', () => {
+      const uni = downloadLine(9_000_000, 23_300_000, { cols: 80 });
+      const asc = downloadLine(9_000_000, 23_300_000, { cols: 80, unicode: false });
+      assert.equal(uni.length, asc.length);
+    });
+
+    it('shows bytes and no bar when the server sent no Content-Length', () => {
+      // A bar needs a denominator. Inventing one is a progress indicator that lies.
+      const line = downloadLine(9_000_000, 0, { cols: 80 });
+      assert.ok(line.includes('8.6 MB'));
+      assert.ok(!line.includes('%'));
+    });
+
+    it('reads as the one-line Archie form the CLI and the installer draw', () => {
+      const line = downloadLine(15_900_000, 23_300_000, { cols: 80 });
+      assert.ok(line.startsWith(' (o) archie  downloading  '), line);
+      assert.ok(line.endsWith('15.2 / 22.2 MB'), line);
+      assert.ok(line.includes(' 68%'), line);
     });
   });
 });

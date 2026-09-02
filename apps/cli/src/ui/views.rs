@@ -1157,6 +1157,67 @@ pub fn matrix(ui: &Ui, coverage_pct: &str, rows: &[MatrixRow]) -> String {
 // scan
 // -----------------------------------------------------------------------------
 
+/// The first thing a new user ever sees: Archie, once, before the first scan, saying what
+/// is about to happen and where it lands.
+///
+/// Printed only when the index is empty — a second run has nothing to introduce, and two
+/// figures on one screen are two states with one of them lying. `--json` never gets it
+/// (he is a state, not a texture, and machine-readable output carries no mascot);
+/// `--plain` gets the same figure in the ASCII glyph set, which is what it already is.
+pub fn scan_first_run(ui: &Ui, index_path: &str) -> String {
+    let mut out = String::new();
+    let index_path = shorten_home(index_path);
+
+    if ui.width() < ARCHIE_BLOCK_MIN_COLUMNS {
+        let budget = ui.inner().saturating_sub(24);
+        push(
+            &mut out,
+            ui,
+            format!(
+                " {} {}  {}  {}",
+                ui.paint(Role::Value, &archie_inline(Lamp::On)),
+                ui.paint(Role::Label, "archie"),
+                ui.paint(Role::Label, "first run"),
+                ui.paint(Role::Label, &truncate(&index_path, budget)),
+            ),
+        );
+        out.push('\n');
+        return out;
+    }
+
+    let art = archie(Lamp::On);
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &art[0])));
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}   {}  {}",
+            ui.paint(Role::Value, &art[1]),
+            ui.paint(Role::Label, "first run"),
+            ui.paint(Role::Label, "nothing indexed here yet"),
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}     {}",
+            ui.paint(Role::Chrome, &art[2]),
+            ui.paint(
+                Role::Label,
+                // 16 columns of figure and indent, 34 of sentence: the path gets what is
+                // left, so `~/.agentworth/agentworth.db` lands whole at 80 columns.
+                &format!(
+                    "reading your agent histories into {}",
+                    truncate(&index_path, ui.inner().saturating_sub(48))
+                )
+            ),
+        ),
+    );
+    out.push('\n');
+    out
+}
+
 /// One redraw of the progress block. Rendered without a trailing newline on the last
 /// line so the caller can cursor back over exactly `scan_progress_lines(ui)` rows.
 ///
