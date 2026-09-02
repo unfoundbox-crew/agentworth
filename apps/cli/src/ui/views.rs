@@ -105,10 +105,29 @@ pub fn severity_tag(severity: &str) -> String {
 /// Word-wrap `text` to `max_width` columns. Splits on whitespace only, so it never cuts a
 /// word (and, unlike a byte-offset slice, never cuts a multi-byte char either).
 fn wrap(text: &str, max_width: usize) -> Vec<String> {
+    let max_width = max_width.max(1);
     let mut lines = Vec::new();
     for paragraph in text.lines() {
         let mut current = String::new();
         for word in paragraph.split_whitespace() {
+            // A single token wider than the line -- a release URL, a long path, a base64
+            // blob -- has no whitespace to break on. Split it across lines rather than
+            // leave it for the caller's width clamp, which would cut it: a link printed
+            // half-way is a dead link, and worse than a wrapped one.
+            if display_width(word) > max_width {
+                if !current.is_empty() {
+                    lines.push(std::mem::take(&mut current));
+                }
+                let mut chunk = String::new();
+                for c in word.chars() {
+                    if display_width(&chunk) + 1 > max_width {
+                        lines.push(std::mem::take(&mut chunk));
+                    }
+                    chunk.push(c);
+                }
+                current = chunk;
+                continue;
+            }
             if display_width(&current) + display_width(word) + 1 > max_width && !current.is_empty() {
                 lines.push(std::mem::take(&mut current));
             }
@@ -4006,9 +4025,17 @@ pub fn update(ui: &Ui, v: &UpdateView<'_>) -> String {
     }
 
     section(&mut out, ui, "HOW TO UPDATE", "");
-    let w = ui.width();
+    // Never a `leaders` row. That line cuts its value to whatever the label leaves, and a
+    // release URL already exceeds it: at MAX_CONTENT the budget under "  download" is 65
+    // columns, and `.../releases/tag/v0.1.17` is 66 -- so from the next two-digit patch
+    // release onward, the one actionable line on this screen would print as a dead link.
+    // The payload gets its own full-width line, hard-wrapped, so every character survives.
+    let payload_width = ui.inner().saturating_sub(2);
     for (channel, line) in &v.advice {
-        push(&mut out, ui, ui.leaders(&format!("  {}", channel), line, w, Role::Emphasis));
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Label, channel)));
+        for wrapped in wrap(line, payload_width) {
+            push(&mut out, ui, format!("    {}", ui.paint(Role::Emphasis, &wrapped)));
+        }
     }
     out.push('\n');
     out.push_str(&ui.next("archie version", "what this build is and where its index lives"));

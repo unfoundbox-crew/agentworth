@@ -715,10 +715,14 @@ async fn test_api_static_file_serving_and_spa_fallback() {
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("<title>AgentWorth</title>"));
     } else {
-        println!(
-            "SKIP: the embedded dashboard is the stub -- apps/dashboard/dist was absent at \
-             compile time. Run `npm --prefix apps/dashboard run build` and rebuild to cover \
-             the embedded-asset half of this test. The custom-dist half below still runs."
+        // stderr, not stdout: libtest shows a skipped test's stderr on `--nocapture` and in
+        // the failure output, and a skip nobody can see is indistinguishable from a pass.
+        eprintln!(
+            "SKIP: the embedded-asset half of test_api_static_file_serving_and_spa_fallback \
+             did not run, because apps/dashboard/dist was absent at compile time so \
+             rust_embed embedded nothing and every route serves the FALLBACK_HTML stub. \
+             Run `npm --prefix apps/dashboard run build` and rebuild to cover it. CI builds \
+             the dashboard first, so it always runs there. The custom-dist half below ran."
         );
     }
 

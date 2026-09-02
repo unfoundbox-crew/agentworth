@@ -34,9 +34,13 @@ fn test_version_command_offline_text_includes_real_crate_version() {
 #[test]
 fn test_version_command_names_the_binary_the_index_and_the_parsers() {
     let temp = tempfile::tempdir().unwrap();
-    let db = temp.path().join("index.db");
     let mut cmd = Command::cargo_bin("agentworth").unwrap();
-    cmd.arg("--db-path").arg(&db).arg("version").arg("--offline");
+    // A relative `--db-path` from inside the temp dir, deliberately short. An absolute one
+    // under a macOS TMPDIR (`/var/folders/<hash>/T/.tmpXXXXXX/index.db`) runs about 68
+    // columns against this row's 68-column budget, so the assertion below would sit exactly
+    // on the truncation boundary and flake by machine.
+    cmd.current_dir(temp.path());
+    cmd.arg("--db-path").arg("idx.db").arg("version").arg("--offline");
     cmd.env_remove("AGENTWORTH_LAUNCHER_ACTIVE");
     cmd.env_remove("AGENTWORTH_NPM_VERSION");
     cmd.env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"));
@@ -48,8 +52,8 @@ fn test_version_command_names_the_binary_the_index_and_the_parsers() {
         // The name this process answered to, not a hardcoded product name.
         .stdout(predicate::str::contains("invoked as"))
         .stdout(predicate::str::contains("agentworth"))
-        // The explicit --db-path, echoed back.
-        .stdout(predicate::str::contains("index.db"))
+        // The explicit --db-path, echoed back whole.
+        .stdout(predicate::str::contains("idx.db"))
         .stdout(predicate::str::contains("PARSERS"))
         .stdout(predicate::str::contains("claude_code"));
 }

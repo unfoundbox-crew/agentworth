@@ -42,7 +42,6 @@ hex = "0.4"
 tempfile = "3.12"
 tokio = { version = "1.40", features = ["full"] }
 console = "0.15"
-indicatif = "0.17"
 directories = "5.0"
 regex = "1.10"
 toml = "0.8"

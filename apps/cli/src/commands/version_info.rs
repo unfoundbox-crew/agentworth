@@ -687,6 +687,51 @@ mod tests {
         assert!(!report.contains("cargo install agentworth-cli"));
     }
 
+    /// The release URL must reach the terminal whole. It used to render through
+    /// `Ui::leaders`, whose value budget under "  download" is 65 columns at MAX_CONTENT --
+    /// and `https://github.com/unfoundbox-crew/agentworth/releases/tag/v0.1.17` is 66. So
+    /// from the first two-digit patch release, the only actionable line on this screen would
+    /// have printed as a truncated, dead link. Pinned verbatim, at both a wide and a narrow
+    /// terminal, with the digits that trip the boundary.
+    #[test]
+    fn test_update_prints_the_release_url_whole_not_truncated() {
+        const URL: &str = "https://github.com/unfoundbox-crew/agentworth/releases/tag/v0.1.17";
+        assert_eq!(URL.len(), 66, "the boundary this test exists for has moved");
+
+        let launcher = LauncherInfo { npm_launcher_active: false, npm_package_version: None };
+        let status = UpdateStatus::UpdateAvailable {
+            latest_version: "0.1.17".to_string(),
+            release_url: URL.to_string(),
+        };
+        let (headline, headline_role) = update_headline("0.1.16", &status);
+        let view = UpdateView {
+            version: "0.1.16",
+            headline: &headline,
+            headline_role,
+            advice: update_advice(&launcher, &status),
+        };
+
+        // Wide enough for one line: the URL appears verbatim, on a line of its own.
+        let wide = views::update(&Ui::new(80, crate::ui::ColorMode::None, true), &view);
+        assert!(wide.contains(URL), "the release URL was cut:\n{wide}");
+        assert!(!wide.contains(".."), "something on this screen was truncated:\n{wide}");
+
+        // Narrow enough to force a wrap: no character may be lost, so the URL with the
+        // line breaks taken back out is still exactly the URL.
+        let narrow = views::update(&Ui::new(40, crate::ui::ColorMode::None, true), &view);
+        let rejoined: String = narrow.lines().map(str::trim).collect::<Vec<_>>().join("");
+        assert!(
+            rejoined.contains(URL),
+            "the URL did not survive wrapping at 40 columns:\n{narrow}"
+        );
+        for line in narrow.lines() {
+            assert!(
+                crate::ui::display_width(line) <= 38,
+                "a line outgrew the narrow terminal:\n{line}"
+            );
+        }
+    }
+
     /// `update` advises; it never executes. Nothing on this path spawns a process.
     #[test]
     fn test_update_advice_is_text_only_and_empty_when_there_is_nothing_to_do() {

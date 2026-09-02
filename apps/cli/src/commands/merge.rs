@@ -220,6 +220,13 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
             let session_id: String = row.get(0)?;
             let other_events: i64 = row.get(7)?;
 
+            // A source index written before the metadata NULL fix holds the literal string
+            // "null" in a column whose own encoding of "absent" is SQL NULL. Copying it
+            // verbatim would carry that straight into a clean target, so it is normalized on
+            // the way through -- the same rule `upsert_session` now applies on write.
+            let metadata: Option<String> =
+                agentworth_storage::normalize_metadata(row.get(18)?).map(|v| v.to_string());
+
             let mut existing = check_stmt.query([&session_id])?;
             if let Some(existing_row) = existing.next()? {
                 let existing_events: i64 = existing_row.get(0)?;
@@ -243,7 +250,7 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                         row.get::<_, i64>(15)?,
                         row.get::<_, String>(16)?,
                         row.get::<_, String>(17)?,
-                        row.get::<_, Option<String>>(18)?,
+                        metadata.clone(),
                         row.get::<_, String>(19)?,
                         row.get::<_, Option<String>>(20)?,
                         row.get::<_, Option<f64>>(21)?,
@@ -276,7 +283,7 @@ pub fn merge_sqlite_databases(target_db_path: &Path, source_db_path: &Path) -> R
                     row.get::<_, i64>(15)?,
                     row.get::<_, String>(16)?,
                     row.get::<_, String>(17)?,
-                    row.get::<_, Option<String>>(18)?,
+                    metadata.clone(),
                     row.get::<_, String>(19)?,
                     row.get::<_, Option<String>>(20)?,
                     row.get::<_, Option<f64>>(21)?,
@@ -384,6 +391,72 @@ mod tests {
                 effort: None,
             },
         )
+    }
+
+    /// A source index written before the metadata NULL fix carries the literal string "null"
+    /// in `sessions.metadata`. Merging it must not carry that into a clean target: the merge
+    /// is the one path that copies the column verbatim from another machine's database, so
+    /// the write-side fix alone would not have covered it.
+    #[test]
+    fn test_merge_normalizes_a_pre_fix_metadata_literal_to_sql_null() {
+        use agentworth_schema::{AgentWorthTrace, Provenance};
+
+        let target = NamedTempFile::new().unwrap();
+        let source = NamedTempFile::new().unwrap();
+
+        // Two sessions in the source: one carrying the pre-fix literal, one carrying real
+        // metadata that must survive the trip intact.
+        {
+            let storage = agentworth_storage::Storage::open_path(source.path()).unwrap();
+            for id in ["sess_legacy", "sess_real"] {
+                let prov = Provenance::new(
+                    format!("/test/{id}.jsonl"),
+                    "claude_code",
+                    10,
+                    100,
+                    format!("fp_{id}"),
+                );
+                let mut trace =
+                    AgentWorthTrace::new(id, "claude_code", prov, chrono::Utc::now());
+                trace.stats.total_events = 3;
+                if id == "sess_real" {
+                    trace.metadata = serde_json::json!({ "cwd": "/repo" });
+                }
+                storage.upsert_trace(&trace).unwrap();
+            }
+            // Force the legacy row back to what every pre-fix scan actually wrote.
+            let conn = Connection::open(source.path()).unwrap();
+            conn.execute(
+                "UPDATE sessions SET metadata = 'null' WHERE session_id = 'sess_legacy'",
+                [],
+            )
+            .unwrap();
+        }
+
+        merge_sqlite_databases(target.path(), source.path()).unwrap();
+
+        let merged = agentworth_storage::Storage::open_path(target.path()).unwrap();
+        assert_eq!(
+            merged.get_session_metadata("sess_legacy").unwrap(),
+            None,
+            "the pre-fix literal must not survive the merge"
+        );
+        assert_eq!(
+            merged.get_session_metadata("sess_real").unwrap(),
+            Some(serde_json::json!({ "cwd": "/repo" })),
+            "real metadata must survive the merge unchanged"
+        );
+
+        // The column itself, not just the accessor: a real NULL, never the string.
+        let conn = Connection::open(target.path()).unwrap();
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT metadata FROM sessions WHERE session_id = 'sess_legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, None);
     }
 
     #[test]
