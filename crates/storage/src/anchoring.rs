@@ -1,0 +1,205 @@
+//! Deciding whether a recorded `file_modifications` row belongs to one specific repository.
+//!
+//! `file_modifications.file_path` is not always absolute. Measured on a 25,206-row index
+//! (`docs/specs/suspect-commits.md`): 25,050 rows absolute, 156 relative — every relative row
+//! written by the `opencode` adapter, whose transcripts record paths relative to a cwd the
+//! schema then throws away. Those 0.6% of rows are what makes a naive suffix join useless: a
+//! bare `Cargo.lock` suffix-matches every Rust repository on the disk, and in the spec's own
+//! sample that one collision produced 16 of 17 flags, 9 of the first 10 of them wrong.
+//!
+//! So a blame row counts as evidence about a repository only when it can be *anchored*: shown
+//! to lie inside that repository's tree, not merely to end with the same characters.
+//!
+//! | recorded path | anchored when |
+//! | :--- | :--- |
+//! | absolute | it is `repo_root`, or sits under `repo_root/` |
+//! | relative | the writing session's own repository identity matches this repository's |
+//!
+//! Nothing else is anchored. A relative path from a session that worked somewhere else is
+//! **unanchored** — dropped, and counted, so a caller can say how much evidence it could not
+//! place instead of quietly reporting a smaller number.
+
+use agentworth_schema::extract_repository_or_workspace;
+
+/// Why a candidate row was accepted, or the fact that it was not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Anchor {
+    /// The recorded path is absolute and sits inside the repository tree.
+    Absolute,
+    /// The recorded path is relative and the writing session's repository identity matches.
+    RelativeToSessionRepo,
+    /// The recorded path is absolute and sits outside this repository. Not evidence here, and
+    /// not a failure either — it is anchored, just to somewhere else.
+    ElsewhereAbsolute,
+    /// A relative path that could not be placed in any repository. Counted, never used.
+    Unanchored,
+}
+
+/// Strip a trailing `/` (but never turn `/` itself into an empty string) so prefix comparisons
+/// have exactly one form to handle.
+pub(crate) fn normalize_root(repo_root: &str) -> String {
+    let trimmed = repo_root.trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// The `org/repo` identity of a checkout directory, in the same shape
+/// `extract_repository_or_workspace` derives from a session's `source_path` — which is what it
+/// has to be compared against. Appending `/.git` makes the directory look like the file paths
+/// that function was written for, so `/Users/x/code/unfoundbox/agentworth` and a session
+/// transcript under `~/.claude/projects/-Users-x-code-unfoundbox-agentworth/` both reduce to
+/// `unfoundbox/agentworth`.
+pub(crate) fn repo_identity(repo_root: &str) -> String {
+    extract_repository_or_workspace(&format!("{}/.git", normalize_root(repo_root)))
+}
+
+/// Classify one recorded path against one repository, and return the path relative to that
+/// repository's root when it is usable evidence.
+///
+/// `session_source_path` is the session's own transcript path, used only for the relative case:
+/// it is the only surviving clue about where a relative path was written.
+pub(crate) fn anchor_path(
+    recorded_path: &str,
+    repo_root_normalized: &str,
+    repo_identity: &str,
+    session_source_path: &str,
+) -> (Anchor, Option<String>) {
+    if recorded_path.starts_with('/') {
+        if let Some(rel) = strip_root(recorded_path, repo_root_normalized) {
+            return (Anchor::Absolute, Some(rel));
+        }
+        return (Anchor::ElsewhereAbsolute, None);
+    }
+
+    let cleaned = recorded_path.trim_start_matches("./");
+    // A `..` segment escapes the tree it is resolved against, so the path is not provably
+    // inside this repository even when the identity matches.
+    if cleaned.is_empty() || cleaned.split('/').any(|seg| seg == "..") {
+        return (Anchor::Unanchored, None);
+    }
+
+    if extract_repository_or_workspace(session_source_path) == repo_identity {
+        (Anchor::RelativeToSessionRepo, Some(cleaned.to_string()))
+    } else {
+        (Anchor::Unanchored, None)
+    }
+}
+
+/// `Some(path relative to root)` when `absolute` is the root itself or sits under it, matching
+/// on whole path components — so `/a/repo-two/x` is never treated as living in `/a/repo`.
+fn strip_root(absolute: &str, root: &str) -> Option<String> {
+    if absolute == root {
+        return Some(String::new());
+    }
+    let with_sep = if root.ends_with('/') {
+        root.to_string()
+    } else {
+        format!("{root}/")
+    };
+    absolute
+        .strip_prefix(&with_sep)
+        .map(|rest| rest.trim_start_matches('/').to_string())
+}
+
+/// Escape a string for use as a literal prefix inside a SQL `LIKE ... ESCAPE '\'` pattern.
+/// Real checkout paths contain `_` far more often than anyone expects (`my_repo`, `web_ui`),
+/// and an unescaped `_` in LIKE matches any single character.
+pub(crate) fn like_prefix_escaped(prefix: &str) -> String {
+    let mut out = String::with_capacity(prefix.len() + 8);
+    for ch in prefix.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ROOT: &str = "/Users/dev/code/unfoundbox/agentworth";
+    const IN_REPO_SESSION: &str =
+        "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/s1.jsonl";
+    const OTHER_REPO_SESSION: &str =
+        "/Users/dev/.local/share/opencode/project/-Users-dev-code-motionvector-studio/s2.json";
+
+    fn anchor(path: &str, session: &str) -> (Anchor, Option<String>) {
+        anchor_path(path, ROOT, &repo_identity(ROOT), session)
+    }
+
+    #[test]
+    fn absolute_inside_the_repo_is_anchored() {
+        let (a, rel) = anchor(&format!("{ROOT}/crates/storage/src/lib.rs"), IN_REPO_SESSION);
+        assert_eq!(a, Anchor::Absolute);
+        assert_eq!(rel.as_deref(), Some("crates/storage/src/lib.rs"));
+    }
+
+    #[test]
+    fn absolute_in_another_repo_is_not_this_repos_evidence() {
+        let (a, rel) = anchor("/Users/dev/code/motionvector/studio/Cargo.lock", IN_REPO_SESSION);
+        assert_eq!(a, Anchor::ElsewhereAbsolute);
+        assert!(rel.is_none());
+    }
+
+    #[test]
+    fn a_sibling_directory_sharing_a_prefix_is_not_inside() {
+        // `/…/agentworth-web` starts with `/…/agentworth` as a string but is a different tree.
+        let (a, _) = anchor(&format!("{ROOT}-web/Cargo.lock"), IN_REPO_SESSION);
+        assert_eq!(a, Anchor::ElsewhereAbsolute);
+    }
+
+    /// The measured trap, in one test: a bare `Cargo.lock` from a session that worked in
+    /// another repository suffix-matches this repository and must not count.
+    #[test]
+    fn the_cargo_lock_collision_is_excluded() {
+        let (a, rel) = anchor("Cargo.lock", OTHER_REPO_SESSION);
+        assert_eq!(a, Anchor::Unanchored);
+        assert!(rel.is_none());
+    }
+
+    #[test]
+    fn a_relative_path_from_this_repos_own_session_is_anchored() {
+        let opencode_here =
+            "/Users/dev/.local/share/opencode/project/-Users-dev-code-unfoundbox-agentworth/s3.json";
+        let (a, rel) = anchor("Cargo.lock", opencode_here);
+        assert_eq!(a, Anchor::RelativeToSessionRepo);
+        assert_eq!(rel.as_deref(), Some("Cargo.lock"));
+    }
+
+    #[test]
+    fn a_relative_path_that_climbs_out_is_unanchored() {
+        let opencode_here =
+            "/Users/dev/.local/share/opencode/project/-Users-dev-code-unfoundbox-agentworth/s3.json";
+        let (a, _) = anchor("../other/Cargo.lock", opencode_here);
+        assert_eq!(a, Anchor::Unanchored);
+    }
+
+    #[test]
+    fn a_dot_slash_prefix_is_stripped() {
+        let opencode_here =
+            "/Users/dev/.local/share/opencode/project/-Users-dev-code-unfoundbox-agentworth/s3.json";
+        let (_, rel) = anchor("./apps/cli/src/main.rs", opencode_here);
+        assert_eq!(rel.as_deref(), Some("apps/cli/src/main.rs"));
+    }
+
+    #[test]
+    fn root_identity_matches_a_session_transcript_identity() {
+        assert_eq!(repo_identity(ROOT), "unfoundbox/agentworth");
+        assert_eq!(repo_identity(&format!("{ROOT}/")), "unfoundbox/agentworth");
+        assert_eq!(
+            extract_repository_or_workspace(IN_REPO_SESSION),
+            repo_identity(ROOT)
+        );
+    }
+
+    #[test]
+    fn like_wildcards_in_a_real_path_are_escaped() {
+        assert_eq!(like_prefix_escaped("/Users/d/my_repo/"), r"/Users/d/my\_repo/");
+        assert_eq!(like_prefix_escaped("/a/100%/"), r"/a/100\%/");
+    }
+}

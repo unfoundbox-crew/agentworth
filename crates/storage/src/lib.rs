@@ -1,3 +1,4 @@
+mod anchoring;
 pub mod chunker;
 pub mod embedder;
 pub mod pricing;
@@ -325,6 +326,48 @@ pub struct BlameMatch {
     /// Model active at the time of that modification, if the trace recorded one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+}
+
+/// One recorded file modification that provably happened inside a given repository.
+///
+/// The difference from `BlameMatch` is the whole point of this type: a `BlameMatch` is whatever
+/// substring-matched a pattern, and an `AnchoredBlameRow` has been shown to lie inside one
+/// specific checkout (see `crates/storage/src/anchoring.rs` for the rule and the measured
+/// reason it exists).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnchoredBlameRow {
+    /// `file_path` expressed relative to the repository root — the form `git log --name-only`
+    /// also produces, so the two can be compared directly.
+    pub repo_relative_path: String,
+    /// The path exactly as the adapter recorded it: absolute for most adapters, repository-
+    /// relative for `opencode`.
+    pub file_path: String,
+    pub session_id: String,
+    pub adapter: String,
+    pub source_path: String,
+    pub action: String,
+    pub modified_at: DateTime<Utc>,
+    /// Model active at the time of the modification, if the trace recorded one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub models_used: Vec<String>,
+    pub primary_outcome: Option<String>,
+}
+
+/// Everything `Storage::blame_for_repo` found, plus what it had to throw away.
+///
+/// `unanchored_rows` is not a footnote. It is the count of recorded modifications that could
+/// not be placed in any repository — relative paths from sessions whose own repository does not
+/// match this one. Reporting a result without it would silently pass off "we dropped evidence"
+/// as "there was none."
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnchoredBlame {
+    /// The repository root the rows were anchored to, normalized (no trailing slash).
+    pub repo_root: String,
+    /// The `org/repo` identity that relative paths were matched against.
+    pub repo_identity: String,
+    pub rows: Vec<AnchoredBlameRow>,
+    pub unanchored_rows: usize,
 }
 
 /// Label for a `FileActionType`, matching its `#[serde(rename_all = "snake_case")]` form.
@@ -2112,6 +2155,100 @@ impl Storage {
             sessions,
         })
     }
+    /// Every recorded file modification that provably happened inside `repo_root`, plus a count
+    /// of the ones that could not be placed anywhere.
+    ///
+    /// This is `find_sessions_for_blame`'s suffix match replaced by a containment test. The
+    /// suffix match is right for "who touched a file called `engine.rs`" and wrong for "who
+    /// touched a file in *this* checkout" — measured on a real index, a bare `Cargo.lock`
+    /// suffix-matches every Rust repository on the disk, which turned a 2.6% flag rate into a
+    /// 33% one that was 90% false (`docs/specs/suspect-commits.md`). The anchoring rule lives
+    /// in `crate::anchoring` with its own tests.
+    ///
+    /// `since` bounds `occurred_at`; pass `None` for the whole index. Results are deduplicated
+    /// to one row per (session, path) — the most recent touch — and ordered newest first.
+    pub fn blame_for_repo(
+        &self,
+        repo_root: &str,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<AnchoredBlame> {
+        let root = anchoring::normalize_root(repo_root);
+        let identity = anchoring::repo_identity(&root);
+
+        // Two candidate sets, unioned by SQL so the whole table is never pulled into memory:
+        // paths under this root, and every relative path (relative rows carry no root to filter
+        // on, and there are ~156 of them in a 25,206-row index).
+        let like_prefix = format!("{}/%", anchoring::like_prefix_escaped(&root));
+        let since_str = since.map(|t| t.to_rfc3339());
+
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT fm.file_path, fm.action, fm.occurred_at, fm.model,
+                   s.session_id, s.adapter, s.source_path, s.models_used, s.primary_outcome
+            FROM file_modifications fm
+            JOIN sessions s ON s.session_id = fm.session_id
+            WHERE (fm.file_path LIKE ?1 ESCAPE '\' OR fm.file_path = ?2
+                   OR fm.file_path NOT LIKE '/%')
+              AND (?3 IS NULL OR fm.occurred_at >= ?3)
+            ORDER BY fm.occurred_at DESC
+            "#,
+        )?;
+
+        let mut rows = stmt.query(params![like_prefix, root, since_str])?;
+
+        // Keyed by (session, repo-relative path) so a file touched twenty times in one session
+        // contributes one row — the most recent, which the DESC ordering makes the first seen.
+        let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        let mut anchored = Vec::new();
+        let mut unanchored_rows = 0usize;
+
+        while let Some(row) = rows.next()? {
+            let file_path: String = row.get(0)?;
+            let source_path: String = row.get(6)?;
+
+            let (anchor, relative) =
+                anchoring::anchor_path(&file_path, &root, &identity, &source_path);
+            let relative = match (anchor, relative) {
+                (anchoring::Anchor::Unanchored, _) => {
+                    unanchored_rows += 1;
+                    continue;
+                }
+                (anchoring::Anchor::ElsewhereAbsolute, _) => continue,
+                (_, Some(rel)) => rel,
+                (_, None) => continue,
+            };
+
+            let session_id: String = row.get(4)?;
+            if !seen.insert((session_id.clone(), relative.clone())) {
+                continue;
+            }
+
+            let occurred_str: String = row.get(2)?;
+            let models_str: String = row.get(7)?;
+            anchored.push(AnchoredBlameRow {
+                repo_relative_path: relative,
+                file_path,
+                session_id,
+                adapter: row.get(5)?,
+                source_path,
+                action: row.get(1)?,
+                modified_at: DateTime::parse_from_rfc3339(&occurred_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                model: row.get(3)?,
+                models_used: serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default(),
+                primary_outcome: row.get(8)?,
+            });
+        }
+
+        Ok(AnchoredBlame {
+            repo_root: root,
+            repo_identity: identity,
+            rows: anchored,
+            unanchored_rows,
+        })
+    }
 }
 
 /// How many sessions `list_sessions_for_repo` will walk before giving up. Every row is one
@@ -2847,6 +2984,142 @@ mod tests {
             .find_files_for_session("no_such_session_anywhere")
             .expect("files for unknown session");
         assert!(unknown.is_empty());
+    }
+
+    /// Seed one session that touched `path`, with `source_path` deciding which repository the
+    /// session itself belongs to.
+    fn seed_file_touch(
+        storage: &Storage,
+        session_id: &str,
+        source_path: &str,
+        path: &str,
+        at: DateTime<Utc>,
+    ) {
+        use agentworth_schema::NormalizedEvent;
+
+        let prov = Provenance::new(source_path, "claude_code", 100, 100, format!("fp_{session_id}"));
+        let mut trace = AgentWorthTrace::new(session_id, "claude_code", prov, at);
+        trace.stats.models_used = vec!["claude-opus-5".to_string()];
+        trace.events.push(NormalizedEvent::new(
+            1,
+            at,
+            EventPayload::FileAction {
+                path: path.to_string(),
+                action: FileActionType::Edit,
+                diff: None,
+                lines_changed: None,
+            },
+        ));
+        storage.upsert_trace(&trace).expect("upsert");
+    }
+
+    /// The measured trap from `docs/specs/suspect-commits.md`, reproduced end to end: a bare
+    /// relative `Cargo.lock`, written by a session that worked in a *different* repository,
+    /// suffix-matches this repository and must be excluded — and counted, not silently dropped.
+    #[test]
+    fn test_blame_for_repo_excludes_the_cargo_lock_collision() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let root = "/Users/dev/code/unfoundbox/agentworth";
+        let now = Utc::now();
+
+        seed_file_touch(
+            &storage,
+            "sess_here_abs",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/a.jsonl",
+            &format!("{root}/crates/storage/src/lib.rs"),
+            now - Duration::minutes(10),
+        );
+        seed_file_touch(
+            &storage,
+            "sess_elsewhere_rel",
+            "/Users/dev/.local/share/opencode/project/-Users-dev-code-motionvector-studio/b.json",
+            "Cargo.lock",
+            now - Duration::minutes(8),
+        );
+        seed_file_touch(
+            &storage,
+            "sess_elsewhere_abs",
+            "/Users/dev/.claude/projects/-Users-dev-code-motionvector-studio/c.jsonl",
+            "/Users/dev/code/motionvector/studio/Cargo.lock",
+            now - Duration::minutes(6),
+        );
+
+        let found = storage.blame_for_repo(root, None).expect("anchored blame");
+
+        assert_eq!(found.repo_identity, "unfoundbox/agentworth");
+        assert_eq!(
+            found.rows.len(),
+            1,
+            "only the absolute in-repo touch is evidence about this repo, got {:?}",
+            found.rows.iter().map(|r| &r.file_path).collect::<Vec<_>>()
+        );
+        assert_eq!(found.rows[0].session_id, "sess_here_abs");
+        assert_eq!(found.rows[0].repo_relative_path, "crates/storage/src/lib.rs");
+
+        // The other repo's *relative* row could not be placed, so it is reported.
+        assert_eq!(found.unanchored_rows, 1);
+        // The other repo's *absolute* row was placed — just not here — so it is not an
+        // unanchored row. Anchored elsewhere is a different fact from unplaceable.
+    }
+
+    #[test]
+    fn test_blame_for_repo_anchors_a_relative_path_from_this_repos_own_session() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let root = "/Users/dev/code/unfoundbox/agentworth";
+
+        seed_file_touch(
+            &storage,
+            "sess_here_rel",
+            "/Users/dev/.local/share/opencode/project/-Users-dev-code-unfoundbox-agentworth/d.json",
+            "Cargo.lock",
+            Utc::now() - Duration::minutes(3),
+        );
+
+        let found = storage.blame_for_repo(root, None).expect("anchored blame");
+        assert_eq!(found.rows.len(), 1);
+        assert_eq!(found.rows[0].repo_relative_path, "Cargo.lock");
+        assert_eq!(found.unanchored_rows, 0);
+    }
+
+    #[test]
+    fn test_blame_for_repo_sibling_prefix_and_since_bound() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let root = "/Users/dev/code/unfoundbox/agentworth";
+        let now = Utc::now();
+
+        // A sibling checkout whose path shares the root as a *string* prefix.
+        seed_file_touch(
+            &storage,
+            "sess_sibling",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth-web/e.jsonl",
+            "/Users/dev/code/unfoundbox/agentworth-web/Cargo.lock",
+            now - Duration::minutes(30),
+        );
+        seed_file_touch(
+            &storage,
+            "sess_old",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/f.jsonl",
+            &format!("{root}/README.md"),
+            now - Duration::hours(48),
+        );
+        seed_file_touch(
+            &storage,
+            "sess_recent",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/g.jsonl",
+            &format!("{root}/README.md"),
+            now - Duration::hours(2),
+        );
+
+        let all = storage.blame_for_repo(root, None).expect("anchored blame");
+        let ids: Vec<&str> = all.rows.iter().map(|r| r.session_id.as_str()).collect();
+        assert!(!ids.contains(&"sess_sibling"), "agentworth-web is a different tree");
+        assert_eq!(ids.len(), 2);
+
+        let recent = storage
+            .blame_for_repo(root, Some(now - Duration::hours(24)))
+            .expect("anchored blame since");
+        assert_eq!(recent.rows.len(), 1);
+        assert_eq!(recent.rows[0].session_id, "sess_recent");
     }
 
     #[test]
