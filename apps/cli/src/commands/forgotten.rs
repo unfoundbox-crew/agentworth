@@ -102,6 +102,8 @@ fn not_found(storage: &Storage, session_id: &str, ui: &Ui) -> String {
     )
 }
 
+// One parameter per CLI flag, same as every other command entry point here.
+#[allow(clippy::too_many_arguments)]
 pub fn run_forgotten_command(
     session_id: Option<String>,
     round: Option<u32>,
