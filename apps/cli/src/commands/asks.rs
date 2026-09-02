@@ -119,6 +119,9 @@ fn resolve_and_load(
                 let (report, trace) = load_asks(storage, scanner, &id, options)?;
                 return Ok((report, trace, Resolution::Explicit));
             }
+            crate::ui::picker::Resolved::Ambiguous { input, candidates } => {
+                crate::ui::picker::exit_ambiguous(ui, json, &input, &candidates)
+            }
             crate::ui::picker::Resolved::NotFound(_) => {
                 if Path::new(input).is_file() {
                     let trace = load_trace_from_raw_path(Path::new(input))?;

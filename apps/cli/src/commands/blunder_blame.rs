@@ -182,6 +182,9 @@ pub fn run_blunder_blame_command(
     let session = match session {
         Some(input) => match crate::ui::picker::resolve_explicit(&storage, &input)? {
             crate::ui::picker::Resolved::Id(id) => Some(id),
+            crate::ui::picker::Resolved::Ambiguous { input, candidates } => {
+                crate::ui::picker::exit_ambiguous(ui, json, &input, &candidates)
+            }
             crate::ui::picker::Resolved::NotFound(input) => Some(input),
         },
         None if last || current => crate::ui::picker::resolve_last(&storage)?,

@@ -64,10 +64,13 @@ describe('npm-wrapper / launcher', () => {
       assert.equal(getBinaryName('win32'), 'agentworth.exe');
     });
 
-    it('resolves the agwt binary name only when explicitly invoked as agwt', () => {
-      // The release tarball ships both native binaries (apps/cli/Cargo.toml's two
-      // [[bin]] targets); the npm 'agwt' alias must resolve to the extracted 'agwt'
-      // file rather than silently falling back to 'agentworth'.
+    it('resolves a short-alias binary name only when explicitly invoked as one', () => {
+      // The release tarball ships all three native binaries (apps/cli/Cargo.toml's three
+      // [[bin]] targets); each npm alias must resolve to its own extracted file rather
+      // than silently falling back to 'agentworth'.
+      assert.equal(getBinaryName('darwin', 'archie'), 'archie');
+      assert.equal(getBinaryName('linux', 'archie'), 'archie');
+      assert.equal(getBinaryName('win32', 'archie'), 'archie.exe');
       assert.equal(getBinaryName('darwin', 'agwt'), 'agwt');
       assert.equal(getBinaryName('linux', 'agwt'), 'agwt');
       assert.equal(getBinaryName('win32', 'agwt'), 'agwt.exe');
@@ -260,6 +263,29 @@ describe('npm-wrapper / launcher', () => {
 
       assert.equal(res.found, true);
       assert.equal(res.path, agwtBin);
+    });
+
+    it('resolves the archie binary specifically from a cache dir holding every extracted binary', () => {
+      const binDir = path.join(tempDir, 'all-binaries');
+      fs.mkdirSync(binDir, { recursive: true });
+      writeMockBinary(path.join(binDir, 'agentworth'));
+      writeMockBinary(path.join(binDir, 'agwt'));
+      const archieBin = path.join(binDir, 'archie');
+      writeMockBinary(archieBin);
+
+      const isolatedDir = path.join(tempDir, 'isolated-archie');
+      fs.mkdirSync(isolatedDir, { recursive: true });
+
+      const res = resolveBinary({
+        cwd: isolatedDir,
+        env: { PATH: binDir },
+        baseDir: isolatedDir,
+        homeDir: tempDir,
+        invokedAs: 'archie',
+      });
+
+      assert.equal(res.found, true);
+      assert.equal(res.path, archieBin);
     });
 
     it('returns found: false when binary is not located', () => {

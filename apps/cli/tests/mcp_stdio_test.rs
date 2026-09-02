@@ -59,16 +59,16 @@ async fn test_stdio_tools_list_and_sessions_find() {
         .expect("tools/list should succeed");
     let tool_names: Vec<&str> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     for expected in [
-        "sessions_find",
-        "session_get",
-        "blame_find",
-        "usage_summary",
-        "pacing_window",
-        "coverage_stats",
-        "outcome_rate",
+        "session_list",
+        "session_show",
+        "repo_blame",
+        "stats_usage",
+        "window_show",
+        "agent_list",
+        "stats_outcomes",
         "session_handoff",
-        "carry_forward",
-        "forgotten_context",
+        "session_carry_forward",
+        "session_forgotten",
         "session_asks",
     ] {
         assert!(
@@ -79,20 +79,20 @@ async fn test_stdio_tools_list_and_sessions_find() {
 
     let call_result = client
         .call_tool(
-            CallToolRequestParams::new("sessions_find")
+            CallToolRequestParams::new("session_list")
                 .with_arguments(serde_json::json!({ "limit": 10 }).as_object().unwrap().clone()),
         )
         .await
-        .expect("tools/call sessions_find should succeed");
+        .expect("tools/call session_list should succeed");
 
-    assert_ne!(call_result.is_error, Some(true), "sessions_find returned an error result");
+    assert_ne!(call_result.is_error, Some(true), "session_list returned an error result");
 
     let text = call_result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.clone())
-        .expect("sessions_find result should carry a text content block");
+        .expect("session_list result should carry a text content block");
     let value: serde_json::Value = serde_json::from_str(&text).expect("result text should be JSON");
     let sessions = value["sessions"].as_array().expect("sessions array");
     assert_eq!(sessions.len(), 1);

@@ -91,611 +91,136 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Subcommand, Debug)]
+/// Every pre-0.1.16 top-level spelling still runs; it is only hidden from `--help` and from
+/// the generated reference. Grep this constant to find everything that goes when the grace
+/// period ends: the `#[command(hide = true)]` variants below, their arms in `normalize`, and
+/// the hidden MCP tool aliases in `apps/cli/src/mcp/server.rs`.
+pub const HIDDEN_ALIASES_REMOVED_IN: &str = "v0.1.18";
+
+/// Old top-level command -> the noun-verb spelling that replaced it.
+///
+/// One table, three readers: the alias test at the bottom of this file walks it, `agentworth
+/// docs` prints it into the reference, and a person reading `normalize` can check the two
+/// against each other. A hidden variant added to `Commands` without a row here fails
+/// `every_hidden_command_has_a_row`.
+pub const OLD_CLI_SPELLINGS: &[(&str, &str)] = &[
+    ("traces", "session list"),
+    ("inspect", "session show"),
+    ("export", "session export"),
+    ("receipt", "session receipt"),
+    ("handoff", "session handoff"),
+    ("forgotten", "session forgotten"),
+    ("loose-ends", "session loose-ends"),
+    ("asks", "session asks"),
+    ("cache-doctor", "session cache"),
+    ("bisect", "session bisect"),
+    ("search", "session search"),
+    ("recall", "session recall"),
+    ("audit", "session audit"),
+    ("blunder", "session blunder"),
+    ("autopsy", "session autopsy"),
+    ("watch", "session watch"),
+    ("blind-spots", "session list --unproven"),
+    ("threat-digest", "session risk"),
+    ("matrix", "agent list"),
+    ("blame", "repo blame"),
+    ("pr-blame", "repo pr-blame"),
+    ("suspect", "repo suspect"),
+    ("blunder-blame", "repo blunder-blame"),
+    ("usage", "stats usage"),
+];
+
+/// Old MCP tool name -> the tool it became. Both names stay registered and dispatch to one
+/// handler (`apps/cli/src/mcp/server.rs`); `agentworth docs` leaves the old ones out of the
+/// generated reference.
+pub const OLD_MCP_TOOL_NAMES: &[(&str, &str)] = &[
+    ("sessions_find", "session_list"),
+    ("session_get", "session_show"),
+    ("blame_find", "repo_blame"),
+    ("usage_summary", "stats_usage"),
+    ("pacing_window", "window_show"),
+    ("coverage_stats", "agent_list"),
+    ("outcome_rate", "stats_outcomes"),
+    ("carry_forward", "session_carry_forward"),
+    ("forgotten_context", "session_forgotten"),
+    ("suspect_commits", "repo_suspect"),
+];
+
+/// `archie completions --help`. The three install lines are clap_complete's own documented
+/// ones (crate 4.6.9, verified on docs.rs 2026-09-02), which is why they source the binary
+/// rather than a committed file: the crate states that the shell code and the binary must
+/// match version for version, so re-source on upgrade instead of checking a script into a
+/// dotfile repo.
+const COMPLETIONS_LONG_ABOUT: &str = "\
+Write a static completion script -- commands, flags and fixed value lists -- to stdout.
+
+Live values (session ids, repositories, models) need the dynamic completer instead, which
+the binary answers itself:
+
+  # bash
+  echo \"source <(COMPLETE=bash archie)\" >> ~/.bashrc
+  # zsh
+  echo \"source <(COMPLETE=zsh archie)\" >> ~/.zshrc
+  # fish
+  echo \"COMPLETE=fish archie | source\" >> ~/.config/fish/completions/archie.fish
+
+Re-source after an upgrade: the shell code and the binary have to be the same version.";
+
+#[derive(Subcommand, Debug, PartialEq)]
 enum Commands {
     /// Scan and index agent histories from the local system
-    Scan {
-        /// Optional specific paths or directories to scan
-        #[arg(value_name = "PATHS")]
-        paths: Vec<PathBuf>,
+    Scan(ScanArgs),
 
-        /// Force rescanning and re-indexing of unchanged source files
-        #[arg(short, long)]
-        force: bool,
-
-        /// Keep storing/pruning near-empty stub sessions instead of filtering them out
-        #[arg(long)]
-        include_stubs: bool,
-
-        /// Output scan results as formatted JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Show machine-wide summary statistics of indexed traces
+    /// Machine-wide summary statistics. `stats usage` rolls spend up by period; `stats
+    /// outcomes` reports the verified-outcome rate
     Stats {
-        /// Output summary statistics as formatted JSON
-        #[arg(long)]
-        json: bool,
+        #[command(subcommand)]
+        action: Option<StatsCommand>,
+
+        #[command(flatten)]
+        args: StatsArgs,
     },
 
-    /// List indexed traces with optional filtering
-    Traces {
-        /// Maximum number of traces to display (default 20, or persisted `config limit`)
-        #[arg(short, long)]
-        limit: Option<usize>,
-
-        /// Filter by adapter name (e.g. claude_code, codex, gemini, opencode)
-        #[arg(short, long)]
-        adapter: Option<String>,
-
-        /// Filter by model substring (e.g. sonnet, gpt-4o, gemini-2.5)
-        #[arg(short, long)]
-        model: Option<String>,
-
-        /// Include 1-event session stubs in the listing
-        #[arg(long)]
-        all_stubs: bool,
-
-        /// Output traces as formatted JSON
-        #[arg(long)]
-        json: bool,
+    /// Everything that acts on sessions: list them, read one, hand one over
+    Session {
+        #[command(subcommand)]
+        action: SessionCommand,
     },
 
-    /// Display extraction capabilities and coverage matrix across all 20 agent adapters
-    Matrix {
-        /// Output matrix as formatted JSON
-        #[arg(long)]
-        json: bool,
+    /// The agent adapters: what each one extracts, and how one is doing on this machine
+    Agent {
+        #[command(subcommand)]
+        action: AgentCommand,
     },
 
-    /// Inspect a specific trace session in detail with timeline visualization
-    Inspect {
-        /// The session ID to inspect, by full ID or a unique prefix. With nothing given on
-        /// a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
-        #[arg(value_name = "SESSION_ID")]
-        session_id: Option<String>,
-
-        /// Inspect the newest session for this directory's repository. The default when
-        /// no ID is given and stdout is not a TTY
-        #[arg(long)]
-        last: bool,
-
-        /// Alias of `--last`
-        #[arg(long)]
-        current: bool,
-
-        /// Output raw trace structure as formatted JSON
-        #[arg(long)]
-        json: bool,
+    /// Repositories: what an agent wrote where, and which commits nothing proved
+    Repo {
+        #[command(subcommand)]
+        action: RepoCommand,
     },
 
-    /// Export a trace session safely in JSON or ATIF format
-    Export {
-        /// The session ID to export, by full ID or a unique prefix. With nothing given on
-        /// a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
-        #[arg(value_name = "SESSION_ID")]
-        session_id: Option<String>,
-
-        /// Export the newest session for this directory's repository. The default when
-        /// no ID is given and stdout is not a TTY
-        #[arg(long)]
-        last: bool,
-
-        /// Alias of `--last`
-        #[arg(long)]
-        current: bool,
-
-        /// Apply redaction to mask secrets, API keys, tokens, emails, and home paths
-        #[arg(short, long)]
-        redact: bool,
-
-        /// Export format: json (default), atif, receipt, or svg
-        #[arg(short, long, default_value = "json", value_parser = ["json", "atif", "receipt", "terminal", "ansi", "svg"])]
-        format: String,
-
-        /// Optional file path to write export output to (defaults to stdout)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
-
-    /// Generate and render an authentic ANSI or SVG Flight Receipt for a trace session
-    Receipt {
-        /// The session ID to generate flight receipt for, by full ID or a unique prefix.
-        /// With nothing given on a TTY, a picker lists the newest sessions; elsewhere,
-        /// pass an ID or `--last`
-        #[arg(value_name = "SESSION_ID")]
-        session_id: Option<String>,
-
-        /// Generate the receipt for the newest session for this directory's repository.
-        /// The default when no ID is given and stdout is not a TTY
-        #[arg(long)]
-        last: bool,
-
-        /// Alias of `--last`
-        #[arg(long)]
-        current: bool,
-
-        /// Output format: terminal (default), ansi, svg, receipt, or json
-        #[arg(short, long, default_value = "terminal", value_parser = ["terminal", "ansi", "svg", "receipt", "json"])]
-        format: String,
-
-        /// Optional file path to write receipt or SVG output to (defaults to stdout)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
-
-
-    /// Semantic vector search across indexed trajectory turns with ASCII thermal receipts
-    Search {
-        /// Search query (natural language or code snippet)
-        query: String,
-
-        /// Maximum number of results to return (default 10, or persisted `config limit`)
-        #[arg(short, long)]
-        limit: Option<usize>,
-
-        /// Minimum similarity score threshold (0.0 to 1.0)
-        #[arg(long, default_value_t = 0.0)]
-        min_score: f32,
-
-        /// Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)
-        #[arg(short, long)]
-        kind: Option<String>,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Safety and threat audit detecting forbidden commands, leaked variables, sweeps, and fake claims
-    Audit {
-        /// Restrict audit to safety and threat vectors only
-        #[arg(long)]
-        safety: bool,
-
-        /// Output audit results as formatted JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Discover top agent blunders, render thermal receipts, and export to the Hall of Blunders
-    Blunder {
-        /// Number of top blunder exhibits to retrieve and display (default: 5)
-        #[arg(short, long, default_value_t = 5)]
-        top: usize,
-
-        /// Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol
-        #[arg(short, long)]
-        submit: bool,
-
-        /// Output blunder exhibits as formatted JSON
-        #[arg(long)]
-        json: bool,
+    /// The rolling burn-rate window: what is being spent right now
+    Window {
+        #[command(subcommand)]
+        action: WindowCommand,
     },
 
     /// Start the local API server and interactive explorer UI
-    Serve {
-        /// Port to bind the server to
-        #[arg(short, long, default_value_t = crate::DEFAULT_PORT)]
-        port: u16,
-
-        /// Automatically open the Web UI in the default browser
-        #[arg(long)]
-        open: bool,
-
-        /// Optional path to custom web frontend dist directory
-        #[arg(long)]
-        dist: Option<PathBuf>,
-    },
+    Serve(ServeArgs),
 
     /// Start the read-only MCP server over stdio, for a coding agent to query this machine's
     /// session index mid-session (see docs/specs/mcp-server.md). Register it once with
     /// `claude mcp add agentworth --scope user -- agentworth mcp`.
     Mcp,
 
-    /// View deep usage, pacing, and token expenditure rollups
-    Usage {
-        /// Rollup period: day, week, month, year, or all -- `all` is one row per group across
-        /// all time, with no period column. Single-letter aliases d/w/m/y also work. Default
-        /// day, or persisted `config period`.
-        #[arg(short, long, value_parser = parse_period_arg)]
-        period: Option<String>,
-
-        /// Show 5-hour rolling pacing window (burn rate, active models, quota headroom)
-        #[arg(long)]
-        pacing: bool,
-
-        /// Pacing window duration in hours
-        #[arg(long, default_value_t = 5)]
-        hours: i64,
-
-        /// Alert and highlight if window spend exceeds this threshold in USD
-        #[arg(long)]
-        alert_above: Option<f64>,
-
-        /// Maximum number of periods to keep (default 30 for day, 26 for week, 24 for month,
-        /// unbounded for year) -- or, under `--period all`, the number of top groups by
-        /// spend to keep (default 20, or persisted `config limit`). Counts periods, not rows:
-        /// a day with two adapters is one period, not two.
-        #[arg(short, long)]
-        limit: Option<usize>,
-
-        /// Group the rollup by adapter (default; most informative when nearly every session
-        /// shares one adapter, e.g. Claude Code), model (usually the useful one), or repo
-        #[arg(long, default_value = "adapter", value_parser = ["adapter", "model", "repo"])]
-        by: String,
-
-        /// Only include sessions started at or after this time: an absolute date
-        /// (`2026-08-01` or RFC 3339), or a relative shorthand (`1d`, `7d`, `2w`, `3m`)
-        #[arg(long)]
-        since: Option<String>,
-
-        /// Output usage data as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Trace file modifications back to the AI agent session, model, and prompt that authored them
-    Blame {
-        /// Target file path or pattern to search
-        file_path: String,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Hand a session over: what it promised and dropped, decided, changed, ran, and proved
-    Handoff {
-        /// Session to hand over, by full ID or a unique prefix. With nothing given on a
-        /// TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
-        session_id: Option<String>,
-
-        /// Hand over the newest session for this repository. The default when no ID is
-        /// given and stdout is not a TTY
-        #[arg(long)]
-        last: bool,
-
-        /// Alias of `--last`
-        #[arg(long)]
-        current: bool,
-
-        /// Mask secrets, paths, and this session's own repository name before printing
-        #[arg(short, long)]
-        redact: bool,
-
-        /// Emit the same markdown the `session_handoff` MCP tool returns
-        #[arg(long)]
-        markdown: bool,
-
-        /// Line budget for `--markdown` (default 60, ceiling 120)
-        #[arg(long)]
-        max_lines: Option<usize>,
-
-        /// Output the structured handoff as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// What compaction dropped: decisions this session made and its own summaries did not keep
-    Forgotten {
-        /// Session to diff, by full ID or a unique prefix. With nothing given on a TTY, a
-        /// picker lists the newest sessions; elsewhere, defaults to the newest session
-        /// indexed for this directory's repository (same as `--last`)
-        session_id: Option<String>,
-
-        /// Diff the newest session for this directory's repository. The default when no
-        /// ID is given and stdout is not a TTY
-        #[arg(long)]
-        last: bool,
-
-        /// Alias of `--last`
-        #[arg(long)]
-        current: bool,
-
-        /// One 1-based compaction round. Defaults to every round.
-        #[arg(long)]
-        round: Option<u32>,
-
-        /// Any of decision, rejected, reason. Repeatable. Defaults to all three.
-        #[arg(long = "class", value_name = "CLASS")]
-        classes: Vec<String>,
-
-        /// How many statements to return, newest first (default 20, ceiling 200)
-        #[arg(long)]
-        limit: Option<usize>,
-
-        /// Mask secrets, paths, and this session's own repository name before printing
-        #[arg(short, long)]
-        redact: bool,
-
-        /// Output the structured diff as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// The questions you asked and where their answers are -- built so you never have to
-    /// re-scroll or re-ask because the answer landed several messages later
-    Asks {
-        /// Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed
-        /// directly if it isn't an indexed session). With neither this nor `--last` given
-        /// on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`.
-        #[arg(long, conflicts_with_all = ["current", "last"])]
-        session: Option<String>,
-
-        /// Resolve the newest session for this directory's repository, falling back to the
-        /// newest session anywhere.
-        #[arg(long)]
-        last: bool,
-
-        /// Alias of `--last`.
-        #[arg(long)]
-        current: bool,
-
-        /// Only questions asked at or after this time: RFC 3339, `YYYY-MM-DD`, or a relative
-        /// duration like `2h`, `30m`, `1d`, `3w`.
-        #[arg(long)]
-        since: Option<String>,
-
-        /// Only questions that are not `answered` -- still open, or flagged back to you.
-        #[arg(long)]
-        unanswered: bool,
-
-        /// Output the structured index as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// The handoff's loose-ends section alone: what a session said it would do and did not
-    #[command(name = "loose-ends")]
-    LooseEnds {
-        /// Session to check. Defaults to the newest session for this directory's repository.
-        session_id: Option<String>,
-
-        /// Check the newest session for this repository. The default when no ID is given.
-        #[arg(long)]
-        last: bool,
-
-        /// Mask secrets, paths, and this session's own repository name before printing
-        #[arg(short, long)]
-        redact: bool,
-
-        /// Print the copyable prompt to hand to an agent that has the repository open
-        #[arg(long)]
-        prompt: bool,
-
-        /// Output the loose ends as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
     /// Check local environment, adapter discoveries, and SQLite database health
-    Doctor {
-        /// Output diagnostic report as formatted JSON
-        #[arg(long)]
-        json: bool,
+    Doctor(DoctorArgs),
 
-        /// Run the real release workflow end to end -- scan, stats, usage, traces,
-        /// inspect, handoff, forgotten, and an MCP round trip -- against the real index
-        /// on this machine, with no network, and report pass/fail/slow and timing for
-        /// each step. Exits non-zero if any step fails
-        #[arg(long)]
-        self_test: bool,
-    },
-
-    /// Print version details: binary version, npm install detection, and a live
-    /// check for a newer release
-    Version {
-        /// Skip the live GitHub-releases update check (fully local, no network call)
-        #[arg(long)]
-        offline: bool,
-
-        /// Output as formatted JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Check for a newer AgentWorth release and show exactly how to get it
-    Update {
-        /// Skip the live GitHub-releases check and just show install-method guidance
-        #[arg(long)]
-        offline: bool,
-
-        /// Output as formatted JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Merge another local SQLite index database into this index
-    Merge {
-        /// Path to the source SQLite database file to merge from
-        source_db: PathBuf,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Watch active session transcripts and detect doom loops or file edit thrashing
-    Watch {
-        /// Polling interval in seconds (default: 3)
-        #[arg(short, long, default_value_t = 3)]
-        interval_secs: u64,
-
-        /// Run a single poll check and exit immediately
-        #[arg(long)]
-        poll_once: bool,
-
-        /// Output findings as formatted JSON
-        #[arg(long)]
-        json: bool,
-
-        /// Custom path directories to monitor
-        #[arg(short, long)]
-        paths: Vec<PathBuf>,
-    },
-
-    /// Diagnose turn-by-turn prompt caching dynamics and identify cache drop root causes
-    #[command(name = "cache-doctor")]
-    CacheDoctor {
-        /// Target session ID to inspect
-        session_id: String,
-
-        /// Output findings as formatted JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// List sessions whose completion claims were never independently corroborated by tests or CI
-    #[command(name = "blind-spots")]
-    BlindSpots {
-        /// Maximum number of sessions to list (default 20, or persisted `config limit`)
-        #[arg(short, long)]
-        limit: Option<usize>,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Rank indexed sessions by real secret/credential exposure risk, by category and severity
-    #[command(name = "threat-digest")]
-    ThreatDigest {
-        /// Maximum number of sessions to show in the report (default 20, or persisted `config
-        /// limit`) -- every indexed session is still scanned; this only trims the displayed list
-        #[arg(short, long)]
-        limit: Option<usize>,
-
-        /// Only include sessions whose worst finding is at least this severity
-        #[arg(long, default_value = "low", value_parser = ["low", "medium", "high", "critical"])]
-        min_severity: String,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Surface recurring human correction and steering phrases across all sessions
-    Autopsy {
-        /// Minimum number of occurrences across sessions to report (default: 2)
-        #[arg(short, long, default_value_t = 2)]
-        min_occurrences: usize,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Semantically recall past solutions joined with outcome validation and cost
-    Recall {
-        /// Search query to match against previous trajectories
-        query: String,
-
-        /// Maximum number of results to return (default 5, or persisted `config limit`)
-        #[arg(short, long)]
-        limit: Option<usize>,
-
-        /// Minimum similarity score threshold (0.0 to 1.0)
-        #[arg(long, default_value_t = 0.0)]
-        min_score: f32,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Pinpoint the exact turning point where an agent session trajectory turned negative
-    Bisect {
-        /// Session ID to bisect
-        session_id: String,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Annotate changed PR files with AI agent authoring provenance and outcome validation
-    #[command(name = "pr-blame")]
-    PrBlame {
-        /// List of files to check (if omitted, infers from git diff)
-        files: Vec<String>,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Bridge AI Code Blame with the Hall of Blunders: trace a recorded blunder forward
-    /// to the exact files it blame-attributes to, or a file's blame history backward to
-    /// any recorded blunders in the sessions blamed for it
-    #[command(name = "blunder-blame")]
-    BlunderBlame {
-        /// Blame -> blunder direction: file path or pattern. Checks every session AI
-        /// Code Blame attributes this file to for a recorded blunder
-        #[arg(long, conflicts_with = "session")]
-        file: Option<String>,
-
-        /// Blunder -> blame direction: one specific session ID, by full ID or a unique
-        /// prefix. Resolves it to the files AI Code Blame attributes to that session
-        #[arg(long, conflicts_with = "file")]
-        session: Option<String>,
-
-        /// Blunder -> blame direction for the newest session in this repository, same as
-        /// `--session` with that session's ID
-        #[arg(long, conflicts_with = "file")]
-        last: bool,
-
-        /// Alias of `--last`
-        #[arg(long, conflicts_with = "file")]
-        current: bool,
-
-        /// In default mode (no --file or --session), number of top blunders to bridge
-        #[arg(short, long, default_value_t = 5)]
-        top: usize,
-
-        /// Output results as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// List commits on this branch whose authoring session never proved anything, so you
-    /// know where to look twice before pushing. Prints a list and a prompt, never a patch
-    Suspect {
-        /// Path to a git checkout. Defaults to the current directory
-        #[arg(long)]
-        repo: Option<PathBuf>,
-
-        /// A date (RFC 3339 or YYYY-MM-DD) or a git ref to measure from. Defaults to the
-        /// branch's upstream, then origin/main
-        #[arg(long)]
-        since: Option<String>,
-
-        /// Branch to walk. Defaults to HEAD
-        #[arg(long)]
-        branch: Option<String>,
-
-        /// Ref to diff against, if you want to name it separately from --since
-        #[arg(long)]
-        base: Option<String>,
-
-        /// How long before a commit a session's file touch still counts as authoring it
-        #[arg(long)]
-        window_hours: Option<i64>,
-
-        /// Print a ready-to-install pre-push hook and exit. The hook never blocks a push
-        #[arg(long)]
-        hook: bool,
-
-        /// Print only the copyable prompt, and only when something is suspect. What the
-        /// hook runs
-        #[arg(long)]
-        quiet: bool,
-
-        /// Output the full report as JSON
-        #[arg(long)]
-        json: bool,
-    },
+    /// Generate CLI, HTTP API, and MCP tool reference documentation from the code itself
+    /// (see docs/REFERENCE.md). Nothing here is hand-written prose: the CLI section walks
+    /// the clap command tree, the API section walks the axum route table, and the MCP
+    /// section walks the rmcp tool router -- so the reference cannot drift from the code.
+    Docs(DocsArgs),
 
     /// Get, set, or list persisted CLI defaults (~/.agentworth/config.toml)
     Config {
@@ -703,24 +228,929 @@ enum Commands {
         action: ConfigAction,
     },
 
-    /// Generate CLI, HTTP API, and MCP tool reference documentation from the code itself
-    /// (see docs/REFERENCE.md). Nothing here is hand-written prose: the CLI section walks
-    /// the clap command tree, the API section walks the axum route table, and the MCP
-    /// section walks the rmcp tool router -- so the reference cannot drift from the code.
-    Docs {
-        /// Output format when printing to stdout (ignored with --write, which always
-        /// writes both forms)
-        #[arg(long, default_value = "markdown", value_parser = ["markdown", "json"])]
-        format: String,
+    /// Print version details: binary version, npm install detection, and a live
+    /// check for a newer release
+    Version(VersionArgs),
 
-        /// Write docs/REFERENCE.md and docs/reference.json (relative to the current
-        /// directory, which must be the repository root) instead of printing to stdout
-        #[arg(long)]
-        write: bool,
-    },
+    /// Check for a newer AgentWorth release and show exactly how to get it
+    Update(UpdateArgs),
+
+    /// Write a shell completion script to stdout
+    #[command(long_about = COMPLETIONS_LONG_ABOUT)]
+    Completions(CompletionsArgs),
+
+    /// Merge another local SQLite index database into this index
+    Merge(MergeArgs),
+
+    // -------------------------------------------------------------------------
+    // Hidden aliases for the pre-0.1.16 spellings. See HIDDEN_ALIASES_REMOVED_IN.
+    // Each one carries the same args struct as the noun-verb spelling it maps to,
+    // so `normalize` below is the only place that knows both names.
+    // -------------------------------------------------------------------------
+    #[command(hide = true)]
+    Traces(SessionListArgs),
+
+    #[command(hide = true)]
+    Inspect(SessionShowArgs),
+
+    #[command(hide = true)]
+    Export(ExportArgs),
+
+    #[command(hide = true)]
+    Receipt(ReceiptArgs),
+
+    #[command(hide = true)]
+    Handoff(HandoffArgs),
+
+    #[command(hide = true)]
+    Forgotten(ForgottenArgs),
+
+    #[command(name = "loose-ends", hide = true)]
+    LooseEnds(LooseEndsArgs),
+
+    #[command(hide = true)]
+    Asks(AsksArgs),
+
+    #[command(name = "cache-doctor", hide = true)]
+    CacheDoctor(SessionRefArgs),
+
+    #[command(hide = true)]
+    Bisect(SessionRefArgs),
+
+    #[command(hide = true)]
+    Search(SearchArgs),
+
+    #[command(hide = true)]
+    Recall(RecallArgs),
+
+    #[command(hide = true)]
+    Audit(AuditArgs),
+
+    #[command(hide = true)]
+    Blunder(BlunderArgs),
+
+    #[command(hide = true)]
+    Autopsy(AutopsyArgs),
+
+    #[command(hide = true)]
+    Watch(WatchArgs),
+
+    #[command(name = "blind-spots", hide = true)]
+    BlindSpots(BlindSpotsArgs),
+
+    #[command(name = "threat-digest", hide = true)]
+    ThreatDigest(RiskArgs),
+
+    #[command(hide = true)]
+    Matrix(AgentListArgs),
+
+    #[command(hide = true)]
+    Blame(BlameArgs),
+
+    #[command(name = "pr-blame", hide = true)]
+    PrBlame(PrBlameArgs),
+
+    #[command(hide = true)]
+    Suspect(SuspectCliArgs),
+
+    #[command(name = "blunder-blame", hide = true)]
+    BlunderBlame(BlunderBlameArgs),
+
+    #[command(hide = true)]
+    Usage(UsageArgs),
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, PartialEq)]
+enum SessionCommand {
+    /// List indexed sessions with optional filtering
+    List(SessionListArgs),
+
+    /// Read one session in detail, with its timeline
+    Show(SessionShowArgs),
+
+    /// Export one session safely, in JSON or ATIF format
+    Export(ExportArgs),
+
+    /// Render one session's Flight Receipt, as ANSI or SVG
+    Receipt(ReceiptArgs),
+
+    /// Hand a session over: what it promised and dropped, decided, changed, ran, and proved
+    Handoff(HandoffArgs),
+
+    /// What compaction dropped: decisions this session made and its own summaries did not keep
+    Forgotten(ForgottenArgs),
+
+    /// The handoff's loose-ends section alone: what a session said it would do and did not
+    #[command(name = "loose-ends")]
+    LooseEnds(LooseEndsArgs),
+
+    /// The questions you asked and where their answers are -- built so you never have to
+    /// re-scroll or re-ask because the answer landed several messages later
+    Asks(AsksArgs),
+
+    /// Diagnose turn-by-turn prompt caching dynamics and identify cache drop root causes
+    Cache(SessionRefArgs),
+
+    /// Pinpoint the exact turning point where a session's trajectory turned negative
+    Bisect(SessionRefArgs),
+
+    /// Semantic vector search across indexed trajectory turns with ASCII thermal receipts
+    Search(SearchArgs),
+
+    /// Semantically recall past solutions joined with outcome validation and cost
+    Recall(RecallArgs),
+
+    /// Safety and threat audit detecting forbidden commands, leaked variables, sweeps, and
+    /// fake claims, machine-wide over every session
+    Audit(AuditArgs),
+
+    /// Discover top agent blunders, render thermal receipts, and export to the Hall of Blunders
+    Blunder(BlunderArgs),
+
+    /// Surface recurring human correction and steering phrases across all sessions
+    Autopsy(AutopsyArgs),
+
+    /// Watch active session transcripts and detect doom loops or file edit thrashing
+    Watch(WatchArgs),
+
+    /// Rank indexed sessions by real secret/credential exposure risk, by category and severity
+    Risk(RiskArgs),
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+enum AgentCommand {
+    /// Extraction capabilities and coverage across every registered adapter
+    List(AgentListArgs),
+
+    /// One adapter in detail: what it extracts, whether it is present here, and what it
+    /// has actually put in the index
+    Show(AgentShowArgs),
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+enum RepoCommand {
+    /// The repositories and workspaces this index holds, by session count
+    List(RepoListArgs),
+
+    /// Trace file modifications back to the session, model, and prompt that authored them
+    Blame(BlameArgs),
+
+    /// Annotate changed PR files with AI agent authoring provenance and outcome validation
+    #[command(name = "pr-blame")]
+    PrBlame(PrBlameArgs),
+
+    /// List commits on this branch whose authoring session never proved anything, so you
+    /// know where to look twice before pushing. Prints a list and a prompt, never a patch
+    Suspect(SuspectCliArgs),
+
+    /// Bridge AI Code Blame with the Hall of Blunders: trace a recorded blunder forward
+    /// to the exact files it blame-attributes to, or a file's blame history backward to
+    /// any recorded blunders in the sessions blamed for it
+    #[command(name = "blunder-blame")]
+    BlunderBlame(BlunderBlameArgs),
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+enum WindowCommand {
+    /// The current rolling window: burn rate, active models, quota headroom
+    Show(WindowShowArgs),
+
+    /// The recent rolling windows, newest first
+    List(WindowListArgs),
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+enum StatsCommand {
+    /// Deep usage, pacing, and token expenditure rollups
+    Usage(UsageArgs),
+
+    /// Verified-outcome rate by model, adapter, or repo: of the sessions that claimed done,
+    /// what share left evidence a test, build, commit or CI run can be pointed at
+    Outcomes(OutcomesArgs),
+}
+
+// -----------------------------------------------------------------------------
+// Argument structs. Shared by the noun-verb spelling and its hidden alias, so the
+// two can never drift apart on a flag.
+// -----------------------------------------------------------------------------
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ScanArgs {
+    /// Optional specific paths or directories to scan
+    #[arg(value_name = "PATHS")]
+    paths: Vec<PathBuf>,
+
+    /// Force rescanning and re-indexing of unchanged source files
+    #[arg(short, long)]
+    force: bool,
+
+    /// Keep storing/pruning near-empty stub sessions instead of filtering them out
+    #[arg(long)]
+    include_stubs: bool,
+
+    /// Output scan results as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct StatsArgs {
+    /// Output summary statistics as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct SessionListArgs {
+    /// Maximum number of sessions to display (default 20, or persisted `config limit`)
+    #[arg(short, long)]
+    limit: Option<usize>,
+
+    /// Filter by adapter name (e.g. claude_code, codex, gemini, opencode)
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(crate::completions::adapter_candidates))]
+    adapter: Option<String>,
+
+    /// Filter by model substring (e.g. sonnet, gpt-4o, gemini-2.5)
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(crate::completions::model_candidates))]
+    model: Option<String>,
+
+    /// Include 1-event session stubs in the listing
+    #[arg(long)]
+    all_stubs: bool,
+
+    /// Only sessions whose completion claims were never independently corroborated by
+    /// tests or CI -- the blind spots
+    #[arg(long, conflicts_with_all = ["adapter", "model", "all_stubs"])]
+    unproven: bool,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct BlindSpotsArgs {
+    /// Maximum number of sessions to list (default 20, or persisted `config limit`)
+    #[arg(short, long)]
+    limit: Option<usize>,
+
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct SessionShowArgs {
+    /// The session to read, by full ID or a unique prefix. With nothing given on a TTY, a
+    /// picker lists the newest sessions; elsewhere, pass an ID or `--last`
+    #[arg(value_name = "SESSION_ID", add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session_id: Option<String>,
+
+    /// The newest session for this directory's repository. The default when no ID is given
+    /// and stdout is not a TTY
+    #[arg(long)]
+    last: bool,
+
+    /// Alias of `--last`
+    #[arg(long)]
+    current: bool,
+
+    /// Output raw trace structure as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+/// The plainest session-taking shape: one session and an output format. `session cache` and
+/// `session bisect` both take exactly this.
+#[derive(clap::Args, Debug, PartialEq)]
+struct SessionRefArgs {
+    /// The session to act on, by full ID or a unique prefix. With nothing given on a TTY, a
+    /// picker lists the newest sessions; elsewhere, pass an ID or `--last`
+    #[arg(value_name = "SESSION_ID", add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session_id: Option<String>,
+
+    /// The newest session for this directory's repository. The default when no ID is given
+    /// and stdout is not a TTY
+    #[arg(long)]
+    last: bool,
+
+    /// Alias of `--last`
+    #[arg(long)]
+    current: bool,
+
+    /// Output findings as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ExportArgs {
+    /// The session to export, by full ID or a unique prefix. With nothing given on a TTY, a
+    /// picker lists the newest sessions; elsewhere, pass an ID or `--last`
+    #[arg(value_name = "SESSION_ID", add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session_id: Option<String>,
+
+    /// Export the newest session for this directory's repository. The default when
+    /// no ID is given and stdout is not a TTY
+    #[arg(long)]
+    last: bool,
+
+    /// Alias of `--last`
+    #[arg(long)]
+    current: bool,
+
+    /// Apply redaction to mask secrets, API keys, tokens, emails, and home paths
+    #[arg(short, long)]
+    redact: bool,
+
+    /// Export format: json (default), atif, receipt, or svg
+    #[arg(short, long, default_value = "json", value_parser = ["json", "atif", "receipt", "terminal", "ansi", "svg"])]
+    format: String,
+
+    /// Optional file path to write export output to (defaults to stdout)
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ReceiptArgs {
+    /// The session to render a flight receipt for, by full ID or a unique prefix.
+    /// With nothing given on a TTY, a picker lists the newest sessions; elsewhere,
+    /// pass an ID or `--last`
+    #[arg(value_name = "SESSION_ID", add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session_id: Option<String>,
+
+    /// Render the newest session for this directory's repository. The default when no ID
+    /// is given and stdout is not a TTY
+    #[arg(long)]
+    last: bool,
+
+    /// Alias of `--last`
+    #[arg(long)]
+    current: bool,
+
+    /// Output format: terminal (default), ansi, svg, receipt, or json
+    #[arg(short, long, default_value = "terminal", value_parser = ["terminal", "ansi", "svg", "receipt", "json"])]
+    format: String,
+
+    /// Optional file path to write receipt or SVG output to (defaults to stdout)
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct SearchArgs {
+    /// Search query (natural language or code snippet)
+    query: String,
+
+    /// Maximum number of results to return (default 10, or persisted `config limit`)
+    #[arg(short, long)]
+    limit: Option<usize>,
+
+    /// Minimum similarity score threshold (0.0 to 1.0)
+    #[arg(long, default_value_t = 0.0)]
+    min_score: f32,
+
+    /// Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(crate::completions::chunk_kind_candidates))]
+    kind: Option<String>,
+
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct RecallArgs {
+    /// Search query to match against previous trajectories
+    query: String,
+
+    /// Maximum number of results to return (default 5, or persisted `config limit`)
+    #[arg(short, long)]
+    limit: Option<usize>,
+
+    /// Minimum similarity score threshold (0.0 to 1.0)
+    #[arg(long, default_value_t = 0.0)]
+    min_score: f32,
+
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct AuditArgs {
+    /// Restrict audit to safety and threat vectors only
+    #[arg(long)]
+    safety: bool,
+
+    /// Output audit results as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct BlunderArgs {
+    /// Number of top blunder exhibits to retrieve and display (default: 5)
+    #[arg(short, long, default_value_t = 5)]
+    top: usize,
+
+    /// Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol
+    #[arg(short, long)]
+    submit: bool,
+
+    /// Output blunder exhibits as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct AutopsyArgs {
+    /// Minimum number of occurrences across sessions to report (default: 2)
+    #[arg(short, long, default_value_t = 2)]
+    min_occurrences: usize,
+
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct WatchArgs {
+    /// Polling interval in seconds (default: 3)
+    #[arg(short, long, default_value_t = 3)]
+    interval_secs: u64,
+
+    /// Run a single poll check and exit immediately
+    #[arg(long)]
+    poll_once: bool,
+
+    /// Output findings as formatted JSON
+    #[arg(long)]
+    json: bool,
+
+    /// Custom path directories to monitor
+    #[arg(short, long)]
+    paths: Vec<PathBuf>,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct RiskArgs {
+    /// Maximum number of sessions to show in the report (default 20, or persisted `config
+    /// limit`) -- every indexed session is still scanned; this only trims the displayed list
+    #[arg(short, long)]
+    limit: Option<usize>,
+
+    /// Only include sessions whose worst finding is at least this severity
+    #[arg(long, default_value = "low", value_parser = ["low", "medium", "high", "critical"])]
+    min_severity: String,
+
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ServeArgs {
+    /// Port to bind the server to
+    #[arg(short, long, default_value_t = crate::DEFAULT_PORT)]
+    port: u16,
+
+    /// Automatically open the Web UI in the default browser
+    #[arg(long)]
+    open: bool,
+
+    /// Optional path to custom web frontend dist directory
+    #[arg(long)]
+    dist: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct DoctorArgs {
+    /// Output diagnostic report as formatted JSON
+    #[arg(long)]
+    json: bool,
+
+    /// Run the real release workflow end to end -- scan, stats, usage, sessions, show,
+    /// handoff, forgotten, and an MCP round trip -- against the real index
+    /// on this machine, with no network, and report pass/fail/slow and timing for
+    /// each step. Exits non-zero if any step fails
+    #[arg(long)]
+    self_test: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct VersionArgs {
+    /// Skip the live GitHub-releases update check (fully local, no network call)
+    #[arg(long)]
+    offline: bool,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct UpdateArgs {
+    /// Skip the live GitHub-releases check and just show install-method guidance
+    #[arg(long)]
+    offline: bool,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct MergeArgs {
+    /// Path to the source SQLite database file to merge from
+    source_db: PathBuf,
+
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct DocsArgs {
+    /// Output format when printing to stdout (ignored with --write, which always
+    /// writes both forms)
+    #[arg(long, default_value = "markdown", value_parser = ["markdown", "json"])]
+    format: String,
+
+    /// Write docs/REFERENCE.md and docs/reference.json (relative to the current
+    /// directory, which must be the repository root) instead of printing to stdout
+    #[arg(long)]
+    write: bool,
+}
+
+/// `archie completions <shell>`. Static scripts only; the live-value completions
+/// (session ids, repos, models) come from `COMPLETE=<shell> archie` instead -- see this
+/// command's long help.
+#[derive(clap::Args, Debug, PartialEq)]
+struct CompletionsArgs {
+    /// Shell to generate a completion script for
+    #[arg(value_name = "SHELL")]
+    shell: clap_complete::aot::Shell,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct HandoffArgs {
+    /// Session to hand over, by full ID or a unique prefix. With nothing given on a
+    /// TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
+    #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session_id: Option<String>,
+
+    /// Hand over the newest session for this repository. The default when no ID is
+    /// given and stdout is not a TTY
+    #[arg(long)]
+    last: bool,
+
+    /// Alias of `--last`
+    #[arg(long)]
+    current: bool,
+
+    /// Mask secrets, paths, and this session's own repository name before printing
+    #[arg(short, long)]
+    redact: bool,
+
+    /// Emit the same markdown the `session_handoff` MCP tool returns
+    #[arg(long)]
+    markdown: bool,
+
+    /// Line budget for `--markdown` (default 60, ceiling 120)
+    #[arg(long)]
+    max_lines: Option<usize>,
+
+    /// Output the structured handoff as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ForgottenArgs {
+    /// Session to diff, by full ID or a unique prefix. With nothing given on a TTY, a
+    /// picker lists the newest sessions; elsewhere, defaults to the newest session
+    /// indexed for this directory's repository (same as `--last`)
+    #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session_id: Option<String>,
+
+    /// Diff the newest session for this directory's repository. The default when no
+    /// ID is given and stdout is not a TTY
+    #[arg(long)]
+    last: bool,
+
+    /// Alias of `--last`
+    #[arg(long)]
+    current: bool,
+
+    /// One 1-based compaction round. Defaults to every round.
+    #[arg(long)]
+    round: Option<u32>,
+
+    /// Any of decision, rejected, reason. Repeatable. Defaults to all three.
+    #[arg(long = "class", value_name = "CLASS", add = clap_complete::engine::ArgValueCandidates::new(crate::completions::forgotten_class_candidates))]
+    classes: Vec<String>,
+
+    /// How many statements to return, newest first (default 20, ceiling 200)
+    #[arg(long)]
+    limit: Option<usize>,
+
+    /// Mask secrets, paths, and this session's own repository name before printing
+    #[arg(short, long)]
+    redact: bool,
+
+    /// Output the structured diff as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct AsksArgs {
+    /// Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed
+    /// directly if it isn't an indexed session). With nothing given on a TTY, a picker
+    /// lists the newest sessions; elsewhere, pass an ID or `--last`.
+    #[arg(value_name = "SESSION_ID", conflicts_with_all = ["session", "current", "last"],
+          add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session_id: Option<String>,
+
+    /// The same session, named with a flag. Kept because `agentworth asks --session <id>`
+    /// is the spelling that shipped in #97.
+    #[arg(long, conflicts_with_all = ["current", "last"],
+          add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session: Option<String>,
+
+    /// Resolve the newest session for this directory's repository, falling back to the
+    /// newest session anywhere.
+    #[arg(long)]
+    last: bool,
+
+    /// Alias of `--last`.
+    #[arg(long)]
+    current: bool,
+
+    /// Only questions asked at or after this time: RFC 3339, `YYYY-MM-DD`, or a relative
+    /// duration like `2h`, `30m`, `1d`, `3w`.
+    #[arg(long)]
+    since: Option<String>,
+
+    /// Only questions that are not `answered` -- still open, or flagged back to you.
+    #[arg(long)]
+    unanswered: bool,
+
+    /// Output the structured index as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct LooseEndsArgs {
+    /// Session to check, by full ID or a unique prefix. With nothing given on a TTY, a
+    /// picker lists the newest sessions; elsewhere, pass an ID or `--last`
+    #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session_id: Option<String>,
+
+    /// Check the newest session for this repository. The default when no ID is given and
+    /// stdout is not a TTY
+    #[arg(long)]
+    last: bool,
+
+    /// Alias of `--last`
+    #[arg(long)]
+    current: bool,
+
+    /// Mask secrets, paths, and this session's own repository name before printing
+    #[arg(short, long)]
+    redact: bool,
+
+    /// Print the copyable prompt to hand to an agent that has the repository open
+    #[arg(long)]
+    prompt: bool,
+
+    /// Output the loose ends as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct AgentListArgs {
+    /// Output the coverage matrix as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct AgentShowArgs {
+    /// Adapter name (e.g. claude_code, codex, gemini, opencode)
+    #[arg(value_name = "ADAPTER", add = clap_complete::engine::ArgValueCandidates::new(crate::completions::adapter_candidates))]
+    adapter: String,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct RepoListArgs {
+    /// Maximum number of repositories to display (default 20, or persisted `config limit`)
+    #[arg(short, long)]
+    limit: Option<usize>,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct BlameArgs {
+    /// Target file path or pattern to search
+    file_path: String,
+
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct PrBlameArgs {
+    /// List of files to check (if omitted, infers from git diff)
+    files: Vec<String>,
+
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct SuspectCliArgs {
+    /// Path to a git checkout. Defaults to the current directory
+    #[arg(long)]
+    repo: Option<PathBuf>,
+
+    /// A date (RFC 3339 or YYYY-MM-DD) or a git ref to measure from. Defaults to the
+    /// branch's upstream, then origin/main
+    #[arg(long)]
+    since: Option<String>,
+
+    /// Branch to walk. Defaults to HEAD
+    #[arg(long)]
+    branch: Option<String>,
+
+    /// Ref to diff against, if you want to name it separately from --since
+    #[arg(long)]
+    base: Option<String>,
+
+    /// How long before a commit a session's file touch still counts as authoring it
+    #[arg(long)]
+    window_hours: Option<i64>,
+
+    /// Print a ready-to-install pre-push hook and exit. The hook never blocks a push
+    #[arg(long)]
+    hook: bool,
+
+    /// Print only the copyable prompt, and only when something is suspect. What the
+    /// hook runs
+    #[arg(long)]
+    quiet: bool,
+
+    /// Output the full report as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct BlunderBlameArgs {
+    /// Blame -> blunder direction: file path or pattern. Checks every session AI
+    /// Code Blame attributes this file to for a recorded blunder
+    #[arg(long, conflicts_with = "session")]
+    file: Option<String>,
+
+    /// Blunder -> blame direction: one specific session ID, by full ID or a unique
+    /// prefix. Resolves it to the files AI Code Blame attributes to that session
+    #[arg(long, conflicts_with = "file",
+          add = clap_complete::engine::ArgValueCandidates::new(crate::completions::session_candidates))]
+    session: Option<String>,
+
+    /// Blunder -> blame direction for the newest session in this repository, same as
+    /// `--session` with that session's ID
+    #[arg(long, conflicts_with = "file")]
+    last: bool,
+
+    /// Alias of `--last`
+    #[arg(long, conflicts_with = "file")]
+    current: bool,
+
+    /// In default mode (no --file or --session), number of top blunders to bridge
+    #[arg(short, long, default_value_t = 5)]
+    top: usize,
+
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct UsageArgs {
+    /// Rollup period: day, week, month, year, or all -- `all` is one row per group across
+    /// all time, with no period column. Single-letter aliases d/w/m/y also work. Default
+    /// day, or persisted `config period`.
+    #[arg(short, long, value_parser = parse_period_arg)]
+    period: Option<String>,
+
+    /// Show the rolling pacing window instead of the rollup. `archie window show` is the
+    /// spelling that survives; this flag is kept for scripts written against `usage`.
+    #[arg(long, hide = true)]
+    pacing: bool,
+
+    /// Pacing window duration in hours
+    #[arg(long, default_value_t = 5)]
+    hours: i64,
+
+    /// Alert and highlight if window spend exceeds this threshold in USD
+    #[arg(long)]
+    alert_above: Option<f64>,
+
+    /// Maximum number of periods to keep (default 30 for day, 26 for week, 24 for month,
+    /// unbounded for year) -- or, under `--period all`, the number of top groups by
+    /// spend to keep (default 20, or persisted `config limit`). Counts periods, not rows:
+    /// a day with two adapters is one period, not two.
+    #[arg(short, long)]
+    limit: Option<usize>,
+
+    /// Group the rollup by adapter (default; most informative when nearly every session
+    /// shares one adapter, e.g. Claude Code), model (usually the useful one), or repo
+    #[arg(long, default_value = "adapter", value_parser = ["adapter", "model", "repo"])]
+    by: String,
+
+    /// Only include sessions started at or after this time: an absolute date
+    /// (`2026-08-01` or RFC 3339), or a relative shorthand (`1d`, `7d`, `2w`, `3m`)
+    #[arg(long)]
+    since: Option<String>,
+
+    /// Output usage data as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct OutcomesArgs {
+    /// Group the rate by model (default), adapter, or repo
+    #[arg(long, default_value = "model", value_parser = ["model", "adapter", "repo"])]
+    by: String,
+
+    /// Suppress groups with fewer than this many sessions (default 20)
+    #[arg(long)]
+    min_n: Option<usize>,
+
+    /// Only sessions started at or after this time: an absolute date (`2026-08-01` or
+    /// RFC 3339), or a relative shorthand (`1d`, `7d`, `2w`, `3m`)
+    #[arg(long)]
+    since: Option<String>,
+
+    /// Only sessions started before this time, same formats as `--since`
+    #[arg(long)]
+    until: Option<String>,
+
+    /// Include 1-event session stubs in the population
+    #[arg(long)]
+    include_stubs: bool,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct WindowShowArgs {
+    /// Window duration in hours
+    #[arg(long, default_value_t = 5)]
+    hours: i64,
+
+    /// Alert and highlight if window spend exceeds this threshold in USD
+    #[arg(long)]
+    alert_above: Option<f64>,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct WindowListArgs {
+    /// Window duration in hours
+    #[arg(long, default_value_t = 5)]
+    hours: i64,
+
+    /// How many consecutive windows to show, newest first (default 6)
+    #[arg(short, long)]
+    limit: Option<usize>,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
 enum ConfigAction {
     /// List every persisted config key and its current value
     List {
@@ -752,7 +1182,97 @@ enum ConfigAction {
     },
 }
 
+/// What `run()` actually dispatches on: the noun-verb grammar with every hidden alias
+/// already folded into it. Two spellings of the same command produce the same `Action`,
+/// which is what makes the alias table testable rather than a promise (see the tests at
+/// the bottom of this file).
+#[derive(Debug, PartialEq)]
+enum Action {
+    Session(SessionCommand),
+    Agent(AgentCommand),
+    Repo(RepoCommand),
+    Window(WindowCommand),
+    Stats {
+        action: Option<StatsCommand>,
+        args: StatsArgs,
+    },
+    Scan(ScanArgs),
+    Serve(ServeArgs),
+    Mcp,
+    Doctor(DoctorArgs),
+    Docs(DocsArgs),
+    Config(ConfigAction),
+    Version(VersionArgs),
+    Update(UpdateArgs),
+    Completions(CompletionsArgs),
+    Merge(MergeArgs),
+}
+
+/// The only place both spellings of a command are named. Everything below the divider is
+/// a pre-0.1.16 alias and goes when `HIDDEN_ALIASES_REMOVED_IN` arrives.
+fn normalize(command: Commands) -> Action {
+    match command {
+        Commands::Session { action } => Action::Session(action),
+        Commands::Agent { action } => Action::Agent(action),
+        Commands::Repo { action } => Action::Repo(action),
+        Commands::Window { action } => Action::Window(action),
+        Commands::Stats { action, args } => Action::Stats { action, args },
+        Commands::Scan(a) => Action::Scan(a),
+        Commands::Serve(a) => Action::Serve(a),
+        Commands::Mcp => Action::Mcp,
+        Commands::Doctor(a) => Action::Doctor(a),
+        Commands::Docs(a) => Action::Docs(a),
+        Commands::Config { action } => Action::Config(action),
+        Commands::Version(a) => Action::Version(a),
+        Commands::Update(a) => Action::Update(a),
+        Commands::Completions(a) => Action::Completions(a),
+        Commands::Merge(a) => Action::Merge(a),
+
+        // ---- hidden aliases ----
+        Commands::Traces(a) => Action::Session(SessionCommand::List(a)),
+        Commands::Inspect(a) => Action::Session(SessionCommand::Show(a)),
+        Commands::Export(a) => Action::Session(SessionCommand::Export(a)),
+        Commands::Receipt(a) => Action::Session(SessionCommand::Receipt(a)),
+        Commands::Handoff(a) => Action::Session(SessionCommand::Handoff(a)),
+        Commands::Forgotten(a) => Action::Session(SessionCommand::Forgotten(a)),
+        Commands::LooseEnds(a) => Action::Session(SessionCommand::LooseEnds(a)),
+        Commands::Asks(a) => Action::Session(SessionCommand::Asks(a)),
+        Commands::CacheDoctor(a) => Action::Session(SessionCommand::Cache(a)),
+        Commands::Bisect(a) => Action::Session(SessionCommand::Bisect(a)),
+        Commands::Search(a) => Action::Session(SessionCommand::Search(a)),
+        Commands::Recall(a) => Action::Session(SessionCommand::Recall(a)),
+        Commands::Audit(a) => Action::Session(SessionCommand::Audit(a)),
+        Commands::Blunder(a) => Action::Session(SessionCommand::Blunder(a)),
+        Commands::Autopsy(a) => Action::Session(SessionCommand::Autopsy(a)),
+        Commands::Watch(a) => Action::Session(SessionCommand::Watch(a)),
+        Commands::ThreatDigest(a) => Action::Session(SessionCommand::Risk(a)),
+        // `blind-spots` was never a listing of its own -- it is `session list` with one
+        // filter on, which is why the spec turned it into a flag.
+        Commands::BlindSpots(a) => Action::Session(SessionCommand::List(SessionListArgs {
+            limit: a.limit,
+            unproven: true,
+            json: a.json,
+            ..SessionListArgs::default()
+        })),
+        Commands::Matrix(a) => Action::Agent(AgentCommand::List(a)),
+        Commands::Blame(a) => Action::Repo(RepoCommand::Blame(a)),
+        Commands::PrBlame(a) => Action::Repo(RepoCommand::PrBlame(a)),
+        Commands::Suspect(a) => Action::Repo(RepoCommand::Suspect(a)),
+        Commands::BlunderBlame(a) => Action::Repo(RepoCommand::BlunderBlame(a)),
+        Commands::Usage(a) => Action::Stats {
+            action: Some(StatsCommand::Usage(a)),
+            args: StatsArgs { json: false },
+        },
+    }
+}
+
 pub fn run() -> Result<()> {
+    // Dynamic shell completion runs before argv is parsed: with COMPLETE=<shell> set, the
+    // binary answers the shell's completion request and exits, and with it unset this is a
+    // no-op. Nothing here touches the index -- the per-argument completers in
+    // `crate::completions` open their own read-only connection only when a value is asked for.
+    clap_complete::env::CompleteEnv::with_factory(Cli::command).complete();
+
     let cli = Cli::parse();
 
     // Initialize tracing
@@ -800,127 +1320,15 @@ pub fn run() -> Result<()> {
     console::set_colors_enabled(ui.color() != crate::ui::ColorMode::None);
     console::set_colors_enabled_stderr(ui.color() != crate::ui::ColorMode::None);
 
-    match cli.command {
-        Commands::Scan { paths, force, include_stubs, json } => {
-            run_scan_command(paths, force, include_stubs, resolve_json(json), cli.db_path, &ui)?;
+    match normalize(cli.command) {
+        Action::Scan(a) => {
+            run_scan_command(a.paths, a.force, a.include_stubs, resolve_json(a.json), cli.db_path, &ui)?;
         }
-        Commands::Stats { json } => {
-            run_stats_command(resolve_json(json), cli.db_path, &ui)?;
+        Action::Stats { action: None, args } => {
+            run_stats_command(resolve_json(args.json), cli.db_path, &ui)?;
         }
-        Commands::Doctor { json, self_test } => {
-            if self_test {
-                self_test::run_self_test_command(resolve_json(json), cli.db_path, &ui)?;
-            } else {
-                run_doctor_command(resolve_json(json), cli.db_path, &ui)?;
-            }
-        }
-        Commands::Version { offline, json } => {
-            version_info::run_version_command(resolve_json(json), offline)?;
-        }
-        Commands::Update { offline, json } => {
-            version_info::run_update_command(resolve_json(json), offline)?;
-        }
-        Commands::Matrix { json } => {
-            run_matrix_command(resolve_json(json), cli.db_path, &ui)?;
-        }
-        Commands::Traces {
-            limit,
-            adapter,
-            model,
-            all_stubs,
-            json,
-        } => {
-            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
-            run_traces_command(
-                limit,
-                adapter,
-                model,
-                all_stubs,
-                resolve_json(json),
-                cli.db_path,
-                &ui,
-            )?;
-        }
-        Commands::Inspect {
-            session_id,
-            last,
-            current,
-            json,
-        } => {
-            let json = resolve_json(json);
-            run_inspect_command(session_id, last, current, json, cli.db_path.clone(), &ui)?;
-        }
-        Commands::Export {
-            session_id,
-            last,
-            current,
-            redact,
-            format,
-            output,
-        } => {
-            run_export_command(
-                session_id,
-                last,
-                current,
-                redact,
-                &format,
-                output.as_deref(),
-                cli.db_path,
-                &ui,
-            )?;
-        }
-        Commands::Receipt {
-            session_id,
-            last,
-            current,
-            format,
-            output,
-        } => {
-            crate::run_receipt_command(
-                session_id,
-                last,
-                current,
-                &format,
-                output,
-                cli.db_path,
-                &ui,
-            )?;
-        }
-
-        Commands::Search {
-            query,
-            limit,
-            min_score,
-            kind,
-            json,
-        } => {
-            let limit = config::resolve_limit(limit, persisted_config.limit, 10);
-            crate::run_search_command(
-                &query,
-                limit,
-                min_score,
-                kind,
-                resolve_json(json),
-                cli.db_path,
-            )?;
-        }
-        Commands::Audit { safety, json } => {
-            crate::run_audit_command(safety, resolve_json(json), cli.db_path, &ui)?;
-        }
-        Commands::Blunder { top, submit, json } => {
-            crate::run_blunder_command(top, submit, resolve_json(json), cli.db_path, &ui)?;
-        }
-        Commands::Usage {
-            period,
-            pacing,
-            hours,
-            alert_above,
-            limit,
-            by,
-            since,
-            json,
-        } => {
-            let period = config::resolve_period(period, persisted_config.period.clone(), "day")?;
+        Action::Stats { action: Some(StatsCommand::Usage(a)), .. } => {
+            let period = config::resolve_period(a.period, persisted_config.period.clone(), "day")?;
             // Periods, not rows (see `UsageReport`'s doc comment): each period kind gets its
             // own sane default, and "year" has no cap because there are rarely more than a
             // handful of them to begin with. `--period all` has no period axis, so its
@@ -932,220 +1340,303 @@ pub fn run() -> Result<()> {
                 "year" => usize::MAX,
                 _ => 20,
             };
-            let limit = config::resolve_limit(limit, persisted_config.limit, builtin_limit_default);
-            let since = since.as_deref().map(parse_since_arg).transpose()?;
+            let limit = config::resolve_limit(a.limit, persisted_config.limit, builtin_limit_default);
+            let since = a.since.as_deref().map(parse_since_arg).transpose()?;
             run_usage_command(UsageCommandArgs {
                 period: &period,
-                pacing,
-                hours,
-                alert_above,
+                pacing: a.pacing,
+                hours: a.hours,
+                alert_above: a.alert_above,
                 limit,
-                by: &by,
+                by: &a.by,
                 since,
-                json: resolve_json(json),
+                json: resolve_json(a.json),
                 db_path: cli.db_path,
                 ui: &ui,
             })?;
         }
-        Commands::Blame { file_path, json } => {
-            run_blame_command(&file_path, resolve_json(json), cli.db_path, &ui)?;
-        }
-        Commands::Handoff {
-            session_id,
-            last,
-            current,
-            redact,
-            markdown,
-            max_lines,
-            json,
-        } => {
-            handoff_command::run_handoff_command(
-                session_id,
-                last,
-                current,
-                redact,
-                max_lines,
-                markdown,
-                resolve_json(json),
-                cli.db_path,
-                &ui,
-            )?;
-        }
-        Commands::Forgotten {
-            session_id,
-            last,
-            current,
-            round,
-            classes,
-            limit,
-            redact,
-            json,
-        } => {
-            forgotten_command::run_forgotten_command(
-                session_id,
-                last,
-                current,
-                round,
-                classes,
-                limit,
-                redact,
-                resolve_json(json),
-                cli.db_path,
-                &ui,
-            )?;
-        }
-        Commands::Asks {
-            session,
-            last,
-            current,
-            since,
-            unanswered,
-            json,
-        } => {
-            asks_command::run_asks_command(
-                session,
-                last,
-                current,
+        Action::Stats { action: Some(StatsCommand::Outcomes(a)), .. } => {
+            let since = a.since.as_deref().map(parse_since_arg).transpose()?;
+            let until = a.until.as_deref().map(parse_since_arg).transpose()?;
+            run_stats_outcomes_command(
+                &a.by,
+                a.min_n,
                 since,
-                unanswered,
-                resolve_json(json),
+                until,
+                a.include_stubs,
+                resolve_json(a.json),
                 cli.db_path,
                 &ui,
             )?;
         }
-        Commands::LooseEnds {
-            session_id,
-            last: _,
-            redact,
-            prompt,
-            json,
-        } => {
+        Action::Window(WindowCommand::Show(a)) => {
+            run_usage_command(UsageCommandArgs {
+                period: "day",
+                pacing: true,
+                hours: a.hours,
+                alert_above: a.alert_above,
+                limit: 30,
+                by: "adapter",
+                since: None,
+                json: resolve_json(a.json),
+                db_path: cli.db_path,
+                ui: &ui,
+            })?;
+        }
+        Action::Window(WindowCommand::List(a)) => {
+            let limit = config::resolve_limit(a.limit, persisted_config.limit, 6);
+            run_window_list_command(a.hours, limit, resolve_json(a.json), cli.db_path, &ui)?;
+        }
+        Action::Session(SessionCommand::List(a)) => {
+            let limit = config::resolve_limit(a.limit, persisted_config.limit, 20);
+            if a.unproven {
+                blind_spots::run_blind_spots_command(limit, resolve_json(a.json), cli.db_path, &ui)?;
+            } else {
+                run_traces_command(
+                    limit,
+                    a.adapter,
+                    a.model,
+                    a.all_stubs,
+                    resolve_json(a.json),
+                    cli.db_path,
+                    &ui,
+                )?;
+            }
+        }
+        Action::Session(SessionCommand::Show(a)) => {
+            let json = resolve_json(a.json);
+            run_inspect_command(a.session_id, a.last, a.current, json, cli.db_path.clone(), &ui)?;
+        }
+        Action::Session(SessionCommand::Export(a)) => {
+            run_export_command(
+                a.session_id,
+                a.last,
+                a.current,
+                a.redact,
+                &a.format,
+                a.output.as_deref(),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::Receipt(a)) => {
+            crate::run_receipt_command(
+                a.session_id,
+                a.last,
+                a.current,
+                &a.format,
+                a.output,
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::Search(a)) => {
+            let limit = config::resolve_limit(a.limit, persisted_config.limit, 10);
+            crate::run_search_command(
+                &a.query,
+                limit,
+                a.min_score,
+                a.kind,
+                resolve_json(a.json),
+                cli.db_path,
+            )?;
+        }
+        Action::Session(SessionCommand::Audit(a)) => {
+            crate::run_audit_command(a.safety, resolve_json(a.json), cli.db_path, &ui)?;
+        }
+        Action::Session(SessionCommand::Blunder(a)) => {
+            crate::run_blunder_command(a.top, a.submit, resolve_json(a.json), cli.db_path, &ui)?;
+        }
+        Action::Session(SessionCommand::Handoff(a)) => {
+            handoff_command::run_handoff_command(
+                a.session_id,
+                a.last,
+                a.current,
+                a.redact,
+                a.max_lines,
+                a.markdown,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::Forgotten(a)) => {
+            forgotten_command::run_forgotten_command(
+                a.session_id,
+                a.last,
+                a.current,
+                a.round,
+                a.classes,
+                a.limit,
+                a.redact,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::Asks(a)) => {
+            asks_command::run_asks_command(
+                a.session_id.or(a.session),
+                a.last,
+                a.current,
+                a.since,
+                a.unanswered,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::LooseEnds(a)) => {
             handoff_command::run_loose_ends_command(
-                session_id,
-                redact,
-                prompt,
-                resolve_json(json),
+                a.session_id,
+                a.last,
+                a.current,
+                a.redact,
+                a.prompt,
+                resolve_json(a.json),
                 cli.db_path,
                 &ui,
             )?;
         }
-        Commands::Serve { port, open, dist } => {
-            let storage = open_storage(cli.db_path)?;
-            let dist_path = crate::server::resolve_dist_dir(dist)?;
-            let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(crate::start_server(storage, port, open, dist_path))?;
+        Action::Session(SessionCommand::Cache(a)) => {
+            cache_doctor::run_cache_doctor_command(
+                a.session_id,
+                a.last,
+                a.current,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
         }
-        Commands::Mcp => {
-            let storage = open_storage(cli.db_path)?;
-            let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(crate::run_mcp_server(storage))?;
+        Action::Session(SessionCommand::Bisect(a)) => {
+            bisect::run_bisect_command(
+                a.session_id,
+                a.last,
+                a.current,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
         }
-        Commands::Merge { source_db, json } => {
-            merge::run_merge_command(source_db, resolve_json(json), cli.db_path, &ui)?;
+        Action::Session(SessionCommand::Watch(a)) => {
+            watch::run_watch_command(
+                a.interval_secs,
+                a.poll_once,
+                resolve_json(a.json),
+                a.paths,
+                cli.db_path,
+                &ui,
+            )?;
         }
-        Commands::Watch {
-            interval_secs,
-            poll_once,
-            json,
-            paths,
-        } => {
-            watch::run_watch_command(interval_secs, poll_once, resolve_json(json), paths, cli.db_path, &ui)?;
-        }
-        Commands::CacheDoctor { session_id, json } => {
-            cache_doctor::run_cache_doctor_command(&session_id, resolve_json(json), cli.db_path, &ui)?;
-        }
-        Commands::BlindSpots { limit, json } => {
-            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
-            blind_spots::run_blind_spots_command(limit, resolve_json(json), cli.db_path, &ui)?;
-        }
-        Commands::ThreatDigest {
-            limit,
-            min_severity,
-            json,
-        } => {
-            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+        Action::Session(SessionCommand::Risk(a)) => {
+            let limit = config::resolve_limit(a.limit, persisted_config.limit, 20);
             threat_digest::run_threat_digest_command(
                 limit,
-                &min_severity,
-                resolve_json(json),
+                &a.min_severity,
+                resolve_json(a.json),
                 cli.db_path,
                 &ui,
             )?;
         }
-        Commands::Autopsy {
-            min_occurrences,
-            json,
-        } => {
-            autopsy::run_autopsy_command(min_occurrences, resolve_json(json), cli.db_path)?;
+        Action::Session(SessionCommand::Autopsy(a)) => {
+            autopsy::run_autopsy_command(a.min_occurrences, resolve_json(a.json), cli.db_path)?;
         }
-        Commands::Recall {
-            query,
-            limit,
-            min_score,
-            json,
-        } => {
-            let limit = config::resolve_limit(limit, persisted_config.limit, 5);
-            recall::run_recall_command(&query, limit, min_score, resolve_json(json), cli.db_path)?;
+        Action::Session(SessionCommand::Recall(a)) => {
+            let limit = config::resolve_limit(a.limit, persisted_config.limit, 5);
+            recall::run_recall_command(&a.query, limit, a.min_score, resolve_json(a.json), cli.db_path)?;
         }
-        Commands::Bisect { session_id, json } => {
-            bisect::run_bisect_command(&session_id, resolve_json(json), cli.db_path, &ui)?;
+        Action::Agent(AgentCommand::List(a)) => {
+            run_matrix_command(resolve_json(a.json), cli.db_path, &ui)?;
         }
-        Commands::PrBlame { files, json } => {
-            pr_blame::run_pr_blame_command(files, resolve_json(json), cli.db_path, &ui)?;
+        Action::Agent(AgentCommand::Show(a)) => {
+            run_agent_show_command(&a.adapter, resolve_json(a.json), cli.db_path, &ui)?;
         }
-        Commands::BlunderBlame {
-            file,
-            session,
-            last,
-            current,
-            top,
-            json,
-        } => {
-            crate::run_blunder_blame_command(
-                file,
-                session,
-                last,
-                current,
-                top,
-                resolve_json(json),
-                cli.db_path,
-                &ui,
-            )?;
+        Action::Repo(RepoCommand::List(a)) => {
+            let limit = config::resolve_limit(a.limit, persisted_config.limit, 20);
+            run_repo_list_command(limit, resolve_json(a.json), cli.db_path, &ui)?;
         }
-        Commands::Suspect {
-            repo,
-            since,
-            branch,
-            base,
-            window_hours,
-            hook,
-            quiet,
-            json,
-        } => {
+        Action::Repo(RepoCommand::Blame(a)) => {
+            run_blame_command(&a.file_path, resolve_json(a.json), cli.db_path, &ui)?;
+        }
+        Action::Repo(RepoCommand::PrBlame(a)) => {
+            pr_blame::run_pr_blame_command(a.files, resolve_json(a.json), cli.db_path, &ui)?;
+        }
+        Action::Repo(RepoCommand::Suspect(a)) => {
             crate::commands::suspect::run_suspect_command(
                 crate::commands::suspect::SuspectArgs {
-                    repo,
-                    since,
-                    branch,
-                    base,
-                    window_hours,
-                    json: resolve_json(json),
-                    hook,
-                    quiet,
+                    repo: a.repo,
+                    since: a.since,
+                    branch: a.branch,
+                    base: a.base,
+                    window_hours: a.window_hours,
+                    json: resolve_json(a.json),
+                    hook: a.hook,
+                    quiet: a.quiet,
                 },
                 cli.db_path,
                 &ui,
             )?;
         }
-        Commands::Config { action } => match action {
+        Action::Repo(RepoCommand::BlunderBlame(a)) => {
+            crate::run_blunder_blame_command(
+                a.file,
+                a.session,
+                a.last,
+                a.current,
+                a.top,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Serve(a) => {
+            let storage = open_storage(cli.db_path)?;
+            let dist_path = crate::server::resolve_dist_dir(a.dist)?;
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(crate::start_server(storage, a.port, a.open, dist_path))?;
+        }
+        Action::Mcp => {
+            let storage = open_storage(cli.db_path)?;
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(crate::run_mcp_server(storage))?;
+        }
+        Action::Merge(a) => {
+            merge::run_merge_command(a.source_db, resolve_json(a.json), cli.db_path, &ui)?;
+        }
+        Action::Doctor(a) => {
+            if a.self_test {
+                self_test::run_self_test_command(resolve_json(a.json), cli.db_path, &ui)?;
+            } else {
+                run_doctor_command(resolve_json(a.json), cli.db_path, &ui)?;
+            }
+        }
+        Action::Version(a) => {
+            version_info::run_version_command(resolve_json(a.json), a.offline)?;
+        }
+        Action::Update(a) => {
+            version_info::run_update_command(resolve_json(a.json), a.offline)?;
+        }
+        Action::Completions(a) => {
+            // Generated for the name this binary was actually invoked as, not for the clap
+            // command's own name: the same executable answers to `archie`, `agwt` and
+            // `agentworth`, and a script naming the wrong one completes nothing.
+            let mut cmd = Cli::command();
+            let bin = std::env::args_os()
+                .next()
+                .map(PathBuf::from)
+                .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "archie".to_string());
+            clap_complete::aot::generate(a.shell, &mut cmd, bin, &mut std::io::stdout());
+        }
+        Action::Config(action) => match action {
             ConfigAction::List { json } => config::run_config_list(resolve_json(json))?,
             ConfigAction::Get { key, json } => config::run_config_get(&key, resolve_json(json))?,
             ConfigAction::Set { key, value, json } => {
                 config::run_config_set(&key, &value, resolve_json(json))?
             }
         },
-        Commands::Docs { format, write } => {
-            crate::commands::docs::run_docs_command(&format, write)?;
+        Action::Docs(a) => {
+            crate::commands::docs::run_docs_command(&a.format, a.write)?;
         }
     }
 
@@ -2408,31 +2899,6 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>, ui: &crate::
     // anyone remembering to add it in a second place.
     let adapters: Vec<Box<dyn agentworth_adapter_sdk::AgentAdapter>> = agentworth_adapters::all_adapters();
 
-    let default_roots: std::collections::HashMap<&'static str, &'static str> = [
-        ("aider", "~/.aider* / chat history"),
-        ("claude_code", "~/.claude/projects/"),
-        ("cline", "~/.config/Code/.../cline/"),
-        ("codex", "~/.codex/sessions/"),
-        ("cursor", "~/.cursor/ / workspaceStorage"),
-        ("deepseek", "~/.deepseek/"),
-        ("gemini", "~/.gemini/ / antigravity"),
-        ("goose", "~/.config/goose/sessions/"),
-        ("grok", "~/.grok/ / ~/.xai/"),
-        ("herdr", "~/.herdr/"),
-        ("hermes", "~/.hermes/"),
-        ("kimi", "~/.kimi/"),
-        ("manus", "~/.manus/"),
-        ("minimax", "~/.minimax/"),
-        ("openclaw", "~/.openclaw/"),
-        ("opencode", "~/.opencode/"),
-        ("pi", "~/.pi/"),
-        ("qwen", "~/.qwen/"),
-        ("windsurf", "~/.codeium/windsurf/"),
-        ("zhipu", "~/.zhipu/ / codegeex/"),
-    ]
-    .into_iter()
-    .collect();
-
     let scan_opts = ScanOptions::default();
     let mut rows_data = Vec::new();
     let mut total_supported = 0usize;
@@ -2446,7 +2912,7 @@ fn run_matrix_command(json_output: bool, _db_path: Option<PathBuf>, ui: &crate::
         total_possible += poss;
 
         let is_detected = adapter.detect(&scan_opts).map(|d| d.is_present).unwrap_or(false);
-        let source_root = default_roots.get(name).copied().unwrap_or("~/.<agent>/");
+        let source_root = adapter_source_root(name);
 
         rows_data.push((name, source_root, caps, is_detected));
     }
@@ -3309,5 +3775,561 @@ mod tests {
         );
         // Every session is "commit_observed" -- rung 4.
         assert_eq!(rungs_summed, 4 * SESSION_COUNT as usize);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Command: repo list
+// -----------------------------------------------------------------------------
+
+/// The repositories this index holds. `repo` is not a stored column -- it is derived from
+/// `sessions.source_path` (`extract_repository_or_workspace`), which is why the count comes
+/// from `Storage::get_top_repositories` rather than a `GROUP BY`.
+fn run_repo_list_command(
+    limit: usize,
+    json: bool,
+    db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
+) -> Result<()> {
+    let storage = open_storage(db_path)?;
+    let ranked = storage.get_top_repositories()?;
+    let total_sessions: usize = ranked.iter().map(|(_, n)| *n).sum();
+
+    if json {
+        let rows: Vec<_> = ranked
+            .iter()
+            .take(limit)
+            .map(|(repo, sessions)| json!({ "repo": repo, "sessions": sessions }))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "total_repos": ranked.len(),
+                "total_sessions": total_sessions,
+                "repos": rows,
+            }))?
+        );
+        return Ok(());
+    }
+
+    let rows: Vec<crate::ui::views::RepoListRow<'_>> = ranked
+        .iter()
+        .take(limit)
+        .map(|(repo, sessions)| crate::ui::views::RepoListRow {
+            repo,
+            sessions: *sessions,
+        })
+        .collect();
+    print!(
+        "{}",
+        crate::ui::views::repo_list(
+            ui,
+            &crate::ui::views::RepoListView {
+                total_repos: ranked.len(),
+                total_sessions,
+                rows: &rows,
+            }
+        )
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// Command: agent show
+// -----------------------------------------------------------------------------
+
+fn run_agent_show_command(
+    adapter_name: &str,
+    json: bool,
+    db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
+) -> Result<()> {
+    let adapters = agentworth_adapters::all_adapters();
+    let adapter = adapters
+        .iter()
+        .find(|a| a.name() == adapter_name)
+        .with_context(|| {
+            let names: Vec<&str> = adapters.iter().map(|a| a.name()).collect();
+            format!(
+                "no adapter named '{adapter_name}'. Registered adapters: {}",
+                names.join(", ")
+            )
+        })?;
+
+    let caps = adapter.capabilities();
+    let detected = adapter
+        .detect(&ScanOptions::default())
+        .map(|d| d.is_present)
+        .unwrap_or(false);
+    let source_root = adapter_source_root(adapter_name);
+
+    let storage = open_storage(db_path)?;
+    let stats = storage.get_aggregate_stats(false)?;
+    let indexed_sessions = stats
+        .sessions_by_adapter
+        .get(adapter_name)
+        .copied()
+        .unwrap_or(0);
+
+    let sessions = storage.list_sessions_filtered(&SessionFilter {
+        adapter: Some(adapter_name.to_string()),
+        order_by: Some(SessionOrderBy::StartedAtDesc),
+        ..Default::default()
+    })?;
+    let indexed_tokens: u64 = sessions.iter().map(|s| s.total_tokens).sum();
+    let mut models: Vec<String> = sessions
+        .iter()
+        .flat_map(|s| s.models_used.iter().cloned())
+        .collect();
+    models.sort();
+    models.dedup();
+
+    let capabilities: [(&str, bool); 7] = [
+        ("prompts", caps.prompts),
+        ("tokens", caps.tokens),
+        ("tools", caps.tools),
+        ("shell", caps.shell),
+        ("diffs", caps.diffs),
+        ("thinking", caps.thinking),
+        ("outcomes", caps.outcomes),
+    ];
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "adapter": adapter_name,
+                "source_root": source_root,
+                "is_detected": detected,
+                "extraction": {
+                    "prompts": caps.prompts,
+                    "tokens": caps.tokens,
+                    "tools": caps.tools,
+                    "shell": caps.shell,
+                    "diffs": caps.diffs,
+                    "thinking": caps.thinking,
+                    "outcomes": caps.outcomes,
+                },
+                "indexed_sessions": indexed_sessions,
+                "indexed_tokens": indexed_tokens,
+                "models": models,
+            }))?
+        );
+        return Ok(());
+    }
+
+    print!(
+        "{}",
+        crate::ui::views::agent_show(
+            ui,
+            &crate::ui::views::AgentShowView {
+                adapter: adapter_name,
+                source_root,
+                detected,
+                capabilities: &capabilities,
+                indexed_sessions,
+                indexed_tokens,
+                models: &models,
+            }
+        )
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// Command: window list
+// -----------------------------------------------------------------------------
+
+/// Recent rolling windows.
+///
+/// Read the simplest correct way rather than through a new bucketing query in storage: one
+/// bounded `list_sessions_filtered` over exactly the span the requested windows cover, then
+/// bucketed here. The span is `hours * limit` wide, so this reads recent rows, never the
+/// index. Anchored on the newest indexed session the same way `Storage::get_pacing_window`
+/// anchors, so a machine that has been idle for a day still shows its last active windows.
+fn run_window_list_command(
+    hours: i64,
+    limit: usize,
+    json: bool,
+    db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
+) -> Result<()> {
+    let storage = open_storage(db_path)?;
+    let hours = hours.max(1);
+    let limit = limit.clamp(1, 200);
+
+    let newest = storage.list_sessions_filtered(&SessionFilter {
+        limit: Some(1),
+        order_by: Some(SessionOrderBy::StartedAtDesc),
+        ..Default::default()
+    })?;
+    let Some(anchor) = newest.first().map(|s| s.started_at) else {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "window_hours": hours, "windows": [] }))?
+            );
+        } else {
+            print!(
+                "{}",
+                crate::ui::views::window_list(
+                    ui,
+                    &crate::ui::views::WindowListView {
+                        hours,
+                        anchor: "nothing indexed",
+                        rows: &[],
+                    }
+                )
+            );
+        }
+        return Ok(());
+    };
+
+    let span = chrono::Duration::hours(hours * limit as i64);
+    let sessions = storage.list_sessions_filtered(&SessionFilter {
+        start_date: Some(anchor - span),
+        order_by: Some(SessionOrderBy::StartedAtDesc),
+        ..Default::default()
+    })?;
+
+    let mut buckets: Vec<(usize, u64, f64)> = vec![(0, 0, 0.0); limit];
+    for s in &sessions {
+        let elapsed_hours = (anchor - s.started_at).num_seconds() as f64 / 3600.0;
+        let index = (elapsed_hours / hours as f64).floor().max(0.0) as usize;
+        if index >= limit {
+            continue;
+        }
+        buckets[index].0 += 1;
+        buckets[index].1 += s.total_tokens;
+        // Priced from the same per-model usage rows `stats usage` prices from, so the two
+        // surfaces cannot disagree about what a window cost.
+        let per_model: std::collections::BTreeMap<String, agentworth_schema::TokenUsage> = storage
+            .get_session_model_usage(&s.session_id)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        buckets[index].2 += agentworth_storage::estimate_total_cost_from_per_model_usage(&per_model);
+    }
+
+    let rows: Vec<crate::ui::views::WindowListRow> = buckets
+        .iter()
+        .enumerate()
+        .map(|(i, (sessions, tokens, cost))| {
+            let end = anchor - chrono::Duration::hours(hours * i as i64);
+            let start = end - chrono::Duration::hours(hours);
+            crate::ui::views::WindowListRow {
+                label: format!("{} to {}", start.format("%b %e %H:%M"), end.format("%H:%M")),
+                sessions: *sessions,
+                total_tokens: *tokens,
+                estimated_cost_usd: *cost,
+                burn_rate_tokens_per_hour: *tokens as f64 / hours as f64,
+            }
+        })
+        .collect();
+
+    if json {
+        let out: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let end = anchor - chrono::Duration::hours(hours * i as i64);
+                json!({
+                    "started_at": (end - chrono::Duration::hours(hours)).to_rfc3339(),
+                    "ended_at": end.to_rfc3339(),
+                    "session_count": r.sessions,
+                    "total_tokens": r.total_tokens,
+                    "estimated_cost_usd": r.estimated_cost_usd,
+                    "burn_rate_tokens_per_hour": r.burn_rate_tokens_per_hour,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "window_hours": hours,
+                "anchored_at": anchor.to_rfc3339(),
+                "windows": out,
+            }))?
+        );
+        return Ok(());
+    }
+
+    let anchor_label = anchor.format("%b %e %H:%M").to_string();
+    print!(
+        "{}",
+        crate::ui::views::window_list(
+            ui,
+            &crate::ui::views::WindowListView {
+                hours,
+                anchor: &anchor_label,
+                rows: &rows,
+            }
+        )
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// Command: stats outcomes
+// -----------------------------------------------------------------------------
+
+/// `outcome_rate` on the CLI. The aggregate itself already exists in storage and behind the
+/// MCP tool; this is the surface a person can type.
+#[allow(clippy::too_many_arguments)]
+fn run_stats_outcomes_command(
+    by: &str,
+    min_n: Option<usize>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    until: Option<chrono::DateTime<chrono::Utc>>,
+    include_stubs: bool,
+    json: bool,
+    db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
+) -> Result<()> {
+    use agentworth_storage::OutcomeRateGroupBy;
+
+    let storage = open_storage(db_path)?;
+    let group_by = match by {
+        "adapter" => OutcomeRateGroupBy::Adapter,
+        "repo" => OutcomeRateGroupBy::Repo,
+        _ => OutcomeRateGroupBy::Model,
+    };
+    // The same floor `outcome_rate` uses over MCP (docs/specs/verified-outcome-rate.md).
+    let min_n = min_n.unwrap_or(20);
+    let result = storage.get_outcome_rate(group_by, since, until, min_n, include_stubs)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
+
+    let rows: Vec<crate::ui::views::StatsOutcomesRow<'_>> = result
+        .rows
+        .iter()
+        .map(|r| crate::ui::views::StatsOutcomesRow {
+            key: &r.key,
+            n: r.n,
+            verified: r.verified,
+            rate: r.rate,
+            reason: r.reason.as_deref(),
+        })
+        .collect();
+
+    let counted_at = result.receipt.counted_at.format("%Y-%m-%d %H:%M UTC").to_string();
+    print!(
+        "{}",
+        crate::ui::views::stats_outcomes(
+            ui,
+            &crate::ui::views::StatsOutcomesView {
+                group_by: by,
+                min_n: result.min_n,
+                baseline_n: result.baseline.n,
+                baseline_rate: result.baseline.rate,
+                suppressed_groups: result.suppressed_groups,
+                rows: &rows,
+                counted_at: &counted_at,
+            }
+        )
+    );
+    Ok(())
+}
+
+/// Where an adapter keeps its history by default. One table, shared by `agent list` and
+/// `agent show`, so the two can't disagree about where to look.
+fn adapter_source_root(name: &str) -> &'static str {
+    match name {
+        "aider" => "~/.aider* / chat history",
+        "claude_code" => "~/.claude/projects/",
+        "cline" => "~/.config/Code/.../cline/",
+        "codex" => "~/.codex/sessions/",
+        "cursor" => "~/.cursor/ / workspaceStorage",
+        "deepseek" => "~/.deepseek/",
+        "gemini" => "~/.gemini/ / antigravity",
+        "goose" => "~/.config/goose/sessions/",
+        "grok" => "~/.grok/ / ~/.xai/",
+        "herdr" => "~/.herdr/",
+        "hermes" => "~/.hermes/",
+        "kimi" => "~/.kimi/",
+        "manus" => "~/.manus/",
+        "minimax" => "~/.minimax/",
+        "openclaw" => "~/.openclaw/",
+        "opencode" => "~/.opencode/",
+        "pi" => "~/.pi/",
+        "qwen" => "~/.qwen/",
+        "windsurf" => "~/.codeium/windsurf/",
+        "zhipu" => "~/.zhipu/ / codegeex/",
+        _ => "~/.<agent>/",
+    }
+}
+
+#[cfg(test)]
+mod grammar_tests {
+    use super::*;
+    use clap::Parser;
+
+    fn action(argv: &[&str]) -> Action {
+        let mut full = vec!["agentworth"];
+        full.extend_from_slice(argv);
+        normalize(
+            Cli::try_parse_from(full)
+                .unwrap_or_else(|e| panic!("{argv:?} did not parse: {e}"))
+                .command,
+        )
+    }
+
+    /// Every hidden alias, and the noun-verb spelling it has to be indistinguishable from.
+    /// One table rather than one test per command: a command added to the grammar without a
+    /// row here is caught by `every_hidden_command_has_a_row` below, and a row that stops
+    /// agreeing is caught here.
+    const ALIAS_PAIRS: &[(&[&str], &[&str])] = &[
+        (&["traces", "--limit", "5"], &["session", "list", "--limit", "5"]),
+        (&["inspect", "abc123"], &["session", "show", "abc123"]),
+        (&["inspect", "--last", "--json"], &["session", "show", "--last", "--json"]),
+        (
+            &["export", "abc", "--format", "atif"],
+            &["session", "export", "abc", "--format", "atif"],
+        ),
+        (
+            &["receipt", "abc", "--format", "svg"],
+            &["session", "receipt", "abc", "--format", "svg"],
+        ),
+        (&["handoff", "abc", "--redact"], &["session", "handoff", "abc", "--redact"]),
+        (
+            &["forgotten", "abc", "--round", "2"],
+            &["session", "forgotten", "abc", "--round", "2"],
+        ),
+        (&["loose-ends", "abc"], &["session", "loose-ends", "abc"]),
+        (&["asks", "--session", "abc"], &["session", "asks", "--session", "abc"]),
+        (&["cache-doctor", "abc"], &["session", "cache", "abc"]),
+        (&["bisect", "abc"], &["session", "bisect", "abc"]),
+        (&["search", "a query"], &["session", "search", "a query"]),
+        (&["recall", "a query"], &["session", "recall", "a query"]),
+        (&["audit", "--safety"], &["session", "audit", "--safety"]),
+        (&["blunder", "--top", "3"], &["session", "blunder", "--top", "3"]),
+        (&["autopsy"], &["session", "autopsy"]),
+        (&["watch", "--poll-once"], &["session", "watch", "--poll-once"]),
+        (
+            &["threat-digest", "--min-severity", "high"],
+            &["session", "risk", "--min-severity", "high"],
+        ),
+        (&["blind-spots"], &["session", "list", "--unproven"]),
+        (
+            &["blind-spots", "--limit", "7", "--json"],
+            &["session", "list", "--unproven", "--limit", "7", "--json"],
+        ),
+        (&["matrix", "--json"], &["agent", "list", "--json"]),
+        (&["blame", "src/lib.rs"], &["repo", "blame", "src/lib.rs"]),
+        (&["pr-blame", "src/lib.rs"], &["repo", "pr-blame", "src/lib.rs"]),
+        (&["suspect", "--quiet"], &["repo", "suspect", "--quiet"]),
+        (&["blunder-blame", "--last"], &["repo", "blunder-blame", "--last"]),
+        (&["usage", "--period", "week"], &["stats", "usage", "--period", "week"]),
+    ];
+
+    #[test]
+    fn every_hidden_alias_dispatches_to_its_new_spelling() {
+        for (old, new) in ALIAS_PAIRS {
+            assert_eq!(
+                action(old),
+                action(new),
+                "`{}` and `{}` must reach the same handler",
+                old.join(" "),
+                new.join(" ")
+            );
+        }
+    }
+
+    /// The alias table and the clap tree have to describe the same set. Without this, a
+    /// hidden variant could quietly exist with nothing documenting what replaced it.
+    #[test]
+    fn every_hidden_command_has_a_row() {
+        let mut cmd = cli_command();
+        cmd.build();
+        let hidden: Vec<String> = cmd
+            .get_subcommands()
+            .filter(|s| s.is_hide_set() && s.get_name() != "help")
+            .map(|s| s.get_name().to_string())
+            .collect();
+
+        for name in &hidden {
+            assert!(
+                OLD_CLI_SPELLINGS.iter().any(|(old, _)| old == name),
+                "hidden command `{name}` has no row in OLD_CLI_SPELLINGS"
+            );
+        }
+        for (old, _) in OLD_CLI_SPELLINGS {
+            assert!(
+                hidden.iter().any(|n| n == old),
+                "OLD_CLI_SPELLINGS lists `{old}`, which is not a hidden command"
+            );
+        }
+        assert!(
+            ALIAS_PAIRS.len() >= hidden.len(),
+            "every hidden command needs at least one ALIAS_PAIRS row"
+        );
+    }
+
+    /// The nouns and the machine-level commands stay visible. A `hide = true` landing on one
+    /// of these by accident would empty out `--help` without failing anything else.
+    #[test]
+    fn the_noun_tree_and_the_top_level_are_visible() {
+        let mut cmd = cli_command();
+        cmd.build();
+        let visible: Vec<String> = cmd
+            .get_subcommands()
+            .filter(|s| !s.is_hide_set())
+            .map(|s| s.get_name().to_string())
+            .collect();
+
+        for expected in [
+            "session", "agent", "repo", "window", "stats", "scan", "serve", "mcp", "doctor",
+            "docs", "config", "version", "update", "completions", "merge",
+        ] {
+            assert!(
+                visible.iter().any(|n| n == expected),
+                "`{expected}` should be visible in --help; visible: {visible:?}"
+            );
+        }
+    }
+
+    /// `--unproven` is a filter on the listing, not a second listing wearing a flag, so it
+    /// must refuse the filters it would silently ignore.
+    #[test]
+    fn unproven_refuses_the_filters_it_would_ignore() {
+        assert!(Cli::try_parse_from(["agentworth", "session", "list", "--unproven", "--adapter", "codex"]).is_err());
+        assert!(Cli::try_parse_from(["agentworth", "session", "list", "--unproven", "--model", "sonnet"]).is_err());
+    }
+
+    /// `window show` and the `usage --pacing` flag it replaced both end at the pacing path.
+    #[test]
+    fn window_show_and_usage_pacing_agree_on_the_window() {
+        let Action::Stats { action: Some(StatsCommand::Usage(usage)), .. } =
+            action(&["usage", "--pacing", "--hours", "3"])
+        else {
+            panic!("`usage --pacing` should normalize to stats usage");
+        };
+        let Action::Window(WindowCommand::Show(window)) = action(&["window", "show", "--hours", "3"])
+        else {
+            panic!("`window show` should normalize to the window noun");
+        };
+        assert!(usage.pacing);
+        assert_eq!(usage.hours, window.hours);
+    }
+
+    #[test]
+    fn the_new_verbs_parse() {
+        assert!(matches!(
+            action(&["agent", "show", "claude_code"]),
+            Action::Agent(AgentCommand::Show(_))
+        ));
+        assert!(matches!(action(&["repo", "list"]), Action::Repo(RepoCommand::List(_))));
+        assert!(matches!(
+            action(&["window", "list", "--hours", "2"]),
+            Action::Window(WindowCommand::List(_))
+        ));
+        assert!(matches!(
+            action(&["stats", "outcomes", "--by", "adapter"]),
+            Action::Stats { action: Some(StatsCommand::Outcomes(_)), .. }
+        ));
+        assert!(matches!(action(&["stats"]), Action::Stats { action: None, .. }));
     }
 }

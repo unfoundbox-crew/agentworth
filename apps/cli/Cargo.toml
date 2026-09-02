@@ -21,6 +21,12 @@ path = "src/main.rs"
 name = "agwt"
 path = "src/bin/agwt.rs"
 
+# The short name from 0.1.16 on. `agwt` still ships and still works; every doc, help string
+# and install line says `archie`.
+[[bin]]
+name = "archie"
+path = "src/bin/archie.rs"
+
 [dependencies]
 agentworth-schema.workspace = true
 agentworth-adapter-sdk.workspace = true
@@ -32,6 +38,7 @@ agentworth-export-atif.workspace = true
 agentworth-outcomes.workspace = true
 agentworth-scoring.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

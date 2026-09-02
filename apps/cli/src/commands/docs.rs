@@ -83,6 +83,22 @@ pub struct ReferenceDoc {
     pub cli: Vec<CliCommandDoc>,
     pub api: Vec<ApiRouteDoc>,
     pub mcp: Vec<McpToolDoc>,
+    /// Old spelling -> new spelling, for the pre-0.1.16 CLI commands and MCP tools that
+    /// still run but no longer appear in help. Read from `crate::app`'s own tables, so this
+    /// cannot drift from what the binary actually accepts.
+    pub old_spellings: Vec<OldSpelling>,
+}
+
+/// One retired name and what replaced it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OldSpelling {
+    /// `cli` or `mcp`.
+    pub surface: String,
+    pub old: String,
+    pub new: String,
+    /// The release the old name stops working in.
+    pub removed_in: String,
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -126,14 +142,41 @@ pub fn build_reference_doc() -> ReferenceDoc {
         })
         .collect();
 
+    // Hidden things stay out of the reference: a retired tool name appears once, in the
+    // old-spellings table, not documented a second time as a tool of its own.
     let mcp = crate::mcp::AgentWorthMcpServer::tool_router()
         .list_all()
         .into_iter()
+        .filter(|tool| {
+            !crate::app::OLD_MCP_TOOL_NAMES
+                .iter()
+                .any(|(old, _)| *old == tool.name.as_ref())
+        })
         .map(|tool| McpToolDoc {
             name: tool.name.to_string(),
             description: tool.description.map(|d| d.to_string()).unwrap_or_default(),
             input_schema: serde_json::Value::Object((*tool.input_schema).clone()),
         })
+        .collect();
+
+    let old_spellings = crate::app::OLD_CLI_SPELLINGS
+        .iter()
+        .map(|(old, new)| OldSpelling {
+            surface: "cli".to_string(),
+            old: (*old).to_string(),
+            new: (*new).to_string(),
+            removed_in: crate::app::HIDDEN_ALIASES_REMOVED_IN.to_string(),
+        })
+        .chain(
+            crate::app::OLD_MCP_TOOL_NAMES
+                .iter()
+                .map(|(old, new)| OldSpelling {
+                    surface: "mcp".to_string(),
+                    old: (*old).to_string(),
+                    new: (*new).to_string(),
+                    removed_in: crate::app::HIDDEN_ALIASES_REMOVED_IN.to_string(),
+                }),
+        )
         .collect();
 
     ReferenceDoc {
@@ -143,6 +186,7 @@ pub fn build_reference_doc() -> ReferenceDoc {
         cli,
         api,
         mcp,
+        old_spellings,
     }
 }
 
@@ -283,6 +327,29 @@ pub fn render_markdown(doc: &ReferenceDoc) -> String {
             let _ = writeln!(out);
         }
         render_args_table(&mut out, &cmd.args);
+    }
+
+    if !doc.old_spellings.is_empty() {
+        let removed_in = doc
+            .old_spellings
+            .first()
+            .map(|s| s.removed_in.clone())
+            .unwrap_or_default();
+        let _ = writeln!(out, "### Old spellings");
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "The commands and MCP tools below were renamed in 0.1.16. Every old name still \
+             runs and reaches the same handler; none of them appears in `--help` any more, \
+             and all of them stop working in {removed_in}."
+        );
+        let _ = writeln!(out);
+        let _ = writeln!(out, "| Surface | Old | New |");
+        let _ = writeln!(out, "|---|---|---|");
+        for s in &doc.old_spellings {
+            let _ = writeln!(out, "| {} | `{}` | `{}` |", s.surface, s.old, s.new);
+        }
+        let _ = writeln!(out);
     }
 
     let _ = writeln!(out, "## HTTP API");

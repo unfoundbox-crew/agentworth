@@ -77,18 +77,18 @@ export function getCacheDir(version, homeDir) {
 /**
  * Returns the expected native binary name for the target platform.
  *
- * `invokedAs` selects between the two native binaries the release tarball ships
- * (`agentworth` and its `agwt` alias, see apps/cli/Cargo.toml's two [[bin]] targets) --
- * anything other than exactly 'agwt' resolves to the `agentworth` binary, so an
- * unrecognized or missing invocation name still gets the primary binary rather than
- * silently 404ing on a name nobody built.
+ * `invokedAs` selects between the three native binaries the release tarball ships
+ * (`agentworth`, the short `archie`, and the older `agwt`; see apps/cli/Cargo.toml's three
+ * [[bin]] targets) -- anything other than exactly 'archie' or 'agwt' resolves to the
+ * `agentworth` binary, so an unrecognized or missing invocation name still gets the primary
+ * binary rather than silently 404ing on a name nobody built.
  *
  * @param {string} [platform=process.platform]
- * @param {string} [invokedAs] - basename the launcher was invoked as ('agentworth' or 'agwt')
+ * @param {string} [invokedAs] - basename the launcher was invoked as ('agentworth', 'archie' or 'agwt')
  * @returns {string}
  */
 export function getBinaryName(platform = process.platform, invokedAs) {
-  const base = invokedAs === 'agwt' ? 'agwt' : 'agentworth';
+  const base = invokedAs === 'archie' || invokedAs === 'agwt' ? invokedAs : 'agentworth';
   return platform === 'win32' ? `${base}.exe` : base;
 }
 
@@ -230,7 +230,7 @@ function pathBinaryMatchesVersion(binPath, expected) {
  * @param {string} [options.version]
  * @param {string} [options.homeDir]
  * @param {boolean} [options.silent=false]
- * @param {string} [options.invokedAs] - 'agentworth' or 'agwt'; picks which extracted binary is returned
+ * @param {string} [options.invokedAs] - 'agentworth', 'archie' or 'agwt'; picks which extracted binary is returned
  * @returns {Promise<string>} Path to extracted binary
  */
 export async function downloadAndExtractBinary(options = {}) {
@@ -378,7 +378,7 @@ export function findPathBinary(binName = getBinaryName(), pathEnv = process.env.
  * @param {NodeJS.ProcessEnv} [options.env=process.env]
  * @param {string} [options.baseDir=__dirname]
  * @param {string} [options.homeDir]
- * @param {string} [options.invokedAs] - 'agentworth' or 'agwt'; selects which native binary to look for
+ * @param {string} [options.invokedAs] - 'agentworth', 'archie' or 'agwt'; selects which native binary to look for
  * @returns {{ found: boolean, path?: string, source?: string, error?: string }}
  */
 export function resolveBinary(options = {}) {
@@ -560,7 +560,7 @@ export function buildChildEnv(baseEnv, npmVersion) {
  *
  * @param {string[]} [argv=process.argv.slice(2)]
  * @param {Object} [options={}]
- * @param {string} [options.invokedAs] - 'agentworth' or 'agwt'; which native binary to resolve
+ * @param {string} [options.invokedAs] - 'agentworth', 'archie' or 'agwt'; which native binary to resolve
  * @returns {number} Exit code
  */
 export function run(argv = process.argv.slice(2), options = {}) {

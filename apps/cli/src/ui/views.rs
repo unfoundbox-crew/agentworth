@@ -2840,3 +2840,427 @@ pub fn self_test(
     out.push_str(&ui.next("agentworth doctor", "the environment and storage snapshot alone"));
     out
 }
+
+// -----------------------------------------------------------------------------
+// repo list
+// -----------------------------------------------------------------------------
+
+pub struct RepoListRow<'a> {
+    pub repo: &'a str,
+    pub sessions: usize,
+}
+
+pub struct RepoListView<'a> {
+    pub total_repos: usize,
+    pub total_sessions: usize,
+    pub rows: &'a [RepoListRow<'a>],
+}
+
+pub fn repo_list(ui: &Ui, v: &RepoListView<'_>) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header(
+        "archie repo list",
+        &format!(
+            "{} repos {} {} sessions",
+            v.total_repos,
+            ui.dot(),
+            thousands(v.total_sessions as u64)
+        ),
+    ));
+    out.push('\n');
+
+    if v.rows.is_empty() {
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Unverified, "Nothing indexed yet.")),
+        );
+        out.push('\n');
+        out.push_str(&ui.next("archie scan", "index what is already on this machine"));
+        return out;
+    }
+
+    const COUNT: usize = 9;
+    const SHARE: usize = 7;
+    let name = i.saturating_sub(COUNT + SHARE + 6).max(10);
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Label,
+                &format!(
+                    "{}  {}  {}",
+                    rpad("REPOSITORY", name),
+                    lpad("SESSIONS", COUNT),
+                    lpad("SHARE", SHARE)
+                )
+            )
+        ),
+    );
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+
+    for r in v.rows {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}  {}  {}",
+                ui.paint(Role::Value, &rpad(&truncate(r.repo, name), name)),
+                lpad(&thousands(r.sessions as u64), COUNT),
+                ui.paint(Role::Label, &lpad(&percent(r.sessions, v.total_sessions), SHARE)),
+            ),
+        );
+    }
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    out.push('\n');
+    out.push_str(&ui.next(
+        "archie repo blame <file>",
+        "which session wrote a given file",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// agent show
+// -----------------------------------------------------------------------------
+
+pub struct AgentShowView<'a> {
+    pub adapter: &'a str,
+    pub source_root: &'a str,
+    pub detected: bool,
+    /// Capability name and whether this adapter extracts it, in the order the matrix uses.
+    pub capabilities: &'a [(&'a str, bool)],
+    pub indexed_sessions: usize,
+    pub indexed_tokens: u64,
+    pub models: &'a [String],
+}
+
+pub fn agent_show(ui: &Ui, v: &AgentShowView<'_>) -> String {
+    let mut out = String::new();
+    let supported = v.capabilities.iter().filter(|(_, on)| *on).count();
+
+    out.push_str(&ui.header(
+        &format!("archie agent show {}", v.adapter),
+        &format!(
+            "{}/{} extracted {} {}",
+            supported,
+            v.capabilities.len(),
+            ui.dot(),
+            if v.detected { "present here" } else { "not found here" }
+        ),
+    ));
+    out.push('\n');
+
+    section(&mut out, ui, "SOURCE", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  default root", v.source_root, ui.width(), Role::Value),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  detected now",
+            if v.detected { "yes" } else { "no" },
+            ui.width(),
+            if v.detected { Role::Verified } else { Role::Unverified },
+        ),
+    );
+    out.push('\n');
+
+    section(&mut out, ui, "EXTRACTS", "");
+    for (name, on) in v.capabilities {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {} {}",
+                ui.paint(
+                    if *on { Role::Verified } else { Role::Unverified },
+                    ui.cell(*on)
+                ),
+                ui.paint(if *on { Role::Value } else { Role::Unverified }, name)
+            ),
+        );
+    }
+    out.push('\n');
+
+    section(&mut out, ui, "IN THIS INDEX", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  sessions",
+            &thousands(v.indexed_sessions as u64),
+            ui.width(),
+            Role::Value,
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  tokens", &compact(v.indexed_tokens), ui.width(), Role::Value),
+    );
+    if v.models.is_empty() {
+        push(
+            &mut out,
+            ui,
+            ui.leaders("  models", "none recorded", ui.width(), Role::Unverified),
+        );
+    } else {
+        for model in v.models {
+            push(
+                &mut out,
+                ui,
+                format!("  {} {}", ui.dot(), ui.paint(Role::Label, &short_model(model))),
+            );
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next(
+        &format!("archie session list --adapter {}", v.adapter),
+        "what this adapter actually recorded",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// window list
+// -----------------------------------------------------------------------------
+
+pub struct WindowListRow {
+    pub label: String,
+    pub sessions: usize,
+    pub total_tokens: u64,
+    pub estimated_cost_usd: f64,
+    pub burn_rate_tokens_per_hour: f64,
+}
+
+pub struct WindowListView<'a> {
+    pub hours: i64,
+    pub anchor: &'a str,
+    pub rows: &'a [WindowListRow],
+}
+
+pub fn window_list(ui: &Ui, v: &WindowListView<'_>) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header(
+        "archie window list",
+        &format!("{}h windows {} to {}", v.hours, ui.dot(), v.anchor),
+    ));
+    out.push('\n');
+
+    if v.rows.is_empty() {
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Unverified, "No sessions in range.")),
+        );
+        out.push('\n');
+        out.push_str(&ui.next("archie scan", "index what is already on this machine"));
+        return out;
+    }
+
+    const N: usize = 8;
+    const TOK: usize = 9;
+    const COST: usize = 9;
+    const RATE: usize = 11;
+    let label = i.saturating_sub(N + TOK + COST + RATE + 8).max(12);
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Label,
+                &format!(
+                    "{}  {}  {}  {}  {}",
+                    rpad("WINDOW", label),
+                    lpad("SESSIONS", N),
+                    lpad("TOKENS", TOK),
+                    lpad("COST", COST),
+                    lpad("TOKENS/H", RATE)
+                )
+            )
+        ),
+    );
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+
+    for r in v.rows {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}  {}  {}  {}  {}",
+                ui.paint(Role::Value, &rpad(&truncate(&r.label, label), label)),
+                lpad(&thousands(r.sessions as u64), N),
+                lpad(&compact(r.total_tokens), TOK),
+                lpad(&format!("${:.2}", r.estimated_cost_usd), COST),
+                ui.paint(
+                    Role::Label,
+                    &lpad(&compact(r.burn_rate_tokens_per_hour as u64), RATE)
+                ),
+            ),
+        );
+    }
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    out.push('\n');
+    out.push_str(&ui.next("archie window show", "the current window in full"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// stats outcomes
+// -----------------------------------------------------------------------------
+
+pub struct StatsOutcomesRow<'a> {
+    pub key: &'a str,
+    pub n: usize,
+    pub verified: usize,
+    pub rate: Option<f64>,
+    pub reason: Option<&'a str>,
+}
+
+pub struct StatsOutcomesView<'a> {
+    pub group_by: &'a str,
+    pub min_n: usize,
+    pub baseline_n: usize,
+    pub baseline_rate: f64,
+    pub suppressed_groups: usize,
+    pub rows: &'a [StatsOutcomesRow<'a>],
+    pub counted_at: &'a str,
+}
+
+pub fn stats_outcomes(ui: &Ui, v: &StatsOutcomesView<'_>) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header(
+        "archie stats outcomes",
+        &format!("by {} {} min n {}", v.group_by, ui.dot(), v.min_n),
+    ));
+    out.push('\n');
+
+    section(&mut out, ui, "YOUR RATE", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  claimed sessions",
+            &thousands(v.baseline_n as u64),
+            ui.width(),
+            Role::Value,
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  left evidence",
+            &format!("{:.1}%", v.baseline_rate * 100.0),
+            ui.width(),
+            Role::Verified,
+        ),
+    );
+    out.push('\n');
+
+    if v.rows.is_empty() {
+        section(&mut out, ui, "GROUPS", "");
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Unverified,
+                    "No group clears the sample floor; nothing here is worth a number yet."
+                )
+            ),
+        );
+    } else {
+        section(&mut out, ui, "GROUPS", &format!("{} shown", v.rows.len()));
+        const N: usize = 7;
+        const VER: usize = 9;
+        const RATE: usize = 8;
+        let key = i.saturating_sub(N + VER + RATE + 6).max(12);
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Label,
+                    &format!(
+                        "{}  {}  {}  {}",
+                        rpad("GROUP", key),
+                        lpad("N", N),
+                        lpad("VERIFIED", VER),
+                        lpad("RATE", RATE)
+                    )
+                )
+            ),
+        );
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+        for r in v.rows {
+            // A group with sessions but no detected outcome is not a low rate -- it is a
+            // parsing gap, and printing 0% for it would be a measurement we never made.
+            let (rate_text, rate_role) = match r.rate {
+                Some(rate) => (
+                    format!("{:.0}%", rate * 100.0),
+                    if rate * 100.0 >= 50.0 { Role::Verified } else { Role::Warn },
+                ),
+                None => (
+                    r.reason.unwrap_or("not measured").to_string(),
+                    Role::Unverified,
+                ),
+            };
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}  {}  {}  {}",
+                    ui.paint(Role::Value, &rpad(&truncate(r.key, key), key)),
+                    lpad(&thousands(r.n as u64), N),
+                    lpad(&thousands(r.verified as u64), VER),
+                    ui.paint(rate_role, &lpad(&rate_text, RATE)),
+                ),
+            );
+        }
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    }
+
+    if v.suppressed_groups > 0 {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Unverified,
+                    &format!(
+                        "{} group(s) under n={} suppressed, not counted as zero.",
+                        v.suppressed_groups, v.min_n
+                    )
+                )
+            ),
+        );
+    }
+    push(
+        &mut out,
+        ui,
+        format!("  {}", ui.paint(Role::Label, &format!("counted at {}", v.counted_at))),
+    );
+    out.push('\n');
+    out.push_str(&ui.next(
+        "archie session list --unproven",
+        "the sessions with nothing behind the claim",
+    ));
+    out
+}

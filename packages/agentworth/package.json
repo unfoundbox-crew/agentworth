@@ -6,6 +6,7 @@
   "main": "./lib/resolver.js",
   "bin": {
     "agentworth": "bin/agentworth.js",
+    "archie": "bin/agentworth.js",
     "agwt": "bin/agentworth.js"
   },
   "scripts": {

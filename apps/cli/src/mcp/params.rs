@@ -39,7 +39,7 @@ impl From<SessionsOrderBy> for SessionOrderBy {
     }
 }
 
-/// Parameters for the `sessions_find` tool. `limit` is required with no default (see
+/// Parameters for the `session_list` tool. `limit` is required with no default (see
 /// `docs/specs/mcp-server.md`'s "limit default trap" note) and is checked at call time
 /// against `SESSIONS_FIND_LIMIT_CEILING`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -83,17 +83,17 @@ pub(super) fn parse_rfc3339_opt(value: Option<&str>) -> Result<Option<DateTime<U
     }
 }
 
-/// Default cap on how many of a trace's events `session_get` returns when the caller doesn't
+/// Default cap on how many of a trace's events `session_show` returns when the caller doesn't
 /// say otherwise. A large real session's event list can run to tens of MB of JSON; without a
 /// default cap, a remote model asking for "the session" gets that in full by accident. 500 is
 /// generous enough to cover most sessions outright while forcing an explicit `events_limit` for
 /// the rest -- the same "no silent unbounded default" principle `SessionsFindParams::limit`
 /// already enforces, just with a permissive rather than a required value here since
-/// `session_get` (unlike `sessions_find`) is about one specific session the caller already
+/// `session_show` (unlike `session_list`) is about one specific session the caller already
 /// knows they want.
 pub const SESSION_GET_DEFAULT_EVENTS_LIMIT: usize = 500;
 
-/// Parameters for the `session_get` tool.
+/// Parameters for the `session_show` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionGetParams {
     pub session_id: String,
@@ -112,14 +112,14 @@ pub struct SessionGetParams {
     pub events_limit: Option<usize>,
 }
 
-/// Parameters for the `blame_find` tool.
+/// Parameters for the `repo_blame` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct BlameFindParams {
     /// Substring pattern matched against recorded file-modification paths.
     pub file_path: String,
 }
 
-/// Rollup period for the `usage_summary` tool, mirroring `Storage::get_daily_usage` /
+/// Rollup period for the `stats_usage` tool, mirroring `Storage::get_daily_usage` /
 /// `get_weekly_usage` / `get_monthly_usage`.
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -129,7 +129,7 @@ pub enum UsagePeriodParam {
     Month,
 }
 
-/// Parameters for the `usage_summary` tool.
+/// Parameters for the `stats_usage` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UsageSummaryParams {
     pub period: UsagePeriodParam,
@@ -137,14 +137,14 @@ pub struct UsageSummaryParams {
     pub limit: Option<usize>,
 }
 
-/// Parameters for the `pacing_window` tool.
+/// Parameters for the `window_show` tool.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct PacingWindowParams {
     /// Rolling window size in hours; defaults to 5.
     pub hours: Option<i64>,
 }
 
-/// Parameters for the `coverage_stats` tool.
+/// Parameters for the `agent_list` tool.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct CoverageStatsParams {
     /// Also compute and include the per-adapter detection/capability matrix
@@ -173,7 +173,7 @@ impl From<OutcomeRateGroupByParam> for agentworth_storage::OutcomeRateGroupBy {
     }
 }
 
-/// Parameters for the `suspect_commits` tool. See `docs/specs/suspect-commits.md`.
+/// Parameters for the `repo_suspect` tool. See `docs/specs/suspect-commits.md`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SuspectCommitsParams {
     /// Absolute path to a git checkout on this machine. Anything inside it works — the
@@ -193,7 +193,7 @@ pub struct SuspectCommitsParams {
     pub max_commits: Option<usize>,
 }
 
-/// Parameters for the `outcome_rate` tool. See `docs/specs/verified-outcome-rate.md`.
+/// Parameters for the `stats_outcomes` tool. See `docs/specs/verified-outcome-rate.md`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct OutcomeRateParams {
     pub group_by: OutcomeRateGroupByParam,
@@ -227,7 +227,7 @@ pub struct SessionHandoffParams {
     pub include_raw: bool,
 }
 
-/// Parameters for the `forgotten_context` tool.
+/// Parameters for the `session_forgotten` tool.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct ForgottenContextParams {
     /// Session to diff. Defaults to the most recent indexed session for the repository this
@@ -249,10 +249,10 @@ pub struct ForgottenContextParams {
     pub include_raw: bool,
 }
 
-/// Parameters for the `carry_forward` tool.
+/// Parameters for the `session_carry_forward` tool.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct CarryForwardParams {
-    /// Repository/workspace key, as `sessions_find`'s `repo` and the handoff receipt report
+    /// Repository/workspace key, as `session_list`'s `repo` and the handoff receipt report
     /// it (e.g. `unfoundbox/agentworth`). A repo's worktrees all answer to one value.
     pub repo: String,
     /// How many handoffs to return, newest first. Defaults to 3, ceiling 10.
