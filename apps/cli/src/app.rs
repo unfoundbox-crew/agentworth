@@ -545,6 +545,44 @@ enum Commands {
         json: bool,
     },
 
+    /// List commits on this branch whose authoring session never proved anything, so you
+    /// know where to look twice before pushing. Prints a list and a prompt, never a patch
+    Suspect {
+        /// Path to a git checkout. Defaults to the current directory
+        #[arg(long)]
+        repo: Option<PathBuf>,
+
+        /// A date (RFC 3339 or YYYY-MM-DD) or a git ref to measure from. Defaults to the
+        /// branch's upstream, then origin/main
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Branch to walk. Defaults to HEAD
+        #[arg(long)]
+        branch: Option<String>,
+
+        /// Ref to diff against, if you want to name it separately from --since
+        #[arg(long)]
+        base: Option<String>,
+
+        /// How long before a commit a session's file touch still counts as authoring it
+        #[arg(long)]
+        window_hours: Option<i64>,
+
+        /// Print a ready-to-install pre-push hook and exit. The hook never blocks a push
+        #[arg(long)]
+        hook: bool,
+
+        /// Print only the copyable prompt, and only when something is suspect. What the
+        /// hook runs
+        #[arg(long)]
+        quiet: bool,
+
+        /// Output the full report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Get, set, or list persisted CLI defaults (~/.agentworth/config.toml)
     Config {
         #[command(subcommand)]
@@ -868,6 +906,29 @@ pub fn run() -> Result<()> {
                 top,
                 resolve_json(json),
                 cli.db_path,
+            )?;
+        }
+        Commands::Suspect {
+            repo,
+            since,
+            branch,
+            base,
+            window_hours,
+            hook,
+            quiet,
+            json,
+        } => {
+            crate::commands::suspect::run_suspect_command(
+                repo,
+                since,
+                branch,
+                base,
+                window_hours,
+                resolve_json(json),
+                hook,
+                quiet,
+                cli.db_path,
+                &ui,
             )?;
         }
         Commands::Config { action } => match action {

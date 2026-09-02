@@ -579,5 +579,145 @@ fn truncate_subject(s: &str, max: usize) -> String {
     format!("{head}…")
 }
 
+/// The pre-push hook, printed for the user to install by hand.
+///
+/// It never blocks the push. A gate on a heuristic with a measured single-digit hit rate gets
+/// turned off within a day, and then it protects nothing — so this prints and exits 0, always,
+/// including when `agentworth` is not installed.
+pub const PRE_PUSH_HOOK: &str = r#"#!/bin/sh
+# agentworth suspect — a note on the way out, never a gate.
+# Install: save as .git/hooks/pre-push and `chmod +x` it.
+#
+# Lists commits about to be pushed whose authoring session never proved anything.
+# It exits 0 no matter what it finds, and no matter whether agentworth is installed.
+
+command -v agentworth >/dev/null 2>&1 || exit 0
+agentworth suspect --repo . --quiet || true
+exit 0
+"#;
+
+/// Execute `agentworth suspect`.
+pub fn run_suspect_command(
+    repo: Option<PathBuf>,
+    since: Option<String>,
+    branch: Option<String>,
+    base: Option<String>,
+    window_hours: Option<i64>,
+    json: bool,
+    hook: bool,
+    quiet: bool,
+    db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
+) -> Result<()> {
+    if hook {
+        print!("{PRE_PUSH_HOOK}");
+        return Ok(());
+    }
+
+    // `--since` takes a date or a ref, because a person reaching for it means "since this
+    // point" and does not want to know which of the two the tool wanted.
+    let (since_time, base_ref) = match since {
+        None => (None, base),
+        Some(value) => match parse_since(&value) {
+            Some(t) => (Some(t), base),
+            None => {
+                if base.is_some() {
+                    bail!("--since '{value}' is not a date, and --base is already set");
+                }
+                (None, Some(value))
+            }
+        },
+    };
+
+    let storage = match db_path {
+        Some(p) => Storage::open_path(&p)?,
+        None => Storage::open_default()?,
+    };
+    let query = SuspectQuery {
+        repo: repo.unwrap_or_else(|| PathBuf::from(".")),
+        branch,
+        base: base_ref,
+        since: since_time,
+        window_hours: window_hours.unwrap_or(DEFAULT_WINDOW_HOURS),
+        max_commits: DEFAULT_MAX_COMMITS,
+    };
+    let report = compute_suspect_commits(&storage, &query)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    // `--quiet` is what the hook runs: say nothing on a clean push rather than printing a
+    // screen the reader learns to scroll past.
+    if quiet {
+        if !report.suspect.is_empty() {
+            println!();
+            print!("{}", report.prompt);
+        }
+        return Ok(());
+    }
+
+    let rows: Vec<crate::ui::views::SuspectCommitRow> = report
+        .suspect
+        .iter()
+        .map(|c| crate::ui::views::SuspectCommitRow {
+            short_sha: c.short_sha.clone(),
+            subject: c.subject.clone(),
+            sessions: c
+                .sessions
+                .iter()
+                .map(|s| crate::ui::views::SuspectSessionRow {
+                    session_id: s.session_id.clone(),
+                    model: s
+                        .model
+                        .as_deref()
+                        .map(crate::ui::views::short_model)
+                        .unwrap_or_else(|| s.adapter.clone()),
+                    rung: s
+                        .outcome
+                        .as_deref()
+                        .map(|o| parse_outcome_rank(o) as usize)
+                        .unwrap_or(0),
+                    reasons: s.reasons.iter().map(|r| r.code.clone()).collect(),
+                    risk_unknown: s.risk_unknown,
+                })
+                .collect(),
+        })
+        .collect();
+
+    print!(
+        "{}",
+        crate::ui::views::suspect(
+            ui,
+            &crate::ui::views::SuspectView {
+                repo: &report.repo,
+                range: &report.range,
+                commits_scanned: report.commits_scanned,
+                attributed: report.attributed,
+                unattributed: report.unattributed,
+                unanchored_blame_rows: report.unanchored_blame_rows,
+                sessions_with_unknown_risk: report.sessions_with_unknown_risk,
+                rows,
+                prompt: &report.prompt,
+            }
+        )
+    );
+
+    Ok(())
+}
+
+/// `Some` when the string is a date this tool understands: RFC 3339, or a bare `YYYY-MM-DD`
+/// read as midnight UTC. `None` means "treat it as a git ref".
+fn parse_since(value: &str) -> Option<DateTime<Utc>> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|naive| Utc.from_utc_datetime(&naive))
+}
+
 #[cfg(test)]
 mod tests;
