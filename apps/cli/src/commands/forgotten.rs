@@ -76,6 +76,21 @@ pub fn run_forgotten_command(
     Ok(())
 }
 
+/// The `session forgotten` screen for a trace the caller already loaded -- the cockpit's `f`.
+pub(crate) fn view_for(
+    storage: &Arc<Storage>,
+    ui: &Ui,
+    trace: &agentworth_schema::AgentWorthTrace,
+) -> Result<String> {
+    let options = ForgottenOptions {
+        round: None,
+        classes: Vec::new(),
+        limit: DEFAULT_LIMIT,
+    };
+    let report = crate::forgotten::forgotten_from_trace(storage, trace, &options)?;
+    Ok(render_terminal(&report, ui))
+}
+
 fn render_terminal(report: &ForgottenReport, ui: &Ui) -> String {
     // One section per round, so the reader can see the shape of the loss round by round rather
     // than as one undifferentiated list. The heading carries both numbers, which is how

@@ -14,7 +14,7 @@ use agentworth_storage::Storage;
 use anyhow::Result;
 
 use crate::handoff::{
-    load_handoff, loose_ends_prompt_for, render_markdown, HandoffOptions, HandoffReport,
+    handoff_from_trace, load_handoff, loose_ends_prompt_for, render_markdown, HandoffOptions, HandoffReport,
     DEFAULT_MAX_LINES, MAX_LINES_CEILING,
 };
 use crate::ui::picker::{self, SessionArg};
@@ -188,6 +188,17 @@ pub fn run_loose_ends_command(
         )
     );
     Ok(())
+}
+
+/// The `session handoff` screen for a trace the caller already loaded -- what the
+/// cockpit's `h` shows. Same report, same renderer, no second rendering path.
+pub(crate) fn view_for(
+    storage: &Arc<Storage>,
+    ui: &Ui,
+    trace: &agentworth_schema::AgentWorthTrace,
+) -> Result<String> {
+    let report = handoff_from_trace(storage, trace, HandoffOptions::default())?;
+    Ok(render_terminal(&report, ui))
 }
 
 fn render_terminal(report: &HandoffReport, ui: &Ui) -> String {

@@ -11,6 +11,7 @@
 
 use std::fmt::Write;
 
+pub mod cockpit;
 pub mod picker;
 pub mod views;
 
@@ -311,6 +312,19 @@ impl Ui {
     }
 }
 
+/// Set while something else owns the terminal -- today, only the cockpit, which draws into
+/// the alternate screen where a status line written straight to stdout lands on top of
+/// whatever was there.
+static STATUS_QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_status_quiet(quiet: bool) {
+    STATUS_QUIET.store(quiet, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn status_quiet() -> bool {
+    STATUS_QUIET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Runs `work` on the calling thread, drawing a small animated one-line status above it
 /// (glyphs from the #67 allowed set: `● ○ ·`, nothing else) whenever stdout is a real
 /// terminal and neither `--plain` nor `NO_COLOR` is in play; the line is cleared before this
@@ -320,6 +334,9 @@ impl Ui {
 /// enough (a large session's trace, a commit-blame sweep) to cross the ~300ms line where
 /// silence starts reading as a hang, rather than `scan`'s per-item loop.
 pub fn with_status<T>(ui: &Ui, label: &str, work: impl FnOnce() -> T) -> T {
+    if status_quiet() {
+        return work();
+    }
     let is_tty = console::Term::stdout().is_term();
     let no_color = std::env::var_os("NO_COLOR").is_some();
     if !is_tty || ui.ascii() || no_color {
@@ -649,6 +666,11 @@ mod tests {
         sample.push_str(ui.arrow());
         sample.push_str(ui.dot());
         sample.push_str(&ui.titled_rule(40, "the evidence line"));
+        // The cockpit draws chrome no view function produced -- a status line, a tab bar,
+        // a key legend, a help overlay. Same set, same rule.
+        for line in cockpit::chrome_samples(&ui) {
+            sample.push_str(&line);
+        }
         for lamp in [Lamp::On, Lamp::Sweeping, Lamp::Dim, Lamp::Off] {
             for part in archie(lamp) {
                 sample.push_str(&part);

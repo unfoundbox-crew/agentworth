@@ -175,13 +175,20 @@ pub fn load_forgotten(
     let trace = scanner.load_trace(session_id).with_context(|| {
         format!("session '{session_id}' could not be re-read from its source file")
     })?;
-    let stored = storage.get_compaction_rounds(session_id)?;
-    let index_last_updated = storage.last_scanned_at().unwrap_or(None);
+    let report = forgotten_from_trace(storage, &trace, options)?;
+    Ok((report, trace))
+}
 
-    Ok((
-        build_forgotten(&trace, stored, index_last_updated, options),
-        trace,
-    ))
+/// The same report from a trace the caller already has -- the cockpit's five tabs read one
+/// session, and only the first of them should pay for parsing it.
+pub fn forgotten_from_trace(
+    storage: &Storage,
+    trace: &AgentWorthTrace,
+    options: &ForgottenOptions,
+) -> Result<ForgottenReport> {
+    let stored = storage.get_compaction_rounds(&trace.session_id)?;
+    let index_last_updated = storage.last_scanned_at().unwrap_or(None);
+    Ok(build_forgotten(trace, stored, index_last_updated, options))
 }
 
 /// Assembles the report from things already in memory. Split out from [`load_forgotten`] so it

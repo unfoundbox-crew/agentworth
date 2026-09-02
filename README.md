@@ -287,10 +287,56 @@ archie session export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | `archie doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
 | `archie doctor --self-test` | Runs the real workflow end to end — scan, stats, usage, traces, inspect, handoff, forgotten, an MCP round trip — against the real index on this machine, with no network. Prints pass/fail/slow and timing per step; exits non-zero if any step fails. |
 | `archie mcp` | Starts the read-only MCP server over stdio, so a coding agent can query this machine's session index mid-session (see below). |
+| `archie` / `archie tui` | Opens the cockpit: the same grammar, full screen, with a cursor (see below). Off a terminal it prints the overview and exits 0. |
 
 Every command accepts `--plain` (no colour, ASCII-only glyphs, same column positions as the colour output) and `--no-color`; setting `NO_COLOR` in the environment has the same effect as `--no-color`.
 
 `inspect`, `export`, `receipt`, `handoff`, and `forgotten` all take the session ID the same way, and it's always optional. Every one of them also takes `--last` (the newest session for this directory's repository, falling back to the newest session anywhere) and `--current` (an alias of `--last`); `blunder-blame` and `asks` take the same two flags for `--session`. Leave the ID off entirely on a terminal and a picker lists the newest sessions to choose from — type a number, type text to filter by ID, repo, adapter, or prompt, `m` for more, `q` to quit. Off a terminal, or with `--json`, the same list prints as JSON or a plain table and the command exits 2 with `pass a session id or prefix` — nothing is guessed for a script.
+
+---
+
+## The cockpit
+
+Type `archie` with nothing after it and, on a terminal, it opens full screen over the index
+you already scanned. `archie tui` is the explicit spelling of the same thing. Not a
+terminal, or `--plain`, or `TERM=dumb`, or JSON output, and it prints the overview — what
+`archie stats` prints plus the current rolling window — and exits 0, so anything that pipes
+`archie` keeps working.
+
+Six screens, each one a command you can also print:
+
+| Screen | The command it shows |
+| :--- | :--- |
+| overview | `archie stats`, plus `archie window show` |
+| sessions | `archie session list`, with a cursor |
+| one session | `archie session show`, and its handoff, asks, forgotten and receipt |
+| agents | `archie agent list` |
+| repos | `archie repo list` |
+| windows | `archie window list` |
+
+| Key | Does |
+| :--- | :--- |
+| `j` / `k`, arrows | move |
+| `Enter` | drill into the highlighted session |
+| `Esc` | back: out of a reading, out of a session, then out of a filter |
+| `/` | filter the current list; `Esc` clears it |
+| `1` - `6` | jump to a screen |
+| `h` | this session's handoff |
+| `a` | the questions it asked, and where the answers are |
+| `f` | what compaction dropped |
+| `r` | its Flight Receipt |
+| `?` | the key list |
+| `q` | quit |
+
+It is read-only, permanently: no writes, no scan, no config changes, no model calls. `scan`
+and `config` stay commands you type. Colour follows the same rules as every printed screen,
+so `--no-color` and `NO_COLOR` give a monochrome cockpit.
+
+One thing it does share with every other command: a bare `archie` opens the index the same
+way they all do, which creates the database file on a machine that has never scanned. You
+get the "no sessions found" screen, and an empty `~/.agentworth/agentworth.db` beside it.
+`Esc` at the overview does nothing — it walks back, it never quits — and `Ctrl-C` quits from
+anywhere, filter entry included.
 
 ---
 

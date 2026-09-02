@@ -1,7 +1,7 @@
 # CLI grammar, completions, and the cockpit
 
-Status: sections 1, 2 and 4(1) built 2026-09-02 in #118. Section 3 (the cockpit) and
-section 4(3) (`window receipt`) are not built.
+Status: built: grammar #118, cockpit #121. Section 4(3) (`window receipt`) is
+not built and waits on spec G.
 
 Thirty-two top-level commands is a list, not a grammar. Nobody can guess
 `blind-spots` or `cache-doctor` from having used `handoff`. The fix is
@@ -139,8 +139,8 @@ Tab that offers nothing.
 ## 3. The cockpit
 
 `archie` with no arguments on a TTY opens a full-screen reader over the same
-data. Not a TTY, or `--plain`, or `TERM=dumb`: print the overview and exit
-0.
+data. Not a TTY, or `--plain`, or `TERM=dumb`, or `--json`: print the overview
+and exit 0. `archie tui` is the explicit spelling and does the same thing.
 
 | Screen | Shows |
 | :--- | :--- |
@@ -189,14 +189,15 @@ efficiency detector produces it.
 
 ## 5. Open questions
 
-Four of these had to be answered to build #118. What was decided, and what is still open:
+Four had to be answered to build #118, and the cockpit answered the fifth in #121. What
+was decided, and what is still open:
 
-| Question | Answered in #118 |
+| Question | Answered |
 | :--- | :--- |
 | Where does `blunder-blame` live? | `repo blunder-blame`, as mapped above. File-first is its trusted direction. |
 | Should an `index` noun exist? | Still open. `merge` stayed top-level and `--db-path` stayed global. |
 | Two releases of hidden MCP aliases, or one? | Two, the same as the CLI aliases — one removal date (`v0.1.18`) is easier to keep than two. But they are **not hidden**: MCP has no unlisted-but-callable tool, and rmcp's `disable_route` takes a tool out of `call` as well as out of `list_all`. The old names stay listed, each described as a deprecated alias, and are left out of the generated reference. |
-| Should a bare `archie` open the cockpit? | Untouched — the cockpit is not built. |
+| Should a bare `archie` open the cockpit? | Yes, and `archie tui` is the explicit spelling of the same thing. Both ship. Off a terminal, under `--plain`, under `TERM=dumb`, or with JSON output, both print the overview and exit 0, so nothing that pipes `archie` is surprised. |
 | Is 100 ms per Tab real? | Now measured, but only against a fixture index of a dozen sessions (`apps/cli/tests/completion_budget.rs`). Nothing has been timed against a few thousand. |
 
 ### Still open
@@ -204,9 +205,6 @@ Four of these had to be answered to build #118. What was decided, and what is st
 - Should an `index` noun exist (`index merge`, `index path`, `index
   prune`)? That would take `merge` off the top level and give `--db-path`
   a home.
-- Should `archie` alone open the cockpit in its first release, or should it
-  need `archie tui` until the TUI has been used for a week? A bare `archie`
-  that suddenly takes over the terminal is a surprise.
 - Does the Tab budget hold against an index of a few thousand sessions?
   The completers read the newest 50 rows off `idx_sessions_started_at` and
   derive repos and models from a bounded 400-row slice, so the shape is

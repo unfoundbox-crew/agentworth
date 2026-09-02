@@ -123,9 +123,18 @@ pub fn load_asks(
     let trace = scanner.load_trace(session_id).with_context(|| {
         format!("session '{session_id}' could not be re-read from its source file")
     })?;
-    let index_last_updated = storage.last_scanned_at().unwrap_or(None);
+    let report = asks_from_trace(storage, &trace, options);
+    Ok((report, trace))
+}
 
-    Ok((build_asks(&trace, index_last_updated, options), trace))
+/// The same report from a trace the caller already has, for the cockpit's tabs.
+pub fn asks_from_trace(
+    storage: &Storage,
+    trace: &AgentWorthTrace,
+    options: &AsksOptions,
+) -> AsksReport {
+    let index_last_updated = storage.last_scanned_at().unwrap_or(None);
+    build_asks(trace, index_last_updated, options)
 }
 
 /// Assembles the report from things already in memory. Split out from [`load_asks`] so it can

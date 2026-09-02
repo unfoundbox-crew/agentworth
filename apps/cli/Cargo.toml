@@ -72,6 +72,21 @@ rusqlite.workspace = true
 # against it the same way a coding agent's MCP client would.
 rmcp = { version = "=3.2.0", features = ["transport-io", "client", "transport-child-process"] }
 schemars = "1.0"
+# The cockpit (`archie`, `archie tui`), spec section 3. Verified on docs.rs 2026-09-02:
+# 0.30.2 is the newest release, and `crossterm` is one of its seven default features
+# (it pulls ratatui-crossterm over crossterm 0.29, and implies `std`). Pinned exactly,
+# like rmcp above, because a TUI breaks visibly rather than loudly when a backend
+# changes under it.
+#
+# Defaults are off and only `crossterm` is asked for, which keeps the other three
+# backends -- termina, termwiz and its wezterm tree, termion -- and the syn 1.x they drag
+# in out of Cargo.lock entirely. Nothing else in the workspace depended on crossterm, so
+# there is exactly one copy of it in the lock.
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
+# Restores the terminal when the cockpit is killed rather than quit (SIGTERM, SIGHUP).
+# Already in the graph under crossterm; named here because a transitive dependency is not
+# something to `use`.
+signal-hook = "0.3"
 
 [dev-dependencies]
 tempfile.workspace = true

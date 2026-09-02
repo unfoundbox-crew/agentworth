@@ -120,6 +120,10 @@ fn screens(root: &std::path::Path) -> Vec<(&'static str, Vec<String>)> {
         ),
         ("blunder", argv(&["blunder"])),
         ("blunder-blame", argv(&["blunder-blame"])),
+        // The cockpit's non-TTY path: a bare `archie` and its explicit spelling both print
+        // the overview, so both are held to the same four rules as every other screen.
+        ("overview", argv(&[])),
+        ("tui", argv(&["tui"])),
     ]
 }
 

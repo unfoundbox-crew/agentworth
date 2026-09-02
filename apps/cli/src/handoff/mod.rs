@@ -273,20 +273,32 @@ impl Default for HandoffOptions {
 /// persisting a shell-command exit-code index; that stays unbuilt on purpose, because the
 /// trace is already in memory here and a second copy of the same facts in SQLite is a
 /// migration plus a rescan buying nothing this surface needs.
+/// The same report from a trace the caller already has.
+///
+/// The cockpit reads one session through five tabs; without this, each tab re-read and
+/// re-parsed the same transcript off disk. Everything else here is index lookups.
+pub fn handoff_from_trace(
+    storage: &Storage,
+    trace: &AgentWorthTrace,
+    options: HandoffOptions,
+) -> Result<HandoffReport> {
+    let session_id = &trace.session_id;
+    let summary = storage
+        .get_session_by_id(session_id)?
+        .with_context(|| format!("session '{session_id}' is not in the index"))?;
+    let outcomes = OutcomeDetector::new().detect_outcomes(trace);
+    let index_last_updated = storage.last_scanned_at().unwrap_or(None);
+    Ok(build_handoff(&summary, trace, &outcomes, index_last_updated, options))
+}
+
 pub fn load_handoff(
     storage: &Storage,
     scanner: &Scanner,
     session_id: &str,
     options: HandoffOptions,
 ) -> Result<(HandoffReport, AgentWorthTrace)> {
-    let summary = storage
-        .get_session_by_id(session_id)?
-        .with_context(|| format!("session '{session_id}' is not in the index"))?;
     let trace = scanner.load_trace(session_id)?;
-    let outcomes = OutcomeDetector::new().detect_outcomes(&trace);
-    let index_last_updated = storage.last_scanned_at().unwrap_or(None);
-
-    let report = build_handoff(&summary, &trace, &outcomes, index_last_updated, options);
+    let report = handoff_from_trace(storage, &trace, options)?;
     Ok((report, trace))
 }
 

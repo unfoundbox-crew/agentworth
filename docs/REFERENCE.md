@@ -470,6 +470,14 @@ Merge another local SQLite index database into this index
 | `SOURCE_DB` | yes | Path to the source SQLite database file to merge from | - | - |
 | `--json` | no | Output results as JSON | false | - |
 
+### `archie tui`
+
+Open the cockpit: the same grammar, full screen, with a cursor. A bare `archie` does this too; `archie tui` is the explicit spelling. Off a terminal, under `--plain`, under `TERM=dumb`, or with JSON output, both print the overview and exit 0 instead of taking the terminal over
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `--json` | no | Print the overview as JSON and exit, without opening anything | false | - |
+
 ### Old spellings
 
 The commands and MCP tools below were renamed in 0.1.16. Every old name still runs and reaches the same handler; none of them appears in `--help` any more, and all of them stop working in v0.1.18.
