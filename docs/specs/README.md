@@ -26,6 +26,7 @@
 | `efficiency-receipts.md` | proposed, measured | — |
 | `cli-grammar.md` | decided 2026-09-02, not built | — |
 | `archie-bench.md` | proposed, measured | — |
+| `convergence.md` | proposed, measured | — |
 
 Twenty specs sit beside this file. They are independent of each other but not of
 the backend, and two of them are worth less than they look until a bug lands
@@ -138,6 +139,7 @@ worth drawing.
 | H | `cli-grammar.md` | every tool renamed to match the CLI noun | the open CLI branches, which the rename would otherwise sit under |
 | I | `spacepilot-loop.md` | `--route`, `--resolve-entities`, `--summarize` (each a call to SpacePilot) | the contract, then `asks.md`'s tier 2 |
 | J | `archie-bench.md` | `stats_bench` | a pricing-table refresh, then B's shared rung ordering |
+| K | `convergence.md` | `session_explain` | nothing — the measurement is done |
 
 ### Why that order
 
@@ -212,6 +214,17 @@ effort axis is empty for the same kind of reason — Codex writes it in 447 of
 448 rollout files and the adapter reads none of them. Everything the bench
 needs is measurable; three of its four columns are waiting on somebody else's
 smaller fix.
+
+**K goes after B because it is B's number with a position attached, and
+because measuring it changed what it should build.** B says a session left
+evidence; K says on which turn, and how much was spent after. Measured over
+3,046 real sessions: two thirds ran no test, build or lint command at all, so
+there is no convergence point in them to find. Of the third that did, the
+median session spends 12% of its tokens after its last verified progress and
+the top tenth spends over 56%. The stop rule it was written to produce did not
+survive its own data — a threshold on turns-since-progress kills working
+sessions at almost exactly the rate it saves tail spend, so what ships is a
+budget, a coverage warning and a report, not a switch. Nothing blocks it.
 
 ## What none of these change
 
