@@ -258,8 +258,10 @@ enum Commands {
 
     /// View deep usage, pacing, and token expenditure rollups
     Usage {
-        /// Rollup period: day, week, or month (default day, or persisted `config period`)
-        #[arg(short, long, value_parser = ["day", "week", "month"])]
+        /// Rollup period: day, week, month, year, or all -- `all` is one row per group across
+        /// all time, with no period column. Single-letter aliases d/w/m/y also work. Default
+        /// day, or persisted `config period`.
+        #[arg(short, long, value_parser = parse_period_arg)]
         period: Option<String>,
 
         /// Show 5-hour rolling pacing window (burn rate, active models, quota headroom)
@@ -274,14 +276,22 @@ enum Commands {
         #[arg(long)]
         alert_above: Option<f64>,
 
-        /// Maximum number of rows to display (default 20, or persisted `config limit`)
+        /// Maximum number of periods to keep (default 30 for day, 26 for week, 24 for month,
+        /// unbounded for year) -- or, under `--period all`, the number of top groups by
+        /// spend to keep (default 20, or persisted `config limit`). Counts periods, not rows:
+        /// a day with two adapters is one period, not two.
         #[arg(short, long)]
         limit: Option<usize>,
 
-        /// Group the rollup by model instead of adapter (e.g. how many tokens
-        /// each of claude-opus-5 / claude-sonnet-5 / claude-fable-5 used)
+        /// Group the rollup by adapter (default; most informative when nearly every session
+        /// shares one adapter, e.g. Claude Code), model (usually the useful one), or repo
+        #[arg(long, default_value = "adapter", value_parser = ["adapter", "model", "repo"])]
+        by: String,
+
+        /// Only include sessions started at or after this time: an absolute date
+        /// (`2026-08-01` or RFC 3339), or a relative shorthand (`1d`, `7d`, `2w`, `3m`)
         #[arg(long)]
-        by_model: bool,
+        since: Option<String>,
 
         /// Output usage data as JSON
         #[arg(long)]
@@ -803,18 +813,32 @@ pub fn run() -> Result<()> {
             hours,
             alert_above,
             limit,
-            by_model,
+            by,
+            since,
             json,
         } => {
             let period = config::resolve_period(period, persisted_config.period.clone(), "day")?;
-            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+            // Periods, not rows (see `UsageReport`'s doc comment): each period kind gets its
+            // own sane default, and "year" has no cap because there are rarely more than a
+            // handful of them to begin with. `--period all` has no period axis, so its
+            // `limit` caps *groups* instead, at the same 20 every other command defaults to.
+            let builtin_limit_default = match period.as_str() {
+                "day" => 30,
+                "week" => 26,
+                "month" => 24,
+                "year" => usize::MAX,
+                _ => 20,
+            };
+            let limit = config::resolve_limit(limit, persisted_config.limit, builtin_limit_default);
+            let since = since.as_deref().map(parse_since_arg).transpose()?;
             run_usage_command(UsageCommandArgs {
                 period: &period,
                 pacing,
                 hours,
                 alert_above,
                 limit,
-                by_model,
+                by: &by,
+                since,
                 json: resolve_json(json),
                 db_path: cli.db_path,
                 ui: &ui,
@@ -1011,6 +1035,50 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Clap `value_parser` for `usage --period`: canonicalizes `d`/`w`/`m`/`y` to their full
+/// words via `config::normalize_period`, so `agentworth usage --period y` and `--period year`
+/// parse identically.
+fn parse_period_arg(s: &str) -> std::result::Result<String, String> {
+    config::normalize_period(s).map(str::to_string).ok_or_else(|| {
+        format!("invalid period {s:?}: expected one of day, week, month, year, all (or d/w/m/y)")
+    })
+}
+
+/// Parse `usage --since`: an absolute date (RFC 3339, or bare `YYYY-MM-DD` read as midnight
+/// UTC) or a relative shorthand (`<n>d`, `<n>w`, `<n>m` for days/weeks/months ago, e.g. `7d`,
+/// `2w`, `3m`), anchored to now.
+fn parse_since_arg(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    use chrono::{Months, TimeZone, Utc};
+
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(value) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        if let Some(naive) = date.and_hms_opt(0, 0, 0) {
+            return Ok(Utc.from_utc_datetime(&naive));
+        }
+    }
+    if value.len() >= 2 {
+        let (count, unit) = value.split_at(value.len() - 1);
+        if let Ok(n) = count.parse::<u32>() {
+            let now = Utc::now();
+            let parsed = match unit {
+                "d" => Some(now - chrono::Duration::days(n as i64)),
+                "w" => Some(now - chrono::Duration::weeks(n as i64)),
+                "m" => now.checked_sub_months(Months::new(n)),
+                _ => None,
+            };
+            if let Some(dt) = parsed {
+                return Ok(dt);
+            }
+        }
+    }
+    anyhow::bail!(
+        "invalid --since {value:?}: expected a date (2026-08-01, or RFC 3339), or a relative \
+         shorthand (1d, 7d, 2w, 3m)"
+    );
 }
 
 /// The full clap command tree for `Cli`, for `agentworth docs` to introspect. Not exposing
@@ -2261,10 +2329,21 @@ struct UsageCommandArgs<'a> {
     hours: i64,
     alert_above: Option<f64>,
     limit: usize,
-    by_model: bool,
+    by: &'a str,
+    since: Option<chrono::DateTime<chrono::Utc>>,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &'a crate::ui::Ui,
+}
+
+/// Noun for one period, for the footer's "N of M <noun>s" phrasing.
+fn period_noun(period: &str) -> &'static str {
+    match period {
+        "week" => "week",
+        "month" => "month",
+        "year" => "year",
+        _ => "day",
+    }
 }
 
 fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
@@ -2274,7 +2353,8 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
         hours,
         alert_above,
         limit,
-        by_model,
+        by,
+        since,
         json,
         db_path,
         ui,
@@ -2304,84 +2384,89 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
         return Ok(());
     }
 
-    if by_model {
-        let records = storage.get_model_usage(period, limit)?;
-
-        if json {
-            println!("{}", serde_json::to_string_pretty(&records)?);
-            return Ok(());
-        }
-
-        if records.is_empty() {
-            print!("{}", no_usage_records(ui));
-            return Ok(());
-        }
-
-        let rows: Vec<crate::ui::views::UsageRow> = records
-            .iter()
-            .map(|r| crate::ui::views::UsageRow {
-                period: r.period.clone(),
-                who: r.model.clone(),
-                sessions: r.session_count,
-                input: r.input_tokens,
-                output: r.output_tokens,
-                cache_read: r.cache_read_tokens,
-                cost_usd: r.estimated_cost_usd,
-                measured: r.total_tokens > 0,
-            })
-            .collect();
-        print!(
-            "{}",
-            crate::ui::views::usage(
-                ui,
-                &format!("agentworth usage --period {} --by-model", period),
-                "MODEL",
-                period,
-                &rows
-            )
-        );
-        return Ok(());
-    }
-
-    let records = match period {
-        "week" => storage.get_weekly_usage(Some(limit))?,
-        "month" => storage.get_monthly_usage(Some(limit))?,
-        _ => storage.get_daily_usage(Some(limit))?,
-    };
+    let period_kind = agentworth_storage::UsagePeriodKind::parse(period)
+        .expect("period already validated by clap's value_parser / config::resolve_period");
+    let group_by = agentworth_storage::UsageGroupBy::parse(by)
+        .expect("by already validated by clap's value_parser");
+    let report = storage.get_usage_report(period_kind, group_by, since, limit)?;
+    let cost_basis = crate::cost_basis::CostBasis::detect();
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&records)?);
+        let mut val = serde_json::to_value(&report)?;
+        if let Some(obj) = val.as_object_mut() {
+            obj.insert("cost_basis".to_string(), json!(cost_basis.cost_basis));
+            if let Some(tier) = &cost_basis.subscription_tier {
+                obj.insert("subscription_tier".to_string(), json!(tier));
+            }
+        }
+        println!("{}", serde_json::to_string_pretty(&val)?);
         return Ok(());
     }
 
-    if records.is_empty() {
+    if report.rows.is_empty() {
         print!("{}", no_usage_records(ui));
         return Ok(());
     }
 
-    let rows: Vec<crate::ui::views::UsageRow> = records
+    let who_head = match group_by {
+        agentworth_storage::UsageGroupBy::Adapter => "ADAPTER",
+        agentworth_storage::UsageGroupBy::Model => "MODEL",
+        agentworth_storage::UsageGroupBy::Repo => "REPO",
+    };
+    let show_period = period_kind != agentworth_storage::UsagePeriodKind::All;
+
+    let rows: Vec<crate::ui::views::UsageRow> = report
+        .rows
         .iter()
         .map(|r| crate::ui::views::UsageRow {
-            period: r.period.clone(),
-            who: r.adapter.clone(),
+            period: r.period.clone().unwrap_or_default(),
+            who: r.group.clone(),
             sessions: r.session_count,
             input: r.input_tokens,
             output: r.output_tokens,
             cache_read: r.cache_read_tokens,
             cost_usd: r.estimated_cost_usd,
-            // Nine of today's eleven adapters keep no token counts. Printing 0 and $0.00
-            // for them asserts something false, so the row prints dashes instead.
             measured: r.total_tokens > 0,
         })
         .collect();
+
+    let truncation_note = report.truncated.then(|| {
+        if show_period {
+            let noun = period_noun(period);
+            let plural = if report.periods_total == 1 { noun.to_string() } else { format!("{noun}s") };
+            format!(
+                "last {} of {} {plural}: totals cover the shown periods only.",
+                report.periods_shown, report.periods_total
+            )
+        } else {
+            let noun = who_head.to_lowercase();
+            let plural = if report.periods_total == 1 { noun } else { format!("{noun}s") };
+            format!(
+                "top {} of {} {plural} by spend: totals cover the shown groups only.",
+                report.periods_shown, report.periods_total
+            )
+        }
+    });
+
+    let mut command = format!("agentworth usage --period {period}");
+    if by != "adapter" {
+        command.push_str(&format!(" --by {by}"));
+    }
+    let cost_note = cost_basis.label_long();
+
     print!(
         "{}",
         crate::ui::views::usage(
             ui,
-            &format!("agentworth usage --period {}", period),
-            "ADAPTER",
-            period,
-            &rows
+            &crate::ui::views::UsageView {
+                command: &command,
+                who_head,
+                period_noun: period_noun(period),
+                rows: &rows,
+                show_period,
+                cost_note: &cost_note,
+                truncation_note: truncation_note.as_deref(),
+            }
         )
     );
 

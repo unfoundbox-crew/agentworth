@@ -138,12 +138,13 @@ View deep usage, pacing, and token expenditure rollups
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `--period, -p` | no | Rollup period: day, week, or month (default day, or persisted `config period`) | - | day, week, month |
+| `--period, -p` | no | Rollup period: day, week, month, year, or all -- `all` is one row per group across all time, with no period column. Single-letter aliases d/w/m/y also work. Default day, or persisted `config period` | - | - |
 | `--pacing` | no | Show 5-hour rolling pacing window (burn rate, active models, quota headroom) | false | - |
 | `--hours` | no | Pacing window duration in hours | 5 | - |
 | `--alert-above` | no | Alert and highlight if window spend exceeds this threshold in USD | - | - |
-| `--limit, -l` | no | Maximum number of rows to display (default 20, or persisted `config limit`) | - | - |
-| `--by-model` | no | Group the rollup by model instead of adapter (e.g. how many tokens each of claude-opus-5 / claude-sonnet-5 / claude-fable-5 used) | false | - |
+| `--limit, -l` | no | Maximum number of periods to keep (default 30 for day, 26 for week, 24 for month, unbounded for year) -- or, under `--period all`, the number of top groups by spend to keep (default 20, or persisted `config limit`). Counts periods, not rows: a day with two adapters is one period, not two | - | - |
+| `--by` | no | Group the rollup by adapter (default; most informative when nearly every session shares one adapter, e.g. Claude Code), model (usually the useful one), or repo | adapter | adapter, model, repo |
+| `--since` | no | Only include sessions started at or after this time: an absolute date (`2026-08-01` or RFC 3339), or a relative shorthand (`1d`, `7d`, `2w`, `3m`) | - | - |
 | `--json` | no | Output usage data as JSON | false | - |
 
 ### `agentworth blame`
@@ -1139,7 +1140,7 @@ Which commits on this branch came out of a session that never proved anything. W
 
 ### `usage_summary`
 
-Daily, weekly, or monthly usage rollups: session counts, token breakdown, estimated cost, and cache hit ratio, grouped by adapter -- the same rollups /api/usage returns for one period at a time.
+Daily, weekly, or monthly usage rollups: session counts, token breakdown, estimated cost, and cache hit ratio, grouped by adapter -- the same rollups /api/usage returns for one period at a time. Every estimated_cost_usd is an API list-price equivalent, not what the account actually paid -- see cost_basis/subscription_tier.
 
 | Param | Required | Type | Description |
 |---|---|---|---|
