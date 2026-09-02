@@ -1169,7 +1169,7 @@ async fn test_suspect_commits_flags_the_unproven_commit() {
         },
     ));
     storage
-        .upsert_session(&trace, Some("artifact_changed"), Some(0.4))
+        .upsert_session(&trace, Some("artifact_changed"), Some(0.4), 1)
         .expect("seed session");
 
     let server = AgentWorthMcpServer::new(storage);

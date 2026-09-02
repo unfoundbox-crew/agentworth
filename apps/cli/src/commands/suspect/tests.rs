@@ -89,7 +89,7 @@ fn seed_session(
         },
     ));
     storage
-        .upsert_session(&trace, outcome, Some(0.5))
+        .upsert_session(&trace, outcome, Some(0.5), 1)
         .expect("seed session");
 }
 
@@ -278,7 +278,7 @@ fn the_cargo_lock_collision_does_not_attribute_and_is_counted() {
         },
     ));
     storage
-        .upsert_session(&trace, Some("done_claimed"), Some(0.2))
+        .upsert_session(&trace, Some("done_claimed"), Some(0.2), 1)
         .expect("seed other-repo session");
 
     let report = compute_suspect_commits(&storage, &query(&root)).expect("report");
