@@ -594,7 +594,7 @@ pub fn build_prompt(
         }
     }
     out.push_str(
-        "\nReview these before pushing. Session ids are queryable with session_get; the \
+        "\nReview these before pushing. Session ids are queryable with session_show; the \
          signals say the session was going badly, not what the code does wrong — read the diff \
          for that.\n",
     );

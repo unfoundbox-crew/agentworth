@@ -105,4 +105,4 @@ case ":$PATH:" in
 esac
 
 echo ""
-echo "Done. Run 'agentworth --version' to verify."
+echo "Done. Run 'archie --version' to verify."

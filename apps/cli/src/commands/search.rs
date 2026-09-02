@@ -88,7 +88,7 @@ pub fn run_search_command(
         if stats.total_chunks == 0 {
             println!(
                 "{}",
-                style("Tip: Run `archie scan` (or `agwt scan`) first to index local agent histories.").yellow()
+                style("Tip: Run `archie scan` first to index local agent histories.").yellow()
             );
         }
         println!();
@@ -218,7 +218,7 @@ fn bootstrap_vector_store<V: VectorStore>(
         println!(
             "{}",
             style(format!(
-                "Tip: {} more sessions not yet searchable. Run `agwt search` again to index them.",
+                "Tip: {} more sessions not yet searchable. Run `archie session search` again to index them.",
                 sessions_still_pending
             ))
             .yellow()

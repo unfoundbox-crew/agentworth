@@ -789,8 +789,13 @@ pub fn run_receipt_command(
     };
 
     let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
-    let session_id =
-        crate::ui::picker::resolve_or_exit(&storage, ui, false, "session receipt", &arg)?;
+    let session_id = crate::ui::picker::resolve_or_exit(
+        &storage,
+        ui,
+        format == "json",
+        "session receipt",
+        &arg,
+    )?;
 
     let scanner = Scanner::new(storage);
     let trace = scanner

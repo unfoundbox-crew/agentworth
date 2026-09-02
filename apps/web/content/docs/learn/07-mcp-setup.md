@@ -46,10 +46,15 @@ Where that server definition goes differs per harness, and this repo does not
 document the registration step for Codex, OpenCode or Gemini CLI. Use each
 harness's own MCP configuration docs, with the command and args above.
 
-## The twelve tools
+## The 12 tools
 
 All read-only. Nothing scans, nothing writes, nothing touches the original
 session logs.
+
+A client's `tools/list` shows 22, not 12. The extra 10 are the pre-0.1.16 tool
+names, still registered as deprecated aliases forwarding to the same handlers,
+so a client configured before the rename keeps working. They are removed in
+v0.1.18. Use the 12 below.
 
 | Tool | What it answers |
 | :--- | :--- |

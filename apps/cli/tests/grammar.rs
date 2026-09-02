@@ -252,3 +252,52 @@ fn completion_scripts_generate_for_every_shell() {
         );
     }
 }
+
+/// The registration script the dynamic completer emits has to name the binary that emitted
+/// it. clap only knows the root command's name (`agentworth`), so without an explicit
+/// `.bin(...)` `source <(COMPLETE=zsh archie)` registers `#compdef agentworth` and Tab on
+/// `archie` completes nothing at all.
+///
+/// Asserted on the registration lines only (`compdef`, `complete -`), not on the whole
+/// script: the script also embeds the binary's absolute path, which contains "agentworth"
+/// for every name because of the repository directory it was built in.
+#[test]
+fn the_dynamic_registration_names_the_binary_that_emitted_it() {
+    for bin in ["archie", "agwt", "agentworth"] {
+        for shell in ["zsh", "bash"] {
+            let out = Command::cargo_bin(bin)
+                .unwrap()
+                .env("COMPLETE", shell)
+                .env("NO_COLOR", "1")
+                .output()
+                .unwrap();
+            let script = String::from_utf8_lossy(&out.stdout).to_string();
+            assert!(
+                !script.trim().is_empty(),
+                "COMPLETE={shell} {bin} emitted no registration script"
+            );
+
+            let registrations: Vec<&str> = script
+                .lines()
+                .map(str::trim)
+                .filter(|l| l.starts_with("#compdef") || l.starts_with("compdef") || l.starts_with("complete "))
+                .collect();
+            assert!(
+                !registrations.is_empty(),
+                "COMPLETE={shell} {bin} emitted no registration line:\n{script}"
+            );
+            for line in &registrations {
+                assert!(
+                    line.split_whitespace().any(|w| w == bin),
+                    "COMPLETE={shell} {bin} registers something else: {line}"
+                );
+                if bin != "agentworth" {
+                    assert!(
+                        !line.split_whitespace().any(|w| w == "agentworth"),
+                        "COMPLETE={shell} {bin} registers `agentworth`: {line}"
+                    );
+                }
+            }
+        }
+    }
+}

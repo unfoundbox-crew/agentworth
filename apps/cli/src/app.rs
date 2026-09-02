@@ -1266,12 +1266,28 @@ fn normalize(command: Commands) -> Action {
     }
 }
 
+/// The name this process was actually invoked as.
+///
+/// One executable answers to `archie`, `agwt` and `agentworth`, and clap only knows the
+/// root command's name (`agentworth`). Every completion script has to name the binary the
+/// user typed: `source <(COMPLETE=zsh archie)` emitting `#compdef agentworth` registers
+/// completions against a name that is not on the command line, so Tab does nothing.
+fn invoked_binary_name() -> String {
+    std::env::args_os()
+        .next()
+        .map(PathBuf::from)
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "archie".to_string())
+}
+
 pub fn run() -> Result<()> {
     // Dynamic shell completion runs before argv is parsed: with COMPLETE=<shell> set, the
     // binary answers the shell's completion request and exits, and with it unset this is a
     // no-op. Nothing here touches the index -- the per-argument completers in
     // `crate::completions` open their own read-only connection only when a value is asked for.
-    clap_complete::env::CompleteEnv::with_factory(Cli::command).complete();
+    clap_complete::env::CompleteEnv::with_factory(Cli::command)
+        .bin(invoked_binary_name())
+        .complete();
 
     let cli = Cli::parse();
 
@@ -1617,16 +1633,13 @@ pub fn run() -> Result<()> {
             version_info::run_update_command(resolve_json(a.json), a.offline)?;
         }
         Action::Completions(a) => {
-            // Generated for the name this binary was actually invoked as, not for the clap
-            // command's own name: the same executable answers to `archie`, `agwt` and
-            // `agentworth`, and a script naming the wrong one completes nothing.
             let mut cmd = Cli::command();
-            let bin = std::env::args_os()
-                .next()
-                .map(PathBuf::from)
-                .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| "archie".to_string());
-            clap_complete::aot::generate(a.shell, &mut cmd, bin, &mut std::io::stdout());
+            clap_complete::aot::generate(
+                a.shell,
+                &mut cmd,
+                invoked_binary_name(),
+                &mut std::io::stdout(),
+            );
         }
         Action::Config(action) => match action {
             ConfigAction::List { json } => config::run_config_list(resolve_json(json))?,
@@ -2634,8 +2647,15 @@ fn run_export_command(
     let scanner = Scanner::new(storage.clone());
 
     let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
-    let session_id =
-        crate::ui::picker::resolve_or_exit(&storage, ui, false, "session export", &arg)?;
+    // `export` has no --json; its machine-readable formats are the ones that emit JSON, and
+    // those must not get a text table from the picker when no session was named.
+    let session_id = crate::ui::picker::resolve_or_exit(
+        &storage,
+        ui,
+        matches!(format, "json" | "atif"),
+        "session export",
+        &arg,
+    )?;
     let session_id = session_id.as_str();
 
     let mut trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(session_id))?;

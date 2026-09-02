@@ -99,7 +99,7 @@ aliases — a registered client should not break on a rename.
 
 ## 2. Completions
 
-`agwt completions <shell>` writes a static script covering commands, flags
+`archie completions <shell>` writes a static script covering commands, flags
 and fixed value lists. Verified on docs.rs 2026-09-02: `clap_complete`
 4.6.9, static generation through the `aot` module (`Generator`, `Shell`,
 `generate`).
@@ -113,11 +113,11 @@ crate:
 
 ```
 # bash
-echo "source <(COMPLETE=bash agwt)" >> ~/.bashrc
+echo "source <(COMPLETE=bash archie)" >> ~/.bashrc
 # zsh
-echo "source <(COMPLETE=zsh agwt)" >> ~/.zshrc
+echo "source <(COMPLETE=zsh archie)" >> ~/.zshrc
 # fish
-echo "COMPLETE=fish agwt | source" >> ~/.config/fish/completions/agwt.fish
+echo "COMPLETE=fish archie | source" >> ~/.config/fish/completions/archie.fish
 ```
 
 The crate warns that shell code and binary must match, so re-source on
@@ -138,13 +138,13 @@ Tab that offers nothing.
 
 ## 3. The cockpit
 
-`agwt` with no arguments on a TTY opens a full-screen reader over the same
+`archie` with no arguments on a TTY opens a full-screen reader over the same
 data. Not a TTY, or `--plain`, or `TERM=dumb`: print the overview and exit
 0.
 
 | Screen | Shows |
 | :--- | :--- |
-| overview | what `agwt stats` prints, plus the current window |
+| overview | what `archie stats` prints, plus the current window |
 | sessions | `session list`, with a cursor |
 | one session | `session show`, and its handoff, asks and forgotten sections |
 | agents | `agent list` |
@@ -162,7 +162,7 @@ CLI commands.
 **One rendering path.** Every screen composes strings from
 `apps/cli/src/ui/views.rs`. The TUI adds a viewport, a cursor and key
 handling — nothing else. The binding rule: no view function may exist that
-only the TUI calls. If the cockpit can show it, `agwt` can print it.
+only the TUI calls. If the cockpit can show it, `archie` can print it.
 
 Dependency, verified on docs.rs 2026-09-02: `ratatui` 0.30.2, default
 `crossterm` backend. Added only when the cockpit ships; the grammar PR
@@ -196,7 +196,7 @@ Four of these had to be answered to build #118. What was decided, and what is st
 | Where does `blunder-blame` live? | `repo blunder-blame`, as mapped above. File-first is its trusted direction. |
 | Should an `index` noun exist? | Still open. `merge` stayed top-level and `--db-path` stayed global. |
 | Two releases of hidden MCP aliases, or one? | Two, the same as the CLI aliases — one removal date (`v0.1.18`) is easier to keep than two. But they are **not hidden**: MCP has no unlisted-but-callable tool, and rmcp's `disable_route` takes a tool out of `call` as well as out of `list_all`. The old names stay listed, each described as a deprecated alias, and are left out of the generated reference. |
-| Should a bare `agwt` open the cockpit? | Untouched — the cockpit is not built. |
+| Should a bare `archie` open the cockpit? | Untouched — the cockpit is not built. |
 | Is 100 ms per Tab real? | Now measured, but only against a fixture index of a dozen sessions (`apps/cli/tests/completion_budget.rs`). Nothing has been timed against a few thousand. |
 
 ### Still open
