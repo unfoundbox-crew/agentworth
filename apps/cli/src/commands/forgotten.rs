@@ -76,15 +76,18 @@ pub fn run_forgotten_command(
     Ok(())
 }
 
-/// The `session forgotten` screen for an already-resolved id -- the cockpit's `f`.
-pub(crate) fn view_for(storage: &Arc<Storage>, ui: &Ui, session_id: &str) -> Result<String> {
-    let scanner = Scanner::new(storage.clone());
+/// The `session forgotten` screen for a trace the caller already loaded -- the cockpit's `f`.
+pub(crate) fn view_for(
+    storage: &Arc<Storage>,
+    ui: &Ui,
+    trace: &agentworth_schema::AgentWorthTrace,
+) -> Result<String> {
     let options = ForgottenOptions {
         round: None,
         classes: Vec::new(),
         limit: DEFAULT_LIMIT,
     };
-    let (report, _trace) = load_forgotten(storage, &scanner, session_id, &options)?;
+    let report = crate::forgotten::forgotten_from_trace(storage, trace, &options)?;
     Ok(render_terminal(&report, ui))
 }
 

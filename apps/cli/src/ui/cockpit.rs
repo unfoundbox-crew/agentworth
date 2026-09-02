@@ -22,8 +22,14 @@ use ratatui::widgets::{Paragraph, Widget};
 
 use super::{truncate, Ui};
 
-/// Rows a list screen asks the index for. The same bound `session list` and `repo list`
-/// default to, so opening the cockpit costs one bounded query per screen and never a scan.
+/// Rows a list screen asks the index for.
+///
+/// The sessions screen passes this as `SessionFilter::limit` and its `/` filter as
+/// `SessionFilter::search`, so both the bound and the filtering happen in SQL and a
+/// keystroke costs one indexed `LIMIT`ed query rather than a full read. The repos screen
+/// takes the same bound over `get_top_repositories`, which is already an aggregate.
+/// Larger than the CLI's own default of 20 because a cockpit scrolls and a printed
+/// screen does not.
 pub const LIST_LIMIT: usize = 50;
 
 /// Windows the windows screen asks for, and the width of each.
@@ -114,6 +120,11 @@ pub enum Key {
     Esc,
     Backspace,
     Char(char),
+    /// Ctrl-C. Its own key rather than a synthetic `q`, because filter entry takes every
+    /// `Char` as text -- routing Ctrl-C through `Char('q')` typed a `q` into the filter
+    /// and left the reader with no way out, since raw mode has ISIG off and the OS is not
+    /// going to send SIGINT.
+    Quit,
 }
 
 impl Key {
@@ -125,7 +136,7 @@ impl Key {
         }
         // Ctrl-C is a quit whatever the screen is doing, filter entry included.
         if k.modifiers.contains(KeyModifiers::CONTROL) && matches!(k.code, KeyCode::Char('c')) {
-            return Some(Key::Char('q'));
+            return Some(Key::Quit);
         }
         Some(match k.code {
             KeyCode::Up => Key::Up,
@@ -151,6 +162,10 @@ pub enum Cmd {
     Reload,
     /// Drill into the session at this row of the sessions list.
     OpenRow(usize),
+    /// Show the sessions list filtered to the repository at this row of the repos list.
+    /// The filter already exists and already runs in SQL, so this costs the query the
+    /// sessions screen was going to run anyway and no new one.
+    FilterByRepo(usize),
     Quit,
 }
 
@@ -208,6 +223,11 @@ impl App {
     /// entry swallows printable keys, and help swallows everything, so both are tested
     /// before the screen's own bindings get a look.
     pub fn on_key(&mut self, key: Key) -> Cmd {
+        // Before everything, including filter entry and the help overlay: Ctrl-C is the
+        // one key that must never be swallowed by a mode.
+        if key == Key::Quit {
+            return Cmd::Quit;
+        }
         if self.filtering {
             return self.filter_key(key);
         }
@@ -256,6 +276,9 @@ impl App {
                 self.tab = Tab::Show;
                 Cmd::OpenRow(self.cursor)
             }
+            Key::Enter if self.screen == Screen::Repos && self.rows > 0 => {
+                Cmd::FilterByRepo(self.cursor)
+            }
             Key::Esc => self.back(),
             _ => Cmd::None,
         }
@@ -263,6 +286,9 @@ impl App {
 
     fn filter_key(&mut self, key: Key) -> Cmd {
         match key {
+            // Unreachable through `on_key`, which takes Ctrl-C first. Kept so this stays
+            // true if anything ever calls `filter_key` directly.
+            Key::Quit => Cmd::Quit,
             Key::Esc => {
                 self.filtering = false;
                 let had = !self.filter.is_empty();
@@ -319,14 +345,17 @@ impl App {
     }
 
     fn go(&mut self, want: Screen) -> Cmd {
-        // `3` with nothing opened yet means "the row the cursor is on", which is the only
-        // reading that does not need a session the cockpit has not been told about.
-        if want == Screen::Session && self.open_session.is_none() {
+        // `3` from the sessions list means the row under the cursor, the same row
+        // `h`/`a`/`f`/`r` and `Enter` act on -- not whichever session was opened last,
+        // which is a different session as soon as the cursor has moved.
+        if want == Screen::Session {
             if self.screen == Screen::Sessions && self.rows > 0 {
                 self.tab = Tab::Show;
                 return Cmd::OpenRow(self.cursor);
             }
-            return Cmd::None;
+            if self.open_session.is_none() {
+                return Cmd::None;
+            }
         }
         if self.screen == want {
             return Cmd::None;
@@ -398,6 +427,7 @@ pub const HELP_LINES: &[(&str, &str)] = &[
     ("j / k, down / up", "move the cursor"),
     ("Enter", "drill into the highlighted session"),
     ("Esc", "back: out of a reading, a session, then a filter"),
+    ("Esc at the overview", "nothing; Esc never quits"),
     ("/", "filter the current list; Esc clears it"),
     ("1 - 6", "overview, sessions, session, agents, repos, windows"),
     ("h", "this session's handoff"),
@@ -406,6 +436,7 @@ pub const HELP_LINES: &[(&str, &str)] = &[
     ("r", "its Flight Receipt"),
     ("?", "this screen"),
     ("q", "quit"),
+    ("Ctrl-C", "quit, from anywhere, filter entry included"),
 ];
 
 /// The headline the cockpit shows against an index with nothing in it -- the same one
@@ -532,7 +563,9 @@ pub fn row_span(lines: &[String], rows: usize) -> Option<(usize, usize)> {
 fn is_rule(line: &str) -> bool {
     let bare = console::strip_ansi_codes(line);
     let bare = bare.trim();
-    bare.len() >= 8 && bare.chars().all(|c| c == '─' || c == '-')
+    // Characters, not bytes: `─` is three bytes, so a byte length made the threshold
+    // three times looser on the Unicode glyph set than on the ASCII one.
+    bare.chars().count() >= 8 && bare.chars().all(|c| c == '─' || c == '-')
 }
 
 // -----------------------------------------------------------------------------
@@ -685,6 +718,7 @@ pub fn run(ui: &Ui, screens: &dyn Screens) -> Result<()> {
     // stray line over whatever was there. Off for as long as the cockpit owns the terminal.
     super::set_status_quiet(true);
     install_panic_hook();
+    install_signal_handlers();
 
     let mut terminal = ratatui::try_init()?;
     let result = event_loop(&mut terminal, ui, screens);
@@ -692,6 +726,41 @@ pub fn run(ui: &Ui, screens: &dyn Screens) -> Result<()> {
     super::set_status_quiet(false);
     result
 }
+
+/// Restore the terminal if the process is killed rather than quit.
+///
+/// A `SIGTERM` or `SIGHUP` while the alternate screen is up otherwise leaves the reader's
+/// shell in raw mode with no echo. `signal_hook::low_level::register` runs the closure in
+/// the signal handler itself, so it does the least it can: the escape sequences that put
+/// the terminal back, then the default disposition for that signal.
+///
+/// Honest about the caveat: `ratatui::restore` writes and issues an ioctl, which are
+/// async-signal-safe, but it also takes crossterm's own state -- so a signal landing
+/// exactly inside a crossterm call could deadlock rather than restore. The alternative is
+/// leaving a killed terminal unusable every time instead of in a rare interleaving.
+///
+/// `SIGINT` is not registered: raw mode turns ISIG off, so Ctrl-C arrives as a key event
+/// and `Key::Quit` handles it. `SIGTSTP` (Ctrl-Z) is not handled at all -- the cockpit
+/// does not suspend cleanly, and a job control story is more than this needs.
+#[cfg(unix)]
+fn install_signal_handlers() {
+    use signal_hook::consts::{SIGHUP, SIGTERM};
+    for sig in [SIGTERM, SIGHUP] {
+        // SAFETY: the handler only writes escape sequences and re-raises with the default
+        // disposition. See the caveat above.
+        let registered = unsafe {
+            signal_hook::low_level::register(sig, move || {
+                ratatui::restore();
+                let _ = signal_hook::low_level::emulate_default_handler(sig);
+            })
+        };
+        // A signal that cannot be hooked is not a reason to refuse to open.
+        let _ = registered;
+    }
+}
+
+#[cfg(not(unix))]
+fn install_signal_handlers() {}
 
 /// A panic inside the alternate screen leaves the terminal in raw mode with no echo, which
 /// looks to the reader like their shell died. Restore first, then let the original hook
@@ -708,6 +777,7 @@ fn install_panic_hook() {
 /// key quits, so a reader is never trapped in a full-screen dead end.
 pub fn run_message(text: &str) -> Result<()> {
     install_panic_hook();
+    install_signal_handlers();
     let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
     let mut terminal = ratatui::try_init()?;
     let result = (|| -> Result<()> {
@@ -775,6 +845,16 @@ fn event_loop(
                     app.scroll = 0;
                     loaded = load(screens, &app);
                     app.rows = 0;
+                }
+            }
+            Cmd::FilterByRepo(row) => {
+                if let Some(repo) = loaded.ids.get(row).cloned() {
+                    app.screen = Screen::Sessions;
+                    app.filter = repo;
+                    app.cursor = 0;
+                    app.scroll = 0;
+                    loaded = load(screens, &app);
+                    app.rows = loaded.ids.len();
                 }
             }
         }
@@ -1056,11 +1136,81 @@ mod tests {
     }
 
     #[test]
-    fn q_quits_and_ctrl_c_is_the_same_key() {
+    fn q_quits_and_ctrl_c_is_its_own_key() {
         let mut a = App::default();
         assert_eq!(a.on_key(Key::Char('q')), Cmd::Quit);
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(Key::from_crossterm(ctrl_c), Some(Key::Char('q')));
+        assert_eq!(Key::from_crossterm(ctrl_c), Some(Key::Quit));
+    }
+
+    /// The sequence that trapped a reader: raw mode turns ISIG off, so there is no SIGINT
+    /// to fall back on, and Ctrl-C routed through `Char('q')` was swallowed by filter
+    /// entry as text. `2` `/` Ctrl-C has to quit, not type a `q`.
+    #[test]
+    fn ctrl_c_quits_out_of_filter_entry_rather_than_typing_a_q() {
+        let mut a = app_with(Screen::Sessions, 6);
+        a.on_key(Key::Char('/'));
+        a.on_key(Key::Char('v'));
+        assert!(a.filtering);
+        assert_eq!(a.on_key(Key::Quit), Cmd::Quit);
+        assert_eq!(a.filter, "v", "Ctrl-C typed into the filter");
+    }
+
+    /// The help overlay swallows every other key, deliberately. Not this one.
+    #[test]
+    fn ctrl_c_quits_out_of_the_help_overlay_too() {
+        let mut a = App::default();
+        a.on_key(Key::Char('?'));
+        assert!(a.help);
+        assert_eq!(a.on_key(Key::Quit), Cmd::Quit);
+    }
+
+    /// `filter_key` is only ever reached through `on_key`, which takes Ctrl-C first --
+    /// but it must not be the only thing standing between a reader and the exit.
+    #[test]
+    fn filter_key_honours_quit_on_its_own() {
+        let mut a = app_with(Screen::Sessions, 3);
+        a.filtering = true;
+        assert_eq!(a.filter_key(Key::Quit), Cmd::Quit);
+    }
+
+    /// `3` and `h`/`a`/`f`/`r` have to act on the same row. They did not: `3` reopened
+    /// whatever was opened last as soon as one session had been visited.
+    #[test]
+    fn three_opens_the_highlighted_row_even_after_another_session_was_opened() {
+        let mut a = app_with(Screen::Sessions, 5);
+        a.open_session = Some("opened_earlier".into());
+        a.cursor = 3;
+        assert_eq!(a.on_key(Key::Char('3')), Cmd::OpenRow(3));
+    }
+
+    /// Off the list, `3` still goes back to the session that is open.
+    #[test]
+    fn three_falls_back_to_the_open_session_away_from_the_list() {
+        let mut a = App {
+            screen: Screen::Repos,
+            open_session: Some("s1".into()),
+            ..App::default()
+        };
+        assert_eq!(a.on_key(Key::Char('3')), Cmd::Reload);
+        assert_eq!(a.screen, Screen::Session);
+    }
+
+    #[test]
+    fn enter_on_a_repository_asks_for_the_sessions_it_owns() {
+        let mut a = app_with(Screen::Repos, 4);
+        a.cursor = 2;
+        assert_eq!(a.on_key(Key::Enter), Cmd::FilterByRepo(2));
+    }
+
+    #[test]
+    fn a_rule_is_measured_in_characters_not_bytes() {
+        // Seven box-drawing characters is 21 bytes: long enough to pass a byte-length
+        // threshold of eight, and not a rule.
+        assert!(!is_rule("  ───────"));
+        assert!(is_rule("  ────────"));
+        assert!(is_rule("  --------"));
+        assert!(!is_rule("  EVIDENCE  SESSION"));
     }
 
     #[test]

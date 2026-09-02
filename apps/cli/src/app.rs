@@ -1314,11 +1314,16 @@ pub fn run() -> Result<()> {
     } else {
         EnvFilter::new("warn")
     };
-    // `archie mcp` speaks JSON-RPC over stdout -- any stray tracing line there would
-    // corrupt the protocol stream for whatever client spawned this process (the same reason
-    // every rmcp stdio example logs to stderr). Every other subcommand keeps the existing
-    // stdout default.
-    if matches!(cli.command, Some(Commands::Mcp)) {
+    // Two commands own stdout and must not have tracing written into it. `archie mcp`
+    // speaks JSON-RPC there -- a stray line corrupts the protocol stream for whatever
+    // client spawned this process (the same reason every rmcp stdio example logs to
+    // stderr). The cockpit draws frames there -- with `-v` a tracing line would land on
+    // top of the frame and stay until the next repaint. Both go to stderr; every other
+    // subcommand keeps the existing stdout default. Chosen over disabling the subscriber
+    // for the cockpit because `archie -v` is how you find out why a screen is empty, and
+    // `2>log` still gets you the lines.
+    let owns_stdout = matches!(cli.command, Some(Commands::Mcp) | Some(Commands::Tui(_)) | None);
+    if owns_stdout {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_target(false)
@@ -4388,10 +4393,7 @@ fn run_cockpit_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui)
     }
 
     let storage = storage.expect("an index that is not missing is open");
-    let screens = CockpitScreens {
-        storage: storage.clone(),
-        ui: *ui,
-    };
+    let screens = CockpitScreens::new(storage.clone(), *ui);
 
     if json {
         let stats = storage.get_aggregate_stats(false)?;
@@ -4419,7 +4421,9 @@ fn run_cockpit_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui)
     if cockpit::should_open(ui, json) {
         return cockpit::run(ui, &screens);
     }
-    print!("{}", crate::ui::cockpit::Screens::overview(&screens)?);
+    // Printed, so it keeps its closing line -- that is the one place `Next  archie tui`
+    // tells the reader something they are not already doing.
+    print!("{}", screens.overview_text(true)?);
     Ok(())
 }
 
@@ -4430,10 +4434,30 @@ fn run_cockpit_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui)
 struct CockpitScreens {
     storage: Arc<Storage>,
     ui: crate::ui::Ui,
+    /// The session screen's five tabs all read one transcript. Loading it costs a disk
+    /// read and a full adapter reparse, so it is loaded once and held until the reader
+    /// opens a different session. One session at a time: this is a cache of exactly one,
+    /// not a growing map, because moving down the list would otherwise hold every session
+    /// visited. `RefCell` rather than a lock because the cockpit is single-threaded and
+    /// `Screens` takes `&self`.
+    trace: std::cell::RefCell<Option<(String, Arc<agentworth_schema::AgentWorthTrace>)>>,
 }
 
-impl crate::ui::cockpit::Screens for CockpitScreens {
-    fn overview(&self) -> Result<String> {
+impl CockpitScreens {
+    fn new(storage: Arc<Storage>, ui: crate::ui::Ui) -> Self {
+        CockpitScreens {
+            storage,
+            ui,
+            trace: std::cell::RefCell::new(None),
+        }
+    }
+
+    /// The overview, with or without its closing line.
+    ///
+    /// `show_next` is true only where the closing line is useful: a printed overview,
+    /// which is what a bare `archie` gives a pipe. Inside the cockpit it points at
+    /// `archie tui`, which the reader is already inside.
+    fn overview_text(&self, show_next: bool) -> Result<String> {
         let ui = &self.ui;
         let stats = self.storage.get_aggregate_stats(false)?;
         let verdict = compute_verdict_breakdown(&self.storage, stats.total_sessions);
@@ -4462,34 +4486,56 @@ impl crate::ui::cockpit::Screens for CockpitScreens {
                 cache_hit_ratio: p.cache_hit_ratio,
                 estimated_cost_usd: p.estimated_cost_usd,
             });
-        Ok(crate::ui::views::overview(ui, &view, window.as_ref()))
+        Ok(crate::ui::views::overview(
+            ui,
+            &view,
+            window.as_ref(),
+            show_next,
+        ))
     }
 
+    /// The open session's trace, parsed at most once.
+    fn trace_for(&self, id: &str) -> Result<Arc<agentworth_schema::AgentWorthTrace>> {
+        if let Some((cached_id, trace)) = self.trace.borrow().as_ref() {
+            if cached_id == id {
+                return Ok(trace.clone());
+            }
+        }
+        let scanner = Scanner::new(self.storage.clone());
+        let trace = Arc::new(scanner.load_trace(id)?);
+        *self.trace.borrow_mut() = Some((id.to_string(), trace.clone()));
+        Ok(trace)
+    }
+}
+
+impl crate::ui::cockpit::Screens for CockpitScreens {
+    /// Inside the cockpit, with no closing line: `Next  archie tui` on the cockpit's own
+    /// first screen tells a reader to open what they are already looking at.
+    fn overview(&self) -> Result<String> {
+        self.overview_text(false)
+    }
+
+    /// The `/` filter is `SessionFilter::search`, which matches session id, source path,
+    /// model and adapter in SQL -- the same four fields, on an indexed `LIMIT`ed query.
+    /// It used to read every row and filter in Rust, which made every keystroke cost a
+    /// full table read.
     fn sessions(&self, filter: &str) -> Result<(String, Vec<String>)> {
         let limit = crate::ui::cockpit::LIST_LIMIT;
+        let trimmed = filter.trim();
+        // The default (`include_stubs` unset) already drops stubs in SQL, with a stricter
+        // predicate than the Rust filter this replaced -- so no second pass is needed.
         let sessions = self.storage.list_sessions_filtered(&SessionFilter {
-            limit: None,
+            search: if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            },
+            limit: Some(limit),
             order_by: Some(SessionOrderBy::StartedAtDesc),
             ..Default::default()
         })?;
-        let needle = filter.to_lowercase();
-        let kept: Vec<_> = sessions
-            .into_iter()
-            .filter(|s| s.total_events > 1)
-            .filter(|s| {
-                needle.is_empty()
-                    || s.session_id.to_lowercase().contains(&needle)
-                    || s.adapter.to_lowercase().contains(&needle)
-                    || s.source_path.to_lowercase().contains(&needle)
-                    || s
-                        .models_used
-                        .iter()
-                        .any(|m| m.to_lowercase().contains(&needle))
-            })
-            .take(limit)
-            .collect();
 
-        let rows = build_trace_rows(&self.storage, kept);
+        let rows = build_trace_rows(&self.storage, sessions);
         let ids: Vec<String> = rows
             .iter()
             .map(|(_, _, _, s)| s.session_id.clone())
@@ -4504,18 +4550,13 @@ impl crate::ui::cockpit::Screens for CockpitScreens {
 
     fn session(&self, id: &str, tab: crate::ui::cockpit::Tab) -> Result<String> {
         use crate::ui::cockpit::Tab;
+        let trace = self.trace_for(id)?;
         match tab {
-            Tab::Show => {
-                let scanner = Scanner::new(self.storage.clone());
-                let trace = scanner.load_trace(id)?;
-                Ok(inspect_view(&trace))
-            }
-            Tab::Handoff => handoff_command::view_for(&self.storage, &self.ui, id),
-            Tab::Asks => asks_command::view_for(&self.storage, &self.ui, id),
-            Tab::Forgotten => forgotten_command::view_for(&self.storage, &self.ui, id),
+            Tab::Show => Ok(inspect_view(&trace)),
+            Tab::Handoff => handoff_command::view_for(&self.storage, &self.ui, &trace),
+            Tab::Asks => asks_command::view_for(&self.storage, &self.ui, &trace),
+            Tab::Forgotten => forgotten_command::view_for(&self.storage, &self.ui, &trace),
             Tab::Receipt => {
-                let scanner = Scanner::new(self.storage.clone());
-                let trace = scanner.load_trace(id)?;
                 let score = agentworth_scoring::TraceScorer::default().score(&trace);
                 Ok(crate::commands::receipt::render_terminal_receipt_with(
                     &trace, &score, &self.ui,

@@ -443,7 +443,16 @@ pub struct OverviewWindow {
 /// The cockpit's first screen and, off a terminal, the whole of what a bare `archie`
 /// prints. Both go through here, which is what keeps the cockpit from growing a
 /// rendering of its own.
-pub fn overview(ui: &Ui, stats_view: &StatsView<'_>, window: Option<&OverviewWindow>) -> String {
+///
+/// `show_next` is off inside the cockpit for the same reason `StatsView::show_next` is:
+/// the closing line points at `archie tui`, and telling a reader who is already inside
+/// the cockpit to open the cockpit is noise.
+pub fn overview(
+    ui: &Ui,
+    stats_view: &StatsView<'_>,
+    window: Option<&OverviewWindow>,
+    show_next: bool,
+) -> String {
     let i = ui.inner();
     let mut out = stats(ui, stats_view);
 
@@ -481,7 +490,9 @@ pub fn overview(ui: &Ui, stats_view: &StatsView<'_>, window: Option<&OverviewWin
         }
     }
 
-    out.push_str(&ui.next("archie tui", "the same data with a cursor"));
+    if show_next {
+        out.push_str(&ui.next("archie tui", "the same data with a cursor"));
+    }
     out
 }
 

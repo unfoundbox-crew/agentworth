@@ -277,16 +277,19 @@ fn parse_relative_duration(value: &str) -> Option<Duration> {
 /// so this is about what stays readable, same reasoning as `forgotten.rs`'s `TERMINAL_ROWS`.
 const TERMINAL_ROWS: usize = 15;
 
-/// The `session asks` screen for an already-resolved id -- the cockpit's `a`.
-pub(crate) fn view_for(storage: &Arc<Storage>, ui: &Ui, session_id: &str) -> Result<String> {
-    let scanner = Scanner::new(storage.clone());
+/// The `session asks` screen for a trace the caller already loaded -- the cockpit's `a`.
+pub(crate) fn view_for(
+    storage: &Arc<Storage>,
+    ui: &Ui,
+    trace: &AgentWorthTrace,
+) -> Result<String> {
     let options = AsksOptions {
         since: None,
         unanswered_only: false,
         limit: DEFAULT_LIMIT,
     };
-    let (report, trace) = load_asks(storage, &scanner, session_id, &options)?;
-    let report = report.redacted(&Redactor::new().for_trace(&trace));
+    let report = crate::asks::asks_from_trace(storage, trace, &options);
+    let report = report.redacted(&Redactor::new().for_trace(trace));
     Ok(render_terminal(&report, ui, &Resolution::Explicit))
 }
 

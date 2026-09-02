@@ -332,6 +332,12 @@ It is read-only, permanently: no writes, no scan, no config changes, no model ca
 and `config` stay commands you type. Colour follows the same rules as every printed screen,
 so `--no-color` and `NO_COLOR` give a monochrome cockpit.
 
+One thing it does share with every other command: a bare `archie` opens the index the same
+way they all do, which creates the database file on a machine that has never scanned. You
+get the "no sessions found" screen, and an empty `~/.agentworth/agentworth.db` beside it.
+`Esc` at the overview does nothing — it walks back, it never quits — and `Ctrl-C` quits from
+anywhere, filter entry included.
+
 ---
 
 ## MCP Server

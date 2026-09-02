@@ -198,9 +198,15 @@ fn no_view_exists_that_only_the_cockpit_calls() {
     let cockpit_path = src.join("ui/cockpit.rs");
     let views = fs::read_to_string(&views_path).unwrap();
 
+    // `pub fn` and `pub(crate) fn`, at any indentation: a view tucked inside a module or
+    // narrowed to the crate is still a view, and would otherwise slip the rule.
     let names: Vec<String> = views
         .lines()
-        .filter_map(|l| l.strip_prefix("pub fn "))
+        .map(str::trim_start)
+        .filter_map(|l| {
+            l.strip_prefix("pub fn ")
+                .or_else(|| l.strip_prefix("pub(crate) fn "))
+        })
         .filter_map(|l| l.split('(').next())
         .filter_map(|l| l.split('<').next())
         .map(|n| n.trim().to_string())
@@ -223,18 +229,34 @@ fn no_view_exists_that_only_the_cockpit_calls() {
         .join("\n");
 
     for name in &names {
-        let call = format!("{name}(");
-        let qualified = format!("views::{name}");
-        let imported = format!("{name} as ");
-        let referenced = elsewhere.contains(&qualified)
-            || elsewhere.contains(&imported)
-            || inside.contains(&call);
+        let referenced = mentions(&elsewhere, &format!("views::{name}"))
+            || mentions(&elsewhere, &format!("{name} as "))
+            || elsewhere.contains(&format!("views::{{{name}"))
+            || mentions(&inside, &format!("{name}("));
         assert!(
             referenced,
             "`views::{name}` is called from nowhere but the cockpit (or from nowhere at \
              all). Every cockpit screen must also be something `archie` can print."
         );
     }
+}
+
+/// `haystack` contains `needle` as a whole identifier.
+///
+/// A plain `contains` let `views::stats_outcomes` satisfy the rule for `views::stats`, so
+/// dropping `stats`'s only caller would not have failed anything. The character after the
+/// match has to be one that cannot continue a Rust identifier.
+fn mentions(haystack: &str, needle: &str) -> bool {
+    // Byte lookups rather than `haystack[end..]`: `clippy::string_slice` is denied
+    // workspace-wide, and every view name is ASCII, so the byte after the match is
+    // exactly the character after it.
+    let bytes = haystack.as_bytes();
+    haystack.match_indices(needle).any(|(at, _)| {
+        match bytes.get(at + needle.len()) {
+            None => true,
+            Some(b) => !(b.is_ascii_alphanumeric() || *b == b'_'),
+        }
+    })
 }
 
 fn rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
