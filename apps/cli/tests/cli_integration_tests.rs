@@ -1087,6 +1087,7 @@ fn test_cli_forgotten_command_on_a_session_that_never_compacted() {
         .assert()
         .success();
 
+    // The terminal says it in a sentence; the named note is what `--json` carries.
     Command::cargo_bin("agentworth")
         .unwrap()
         .arg("--db-path")
@@ -1096,5 +1097,21 @@ fn test_cli_forgotten_command_on_a_session_that_never_compacted() {
         .assert()
         .success()
         .stdout(predicate::str::contains("never compacted"))
-        .stdout(predicate::str::contains("no_compactions_in_this_session"));
+        .stdout(predicate::str::contains("NEVER COMPACTED"));
+
+    let json_out = Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .arg("forgotten")
+        .arg(&session_id)
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+    assert_eq!(value["compactions"], 0);
+    assert_eq!(value["notes"][0], "no_compactions_in_this_session");
 }

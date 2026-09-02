@@ -142,42 +142,59 @@ pub fn run_forgotten_command(
 
 fn render_terminal(report: &ForgottenReport, ui: &Ui) -> String {
     // One section per round, so the reader can see the shape of the loss round by round rather
-    // than as one undifferentiated list. Rounds with nothing returned are still named in the
-    // heading count, which is how "round 2 dropped 63 and kept 3" stays visible.
-    let mut sections: Vec<HandoffSection> = Vec::new();
-    let mut titles: Vec<String> = Vec::new();
-    for round in &report.rounds {
-        titles.push(format!(
-            "Round {} — {} dropped, {} survived",
-            round.round, round.dropped_total, round.summary_total
-        ));
-    }
+    // than as one undifferentiated list. The heading carries both numbers, which is how
+    // "round 2 — 63 dropped, 3 survived" stays visible even when only ten rows fit.
+    let mut titles: Vec<String> = report
+        .rounds
+        .iter()
+        .map(|r| {
+            format!(
+                "Round {} — {} dropped, {} survived",
+                r.round, r.dropped_total, r.summary_total
+            )
+        })
+        .collect();
+    // Appended before anything borrows the vec, since `HandoffSection` holds `&str` into it.
+    let empty_index = titles.len();
+    titles.push(empty_title(report).to_string());
+    let titles = titles;
 
+    let mut sections: Vec<HandoffSection> = Vec::new();
     for (i, round) in report.rounds.iter().enumerate() {
-        let rows: Vec<(String, String)> = report
+        let matching: Vec<&_> = report
             .forgotten
             .iter()
             .filter(|s| s.round == round.round)
+            .collect();
+        if matching.is_empty() {
+            continue;
+        }
+        let rows: Vec<(String, String)> = matching
+            .iter()
             .take(TERMINAL_ROWS)
             .map(|s| {
                 let acted = if s.followed_by.is_empty() { "" } else { " ·acted" };
                 (format!("seq {}{}", s.sequence, acted), s.text.clone())
             })
             .collect();
-        let shown = rows.len();
-        let total = report
-            .forgotten
-            .iter()
-            .filter(|s| s.round == round.round)
-            .count();
-        if total == 0 {
-            continue;
-        }
         sections.push(HandoffSection {
             title: &titles[i],
-            total,
-            dropped: total.saturating_sub(shown),
+            total: matching.len(),
+            dropped: matching.len().saturating_sub(rows.len()),
             rows,
+        });
+    }
+
+    // With no sections the shared renderer prints its own "nothing to hand over: no file
+    // changes, no commands, no outcome evidence" line, which names things this command does not
+    // report. One empty section says the true thing instead, and the machine-readable note is
+    // still in `--json`.
+    if sections.is_empty() {
+        sections.push(HandoffSection {
+            title: &titles[empty_index],
+            total: 0,
+            dropped: 0,
+            rows: Vec::new(),
         });
     }
 
@@ -204,6 +221,22 @@ fn render_terminal(report: &ForgottenReport, ui: &Ui) -> String {
     )
 }
 
+/// The heading for a session with nothing to show, in the reader's words rather than the
+/// machine's. The named note is what `--json` carries; a person gets the sentence.
+fn empty_title(report: &ForgottenReport) -> &'static str {
+    if report.compactions == 0 {
+        "This session never compacted"
+    } else if report.dropped_total == 0 {
+        "Compacted, but nothing decision-shaped was dropped"
+    } else if report.forgotten_total == 0 {
+        "Compacted, and every dropped decision survived in a summary"
+    } else {
+        "Nothing matched the filters you asked for"
+    }
+}
+
+/// Kept short on purpose: the shared renderer truncates this to one line, so the counts most
+/// likely to be cut are the ones `--json` already carries in full.
 fn cost_line(report: &ForgottenReport) -> String {
     let mut parts = vec![
         format!(
@@ -215,10 +248,10 @@ fn cost_line(report: &ForgottenReport) -> String {
         format!("{} out", compact(report.survived_in_summary as u64)),
     ];
     if report.truncated {
-        parts.push(format!("showing {} of {}", report.returned, report.forgotten_total));
-    }
-    if !report.notes.is_empty() {
-        parts.push(report.notes.join(", "));
+        parts.push(format!(
+            "showing {} of {}",
+            report.returned, report.forgotten_total
+        ));
     }
     parts.join(" · ")
 }
