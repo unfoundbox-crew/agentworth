@@ -145,7 +145,9 @@ fn colour_never_moves_a_column() {
     let (_t, db) = fixture();
     for (name, args) in screens() {
         // `scan` reports elapsed-dependent counts on a second run; skip its re-render.
-        if name == "scan" {
+        // `watch-once` prints the wall-clock second it polled at, which can tick over
+        // between the plain and coloured invocations below -- same class of flake.
+        if name == "scan" || name == "watch-once" {
             continue;
         }
         for columns in [80usize, 120] {

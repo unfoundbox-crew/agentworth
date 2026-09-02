@@ -597,8 +597,21 @@ fn detect_credential_leak(
     })
 }
 
+/// Not `agentworth_schema::text::preview` (which this could delegate to): `preview` marks
+/// a cut with `…` (U+2026), a glyph outside `ui/mod.rs`'s allowed set, and this value flows
+/// straight into `AuditFindingRow`'s `offending_snippet` rendered by `views::audit` --
+/// confirmed by `output_snapshots.rs`'s `no_screen_ships_a_glyph_outside_the_allowed_set`,
+/// which failed on exactly this before this fix. Same reasoning as
+/// `blunder.rs::truncate_snippet`: reuse `preview`'s own char-boundary-safe primitive,
+/// `truncate_chars`, with a literal `...` instead.
 fn truncate_str(s: &str, max_chars: usize) -> String {
-    agentworth_schema::text::preview(s, max_chars)
+    let trimmed = s.trim();
+    if trimmed.chars().count() <= max_chars {
+        trimmed.to_string()
+    } else {
+        let budget = max_chars.saturating_sub(3);
+        format!("{}...", agentworth_schema::text::truncate_chars(trimmed, budget))
+    }
 }
 
 /// Render the ASCII Safety Audit Report.

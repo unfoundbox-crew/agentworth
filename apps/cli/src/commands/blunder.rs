@@ -138,7 +138,15 @@ pub fn run_blunder_command(
                 let top_exhibit = &exhibits[0];
                 dispatch_and_print_result(ui, top_exhibit)?;
             } else {
-                println!("{}", ui.paint(crate::ui::Role::Label, "Submission skipped."));
+                // A real terminal echoes the user's keystrokes and the Enter that submits
+                // them, so the prompt's own `print!` (no trailing newline, by design --
+                // `[y/N]: ` reads on the same line as what gets typed) is followed by a
+                // fresh line before this ever prints. Piped/non-interactive stdin (a test,
+                // a script, `agentworth blunder < /dev/null`) echoes nothing, so without an
+                // explicit newline here this glues straight onto the end of the prompt --
+                // caught by output_snapshots.rs's 80-column wrap check, which runs with no
+                // TTY attached.
+                println!("\n{}", ui.paint(crate::ui::Role::Label, "Submission skipped."));
             }
         }
     }
