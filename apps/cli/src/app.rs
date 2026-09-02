@@ -40,6 +40,9 @@ mod handoff_command;
 // Same collision, same fix: `commands::forgotten` would clash with `crate::forgotten`.
 #[path = "commands/forgotten.rs"]
 mod forgotten_command;
+// Same collision, same fix again: `commands::asks` would clash with `crate::asks`.
+#[path = "commands/asks.rs"]
+mod asks_command;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -345,6 +348,35 @@ enum Commands {
         redact: bool,
 
         /// Output the structured diff as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// The questions you asked and where their answers are -- built so you never have to
+    /// re-scroll or re-ask because the answer landed several messages later
+    Asks {
+        /// Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed
+        /// directly if it isn't an indexed session). Defaults to the newest session for this
+        /// directory's repository, same as `--current`.
+        #[arg(long, conflicts_with = "current")]
+        session: Option<String>,
+
+        /// Resolve the newest session for this directory's repository. The default when
+        /// `--session` is not given -- this flag exists so an invocation can say that on
+        /// purpose.
+        #[arg(long)]
+        current: bool,
+
+        /// Only questions asked at or after this time: RFC 3339, `YYYY-MM-DD`, or a relative
+        /// duration like `2h`, `30m`, `1d`, `3w`.
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Only questions that are not `answered` -- still open, or flagged back to you.
+        #[arg(long)]
+        unanswered: bool,
+
+        /// Output the structured index as JSON
         #[arg(long)]
         json: bool,
     },
@@ -810,6 +842,23 @@ pub fn run() -> Result<()> {
                 classes,
                 limit,
                 redact,
+                resolve_json(json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Commands::Asks {
+            session,
+            current,
+            since,
+            unanswered,
+            json,
+        } => {
+            asks_command::run_asks_command(
+                session,
+                current,
+                since,
+                unanswered,
                 resolve_json(json),
                 cli.db_path,
                 &ui,

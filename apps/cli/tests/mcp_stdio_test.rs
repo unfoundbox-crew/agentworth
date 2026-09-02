@@ -69,6 +69,7 @@ async fn test_stdio_tools_list_and_sessions_find() {
         "session_handoff",
         "carry_forward",
         "forgotten_context",
+        "session_asks",
     ] {
         assert!(
             tool_names.contains(&expected),

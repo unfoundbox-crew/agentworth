@@ -20,12 +20,13 @@
 | `handoff.md` | built | #77 — `session_handoff`, `carry_forward`, `agentworth handoff`; `prompt_preview` turned out to be filled since #47, only the pre-#47 rows are null |
 | `loose-ends.md` | built | #77 — `agentworth loose-ends`, the dashboard's detector ported to Rust |
 | `compaction-diff.md` | built | #83 — `forgotten_context`, `agentworth forgotten`, stored round boundaries, and a handoff section |
+| `asks.md` | built | #97 — `session_asks`, `agentworth asks`, a questions-to-answers index, tier 1 only |
 | `market-autofix.md` | research doc, not a build item | — |
 | `beliefs.md` | proposed, measured | — |
 | `efficiency-receipts.md` | proposed, measured | — |
 | `cli-grammar.md` | decided 2026-09-02, not built | — |
 
-Nineteen specs sit beside this file. They are independent of each other but not of
+Twenty specs sit beside this file. They are independent of each other but not of
 the backend, and two of them are worth less than they look until a bug lands
 first. This is the sequencing.
 
