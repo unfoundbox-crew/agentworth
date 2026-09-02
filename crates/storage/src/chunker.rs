@@ -673,6 +673,10 @@ fn is_test_command(cmd: &str) -> bool {
         || lower.contains("go test")
 }
 
+#[allow(
+    clippy::string_slice,
+    reason = "boundary is walked back to the nearest is_char_boundary() above, always safe"
+)]
 fn truncate_text(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -892,7 +896,12 @@ mod tests {
         let truncated_inside_dash = truncate_text(s, em_dash_offset + 1);
         assert!(truncated_inside_dash.ends_with("... [truncated]"));
         // Does not panic and preserves valid UTF-8
-        assert_eq!(truncated_inside_dash, format!("{}... [truncated]", &s[..em_dash_offset]));
+        #[allow(
+            clippy::string_slice,
+            reason = "em_dash_offset comes from find('—'), always a char boundary"
+        )]
+        let expected = format!("{}... [truncated]", &s[..em_dash_offset]);
+        assert_eq!(truncated_inside_dash, expected);
 
         // Exact length returns original string
         assert_eq!(truncate_text("Hello 🚀", 10), "Hello 🚀");

@@ -62,6 +62,10 @@ fn trim_row(line: &str) -> String {
 }
 
 /// Remove a trailing `ESC [ … m` sequence, if the string ends in one.
+#[allow(
+    clippy::string_slice,
+    reason = "start comes from rfind() on an ASCII escape sequence, always a char boundary"
+)]
 fn strip_trailing_sgr(s: &str) -> Option<&str> {
     let start = s.rfind("\u{1b}[")?;
     let body = &s[start + 2..];
@@ -1719,7 +1723,12 @@ fn barcode(ui: &Ui, session_id: &str, width: usize) -> String {
 fn shorten_home(path: &str) -> String {
     match std::env::var("HOME") {
         Ok(home) if !home.is_empty() && path.starts_with(&home) => {
-            format!("~{}", &path[home.len()..])
+            #[allow(
+                clippy::string_slice,
+                reason = "path.starts_with(&home) just verified home.len() is a char boundary"
+            )]
+            let rest = &path[home.len()..];
+            format!("~{rest}")
         }
         _ => path.to_string(),
     }

@@ -143,8 +143,8 @@ pub async fn start_server(
     );
     if let Some(path) = storage.db_path() {
         let path_str = path.to_string_lossy();
-        let display_path = if path_str.len() > 38 {
-            format!("...{}", &path_str[path_str.len() - 35..])
+        let display_path = if path_str.chars().count() > 38 {
+            format!("...{}", agentworth_schema::text::tail_chars(&path_str, 35))
         } else {
             path_str.to_string()
         };

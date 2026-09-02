@@ -207,8 +207,8 @@ pub fn compute_archaeology_highlights(
                             let trimmed = content.trim();
                             if !trimmed.is_empty() {
                                 let first_line = trimmed.lines().next().unwrap_or(trimmed);
-                                Some(if first_line.len() > 120 {
-                                    format!("{}...", &first_line[..117])
+                                Some(if first_line.chars().count() > 120 {
+                                    format!("{}...", agentworth_schema::text::truncate_chars(first_line, 117))
                                 } else {
                                     first_line.to_string()
                                 })

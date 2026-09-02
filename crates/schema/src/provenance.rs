@@ -39,6 +39,10 @@ impl Provenance {
 /// Moved here from `agentworth-storage` (still re-exported from there for existing callers)
 /// so `agentworth-redaction` can derive a trace's own project identity to redact it, without
 /// pulling in storage's SQLite dependency for one pure string function.
+#[allow(
+    clippy::string_slice,
+    reason = "every idx comes from find() on an ASCII literal, offset by its own byte length: always a char boundary"
+)]
 pub fn extract_repository_or_workspace(source_path: &str) -> String {
     let path = Path::new(source_path);
     let path_str = source_path.replace('\\', "/");

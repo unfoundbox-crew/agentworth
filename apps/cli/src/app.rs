@@ -1733,8 +1733,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
             .map(|(k, v)| format!("{}({})", k, v))
             .collect::<Vec<_>>()
             .join(", ");
-        let display = if tools_str.len() > 66 {
-            format!("{}...", &tools_str[..63])
+        let display = if tools_str.chars().count() > 66 {
+            format!("{}...", agentworth_schema::text::truncate_chars(&tools_str, 63))
         } else {
             tools_str
         };
@@ -1764,8 +1764,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
 
         let supporting: Vec<_> = outcomes.iter().filter(|o| o.kind == strongest.kind).collect();
         for ev in &supporting {
-            let summary_display = if ev.summary.len() > 64 {
-                format!("{}...", &ev.summary[..61])
+            let summary_display = if ev.summary.chars().count() > 64 {
+                format!("{}...", agentworth_schema::text::truncate_chars(&ev.summary, 61))
             } else {
                 ev.summary.clone()
             };
@@ -1782,8 +1782,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                 other_signals.len()
             );
             for ev in other_signals.iter().take(3) {
-                let summary_display = if ev.summary.len() > 48 {
-                    format!("{}...", &ev.summary[..45])
+                let summary_display = if ev.summary.chars().count() > 48 {
+                    format!("{}...", agentworth_schema::text::truncate_chars(&ev.summary, 45))
                 } else {
                     ev.summary.clone()
                 };

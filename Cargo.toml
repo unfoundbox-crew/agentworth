@@ -14,7 +14,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.14"
+version = "0.1.15"
 edition = "2021"
 authors = ["AgentWorth Contributors"]
 license = "Apache-2.0"
@@ -73,3 +73,11 @@ assigning_clones = "warn" # `x = y.clone()` can reuse x's existing allocation vi
 # their existing backlogs were NOT cleared in this pass -- enabling them now would
 # warn immediately. See docs/DECISION-INBOX.md's 2026-09-01 quality-audit entry
 # before turning these on.
+
+# `restriction` group, cherry-picked (2026-09-02, after the recovery.rs:571 panic):
+# a byte-index slice (`&s[..80]`) on transcript text panics the moment the cut lands
+# inside a multi-byte char. Denied at the workspace level so this class can't ship
+# again; every remaining site either now goes through agentworth_schema::text's
+# char-boundary-safe helpers, or is a byte slice on provably-ASCII/boundary-safe data
+# with an `#[allow(clippy::string_slice, reason = "...")]` explaining why.
+string_slice = "deny"

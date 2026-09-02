@@ -99,6 +99,10 @@ fn wrap_with_repo_marker(repo_dir: Option<&str>, leaf: &str, real_locator: &str)
 /// Recover the real locator from a possibly-wrapped source path. Absent the marker (older
 /// index rows, or a directory that could not be resolved), the whole string already is the
 /// real locator.
+#[allow(
+    clippy::string_slice,
+    reason = "idx comes from rfind() on an ASCII marker, offset by its own byte length: always a char boundary"
+)]
 fn strip_repo_marker(path_str: &str) -> &str {
     match path_str.rfind(OPENCODE_REPO_MARKER) {
         Some(idx) => &path_str[idx + OPENCODE_REPO_MARKER.len()..],
@@ -122,6 +126,10 @@ fn strip_repo_marker(path_str: &str) -> &str {
 /// directory directly (see [`OPENCODE_REPO_MARKER`]'s doc comment) and needs no decoding at
 /// all. This function covers hosts still on the older file-based layout, matching the slug
 /// format the pinned anchoring.rs test documents.
+#[allow(
+    clippy::string_slice,
+    reason = "idx comes from find() on an ASCII literal, offset by its own byte length: always a char boundary"
+)]
 fn decode_opencode_project_directory(path_str: &str) -> Option<String> {
     let normalized = path_str.replace('\\', "/");
     let idx = normalized.find("/project/-")?;

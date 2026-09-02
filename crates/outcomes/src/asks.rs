@@ -122,6 +122,10 @@ fn strip_list_prefix(line: &str) -> &str {
         }
     }
     if let Some(dot) = s.find(". ") {
+        #[allow(
+            clippy::string_slice,
+            reason = "dot comes from find(\". \"), offset by its own byte length: always a char boundary"
+        )]
         if s[..dot].chars().all(|c| c.is_ascii_digit()) && !s[..dot].is_empty() {
             s = s[dot + 2..].trim_start();
         }
@@ -188,6 +192,10 @@ fn find_answer<'a>(ordered: &'a [&'a NormalizedEvent], after: usize) -> Option<C
 /// so the returned slice borrows straight from `content` instead of a search-for-the-substring
 /// hack that would silently fall back to the whole message on any mismatch (trailing
 /// whitespace, `\r\n`, ...).
+#[allow(
+    clippy::string_slice,
+    reason = "offset accumulates split('\\n') line lengths, always a char boundary"
+)]
 fn first_substantive_span(content: &str) -> Option<&str> {
     let mut offset = 0usize;
     for line in content.split('\n') {

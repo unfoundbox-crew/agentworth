@@ -385,8 +385,7 @@ fn command_line(report: &AsksReport, resolution: &Resolution) -> String {
 }
 
 fn short(session_id: &str) -> &str {
-    let cut = session_id.char_indices().nth(8).map_or(session_id.len(), |(i, _)| i);
-    &session_id[..cut]
+    agentworth_schema::text::truncate_chars(session_id, 8)
 }
 
 #[cfg(test)]

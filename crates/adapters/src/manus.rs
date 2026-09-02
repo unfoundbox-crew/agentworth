@@ -476,6 +476,10 @@ fn parse_manus_record(
                 .map(String::from);
 
             // Extract XML style <thought> or <thinking> tags if embedded in content
+            #[allow(
+                clippy::string_slice,
+                reason = "all offsets come from find() on ASCII tag literals, always char boundaries"
+            )]
             if thinking.is_none() {
                 if let Some(start) = content.find("<thought>") {
                     if let Some(end) = content.find("</thought>") {

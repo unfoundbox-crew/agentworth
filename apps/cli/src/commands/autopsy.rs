@@ -201,8 +201,8 @@ pub fn run_autopsy_command(
             println!(
                 "│ [{}] \"{:<38}\" │",
                 i + 1,
-                style(if c.sample_raw_prompt.len() > 38 {
-                    format!("{}...", &c.sample_raw_prompt[..35])
+                style(if c.sample_raw_prompt.chars().count() > 38 {
+                    format!("{}...", agentworth_schema::text::truncate_chars(&c.sample_raw_prompt, 35))
                 } else {
                     c.sample_raw_prompt.clone()
                 }).bold().yellow()
