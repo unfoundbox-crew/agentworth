@@ -275,12 +275,147 @@ async fn test_api_get_trace_by_id_and_not_found() {
     assert!(detail["score"]["composite_score"].as_f64().unwrap() > 0.0);
     assert!(detail["score"]["outcome_score"].as_f64().unwrap() >= 0.50);
     assert!(!detail["outcomes"].as_array().unwrap().is_empty());
-    assert!(!detail["trace"]["events"].as_array().unwrap().is_empty());
+    let events = detail["trace"]["events"].as_array().unwrap();
+    assert!(!events.is_empty());
+    // No offset/limit given -- this must be exactly today's behavior: the full event list,
+    // with events_total/events_offset describing that (not silently truncating).
+    assert_eq!(detail["events_total"], events.len() as u64);
+    assert_eq!(detail["events_offset"], 0);
 
     // 2. Query non-existent trace -> 404 Not Found
     let (status, err) = request_json(app, "GET", "/api/traces/unknown_session_999", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(err["error"].as_str().unwrap().contains("not found"));
+}
+
+/// Builds a temp Claude Code `.jsonl` file with `n` minimal single-line user-message events
+/// and seeds a matching session row, returning `(session_id, temp_file)`. The temp file must
+/// stay alive for `Scanner::load_trace` to find it on disk.
+fn seed_trace_with_n_events(storage: &Storage, n: usize) -> (String, TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("evt_session.jsonl");
+    let contents: String = (0..n)
+        .map(|i| {
+            format!(
+                r#"{{"type":"user","timestamp":"2026-08-29T10:{:02}:{:02}Z","content":"event {i}"}}"#,
+                (i / 60) % 60,
+                i % 60
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&file_path, contents).unwrap();
+
+    let session_id = file_path
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let prov = Provenance::new(
+        file_path.to_string_lossy().to_string(),
+        "claude_code",
+        1024,
+        1700000000,
+        "sha256:mock_hash_evt",
+    );
+    let trace = AgentWorthTrace::new(session_id.clone(), "claude_code", prov, Utc::now());
+    storage.upsert_trace(&trace).expect("upsert trace");
+
+    (session_id, dir, file_path)
+}
+
+#[tokio::test]
+async fn test_api_get_trace_by_id_events_pagination_boundaries() {
+    let (app, storage, _) = setup_test_app(None);
+    let (session_id, _dir, _path) = seed_trace_with_n_events(&storage, 10);
+
+    // offset + limit slices trace.events, and echoes back events_total/events_offset.
+    let uri = format!("/api/traces/{session_id}?offset=3&limit=4");
+    let (status, detail) = request_json(app.clone(), "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let events = detail["trace"]["events"].as_array().unwrap();
+    assert_eq!(events.len(), 4);
+    assert_eq!(detail["events_total"], 10);
+    assert_eq!(detail["events_offset"], 3);
+
+    // offset past the end of the trace returns an empty page, not an error.
+    let uri = format!("/api/traces/{session_id}?offset=100&limit=5");
+    let (status, detail) = request_json(app.clone(), "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(detail["trace"]["events"].as_array().unwrap().is_empty());
+    assert_eq!(detail["events_total"], 10);
+    assert_eq!(detail["events_offset"], 100);
+
+    // limit=0 is rejected outright rather than silently returning zero events.
+    let uri = format!("/api/traces/{session_id}?limit=0");
+    let (status, err) = request_json(app.clone(), "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(err["error"].as_str().unwrap().contains("limit"));
+
+    // No params at all keeps today's behavior: every event, offset 0.
+    let uri = format!("/api/traces/{session_id}");
+    let (status, detail) = request_json(app, "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["trace"]["events"].as_array().unwrap().len(), 10);
+    assert_eq!(detail["events_total"], 10);
+    assert_eq!(detail["events_offset"], 0);
+}
+
+#[tokio::test]
+async fn test_api_get_trace_events_endpoint_returns_just_the_slice() {
+    let (app, storage, _) = setup_test_app(None);
+    let (session_id, _dir, _path) = seed_trace_with_n_events(&storage, 10);
+
+    let uri = format!("/api/traces/{session_id}/events?offset=2&limit=3");
+    let (status, page) = request_json(app.clone(), "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["events"].as_array().unwrap().len(), 3);
+    assert_eq!(page["events_total"], 10);
+    assert_eq!(page["events_offset"], 2);
+    // Only the slice -- no trace/score/outcomes on this endpoint's shape.
+    assert!(page.get("trace").is_none());
+    assert!(page.get("score").is_none());
+
+    // 404 for an unknown session, same as /api/traces/:id.
+    let (status, err) = request_json(app, "GET", "/api/traces/unknown_999/events", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(err["error"].as_str().unwrap().contains("not found"));
+}
+
+#[tokio::test]
+async fn test_api_response_compression_negotiated_via_accept_encoding() {
+    let (app, storage, _) = setup_test_app(None);
+    let (session_id, _dir, _path) = seed_trace_with_n_events(&storage, 200);
+
+    let uri = format!("/api/traces/{session_id}");
+    let req = Request::builder()
+        .method("GET")
+        .uri(&uri)
+        .header("accept-encoding", "gzip")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(req).await.expect("execute request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let content_encoding = response
+        .headers()
+        .get("content-encoding")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    assert_eq!(
+        content_encoding.as_deref(),
+        Some("gzip"),
+        "a large JSON response with Accept-Encoding: gzip must come back gzip-compressed"
+    );
+
+    // No Accept-Encoding header -> no content-encoding on the response.
+    let req = Request::builder()
+        .method("GET")
+        .uri(&uri)
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.expect("execute request");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get("content-encoding").is_none());
 }
 
 #[tokio::test]

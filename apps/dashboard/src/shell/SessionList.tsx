@@ -567,6 +567,14 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
                       <span className="shell-row-id" title={s.session_id}>
                         {s.session_id}
                       </span>
+                      {!!s.compaction_count && (
+                        <span
+                          className="shell-row-compaction"
+                          title={`compacted ${s.compaction_count} time${s.compaction_count === 1 ? '' : 's'}`}
+                        >
+                          ⟲ {s.compaction_count}
+                        </span>
+                      )}
                       <span className="shell-row-agent" title={s.adapter}>
                         {s.adapter}
                       </span>

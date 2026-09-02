@@ -28,6 +28,15 @@ fn push(out: &mut String, ui: &Ui, line: String) {
     let _ = writeln!(out, "{}", trim_row(&fit(ui, &line)));
 }
 
+/// `Ui::section` right-pads its head line to the full inner width, which is exactly the
+/// trailing padding `push` exists to strip -- so a section head always goes through it
+/// one line at a time rather than being written raw.
+fn section(out: &mut String, ui: &Ui, left: &str, right: &str) {
+    for line in ui.section(left, right).lines() {
+        push(out, ui, line.to_string());
+    }
+}
+
 /// `trim_end` cannot see padding that sits *inside* a colour span, before the reset — so a
 /// coloured row would keep trailing spaces a plain one dropped, and the two renderings
 /// would stop agreeing on column positions.
@@ -794,6 +803,204 @@ pub fn blame(ui: &Ui, path: &str, rows: &[BlameRow]) -> String {
 }
 
 // -----------------------------------------------------------------------------
+// doctor
+// -----------------------------------------------------------------------------
+
+pub struct DoctorAdapterRow {
+    pub name: String,
+    pub detected: bool,
+    pub roots: usize,
+}
+
+pub struct DoctorView {
+    pub os: String,
+    pub arch: String,
+    pub version: String,
+    pub db_path: String,
+    pub storage_healthy: bool,
+    pub db_size_bytes: u64,
+    pub total_indexed: usize,
+    pub adapters: Vec<DoctorAdapterRow>,
+}
+
+pub fn doctor(ui: &Ui, v: &DoctorView) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header("agentworth doctor", &format!("v{}", v.version)));
+    out.push('\n');
+
+    section(&mut out, ui, "ENVIRONMENT", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  os / arch", &format!("{}/{}", v.os, v.arch), ui.width(), Role::Value),
+    );
+    out.push('\n');
+
+    section(&mut out, ui, "STORAGE", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  path", &shorten_home(&v.db_path), ui.width(), Role::Value),
+    );
+    let (state, state_role) = if v.storage_healthy {
+        ("healthy, WAL mode", Role::Verified)
+    } else {
+        ("not found or uninitialized", Role::Error)
+    };
+    push(&mut out, ui, ui.leaders("  state", state, ui.width(), state_role));
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  size",
+            &format!("{:.1} KB", v.db_size_bytes as f64 / 1024.0),
+            ui.width(),
+            Role::Value,
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  indexed",
+            &format!("{} sessions", thousands(v.total_indexed as u64)),
+            ui.width(),
+            Role::Value,
+        ),
+    );
+    out.push('\n');
+
+    let present = v.adapters.iter().filter(|a| a.detected).count();
+    section(
+        &mut out,
+        ui,
+        "ADAPTERS",
+        &format!("{} of {} detected", present, v.adapters.len()),
+    );
+
+    const NAME: usize = 16;
+    // 1 for the cell glyph, 2 gaps of two spaces around the name column.
+    let roots_w = i.saturating_sub(1 + 2 + NAME + 2);
+    for a in &v.adapters {
+        let roots = if a.detected {
+            format!("{} root{}", a.roots, if a.roots == 1 { "" } else { "s" })
+        } else {
+            String::new()
+        };
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}  {}  {}",
+                ui.paint(
+                    if a.detected { Role::Verified } else { Role::Unverified },
+                    ui.cell(a.detected)
+                ),
+                ui.paint(Role::Value, &lpad(&truncate(&a.name, NAME), NAME)),
+                ui.paint(Role::Label, &rpad(&roots, roots_w)),
+            ),
+        );
+    }
+    out.push('\n');
+
+    out.push_str(&ui.next("agentworth scan", "pick up anything new since the last index"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// matrix
+// -----------------------------------------------------------------------------
+
+pub struct MatrixRow {
+    pub adapter: String,
+    /// Live: is this adapter's tool actually found on this machine right now.
+    pub detected: bool,
+    /// Every registered adapter clears this floor -- it is the trait's own baseline.
+    pub parse: bool,
+    /// The adapter classifies completion/failure signals into the outcome hierarchy.
+    pub outcomes: bool,
+    /// The adapter captures both tool calls and shell output, the two event kinds the
+    /// shared recovery-loop detector keys off (see `crates/outcomes/src/recovery.rs`).
+    pub recoveries: bool,
+    /// The adapter tracks per-session context compaction.
+    pub compaction: bool,
+}
+
+pub fn matrix(ui: &Ui, coverage_pct: &str, rows: &[MatrixRow]) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header(
+        "agentworth matrix",
+        &format!("{} adapters {} {} grounded coverage", rows.len(), ui.dot(), coverage_pct),
+    ));
+    out.push('\n');
+
+    const COL: usize = 8;
+    // The name column absorbs whatever the five fixed cells and their gaps don't need,
+    // so the row -- like every other table in this module -- fills exactly `i`.
+    let name = i.saturating_sub(COL * 5 + 10).max(10);
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Label,
+                &format!(
+                    "{}  {}  {}  {}  {}  {}",
+                    lpad("ADAPTER", name),
+                    lpad("DETECT", COL),
+                    lpad("PARSE", COL),
+                    lpad("OUTCOMES", COL),
+                    lpad("RECOVER", COL),
+                    lpad("COMPACT", COL),
+                )
+            )
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))),
+    );
+
+    let cell = |ui: &Ui, on: bool| -> String {
+        ui.paint(if on { Role::Verified } else { Role::Unverified }, ui.cell(on))
+    };
+
+    for r in rows {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}  {}  {}  {}  {}  {}",
+                ui.paint(Role::Value, &lpad(&truncate(&r.adapter, name), name)),
+                lpad(&cell(ui, r.detected), COL),
+                lpad(&cell(ui, r.parse), COL),
+                lpad(&cell(ui, r.outcomes), COL),
+                lpad(&cell(ui, r.recoveries), COL),
+                lpad(&cell(ui, r.compaction), COL),
+            ),
+        );
+    }
+
+    push(
+        &mut out,
+        ui,
+        format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))),
+    );
+    out.push('\n');
+    out.push_str(&ui.next(
+        "agentworth doctor",
+        "which of these are actually installed here",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
 // scan
 // -----------------------------------------------------------------------------
 
@@ -848,6 +1055,7 @@ pub struct ScanView {
     pub discovered: usize,
     pub scanned: usize,
     pub skipped: usize,
+    pub backfilled: usize,
     pub errors: usize,
     pub total_indexed: usize,
     pub pruned: usize,
@@ -884,11 +1092,16 @@ pub fn scan_summary(ui: &Ui, v: &ScanView) -> String {
             ui.paint(
                 Role::Label,
                 &format!(
-                    "{} new, {} unchanged, {} error{}{}",
+                    "{} new, {} unchanged, {} error{}{}{}",
                     thousands(v.scanned as u64),
                     thousands(v.skipped as u64),
                     v.errors,
                     if v.errors == 1 { "" } else { "s" },
+                    if v.backfilled > 0 {
+                        format!(", {} backfilled", thousands(v.backfilled as u64))
+                    } else {
+                        String::new()
+                    },
                     if v.pruned > 0 {
                         format!(", {} stale removed", thousands(v.pruned as u64))
                     } else {

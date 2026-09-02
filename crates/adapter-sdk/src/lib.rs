@@ -146,6 +146,16 @@ pub trait AgentAdapter: Send + Sync {
         }
     }
 
+    /// Every distinct `adapter` name this adapter's parsed sessions can be stored under.
+    /// Defaults to `[name()]`. An adapter that routes sessions into more than one product
+    /// identity at parse time (e.g. Gemini vs. Antigravity, both handled by one adapter
+    /// implementation) overrides this so callers that join on adapter name -- the coverage
+    /// matrix in particular -- can still find every row this adapter produces instead of
+    /// only the rows tagged with its own `name()`.
+    fn identity_names(&self) -> Vec<&'static str> {
+        vec![self.name()]
+    }
+
     /// Detect whether this agent's history directories exist on the local system.
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult>;
 

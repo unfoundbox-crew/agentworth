@@ -210,6 +210,16 @@ impl Ui {
         self.g("·", "-")
     }
 
+    /// A single filled/empty cell -- the one-glyph form of `meter`, for a capability grid
+    /// where each column is its own yes/no rather than a five-rung ladder.
+    pub fn cell(&self, on: bool) -> &'static str {
+        if on {
+            self.g("●", "#")
+        } else {
+            self.g("○", ".")
+        }
+    }
+
     // -- lines ----------------------------------------------------------------
 
     /// The screen head: the command echoed at column 0, its context right-aligned.
@@ -456,6 +466,15 @@ mod tests {
         assert_eq!(ui.meter(5), "●●●●●");
         assert_eq!(ui.meter(9), "●●●●●");
         assert_eq!(plain(80).meter(2), "##...");
+    }
+
+    #[test]
+    fn cell_is_the_one_glyph_form_of_meter() {
+        let ui = Ui::new(80, ColorMode::None, false);
+        assert_eq!(ui.cell(true), "●");
+        assert_eq!(ui.cell(false), "○");
+        assert_eq!(plain(80).cell(true), "#");
+        assert_eq!(plain(80).cell(false), ".");
     }
 
     #[test]

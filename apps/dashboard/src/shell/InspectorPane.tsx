@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { AgentWorthTrace } from '../types';
 import { formatDate, formatDuration } from '../utils/formatters';
 import { useSessions } from '../hooks/useSessions';
-import { fetchTraceDetail } from '../services/api';
+import { useTraceDetail } from '../hooks/useTraceDetail';
 import { OutcomeLadder, captionsFromOutcomes, determineReachedLevel } from './OutcomeLadder';
 import { TrajectoryView } from './TrajectoryView';
 import { OverviewPane } from './OverviewPane';
@@ -39,39 +39,10 @@ function collectChangedFiles(trace: AgentWorthTrace): string[] {
 
 export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggleTrajectoryFocus }: InspectorPaneProps) {
   const { sessions } = useSessions();
-  const [trace, setTrace] = useState<AgentWorthTrace | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!sessionId) {
-      setTrace(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    // fetchTraceDetail also normalizes the backend's short-form token_usage
-    // field names (cache_read_tokens/cache_creation_tokens) to the long
-    // names this component reads — don't re-fetch/re-normalize by hand here,
-    // that's exactly the duplication that let this drift out of sync before.
-    fetchTraceDetail(sessionId).then((data) => {
-      if (cancelled) return;
-      if (!data) {
-        setError('Could not load this session.');
-      } else {
-        setTrace(data);
-      }
-      setLoading(false);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId]);
+  // Fetches the first 500 events for a fast paint, then pages the rest in
+  // from /events in the background (#72) — see the hook for the two-phase
+  // load and how it cancels on a session change.
+  const { trace, loading, error, eventsTotal, eventsComplete } = useTraceDetail(sessionId);
 
   const summary = useMemo(
     () => sessions.find((s) => s.session_id === sessionId) ?? null,
@@ -169,6 +140,8 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
               focused={trajectoryFocused}
               onToggleFocus={onToggleTrajectoryFocus}
               compactionEventIds={compactionEventIds}
+              eventsTotal={eventsTotal}
+              eventsComplete={eventsComplete}
             />
           )}
 
@@ -181,16 +154,24 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
           {trace?.stats?.token_usage && (
             <div className="shell-tokens-section">
               <TokenEconomics tokenUsage={trace.stats.token_usage} />
-              <CacheWarmth events={trace.events} />
+              <CacheWarmth events={trace.events} eventsComplete={eventsComplete} />
             </div>
           )}
 
-          {trace?.events && <ContextComposition events={trace.events} />}
-
-          {trace?.events && <Compaction events={trace.events} />}
+          {trace?.events && (
+            <ContextComposition events={trace.events} eventsComplete={eventsComplete} />
+          )}
 
           {trace?.events && (
-            <LooseEnds events={trace.events} sessionId={trace.session_id} />
+            <Compaction events={trace.events} eventsComplete={eventsComplete} />
+          )}
+
+          {trace?.events && (
+            <LooseEnds
+              events={trace.events}
+              sessionId={trace.session_id}
+              eventsComplete={eventsComplete}
+            />
           )}
 
           {trace?.recoveries && trace.recoveries.length > 0 && (

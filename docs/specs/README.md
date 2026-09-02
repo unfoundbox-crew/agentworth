@@ -16,6 +16,10 @@
 | `archie.md` | proposed (umbrella spec) | — |
 | `desktop-app.md` | proposal, not started | — |
 | `questions.md` | proposed | — |
+| `verified-outcome-rate.md` | proposed, measured | — |
+| `suspect-commits.md` | proposed, measured | — |
+| `handoff.md` | proposed, measured | — |
+| `compaction-diff.md` | proposed, measured | — |
 | `market-autofix.md` | research doc, not a build item | — |
 
 Thirteen specs sit beside this file. They are independent of each other but not of
@@ -98,6 +102,56 @@ questions people actually ask are exact-match SQL that 4b already answers, and
 that embeddings only earn their place for "sessions like this one" or "what
 was this session about" — real, but not the daily case. Build 4b, see what it
 can't answer, then decide whether 9 is worth it.
+
+## Next: usefulness over panes
+
+The table above is a build order for a dashboard. The consumer of an answer is
+an agent over MCP, or a person in a chat app — neither of them opens a pane.
+Five documents cover what to build next on that basis. Nothing above gets
+deleted; the panes are built and they stay.
+
+**The MCP tool ships before any UI, for every one of these.** A tool is
+testable, callable by anything, and needs no design pass. A pane needs a human
+to open it, which is the bottleneck `mcp-server.md` already argued for
+removing. Build the tool, use it for a week, then decide whether the screen is
+worth drawing.
+
+| # | Spec | Tool | Blocked on |
+| :-- | :--- | :--- | :--- |
+| A | `capability-matrix.md` (in `docs/`, not here) | — | nothing, it is written |
+| B | `verified-outcome-rate.md` | `outcome_rate` | one aggregate query |
+| C | `handoff.md` | `session_handoff`, `carry_forward` | `prompt_preview`, and loose ends ported to Rust |
+| D | `suspect-commits.md` | `suspect_commits` | absolute-path filtering, then a `session_risk` table |
+| E | `compaction-diff.md` | `forgotten_context` | stored compaction round boundaries |
+
+### Why that order
+
+**A is first because it is already true and it changes the other four.** The
+matrix says twenty adapters. Two of them extract tokens and outcomes. Every
+spec below inherits that, and three of them return null rather than a number
+because of it. Read it before estimating anything here.
+
+**B is next because it is the smallest.** One aggregate query over columns that
+already exist, no new table, no new parsing. It also produces the first number
+anyone can act on: the verified rate spreads 75 points across repos and 32
+across models, which says the codebase matters more than the model — the
+opposite of what a model leaderboard would suggest.
+
+**C is third because it removes the daily chore.** 338 hand-written handoff
+files sit under `~/code`, 78 in the last eight days. It is third rather than
+first because it is gated on `prompt_preview` — item 2 of the table above,
+never filled, and the one field a handoff cannot open without.
+
+**D is fourth because its naive version is wrong.** Measured on this repo's
+main, the obvious join flags 33% of commits and nine of ten sampled flags are
+false, all from relative blame paths that suffix-match every repo on the disk.
+Anchored properly it flags 2.6%. Ship the anchoring, or ship a feature that
+loses trust on its first run.
+
+**E is last because it needs a new table and serves 4% of sessions.** It is
+also the only one nothing else can do: 402 decision-shaped sentences went into
+one session's eight compaction rounds and 28 came out, with reasons surviving
+at 1.7%. Worth building, after the four cheaper things.
 
 ## What none of these change
 

@@ -149,9 +149,7 @@ fn test_explicit_no_json_flag_overrides_persisted_json_default() {
     override_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "AgentWorth Adapter Extraction Coverage Matrix",
-        ))
+        .stdout(predicate::str::contains("agentworth matrix"))
         .stdout(predicate::str::contains("\"total_adapters\"").not());
 }
 

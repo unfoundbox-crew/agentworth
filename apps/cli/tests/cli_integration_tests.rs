@@ -111,7 +111,9 @@ fn test_cli_matrix_command_table_and_json() {
     matrix_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("AgentWorth Adapter Extraction Coverage Matrix (20 Production Adapters)"))
+        .stdout(predicate::str::contains("agentworth matrix"))
+        .stdout(predicate::str::contains("DETECT"))
+        .stdout(predicate::str::contains("COMPACT"))
         .stdout(predicate::str::contains("claude_code"))
         .stdout(predicate::str::contains("codex"))
         .stdout(predicate::str::contains("gemini"))
@@ -125,8 +127,9 @@ fn test_cli_matrix_command_table_and_json() {
         // fix/matrix-coverage replaced the old hardcoded "100% extraction parity" claim
         // with a real per-adapter capability score; see the --json assertion below for
         // the exact computed rate (27.1%, fixed given the current 4 real + 16 default
-        // capability profiles).
-        .stdout(predicate::str::contains("Grounded extraction coverage across feature dimensions:"));
+        // capability profiles). The table view (feat/cli-followups) folded that score
+        // into the header instead of a closing sentence.
+        .stdout(predicate::str::contains("grounded coverage"));
 
     // 2. agwt matrix (--json)
     let mut matrix_json_cmd = Command::cargo_bin("agwt").unwrap();

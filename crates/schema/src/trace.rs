@@ -41,7 +41,15 @@ pub struct AgentWorthTrace {
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub stats: TraceStats,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    // No `skip_serializing_if` here (unlike `metadata` below): `GET /api/traces/:id` and the
+    // MCP `session_get` tool both page this field down to an intentionally empty `Vec` when a
+    // caller's `offset` lands past the end of the trace (see `paginate_events`,
+    // `apps/cli/src/server/routes.rs`), and that empty page must still serialize as `"events":
+    // []`, not silently vanish from the response -- a JS/TS client doing `trace.events.length`
+    // would throw on a missing key but not on `[]`. `#[serde(default)]` is kept so a historical
+    // stored trace that predates this field, or one written by something using the omitting
+    // behavior this replaced, still deserializes.
+    #[serde(default)]
     pub events: Vec<NormalizedEvent>,
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub metadata: serde_json::Value,

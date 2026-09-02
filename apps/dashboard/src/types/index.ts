@@ -158,6 +158,28 @@ export interface AgentWorthTrace {
   recoveries?: RecoverySignal[];
 }
 
+/**
+ * The dashboard's flattened view of `GET /api/traces/:id`'s response (server
+ * type `TraceDetailResponse` in apps/cli/src/server/routes.rs): score,
+ * outcomes and recoveries merged onto the trace object, plus the two
+ * pagination fields the server started returning in #72.
+ *
+ * `events_total`/`events_offset` are absent on a server that predates #72 —
+ * such a response already carries every event in `trace.events`, so absence
+ * means "complete", not "unknown total".
+ */
+export interface TraceDetailResponse extends AgentWorthTrace {
+  events_total?: number;
+  events_offset?: number;
+}
+
+/** `GET /api/traces/:id/events` — one page of a trace's events, for lazy loading. */
+export interface EventsPageResponse {
+  events: NormalizedEvent[];
+  events_total: number;
+  events_offset: number;
+}
+
 export interface SessionSummary {
   session_id: string;
   adapter: string;

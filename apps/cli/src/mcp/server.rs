@@ -25,8 +25,9 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler
 use serde_json::json;
 
 use super::params::{
-    parse_rfc3339_opt, BlameFindParams, CoverageStatsParams, PacingWindowParams,
-    SessionGetParams, SessionsFindParams, UsagePeriodParam, UsageSummaryParams,
+    parse_rfc3339_opt, BlameFindParams, CoverageStatsParams, OutcomeRateParams,
+    PacingWindowParams, SessionGetParams, SessionsFindParams, UsagePeriodParam,
+    UsageSummaryParams,
 };
 
 /// Hard ceiling on `sessions_find`'s `limit`, so a remote model is forced to state how much
@@ -39,6 +40,10 @@ const SESSIONS_FIND_LIMIT_CEILING: usize = 200;
 /// column and has to be post-filtered client-side after a bounded fetch (see
 /// `docs/specs/mcp-server.md`'s `sessions_find` "repo is not a stored column" note).
 const REPO_OVERFETCH_MULTIPLIER: usize = 4;
+
+/// Default `min_n` floor for `outcome_rate` -- `docs/specs/verified-outcome-rate.md` picks 20
+/// to hide noise, explicitly not a measured value (see the spec's "Open questions").
+const OUTCOME_RATE_DEFAULT_MIN_N: usize = 20;
 
 /// The `agentworth mcp` tool server. Cheap to construct -- `Scanner::new` only builds the
 /// adapter list, it does no I/O -- so a fresh instance per `run_mcp_server` call is fine.
@@ -179,15 +184,26 @@ impl AgentWorthMcpServer {
                         TraceScore, outcome evidence, and recovery signals -- the same shape \
                         /api/traces/:id returns. Redacted by default (trace events, outcome \
                         summaries, and recovery summaries all pass through the redaction \
-                        engine); pass include_raw=true for the unredacted trace."
+                        engine); pass include_raw=true for the unredacted trace. \
+                        `trace.events` is paginated: events_offset (default 0) and \
+                        events_limit (default 500, must be > 0) page through it, and the \
+                        response's events_total says how many events the session actually has, \
+                        so a large session is never returned in full by accident."
     )]
     pub(crate) async fn session_get(
         &self,
         Parameters(params): Parameters<SessionGetParams>,
     ) -> Result<CallToolResult, McpError> {
+        if params.events_limit == Some(0) {
+            return Err(McpError::invalid_params(
+                "events_limit must be greater than 0".to_string(),
+                None,
+            ));
+        }
+
         let scanner = self.scanner.clone();
         let session_id_for_task = params.session_id.clone();
-        let trace = tokio::task::spawn_blocking(move || scanner.load_trace(&session_id_for_task))
+        let mut trace = tokio::task::spawn_blocking(move || scanner.load_trace(&session_id_for_task))
             .await
             .map_err(Self::join_error)?
             .map_err(|e| {
@@ -201,6 +217,19 @@ impl AgentWorthMcpServer {
         let score = scorer.score(&trace);
         let outcomes = OutcomeDetector::new().detect_outcomes(&trace);
         let recoveries = RecoveryDetector::new().detect_recoveries(&trace);
+
+        let events_limit = Some(
+            params
+                .events_limit
+                .unwrap_or(super::params::SESSION_GET_DEFAULT_EVENTS_LIMIT),
+        );
+        let (events, events_total, events_offset) = crate::server::routes::paginate_events(
+            std::mem::take(&mut trace.events),
+            params.events_offset,
+            events_limit,
+        )
+        .map_err(|e| McpError::invalid_params(e, None))?;
+        trace.events = events;
 
         let (trace, outcomes, recoveries) = if params.include_raw {
             (trace, outcomes, recoveries)
@@ -223,6 +252,8 @@ impl AgentWorthMcpServer {
             "score": score,
             "outcomes": outcomes,
             "recoveries": recoveries,
+            "events_total": events_total,
+            "events_offset": events_offset,
         }))
     }
 
@@ -339,6 +370,40 @@ impl AgentWorthMcpServer {
         })?;
         Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
     }
+
+    #[tool(
+        description = "Verified-outcome rate by model, adapter, or repo: of the sessions that \
+                        claimed done, what share left evidence (a passed test/build or \
+                        stronger), with the sample size next to every row. Groups under min_n \
+                        (default 20) are suppressed and counted in suppressed_groups rather \
+                        than shown; a group with sessions but zero detected outcomes comes back \
+                        as rate: null with reason: \"no_outcome_detection\" instead of being \
+                        suppressed -- those are different claims. Includes a receipt \
+                        (db_path, counted_at, index_last_session_at, the non-stub predicate, and \
+                        the session IDs behind each row) so the answer is checkable."
+    )]
+    pub(crate) async fn outcome_rate(
+        &self,
+        Parameters(params): Parameters<OutcomeRateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let since = parse_rfc3339_opt(params.since.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let until = parse_rfc3339_opt(params.until.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let min_n = params.min_n.unwrap_or(OUTCOME_RATE_DEFAULT_MIN_N);
+        let include_stubs = params.include_stubs.unwrap_or(false);
+        let group_by = params.group_by.into();
+
+        let storage = self.storage.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            storage.get_outcome_rate(group_by, since, until, min_n, include_stubs)
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("outcome_rate query failed: {e}"), None))?;
+
+        Self::json_result(&result)
+    }
 }
 
 #[tool_handler]
@@ -350,8 +415,8 @@ impl ServerHandler for AgentWorthMcpServer {
             .with_instructions(
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  sessions_find, session_get, blame_find, usage_summary, pacing_window, \
-                 coverage_stats. Redacted output is the default everywhere event or file \
-                 content is returned; session_get's include_raw is the only opt-in to raw \
+                 coverage_stats, outcome_rate. Redacted output is the default everywhere event \
+                 or file content is returned; session_get's include_raw is the only opt-in to raw \
                  content, and it is per-call, never global. Run `agentworth scan` first if the \
                  index looks stale -- this server never scans on its own."
                     .to_string(),

@@ -4,12 +4,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
-use agentworth_adapters::{
-    AiderAdapter, ClaudeCodeAdapter, ClineAdapter, CodexAdapter, CursorAdapter, DeepSeekAdapter,
-    GeminiAdapter, GooseAdapter, GrokAdapter, HerdrAdapter, HermesAdapter, KimiAdapter, ManusAdapter,
-    MiniMaxAdapter, OpenClawAdapter, OpenCodeAdapter, PiAdapter, QwenAdapter, WindsurfAdapter,
-    ZhipuAdapter,
-};
 use agentworth_outcomes::{outcome_kind_name, OutcomeHierarchyDetector};
 use agentworth_schema::AgentWorthTrace;
 use agentworth_scoring::TraceScorer;
@@ -24,6 +18,10 @@ pub struct ScanSummary {
     pub discovered_sources: usize,
     pub scanned_sessions: usize,
     pub skipped_unchanged: usize,
+    /// Unchanged-source rows reparsed anyway because they were missing a field derived
+    /// from the source content (e.g. `prompt_preview`, added in v0.1.10 after these rows
+    /// were first indexed). See `Storage::needs_backfill`.
+    pub backfilled_sessions: usize,
     pub errors_encountered: usize,
     pub total_indexed_sessions: usize,
     pub aggregate_stats: AggregateStats,
@@ -40,31 +38,10 @@ pub struct Scanner {
 }
 
 impl Scanner {
-    /// Create a new scanner with default registered adapters.
+    /// Create a new scanner with every adapter in `agentworth_adapters::all_adapters()` --
+    /// the canonical registry, so a newly-added adapter is picked up here automatically.
     pub fn new(storage: Arc<Storage>) -> Self {
-        let adapters: Vec<Box<dyn AgentAdapter>> = vec![
-            Box::new(AiderAdapter::new()),
-            Box::new(ClaudeCodeAdapter::new()),
-            Box::new(ClineAdapter::new()),
-            Box::new(CodexAdapter::new()),
-            Box::new(CursorAdapter::new()),
-            Box::new(DeepSeekAdapter::new()),
-            Box::new(GeminiAdapter::new()),
-            Box::new(GooseAdapter::new()),
-            Box::new(GrokAdapter::new()),
-            Box::new(HerdrAdapter::new()),
-            Box::new(HermesAdapter::new()),
-            Box::new(KimiAdapter::new()),
-            Box::new(ManusAdapter::new()),
-            Box::new(MiniMaxAdapter::new()),
-            Box::new(OpenClawAdapter::new()),
-            Box::new(OpenCodeAdapter::new()),
-            Box::new(PiAdapter::new()),
-            Box::new(QwenAdapter::new()),
-            Box::new(WindsurfAdapter::new()),
-            Box::new(ZhipuAdapter::new()),
-        ];
-        Self { adapters, storage }
+        Self { adapters: agentworth_adapters::all_adapters(), storage }
     }
 
     /// Create a scanner with custom adapter list (useful for testing or selective execution).
@@ -190,17 +167,38 @@ impl Scanner {
         let total = all_sources.len();
         let mut scanned_sessions = 0;
         let mut skipped_unchanged = 0;
+        let mut backfilled_sessions = 0;
         let mut errors_encountered = 0;
 
         for (idx, (adapter_idx, source)) in all_sources.iter().enumerate() {
             let adapter = &self.adapters[*adapter_idx];
             on_progress(idx + 1, total);
 
+            let mut is_backfill = false;
             if !options.force {
                 match self.storage.should_scan_source(source) {
                     Ok(false) => {
-                        skipped_unchanged += 1;
-                        continue;
+                        // Unchanged content, but the indexed row may predate a
+                        // derived-field extractor (e.g. prompt_preview). Reparse once
+                        // to backfill rather than skipping forever.
+                        let path_str = source.path.to_string_lossy();
+                        match self.storage.needs_backfill(&path_str) {
+                            Ok(true) => {
+                                is_backfill = true;
+                            }
+                            Ok(false) => {
+                                skipped_unchanged += 1;
+                                continue;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed checking backfill status for {:?}: {}",
+                                    source.path, e
+                                );
+                                skipped_unchanged += 1;
+                                continue;
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!("Failed checking cache for {:?}: {}", source.path, e);
@@ -218,6 +216,12 @@ impl Scanner {
                     // permanent zero-activity stub, regardless of `include_stubs`: this
                     // isn't a thin-but-real session, it's not a session at all.
                     if parse_result.trace.events.is_empty() {
+                        if is_backfill {
+                            // The row still has no derivable prompt_preview (no user
+                            // message in this source), so it will be retried next scan
+                            // too -- see the doc comment on `needs_backfill`.
+                            skipped_unchanged += 1;
+                        }
                         continue;
                     }
 
@@ -255,6 +259,8 @@ impl Scanner {
                     ) {
                         error!("Failed storing trace for {:?}: {}", source.path, e);
                         errors_encountered += 1;
+                    } else if is_backfill {
+                        backfilled_sessions += 1;
                     } else {
                         scanned_sessions += 1;
                     }
@@ -299,6 +305,7 @@ impl Scanner {
             discovered_sources: total,
             scanned_sessions,
             skipped_unchanged,
+            backfilled_sessions,
             errors_encountered,
             total_indexed_sessions,
             aggregate_stats,
@@ -310,6 +317,7 @@ impl Scanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentworth_adapters::ClaudeCodeAdapter;
     use agentworth_schema::Provenance;
     use chrono::Utc;
     use std::io::Write;
@@ -543,6 +551,82 @@ mod tests {
         assert_eq!(summary2.scanned_sessions, 0);
         assert_eq!(summary2.skipped_unchanged, 1);
         assert_eq!(summary2.total_indexed_sessions, 1);
+    }
+
+    /// Regression test for the real-index bug (handoff.md, #71): `prompt_preview` was empty
+    /// in all 2,960 non-stub rows because `should_scan_source` treats an unchanged source as
+    /// permanently skippable, so a session indexed before v0.1.10 added prompt_preview
+    /// extraction never got rescanned to pick it up. The fix backfills such rows once, on
+    /// their next scan, even though their source is unchanged.
+    #[test]
+    fn test_scanner_backfills_missing_prompt_preview_on_unchanged_source() {
+        use agentworth_schema::TokenUsage;
+
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        let mut temp = tempfile::Builder::new()
+            .suffix(".jsonl")
+            .tempfile()
+            .unwrap();
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"fix the flaky test"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Done"}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let session_id = temp
+            .path()
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        // Seed a row with the exact provenance (size/mtime/fingerprint) the real file on disk
+        // already has, but with no prompt_preview -- exactly the shape left behind by a scan
+        // that ran before v0.1.10 added the extractor. `should_scan_source` alone would treat
+        // this source as unchanged forever.
+        let source = SessionSource::from_path(temp.path(), "claude_code").expect("source");
+        let provenance = Provenance::new(
+            source.path.to_string_lossy().to_string(),
+            "claude_code",
+            source.file_size_bytes,
+            source.mtime_epoch_secs,
+            &source.fingerprint,
+        );
+        let mut stale_trace = AgentWorthTrace::new(&session_id, "claude_code", provenance, Utc::now());
+        stale_trace.stats.total_events = 2;
+        stale_trace.stats.token_usage = TokenUsage::new(100, 50, 0, 0);
+        storage.upsert_session(&stale_trace, None, None).expect("seed stale row");
+
+        let seeded = storage.get_session_by_id(&session_id).unwrap().unwrap();
+        assert!(
+            seeded.prompt_preview.as_deref().unwrap_or("").is_empty(),
+            "seeded row must start with an empty prompt_preview to reproduce the bug"
+        );
+
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+        };
+
+        // Backfill scan: source is unchanged, but the row is missing prompt_preview, so it
+        // must be reparsed rather than skipped.
+        let summary = scanner.run_scan(&options, |_, _| {}).expect("backfill scan");
+        assert_eq!(summary.scanned_sessions, 0, "not a fresh/changed source");
+        assert_eq!(summary.skipped_unchanged, 0, "must not be silently skipped forever");
+        assert_eq!(summary.backfilled_sessions, 1);
+
+        let backfilled = storage.get_session_by_id(&session_id).unwrap().unwrap();
+        assert_eq!(backfilled.prompt_preview.as_deref(), Some("fix the flaky test"));
+
+        // Steady-state scan: fields are now complete and the source is still unchanged, so
+        // this must go back to a plain skip, not a repeated backfill.
+        let summary2 = scanner.run_scan(&options, |_, _| {}).expect("steady-state scan");
+        assert_eq!(summary2.scanned_sessions, 0);
+        assert_eq!(summary2.backfilled_sessions, 0, "a complete row must not be rescanned");
+        assert_eq!(summary2.skipped_unchanged, 1);
     }
 
     /// Regression test for the "blame returns nothing for Claude Code sessions" bug: a scanned

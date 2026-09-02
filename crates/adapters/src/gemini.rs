@@ -104,6 +104,14 @@ impl AgentAdapter for GeminiAdapter {
         "gemini"
     }
 
+    /// `parse()` tags each session with `detect_product_identity(path)`, which returns
+    /// "antigravity" rather than "gemini" for sessions under an Antigravity brain/session
+    /// root. Both identities must be listed here or a join keyed on `name()` alone (the
+    /// adapter coverage matrix, most notably) silently drops every antigravity row.
+    fn identity_names(&self) -> Vec<&'static str> {
+        vec!["gemini", "antigravity"]
+    }
+
     fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
         agentworth_adapter_sdk::AdapterCapabilities {
             prompts: true,
