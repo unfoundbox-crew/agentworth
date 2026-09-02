@@ -21,7 +21,7 @@ import { readLockup, postCardSvg, renderSvgToPng } from './og-template.mjs';
 
 const dist = path.join(webRoot, 'dist');
 const { render } = await import(path.join(webRoot, 'dist-ssr/entry-server.js'));
-const { releases, posts, downloads } = JSON.parse(
+const { releases, posts, reference, downloads } = JSON.parse(
   readFileSync(path.join(webRoot, 'src/content.generated.json'), 'utf8')
 );
 
@@ -244,6 +244,39 @@ pages.push({
   }),
 });
 
+// /docs/reference/
+pages.push({
+  route: '/docs/reference/',
+  file: 'docs/reference/index.html',
+  head: head({
+    title: `Reference — CLI, API, and MCP tools (AgentWorth ${reference.version})`,
+    description: `Every agentworth subcommand and flag, every local API route, and every MCP tool with its schema -- generated from the code, not hand-written. v${reference.version}, ${reference.cli.length} commands, ${reference.api.length} routes, ${reference.mcp.length} MCP tools.`,
+    canonical: `${SITE}/docs/reference/`,
+    feeds: FEEDS,
+    jsonLd: [
+      {
+        '@context': 'https://schema.org',
+        '@graph': [
+          ORG,
+          {
+            '@type': 'TechArticle',
+            '@id': `${SITE}/docs/reference/#article`,
+            headline: 'AgentWorth reference: CLI, API, and MCP tools',
+            url: `${SITE}/docs/reference/`,
+            dateModified: reference.generatedDate,
+            about: { '@id': `${SITE}/#software` },
+            publisher: { '@id': `${SITE}/#org` },
+          },
+          crumbs([
+            { name: 'Home', url: `${SITE}/` },
+            { name: 'Reference', url: `${SITE}/docs/reference/` },
+          ]),
+        ],
+      },
+    ],
+  }),
+});
+
 // /blog/
 pages.push({
   route: '/blog/',
@@ -418,6 +451,7 @@ const latestPost = posts.reduce((d, p) => newest(d, p.date), '0000-00-00');
 const sitemapUrls = [
   { loc: `${SITE}/`, lastmod: newest(releases[0].date, latestPost) },
   { loc: `${SITE}/changelog/`, lastmod: releases[0].date },
+  { loc: `${SITE}/docs/reference/`, lastmod: reference.generatedDate },
   { loc: `${SITE}/blog/`, lastmod: latestPost },
   ...posts.map((p) => ({ loc: `${SITE}/blog/${p.slug}/`, lastmod: p.date })),
 ];
@@ -512,9 +546,11 @@ ${MCP_TOOLS.map(([n, d]) => `- \`${n}\`: ${d}`).join('\n')}
 
 - [Changelog](${SITE}/changelog/): every release with the pull request behind each line
 - [Releases RSS](${SITE}/changelog/rss.xml): the changelog as a feed
+- [Reference](${SITE}/docs/reference/): every CLI command, API route, and MCP tool, generated from the code
+- [Reference (markdown)](${SITE}/docs/reference.md): the same reference, plain text
 - [Blog](${SITE}/blog/): measurements from our own index
 - [Blog RSS](${SITE}/blog/rss.xml): the blog as a feed
-- [Full text](${SITE}/llms-full.txt): this file plus every post and release in full
+- [Full text](${SITE}/llms-full.txt): this file plus every post, release, and the full reference
 - [Source](${REPO}): Apache-2.0
 
 ## Posts
@@ -522,6 +558,11 @@ ${MCP_TOOLS.map(([n, d]) => `- \`${n}\`: ${d}`).join('\n')}
 ${posts.map((p) => `- [${p.title}](${SITE}/blog/${p.slug}/): ${p.description}`).join('\n')}
 `
 );
+
+// Nests docs/REFERENCE.md's own headings (# AgentWorth Reference, ## CLI, ### `agentworth
+// scan`, ...) one level under llms-full.txt's H2 sections, so "# AgentWorth Reference"
+// becomes a peer of "## Changelog" instead of a second top-level H1.
+const demoteHeadings = (md) => md.replace(/^(#{1,5})(\s)/gm, (_m, hashes, sp) => `#${hashes}${sp}`);
 
 const stripTags = (html) =>
   html
@@ -550,6 +591,8 @@ write(
 ## MCP tools
 
 ${MCP_TOOLS.map(([n, d]) => `- ${n}: ${d}`).join('\n')}
+
+${demoteHeadings(reference.markdown)}
 
 ## Blog posts
 
@@ -595,6 +638,11 @@ write(
 `
 );
 console.log('wrote llms.txt, llms-full.txt and humans.txt');
+
+// docs/REFERENCE.md served verbatim at /docs/reference.md (text/markdown, see vercel.json)
+// -- the same committed file the page above renders and the CI staleness check verifies.
+write('docs/reference.md', reference.markdown);
+console.log('wrote docs/reference.md');
 
 // ------------------------------------------------------------ social cards
 

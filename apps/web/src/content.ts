@@ -91,11 +91,12 @@ export interface Downloads {
 export interface SiteContent {
   releases: Release[];
   posts: Post[];
+  reference: Reference;
   downloads: Downloads;
 }
 
 export const content = generated as unknown as SiteContent;
-export const { releases, posts, downloads } = content;
+export const { releases, posts, reference, downloads } = content;
 
 export const humanDate = (d: string): string =>
   new Date(`${d}T00:00:00Z`).toLocaleDateString("en-US", {
