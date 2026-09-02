@@ -28,10 +28,11 @@ use serde_json::json;
 
 use super::params::{
     parse_rfc3339_opt, BlameFindParams, CarryForwardParams, CoverageStatsParams,
-    ForgottenContextParams, OutcomeRateParams, PacingWindowParams, SessionGetParams,
-    SessionHandoffParams, SessionsFindParams, SuspectCommitsParams, UsagePeriodParam,
-    UsageSummaryParams,
+    ForgottenContextParams, OutcomeRateParams, PacingWindowParams, SessionAsksParams,
+    SessionGetParams, SessionHandoffParams, SessionsFindParams, SuspectCommitsParams,
+    UsagePeriodParam, UsageSummaryParams,
 };
+use crate::asks::{self, AsksOptions, AsksReport};
 use crate::forgotten::{self, ForgottenOptions, ForgottenReport};
 use crate::handoff::{
     self, render_markdown, HandoffOptions, HandoffReport, DEFAULT_MAX_LINES, MAX_LINES_CEILING,
@@ -183,7 +184,11 @@ impl AgentWorthMcpServer {
     }
 }
 
-#[tool_router]
+// `vis = "pub(crate)"`: `agentworth docs` (apps/cli/src/commands/docs.rs) calls
+// `Self::tool_router().list_all()` from another module to read every tool's name,
+// description, and JSON schema without constructing a live server instance -- building a
+// `ToolRouter` doesn't touch `Storage`/`Scanner` at all, it only type-erases the handlers.
+#[tool_router(vis = "pub(crate)")]
 impl AgentWorthMcpServer {
     #[tool(
         description = "Find sessions by adapter, model, outcome, search text, date range, token \
@@ -683,6 +688,71 @@ impl AgentWorthMcpServer {
     }
 
     #[tool(
+        description = "The questions-to-answers index for one session: every question asked \
+                        (a `?` sentence in a user turn, or a flag-prefixed `⚑`/`🚩` line in an \
+                        assistant turn asking the user something) matched to the first \
+                        substantive assistant text that follows it, before the next user turn. \
+                        Exists so an agent can be told where an answer already landed instead \
+                        of the user re-scrolling or re-asking. Each result carries the question \
+                        (trimmed to 120 chars), a status (answered, flagged_back_to_user -- \
+                        either a flag line or a reply that was itself a question, or \
+                        no_reply_yet), an answer excerpt when one was found (trimmed to 200 \
+                        chars), and a pointer (event sequence and timestamp) to jump to: the \
+                        answer's location when there is one, otherwise the question's own. \
+                        Filter with since (RFC 3339) and unanswered_only; limit defaults to 50, \
+                        ceiling 500, and the totals describe the whole session regardless of \
+                        it. No model is involved -- three deterministic patterns, same \
+                        `regex_v1` method `forgotten_context` uses. Defaults to the newest \
+                        session for the repo this server runs in. Redacted by default; \
+                        include_raw=true opts out, per call."
+    )]
+    pub(crate) async fn session_asks(
+        &self,
+        Parameters(params): Parameters<SessionAsksParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = params.limit.unwrap_or(asks::DEFAULT_LIMIT);
+        if limit == 0 || limit > asks::LIMIT_CEILING {
+            return Err(McpError::invalid_params(
+                format!(
+                    "limit must be between 1 and {} (got {limit})",
+                    asks::LIMIT_CEILING
+                ),
+                None,
+            ));
+        }
+        let since = parse_rfc3339_opt(params.since.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let options = AsksOptions {
+            since,
+            unanswered_only: params.unanswered_only,
+            limit,
+        };
+
+        let storage = self.storage.clone();
+        let scanner = self.scanner.clone();
+        let explicit_id = params.session_id.clone();
+        let include_raw = params.include_raw;
+
+        let report = tokio::task::spawn_blocking(move || -> anyhow::Result<AsksReport> {
+            let session_id = match explicit_id {
+                Some(id) => id,
+                None => Self::newest_session_for_cwd(&storage)?,
+            };
+            let (report, trace) = asks::load_asks(&storage, &scanner, &session_id, &options)?;
+            Ok(if include_raw {
+                report
+            } else {
+                report.redacted(&Redactor::new().for_trace(&trace))
+            })
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::resource_not_found(format!("{e:#}"), None))?;
+
+        Self::json_result(&report)
+    }
+
+    #[tool(
         description = "Which commits on this branch came out of a session that never proved \
                         anything. Walks `git log` over the range, joins each commit's changed \
                         paths to indexed sessions that touched them within window_hours before \
@@ -756,10 +826,12 @@ impl ServerHandler for AgentWorthMcpServer {
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  sessions_find, session_get, blame_find, usage_summary, pacing_window, \
                  coverage_stats, outcome_rate, session_handoff, carry_forward, \
-                 forgotten_context, suspect_commits. Start a \
+                 forgotten_context, session_asks, suspect_commits. Start a \
                  session in a repo with carry_forward to read what recent sessions there \
                  actually did; end one with session_handoff. If a session has compacted, \
-                 forgotten_context returns the decisions its own summaries dropped. Before \
+                 forgotten_context returns the decisions its own summaries dropped. \
+                 session_asks finds where a question's answer already landed, so it never \
+                 needs re-asking. Before \
                  pushing, suspect_commits names the commits whose authoring session never \
                  proved anything -- a list and a prompt, never a patch. Redacted \
                  output is the default \

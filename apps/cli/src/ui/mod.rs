@@ -296,6 +296,51 @@ impl Ui {
     }
 }
 
+/// Runs `work` on the calling thread, drawing a small animated one-line status above it
+/// (glyphs from the #67 allowed set: `● ○ ·`, nothing else) whenever stdout is a real
+/// terminal and neither `--plain` nor `NO_COLOR` is in play; the line is cleared before this
+/// returns either way. Under a pipe, `--plain`, or `NO_COLOR` it draws nothing and just runs
+/// `work` -- same as `ScanProgress` in `app.rs`'s `animate` flag, but for the one-shot
+/// commands (`handoff`, `forgotten`, `suspect`, `inspect`) that make a single call heavy
+/// enough (a large session's trace, a commit-blame sweep) to cross the ~300ms line where
+/// silence starts reading as a hang, rather than `scan`'s per-item loop.
+pub fn with_status<T>(ui: &Ui, label: &str, work: impl FnOnce() -> T) -> T {
+    let is_tty = console::Term::stdout().is_term();
+    let no_color = std::env::var_os("NO_COLOR").is_some();
+    if !is_tty || ui.ascii() || no_color {
+        return work();
+    }
+
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop_writer = stop.clone();
+    let label = label.to_string();
+    let ui = *ui;
+    let writer = std::thread::spawn(move || {
+        use std::io::Write as _;
+        let term = console::Term::stdout();
+        let frames = [
+            ui.paint(Role::Verified, "\u{25cf}\u{25cb}\u{25cb}"),
+            ui.paint(Role::Verified, "\u{25cb}\u{25cf}\u{25cb}"),
+            ui.paint(Role::Verified, "\u{25cb}\u{25cb}\u{25cf}"),
+        ];
+        let mut frame = 0usize;
+        while !stop_writer.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = term.clear_line();
+            print!("  {}  {}", frames[frame % frames.len()], ui.paint(Role::Label, &label));
+            let _ = std::io::stdout().flush();
+            frame += 1;
+            std::thread::sleep(std::time::Duration::from_millis(125));
+        }
+        let _ = term.clear_line();
+        let _ = std::io::stdout().flush();
+    });
+
+    let result = work();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = writer.join();
+    result
+}
+
 // -- numbers ------------------------------------------------------------------
 
 /// `1285563` -> `1,285,563`. Every column is the same width whatever the magnitude.

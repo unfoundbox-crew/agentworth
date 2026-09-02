@@ -9,7 +9,7 @@ export const SCAN_CMD = "npx -y agentworth scan";
 export const CURL_CMD = "curl -fsSL https://agentworth.dev/install.sh | sh";
 
 /** `current` dims the link for the page you are already on. */
-export const SiteHeader: React.FC<{ current?: "changelog" | "blog" }> = ({
+export const SiteHeader: React.FC<{ current?: "changelog" | "reference" | "blog" }> = ({
   current,
 }) => (
   <header className="wrap">
@@ -27,6 +27,13 @@ export const SiteHeader: React.FC<{ current?: "changelog" | "blog" }> = ({
           aria-current={current === "changelog" ? "page" : undefined}
         >
           Changelog
+        </a>
+        <a
+          className="nav-link"
+          href="/docs/reference/"
+          aria-current={current === "reference" ? "page" : undefined}
+        >
+          Reference
         </a>
         <a
           className="nav-link"

@@ -1,0 +1,481 @@
+<!-- @dsCard group="Charts" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentWorth DS — Token/turn exposure area</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+
+:root {
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --mv-ground: #ffffff;
+  --mv-surface: #f4f4f5;
+  --mv-surface-2: #efeff1;
+  --mv-surface-3: #e4e4e7;
+  --mv-border: #e4e4e7;
+  --mv-border-soft: #ececee;
+  --mv-ink: #111113;
+  --mv-text: #3f3f46;
+  --mv-muted: #52525b;
+  --mv-faint: #a1a1aa;
+  --mv-accent: #7c6bb3;
+
+  --mv-cat-1: #6b7fc7;
+  --mv-cat-2: #c78a4a;
+  --mv-cat-3: #4f9d76;
+  --mv-cat-4: #b06a94;
+  --mv-cat-5: #5b9bb5;
+  --mv-cat-6: #a3843f;
+  --mv-cat-7: #8b74c4;
+  --mv-cat-8: #9a9aa4;
+  --mv-accent-soft: rgba(124, 107, 179, 0.08);
+  --mv-accent-border: rgba(124, 107, 179, 0.28);
+  --mv-accent-contrast: #ffffff;
+
+  --mv-success: #15803d;
+  --mv-success-soft: rgba(21, 128, 61, 0.08);
+  --mv-success-border: rgba(21, 128, 61, 0.28);
+  --mv-warn: #b45309;
+  --mv-warn-soft: rgba(180, 83, 9, 0.08);
+  --mv-warn-border: rgba(180, 83, 9, 0.28);
+  --mv-danger: #b91c1c;
+  --mv-danger-soft: rgba(185, 28, 28, 0.08);
+  --mv-danger-border: rgba(185, 28, 28, 0.28);
+
+  --mv-rise: 10px;
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 220ms;
+  --motion-slower: 300ms;
+  --motion-exit: 120ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-enter-scale: 0.98;
+  --stagger-step: 40ms;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --mv-ground: #000000;
+    --mv-surface: #18181b;
+    --mv-surface-2: #1d1d20;
+    --mv-surface-3: #27272a;
+    --mv-border: #2a2a2d;
+    --mv-border-soft: #1c1c1f;
+    --mv-ink: #ffffff;
+    --mv-text: #d4d4d8;
+    --mv-muted: #a1a1aa;
+    --mv-faint: #52525b;
+    --mv-accent: #a396d6;
+    --mv-accent-soft: rgba(163, 150, 214, 0.1);
+    --mv-accent-border: rgba(163, 150, 214, 0.3);
+    --mv-accent-contrast: #0d0d0f;
+
+    --mv-success: #34d399;
+    --mv-success-soft: rgba(52, 211, 153, 0.1);
+    --mv-success-border: rgba(52, 211, 153, 0.3);
+    --mv-warn: #fbbf24;
+    --mv-warn-soft: rgba(251, 191, 36, 0.1);
+    --mv-warn-border: rgba(251, 191, 36, 0.3);
+    --mv-danger: #f87171;
+    --mv-danger-soft: rgba(248, 113, 113, 0.1);
+    --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+    --mv-cat-1: #8b9ee0;
+    --mv-cat-2: #dda86a;
+    --mv-cat-3: #6fbf95;
+    --mv-cat-4: #cd8ab2;
+    --mv-cat-5: #7bb9d2;
+    --mv-cat-6: #c3a45c;
+    --mv-cat-7: #a996dd;
+    --mv-cat-8: #b4b4bd;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --mv-ground: #000000;
+  --mv-surface: #18181b;
+  --mv-surface-2: #1d1d20;
+  --mv-surface-3: #27272a;
+  --mv-border: #2a2a2d;
+  --mv-border-soft: #1c1c1f;
+  --mv-ink: #ffffff;
+  --mv-text: #d4d4d8;
+  --mv-muted: #a1a1aa;
+  --mv-faint: #52525b;
+  --mv-accent: #a396d6;
+  --mv-accent-soft: rgba(163, 150, 214, 0.1);
+  --mv-accent-border: rgba(163, 150, 214, 0.3);
+  --mv-accent-contrast: #0d0d0f;
+
+  --mv-success: #34d399;
+  --mv-success-soft: rgba(52, 211, 153, 0.1);
+  --mv-success-border: rgba(52, 211, 153, 0.3);
+  --mv-warn: #fbbf24;
+  --mv-warn-soft: rgba(251, 191, 36, 0.1);
+  --mv-warn-border: rgba(251, 191, 36, 0.3);
+  --mv-danger: #f87171;
+  --mv-danger-soft: rgba(248, 113, 113, 0.1);
+  --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+  --mv-cat-1: #8b9ee0;
+  --mv-cat-2: #dda86a;
+  --mv-cat-3: #6fbf95;
+  --mv-cat-4: #cd8ab2;
+  --mv-cat-5: #7bb9d2;
+  --mv-cat-6: #c3a45c;
+  --mv-cat-7: #a996dd;
+  --mv-cat-8: #b4b4bd;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --mv-rise: 0px;
+    --motion-enter-scale: 1;
+    --stagger-step: 0ms;
+  }
+}
+
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--mv-ground);
+  color: var(--mv-text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--mv-accent-soft); }
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
+  border-radius: 4px;
+}
+
+a { color: var(--mv-accent); }
+
+.card-shell {
+  max-width: 1080px;
+  margin-inline: auto;
+  padding: 0 clamp(18px, 4vw, 40px) 72px;
+}
+
+.card-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px clamp(18px, 4vw, 40px);
+  border-bottom: 0.5px solid var(--mv-border);
+  background: var(--mv-ground);
+}
+
+.card-eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+
+.card-eyebrow .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mv-accent);
+  display: inline-block;
+  flex: none;
+}
+
+.card-eyebrow .group { color: var(--mv-muted); }
+.card-eyebrow a { color: var(--mv-faint); text-decoration: none; }
+.card-eyebrow a:hover { color: var(--mv-text); }
+
+.card-title {
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  color: var(--mv-ink);
+  margin: 28px 0 10px;
+  text-wrap: balance;
+}
+
+.card-dek {
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 66ch;
+  margin: 0 0 8px;
+}
+
+.card-rule-note {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--mv-muted);
+  max-width: 66ch;
+  margin: 4px 0 0;
+  border-left: 2px solid var(--mv-accent-border);
+  padding-left: 12px;
+}
+
+.sec {
+  padding: 36px 0;
+  border-top: 0.5px solid var(--mv-border);
+}
+.sec:first-of-type { border-top: none; padding-top: 28px; }
+
+.sec-eyebrow {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mv-muted);
+  margin-bottom: 14px;
+}
+
+.sec-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mv-ink);
+  margin: 0 0 12px;
+}
+
+.sec-lede {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 62ch;
+  margin: 0 0 20px;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--mv-border);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.swatch {
+  background: var(--mv-surface);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
+.swatch .chip {
+  width: 100%;
+  height: 44px;
+  border-radius: 8px;
+  border: 0.5px solid var(--mv-border);
+}
+
+.swatch .name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--mv-ink);
+}
+
+.swatch .hex {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+  margin-top: 2px;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.mini-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--mv-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  padding: 0 12px 8px 0;
+  border-bottom: 0.5px solid var(--mv-border);
+}
+.mini-table td {
+  padding: 9px 12px 9px 0;
+  color: var(--mv-text);
+  border-bottom: 0.5px solid var(--mv-border-soft);
+  vertical-align: top;
+}
+.mini-table tr:last-child td { border-bottom: none; }
+.mini-table td.dim { color: var(--mv-muted); }
+
+.code-block {
+  background: var(--mv-surface);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--mv-text);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-muted);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 5px;
+  padding: 2px 7px;
+}
+
+@media (max-width: 640px) {
+  .swatch-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+}
+
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 0.5px solid var(--mv-border);
+  border-radius: 8px;
+  background: var(--mv-surface);
+  flex: none;
+}
+.theme-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.theme-toggle button:hover { color: var(--mv-ink); }
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--mv-surface-3);
+  color: var(--mv-ink);
+}
+
+
+.ex-wrap { border: 0.5px solid var(--mv-border); border-radius: 12px; background: var(--mv-surface); padding: 20px 24px; max-width: 680px; }
+.ex-legend-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 14px; }
+.ex-legend-item { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--mv-muted); }
+.ex-legend-item i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.ex-dl-row { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; }
+.ex-dl-item { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--mv-text); }
+.ex-dl-item i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+</style>
+</head>
+<body>
+<div class="card-topbar">
+  <div class="card-eyebrow"><a href="../index.html">&larr; Index</a><span class="dot"></span><span class="group">Charts</span></div>
+  <div class="theme-toggle" role="group" aria-label="Theme">
+  <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+  <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+  <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+</div>
+</div>
+<div class="card-shell">
+  <h1 class="card-title">Token/turn exposure area</h1>
+  <p class="card-dek">Context-window composition across a session's turns — four categorical bands, stacked.</p>
+  
+<section class="sec">
+  <span class="sec-eyebrow">01 — The chart</span>
+  <h2 class="sec-title">What filled the context window, turn by turn</h2>
+  <p class="sec-lede">Four categorical series (identity, not magnitude) stacked as an area, in the fixed <code>--mv-cat-1..4</code> hue order. A 1.4px <code>--mv-surface</code> stroke separates every segment — the dataviz skill's "2px surface gap" rule scaled to this chart's size — so no two adjacent fills ever touch edge to edge.</p>
+  <div class="ex-wrap">
+    <svg viewBox="0 0 620 220" width="100%" height="220" role="img" aria-label="Stacked area chart of context-window composition across twelve turns: system prompt and tool definitions stay flat while history grows and generation stays bursty.">
+      <path d="M 8.0,180.1 L 62.9,180.1 L 117.8,180.1 L 172.7,180.1 L 227.6,180.1 L 282.5,180.1 L 337.5,180.1 L 392.4,180.1 L 447.3,180.1 L 502.2,180.1 L 557.1,180.1 L 612.0,180.1 L 612.0,196.0 L 557.1,196.0 L 502.2,196.0 L 447.3,196.0 L 392.4,196.0 L 337.5,196.0 L 282.5,196.0 L 227.6,196.0 L 172.7,196.0 L 117.8,196.0 L 62.9,196.0 L 8.0,196.0 Z" fill="var(--mv-cat-1)" stroke="var(--mv-surface)" stroke-width="1"><title>System prompt</title></path><path d="M 8.0,154.0 L 62.9,154.0 L 117.8,154.0 L 172.7,154.0 L 227.6,154.0 L 282.5,154.0 L 337.5,154.0 L 392.4,154.0 L 447.3,154.0 L 502.2,154.0 L 557.1,154.0 L 612.0,154.0 L 612.0,177.3 L 557.1,177.3 L 502.2,177.3 L 447.3,177.3 L 392.4,177.3 L 337.5,177.3 L 282.5,177.3 L 227.6,177.3 L 172.7,177.3 L 117.8,177.3 L 62.9,177.3 L 8.0,177.3 Z" fill="var(--mv-cat-2)" stroke="var(--mv-surface)" stroke-width="1"><title>Tool defs</title></path><path d="M 8.0,142.5 L 62.9,133.2 L 117.8,124.0 L 172.7,114.7 L 227.6,105.4 L 282.5,96.2 L 337.5,86.9 L 392.4,77.7 L 447.3,68.4 L 502.2,59.2 L 557.1,49.9 L 612.0,40.7 L 612.0,151.2 L 557.1,151.2 L 502.2,151.2 L 447.3,151.2 L 392.4,151.2 L 337.5,151.2 L 282.5,151.2 L 227.6,151.2 L 172.7,151.2 L 117.8,151.2 L 62.9,151.2 L 8.0,151.2 Z" fill="var(--mv-cat-3)" stroke="var(--mv-surface)" stroke-width="1"><title>History</title></path><path d="M 8.0,132.4 L 62.9,120.2 L 117.8,108.1 L 172.7,96.0 L 227.6,95.4 L 282.5,83.2 L 337.5,71.1 L 392.4,58.9 L 447.3,58.4 L 502.2,46.2 L 557.1,34.1 L 612.0,21.9 L 612.0,37.9 L 557.1,47.1 L 502.2,56.4 L 447.3,65.6 L 392.4,74.9 L 337.5,84.1 L 282.5,93.4 L 227.6,102.6 L 172.7,111.9 L 117.8,121.2 L 62.9,130.4 L 8.0,139.7 Z" fill="var(--mv-cat-4)" stroke="var(--mv-surface)" stroke-width="1"><title>Generation</title></path>
+    </svg>
+    <div class="ex-legend-row"><span class="ex-legend-item"><i style="background:var(--mv-cat-1)"></i>System prompt</span><span class="ex-legend-item"><i style="background:var(--mv-cat-2)"></i>Tool defs</span><span class="ex-legend-item"><i style="background:var(--mv-cat-3)"></i>History</span><span class="ex-legend-item"><i style="background:var(--mv-cat-4)"></i>Generation</span></div>
+    <div class="ex-dl-row"><span class="ex-dl-item"><i style="background:var(--mv-cat-1)"></i>System prompt: 72K avg</span><span class="ex-dl-item"><i style="background:var(--mv-cat-2)"></i>Tool defs: 108K avg</span><span class="ex-dl-item"><i style="background:var(--mv-cat-3)"></i>History: 259K avg</span><span class="ex-dl-item"><i style="background:var(--mv-cat-4)"></i>Generation: 54K avg</span></div>
+  </div>
+</section>
+<section class="sec">
+  <span class="sec-eyebrow">02 — Rules applied</span>
+  <h2 class="sec-title">Four series: legend AND direct labels</h2>
+  <p class="sec-lede">The dataviz skill's accessibility pass requires a legend for two or more series always, plus direct labels while the count stays at four or fewer — this chart sits exactly at that line, so it carries both rather than picking one.</p>
+  <table class="mini-table">
+    <tr><td>Categorical, fixed order</td><td class="dim">Identity (which part of the prompt), not magnitude — <code>--mv-cat-1</code> through <code>-4</code>, never reordered by a filter</td></tr>
+    <tr><td>History grows, the rest don't</td><td class="dim">The mechanism the chart exists to show — a compaction boundary would show as a sawtooth drop in that band alone</td></tr>
+    <tr><td>Hover title per band</td><td class="dim">Native SVG tooltip naming the series — same lightweight approach as the sparkline card</td></tr>
+  </table>
+</section>
+
+</div>
+<script>
+
+(function () {
+  var root = document.documentElement;
+  var STORAGE_KEY = "agentworth-ds-card-theme";
+  var buttons = document.querySelectorAll("[data-theme-choice]");
+
+  function apply(choice) {
+    if (choice === "light" || choice === "dark") {
+      root.setAttribute("data-theme", choice);
+    } else {
+      root.removeAttribute("data-theme");
+    }
+    buttons.forEach(function (btn) {
+      btn.setAttribute("aria-pressed", String(btn.getAttribute("data-theme-choice") === choice));
+    });
+  }
+
+  var stored = "system";
+  try { stored = localStorage.getItem(STORAGE_KEY) || "system"; } catch (e) {}
+  apply(stored);
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var choice = btn.getAttribute("data-theme-choice");
+      apply(choice);
+      try { localStorage.setItem(STORAGE_KEY, choice); } catch (e) {}
+    });
+  });
+})();
+
+
+</script>
+</body>
+</html>

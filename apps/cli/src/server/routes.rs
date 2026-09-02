@@ -19,7 +19,7 @@ use anyhow::Result;
 use axum::extract::{Path, Query, State};
 use axum::http::{Request, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{get, post};
+use axum::routing::{get, post, MethodRouter};
 use axum::{body::Body, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -219,6 +219,143 @@ pub struct ExportResponse {
     pub content: String,
 }
 
+/// One documented query parameter, read by `agentworth docs` (see `apps/cli/src/commands/docs.rs`).
+#[derive(Debug, Clone, Copy)]
+pub struct QueryParamDoc {
+    pub name: &'static str,
+    pub description: &'static str,
+}
+
+/// One registered API route, carrying both the live `MethodRouter` and the documentation
+/// `agentworth docs` reads. `create_router` below builds the whole `/api` surface from exactly
+/// this table -- there is no second, hand-copied list of paths for the two to drift apart on.
+pub struct RouteEntry {
+    pub method: &'static str,
+    pub path: &'static str,
+    pub description: &'static str,
+    pub query_params: &'static [QueryParamDoc],
+    pub handler: MethodRouter<AppState>,
+}
+
+/// The complete `/api/*` route table. Building a `MethodRouter` from a handler function is
+/// just type erasure -- it doesn't touch `AppState` -- so this can be (and is) called from
+/// `agentworth docs` for introspection without ever constructing a real server.
+pub fn route_entries() -> Vec<RouteEntry> {
+    const TRACES_PARAMS: &[QueryParamDoc] = &[
+        QueryParamDoc { name: "adapter", description: "Filter by adapter name" },
+        QueryParamDoc { name: "model", description: "Filter by model substring" },
+        QueryParamDoc { name: "search", description: "Full-text search across session content" },
+        QueryParamDoc { name: "outcome", description: "Filter by primary outcome kind" },
+        QueryParamDoc { name: "min_tokens", description: "Minimum total token count" },
+        QueryParamDoc { name: "limit", description: "Maximum number of sessions to return (default 50)" },
+        QueryParamDoc { name: "offset", description: "Number of sessions to skip" },
+        QueryParamDoc { name: "order_by", description: "Sort order for the result list" },
+    ];
+    const EVENTS_PAGE_PARAMS: &[QueryParamDoc] = &[
+        QueryParamDoc { name: "offset", description: "Number of events to skip (default 0)" },
+        QueryParamDoc { name: "limit", description: "Maximum number of events to return (default: all)" },
+    ];
+    const USAGE_PARAMS: &[QueryParamDoc] = &[
+        QueryParamDoc { name: "daily_limit", description: "Maximum number of daily rollup rows" },
+        QueryParamDoc { name: "weekly_limit", description: "Maximum number of weekly rollup rows" },
+        QueryParamDoc { name: "monthly_limit", description: "Maximum number of monthly rollup rows" },
+    ];
+    const PACING_PARAMS: &[QueryParamDoc] = &[
+        QueryParamDoc { name: "hours", description: "Pacing window duration in hours (default 5)" },
+    ];
+    const BLAME_PARAMS: &[QueryParamDoc] = &[
+        QueryParamDoc { name: "file", description: "Target file path or pattern" },
+        QueryParamDoc { name: "path", description: "Alias for `file`" },
+    ];
+
+    vec![
+        RouteEntry {
+            method: "GET",
+            path: "/stats",
+            description: "Machine-wide experience stats with outcome distributions and verification telemetry",
+            query_params: &[],
+            handler: get(get_stats_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/traces",
+            description: "Filtered, paginated list of indexed sessions",
+            query_params: TRACES_PARAMS,
+            handler: get(get_traces_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/traces/:id",
+            description: "Full trace details: metadata, stats, 5-factor score, outcome evidence, timeline",
+            query_params: EVENTS_PAGE_PARAMS,
+            handler: get(get_trace_by_id_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/traces/:id/events",
+            description: "Just the paginated event slice for one trace",
+            query_params: EVENTS_PAGE_PARAMS,
+            handler: get(get_trace_events_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/usage",
+            description: "Daily, weekly, and monthly token usage rollups",
+            query_params: USAGE_PARAMS,
+            handler: get(get_usage_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/pacing",
+            description: "Rolling pacing window: burn velocity and cache hit ratio",
+            query_params: PACING_PARAMS,
+            handler: get(get_pacing_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/blame",
+            description: "File change lineage matching session histories",
+            query_params: BLAME_PARAMS,
+            handler: get(get_blame_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/matrix",
+            description: "Adapter extraction coverage and capabilities matrix",
+            query_params: &[],
+            handler: get(get_matrix_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/archaeology",
+            description: "Archaeology highlights across the whole index",
+            query_params: &[],
+            handler: get(get_archaeology_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/live-tail",
+            description: "Server-Sent Events stream of live filesystem changes under watched adapter session directories",
+            query_params: &[],
+            handler: get(get_live_tail_handler),
+        },
+        RouteEntry {
+            method: "POST",
+            path: "/scan",
+            description: "Trigger a scanner background sync (body: paths, force)",
+            query_params: &[],
+            handler: post(post_scan_handler),
+        },
+        RouteEntry {
+            method: "POST",
+            path: "/export/:id",
+            description: "Export a trace with optional redaction, in JSON or ATIF format (body: redact, format)",
+            query_params: &[],
+            handler: post(post_export_handler),
+        },
+    ]
+}
+
 /// Builds the complete Axum router with all API routes, CORS, tracing, and static fallback.
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
@@ -226,19 +363,10 @@ pub fn create_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let api_routes = Router::new()
-        .route("/stats", get(get_stats_handler))
-        .route("/traces", get(get_traces_handler))
-        .route("/traces/:id", get(get_trace_by_id_handler))
-        .route("/traces/:id/events", get(get_trace_events_handler))
-        .route("/usage", get(get_usage_handler))
-        .route("/pacing", get(get_pacing_handler))
-        .route("/blame", get(get_blame_handler))
-        .route("/matrix", get(get_matrix_handler))
-        .route("/archaeology", get(get_archaeology_handler))
-        .route("/live-tail", get(get_live_tail_handler))
-        .route("/scan", post(post_scan_handler))
-        .route("/export/:id", post(post_export_handler));
+    let mut api_routes = Router::new();
+    for entry in route_entries() {
+        api_routes = api_routes.route(entry.path, entry.handler);
+    }
 
     let dist_dir_for_fallback = state.dist_dir.clone();
 

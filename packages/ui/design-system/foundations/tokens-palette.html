@@ -1,0 +1,514 @@
+<!-- @dsCard group="Foundations" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentWorth DS — Tokens & palette</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+
+:root {
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --mv-ground: #ffffff;
+  --mv-surface: #f4f4f5;
+  --mv-surface-2: #efeff1;
+  --mv-surface-3: #e4e4e7;
+  --mv-border: #e4e4e7;
+  --mv-border-soft: #ececee;
+  --mv-ink: #111113;
+  --mv-text: #3f3f46;
+  --mv-muted: #52525b;
+  --mv-faint: #a1a1aa;
+  --mv-accent: #7c6bb3;
+
+  --mv-cat-1: #6b7fc7;
+  --mv-cat-2: #c78a4a;
+  --mv-cat-3: #4f9d76;
+  --mv-cat-4: #b06a94;
+  --mv-cat-5: #5b9bb5;
+  --mv-cat-6: #a3843f;
+  --mv-cat-7: #8b74c4;
+  --mv-cat-8: #9a9aa4;
+  --mv-accent-soft: rgba(124, 107, 179, 0.08);
+  --mv-accent-border: rgba(124, 107, 179, 0.28);
+  --mv-accent-contrast: #ffffff;
+
+  --mv-success: #15803d;
+  --mv-success-soft: rgba(21, 128, 61, 0.08);
+  --mv-success-border: rgba(21, 128, 61, 0.28);
+  --mv-warn: #b45309;
+  --mv-warn-soft: rgba(180, 83, 9, 0.08);
+  --mv-warn-border: rgba(180, 83, 9, 0.28);
+  --mv-danger: #b91c1c;
+  --mv-danger-soft: rgba(185, 28, 28, 0.08);
+  --mv-danger-border: rgba(185, 28, 28, 0.28);
+
+  --mv-rise: 10px;
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 220ms;
+  --motion-slower: 300ms;
+  --motion-exit: 120ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-enter-scale: 0.98;
+  --stagger-step: 40ms;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --mv-ground: #000000;
+    --mv-surface: #18181b;
+    --mv-surface-2: #1d1d20;
+    --mv-surface-3: #27272a;
+    --mv-border: #2a2a2d;
+    --mv-border-soft: #1c1c1f;
+    --mv-ink: #ffffff;
+    --mv-text: #d4d4d8;
+    --mv-muted: #a1a1aa;
+    --mv-faint: #52525b;
+    --mv-accent: #a396d6;
+    --mv-accent-soft: rgba(163, 150, 214, 0.1);
+    --mv-accent-border: rgba(163, 150, 214, 0.3);
+    --mv-accent-contrast: #0d0d0f;
+
+    --mv-success: #34d399;
+    --mv-success-soft: rgba(52, 211, 153, 0.1);
+    --mv-success-border: rgba(52, 211, 153, 0.3);
+    --mv-warn: #fbbf24;
+    --mv-warn-soft: rgba(251, 191, 36, 0.1);
+    --mv-warn-border: rgba(251, 191, 36, 0.3);
+    --mv-danger: #f87171;
+    --mv-danger-soft: rgba(248, 113, 113, 0.1);
+    --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+    --mv-cat-1: #8b9ee0;
+    --mv-cat-2: #dda86a;
+    --mv-cat-3: #6fbf95;
+    --mv-cat-4: #cd8ab2;
+    --mv-cat-5: #7bb9d2;
+    --mv-cat-6: #c3a45c;
+    --mv-cat-7: #a996dd;
+    --mv-cat-8: #b4b4bd;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --mv-ground: #000000;
+  --mv-surface: #18181b;
+  --mv-surface-2: #1d1d20;
+  --mv-surface-3: #27272a;
+  --mv-border: #2a2a2d;
+  --mv-border-soft: #1c1c1f;
+  --mv-ink: #ffffff;
+  --mv-text: #d4d4d8;
+  --mv-muted: #a1a1aa;
+  --mv-faint: #52525b;
+  --mv-accent: #a396d6;
+  --mv-accent-soft: rgba(163, 150, 214, 0.1);
+  --mv-accent-border: rgba(163, 150, 214, 0.3);
+  --mv-accent-contrast: #0d0d0f;
+
+  --mv-success: #34d399;
+  --mv-success-soft: rgba(52, 211, 153, 0.1);
+  --mv-success-border: rgba(52, 211, 153, 0.3);
+  --mv-warn: #fbbf24;
+  --mv-warn-soft: rgba(251, 191, 36, 0.1);
+  --mv-warn-border: rgba(251, 191, 36, 0.3);
+  --mv-danger: #f87171;
+  --mv-danger-soft: rgba(248, 113, 113, 0.1);
+  --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+  --mv-cat-1: #8b9ee0;
+  --mv-cat-2: #dda86a;
+  --mv-cat-3: #6fbf95;
+  --mv-cat-4: #cd8ab2;
+  --mv-cat-5: #7bb9d2;
+  --mv-cat-6: #c3a45c;
+  --mv-cat-7: #a996dd;
+  --mv-cat-8: #b4b4bd;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --mv-rise: 0px;
+    --motion-enter-scale: 1;
+    --stagger-step: 0ms;
+  }
+}
+
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--mv-ground);
+  color: var(--mv-text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--mv-accent-soft); }
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
+  border-radius: 4px;
+}
+
+a { color: var(--mv-accent); }
+
+.card-shell {
+  max-width: 1080px;
+  margin-inline: auto;
+  padding: 0 clamp(18px, 4vw, 40px) 72px;
+}
+
+.card-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px clamp(18px, 4vw, 40px);
+  border-bottom: 0.5px solid var(--mv-border);
+  background: var(--mv-ground);
+}
+
+.card-eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+
+.card-eyebrow .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mv-accent);
+  display: inline-block;
+  flex: none;
+}
+
+.card-eyebrow .group { color: var(--mv-muted); }
+.card-eyebrow a { color: var(--mv-faint); text-decoration: none; }
+.card-eyebrow a:hover { color: var(--mv-text); }
+
+.card-title {
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  color: var(--mv-ink);
+  margin: 28px 0 10px;
+  text-wrap: balance;
+}
+
+.card-dek {
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 66ch;
+  margin: 0 0 8px;
+}
+
+.card-rule-note {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--mv-muted);
+  max-width: 66ch;
+  margin: 4px 0 0;
+  border-left: 2px solid var(--mv-accent-border);
+  padding-left: 12px;
+}
+
+.sec {
+  padding: 36px 0;
+  border-top: 0.5px solid var(--mv-border);
+}
+.sec:first-of-type { border-top: none; padding-top: 28px; }
+
+.sec-eyebrow {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mv-muted);
+  margin-bottom: 14px;
+}
+
+.sec-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mv-ink);
+  margin: 0 0 12px;
+}
+
+.sec-lede {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 62ch;
+  margin: 0 0 20px;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--mv-border);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.swatch {
+  background: var(--mv-surface);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
+.swatch .chip {
+  width: 100%;
+  height: 44px;
+  border-radius: 8px;
+  border: 0.5px solid var(--mv-border);
+}
+
+.swatch .name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--mv-ink);
+}
+
+.swatch .hex {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+  margin-top: 2px;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.mini-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--mv-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  padding: 0 12px 8px 0;
+  border-bottom: 0.5px solid var(--mv-border);
+}
+.mini-table td {
+  padding: 9px 12px 9px 0;
+  color: var(--mv-text);
+  border-bottom: 0.5px solid var(--mv-border-soft);
+  vertical-align: top;
+}
+.mini-table tr:last-child td { border-bottom: none; }
+.mini-table td.dim { color: var(--mv-muted); }
+
+.code-block {
+  background: var(--mv-surface);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--mv-text);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-muted);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 5px;
+  padding: 2px 7px;
+}
+
+@media (max-width: 640px) {
+  .swatch-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+}
+
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 0.5px solid var(--mv-border);
+  border-radius: 8px;
+  background: var(--mv-surface);
+  flex: none;
+}
+.theme-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.theme-toggle button:hover { color: var(--mv-ink); }
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--mv-surface-3);
+  color: var(--mv-ink);
+}
+
+
+</style>
+</head>
+<body>
+<div class="card-topbar">
+  <div class="card-eyebrow"><a href="../index.html">&larr; Index</a><span class="dot"></span><span class="group">Foundations</span></div>
+  <div class="theme-toggle" role="group" aria-label="Theme">
+  <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+  <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+  <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+</div>
+</div>
+<div class="card-shell">
+  <h1 class="card-title">Tokens & palette</h1>
+  <p class="card-dek">The complete zinc-neutral + violet-accent token set, read live from <code>packages/ui/tokens.css</code>.</p>
+  
+<section class="sec">
+  <span class="sec-eyebrow">01 — Neutrals</span>
+  <h2 class="sec-title">Zinc ramp</h2>
+  <p class="sec-lede">Every gray in AgentWorth is one of these eight steps. No warm or cool gray outside this set, in either theme.</p>
+  <div class="swatch-grid">
+    <div class="swatch"><div class="chip" style="background:var(--mv-ground);"></div><div><div class="name">--mv-ground</div><div class="hex">#ffffff · #000000</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-surface);"></div><div><div class="name">--mv-surface</div><div class="hex">#f4f4f5 · #18181b</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-surface-2);"></div><div><div class="name">--mv-surface-2</div><div class="hex">#efeff1 · #1d1d20</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-surface-3);"></div><div><div class="name">--mv-surface-3</div><div class="hex">#e4e4e7 · #27272a</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-border);"></div><div><div class="name">--mv-border</div><div class="hex">#e4e4e7 · #2a2a2d</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-border-soft);"></div><div><div class="name">--mv-border-soft</div><div class="hex">#ececee · #1c1c1f</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-ink);"></div><div><div class="name">--mv-ink</div><div class="hex">#111113 · #ffffff</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-text);"></div><div><div class="name">--mv-text</div><div class="hex">#3f3f46 · #d4d4d8</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-muted);"></div><div><div class="name">--mv-muted</div><div class="hex">#52525b · #a1a1aa</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-faint);"></div><div><div class="name">--mv-faint</div><div class="hex">#a1a1aa · #52525b</div></div></div>
+  </div>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">02 — Accent</span>
+  <h2 class="sec-title">Violet — one accent, and only where it's earned</h2>
+  <p class="sec-lede">AgentWorth's identity color. It carries selection, focus, links, and the receipt's total line — nothing else. Chart series and status use their own tokens below, deliberately kept out of this family.</p>
+  <div class="swatch-grid">
+    <div class="swatch"><div class="chip" style="background:var(--mv-accent);"></div><div><div class="name">--mv-accent</div><div class="hex">#7c6bb3 · #a396d6</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-accent-soft); border-color: var(--mv-accent-border);"></div><div><div class="name">--mv-accent-soft</div><div class="hex">rgba violet 8% / 10%</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-ground); border: 1.5px solid var(--mv-accent-border);"></div><div><div class="name">--mv-accent-border</div><div class="hex">rgba violet 28% / 30%</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-accent); display:flex; align-items:center; justify-content:center; color:var(--mv-accent-contrast); font-family:var(--font-mono); font-size:11px;">Aa</div><div><div class="name">--mv-accent-contrast</div><div class="hex">text/icons on solid accent</div></div></div>
+  </div>
+  <p class="card-rule-note">The accent gets lighter in dark (#7c6bb3 &rarr; #a396d6) — a saturated violet that reads on white goes muddy on true black, so lightness rises to keep it legible and keep it looking like the same color.</p>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">03 — Semantic</span>
+  <h2 class="sec-title">Status — reserved, never a series</h2>
+  <p class="sec-lede">Good / warn / danger. Used for the evidence ladder, cache-warmth cold starts, and verdict chips — never for "series 4" and never reused as the brand accent.</p>
+  <div class="swatch-grid">
+    <div class="swatch"><div class="chip" style="background:var(--mv-success);"></div><div><div class="name">--mv-success</div><div class="hex">verified / good</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-warn);"></div><div><div class="name">--mv-warn</div><div class="hex">cold start / partial</div></div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-danger);"></div><div><div class="name">--mv-danger</div><div class="hex">overclaimed / error</div></div></div>
+  </div>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">04 — Categorical</span>
+  <h2 class="sec-title">Chart series (8 slots)</h2>
+  <p class="sec-lede">Fixed hue order, anchored on the violet accent's family. Split per-theme since #93 (light and dark ship independent values, not one ramp lightened). See <a href="../charts/categorical-palette.html">charts/categorical-palette</a> for the validator results and usage rule.</p>
+  <div class="swatch-grid">
+    <div class="swatch"><div class="chip" style="background:var(--mv-cat-1);"></div><div class="name">--mv-cat-1</div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-cat-2);"></div><div class="name">--mv-cat-2</div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-cat-3);"></div><div class="name">--mv-cat-3</div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-cat-4);"></div><div class="name">--mv-cat-4</div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-cat-5);"></div><div class="name">--mv-cat-5</div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-cat-6);"></div><div class="name">--mv-cat-6</div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-cat-7);"></div><div class="name">--mv-cat-7</div></div>
+    <div class="swatch"><div class="chip" style="background:var(--mv-cat-8);"></div><div class="name">--mv-cat-8</div></div>
+  </div>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">05 — Source</span>
+  <h2 class="sec-title">Where these live</h2>
+  <p class="sec-lede">Every value above is read live from <code>packages/ui/tokens.css</code> via <code>var()</code> — this page has no hard-coded hex. Never borrow MotionVector's black-and-white chrome or SpacePilot's gold/silver; AgentWorth is zinc + violet, full stop.</p>
+</section>
+
+</div>
+<script>
+
+(function () {
+  var root = document.documentElement;
+  var STORAGE_KEY = "agentworth-ds-card-theme";
+  var buttons = document.querySelectorAll("[data-theme-choice]");
+
+  function apply(choice) {
+    if (choice === "light" || choice === "dark") {
+      root.setAttribute("data-theme", choice);
+    } else {
+      root.removeAttribute("data-theme");
+    }
+    buttons.forEach(function (btn) {
+      btn.setAttribute("aria-pressed", String(btn.getAttribute("data-theme-choice") === choice));
+    });
+  }
+
+  var stored = "system";
+  try { stored = localStorage.getItem(STORAGE_KEY) || "system"; } catch (e) {}
+  apply(stored);
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var choice = btn.getAttribute("data-theme-choice");
+      apply(choice);
+      try { localStorage.setItem(STORAGE_KEY, choice); } catch (e) {}
+    });
+  });
+})();
+
+
+</script>
+</body>
+</html>
