@@ -111,8 +111,8 @@ const KitSwitch: React.FC<{
       <p className="ar-try-note">
         One drawing. The kit is <code>data-accessory</code> on the SVG and the colourway is
         a <code>.archie-c1</code>&hellip;<code>.archie-c4</code> class on any ancestor, so
-        neither is ever a second file to keep in sync. C3 is the default and the only one
-        that ships on this site.
+        neither is ever a second file to keep in sync. He arrives bare; the head gear is a
+        switch. C3 is the default colourway and the only one that ships on this site.
       </p>
       <p className="ar-try-note">
         <code>agentworth config set archie.colourway C4</code> stores a choice for the
@@ -229,8 +229,8 @@ export const ArchiePage: React.FC = () => {
               <h3>He works offline, on files you already have</h3>
               <p>
                 Nothing is uploaded, no model reads your transcript, and the index lives
-                beside the logs. The lamp is on because he is reading your disk — not
-                because anything is talking to a server.
+                beside the logs. He is digging through files you already have — nothing
+                here is talking to a server.
               </p>
             </div>
           </section>

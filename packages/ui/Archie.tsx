@@ -25,7 +25,9 @@ export type ArchieMotion = "dig" | "run" | "found" | "error";
 
 export const ARCHIE_ACCESSORIES: ArchieAccessory[] = ["lamp", "goggles", "none"];
 export const ARCHIE_COLOURWAYS: ArchieColourway[] = ["C1", "C2", "C3", "C4"];
-export const ARCHIE_DEFAULT_ACCESSORY: ArchieAccessory = "lamp";
+
+/** Bare (Saurabh, 2026-09-02). The head gear is a switch, not how he arrives. */
+export const ARCHIE_DEFAULT_ACCESSORY: ArchieAccessory = "none";
 export const ARCHIE_DEFAULT_COLOURWAY: ArchieColourway = "C3";
 
 const SOURCES: Record<ArchiePose, string> = {

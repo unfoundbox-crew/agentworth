@@ -38,7 +38,7 @@ pub struct CliConfig {
 /// read `data-accessory` and the colourway is a `.archie-cN` class.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ArchieConfig {
-    /// `lamp` (default) | `goggles` | `none`.
+    /// `none` (the default -- he arrives bare) | `lamp` | `goggles`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accessory: Option<String>,
     /// `C1` mono | `C2` dark | `C3` AgentWorth, the default | `C4` quiet.
@@ -60,8 +60,8 @@ const VALID_COLOURWAYS: &[&str] = &["C1", "C2", "C3", "C4"];
 // No default constants here on purpose. The CLI stores these two keys but never draws
 // the SVG -- the terminal short form's lamp glyph is the state, not an accessory, and it
 // is fixed. Unset reads back as null and the surface that renders him applies its own
-// default (packages/ui/Archie.tsx). A second copy of "lamp"/"C3" in Rust would be one
-// more thing to keep in step for no reader.
+// default (`ARCHIE_DEFAULT_*` in packages/ui/Archie.tsx). A second copy of those values
+// in Rust would be one more thing to keep in step for no reader.
 
 /// Canonicalize a `--period` value, accepting the single-letter aliases `d`/`w`/`m`/`y`
 /// alongside the full words. `None` means the input matches none of them -- the caller
