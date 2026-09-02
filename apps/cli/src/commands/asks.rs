@@ -43,10 +43,8 @@ enum Resolution {
 #[allow(clippy::too_many_arguments)]
 pub fn run_asks_command(
     session: Option<String>,
-    // `clap` rejects `--session` and `--current` together (`conflicts_with`), so by the time
-    // this runs `session.is_none()` already means "resolve from the current directory" --
-    // `--current` changes nothing here, it only lets the invocation say that on purpose.
-    _current: bool,
+    last: bool,
+    current: bool,
     since: Option<String>,
     unanswered: bool,
     json: bool,
@@ -68,7 +66,15 @@ pub fn run_asks_command(
         limit: DEFAULT_LIMIT,
     };
 
-    let (report, trace, resolution) = resolve_and_load(&storage, &scanner, session.as_deref(), ui, &options)?;
+    let (report, trace, resolution) = resolve_and_load(
+        &storage,
+        &scanner,
+        session.as_deref(),
+        last || current,
+        json,
+        ui,
+        &options,
+    )?;
     let report = report.redacted(&Redactor::new().for_trace(&trace));
 
     let elapsed = started.elapsed();
@@ -91,61 +97,85 @@ pub fn run_asks_command(
     Ok(())
 }
 
-/// Resolves `--session` (an ID, a unique prefix, or a raw JSONL path) or, absent that, the
-/// current-directory default, and loads its asks report. `current` doesn't change the
-/// resolution -- naming no session already means "resolve from the current directory" -- it
-/// only exists so the invocation can say that on purpose rather than by omission.
+/// Resolves `--session` (an ID, a unique prefix, or a raw JSONL path), `--last`/`--current`,
+/// or -- with none of those given -- the shared picker (`crate::ui::picker`), and loads the
+/// asks report for whatever it resolves to.
+///
+/// The raw-JSONL-path fallback is `asks`'s own and the picker doesn't know about it, so it
+/// stays a check here rather than moving into the shared resolver: a `--session` value that
+/// isn't an indexed ID or prefix is tried as a path before giving up.
 fn resolve_and_load(
     storage: &Storage,
     scanner: &Scanner,
     session: Option<&str>,
+    wants_last: bool,
+    json: bool,
     ui: &Ui,
     options: &AsksOptions,
 ) -> Result<(AsksReport, AgentWorthTrace, Resolution)> {
     if let Some(input) = session {
-        if storage.get_session_by_id(input)?.is_some() {
-            let (report, trace) = load_asks(storage, scanner, input, options)?;
-            return Ok((report, trace, Resolution::Explicit));
+        match crate::ui::picker::resolve_explicit(storage, input)? {
+            crate::ui::picker::Resolved::Id(id) => {
+                let (report, trace) = load_asks(storage, scanner, &id, options)?;
+                return Ok((report, trace, Resolution::Explicit));
+            }
+            crate::ui::picker::Resolved::NotFound(_) => {
+                if Path::new(input).is_file() {
+                    let trace = load_trace_from_raw_path(Path::new(input))?;
+                    let report = crate::asks::build_asks(&trace, None, options);
+                    return Ok((report, trace, Resolution::RawPath));
+                }
+                print!("{}", not_found(storage, input, ui));
+                std::process::exit(1);
+            }
         }
-        if let [only] = storage.find_sessions_by_id_prefix(input, 2)?.as_slice() {
-            let (report, trace) = load_asks(storage, scanner, &only.session_id, options)?;
-            return Ok((report, trace, Resolution::Explicit));
-        }
-        if Path::new(input).is_file() {
-            let trace = load_trace_from_raw_path(Path::new(input))?;
-            let report = crate::asks::build_asks(&trace, None, options);
-            return Ok((report, trace, Resolution::RawPath));
-        }
-        print!("{}", not_found(storage, input, ui));
-        std::process::exit(1);
     }
 
-    let repo = std::env::current_dir()
-        .ok()
-        .map(|d| extract_repository_or_workspace(&d.to_string_lossy()));
-    if let Some(repo) = repo.as_deref() {
-        if let Some(summary) = storage
-            .list_sessions_for_repo(repo, 1)?
-            .sessions
+    // `--last`/`--current`: the exact current-repo-then-anywhere fallback `asks` always did,
+    // kept as its own branch (rather than `crate::ui::picker::resolve_last`) so the CLI can
+    // still say which of the two it used -- `resolve_last`'s own message is aimed at a
+    // person reading past a not-found screen, not at this receipt-shaped resolution line.
+    if wants_last {
+        let repo = std::env::current_dir()
+            .ok()
+            .map(|d| extract_repository_or_workspace(&d.to_string_lossy()));
+        if let Some(repo) = repo.as_deref() {
+            if let Some(summary) = storage
+                .list_sessions_for_repo(repo, 1)?
+                .sessions
+                .into_iter()
+                .next()
+            {
+                let (report, trace) = load_asks(storage, scanner, &summary.session_id, options)?;
+                return Ok((report, trace, Resolution::CurrentRepo(repo.to_string())));
+            }
+        }
+
+        let newest = storage
+            .list_sessions_filtered(&SessionFilter {
+                limit: Some(1),
+                order_by: Some(SessionOrderBy::StartedAtDesc),
+                ..Default::default()
+            })?
             .into_iter()
             .next()
-        {
-            let (report, trace) = load_asks(storage, scanner, &summary.session_id, options)?;
-            return Ok((report, trace, Resolution::CurrentRepo(repo.to_string())));
-        }
+            .context("no sessions are indexed; run `agentworth scan` first")?;
+        let (report, trace) = load_asks(storage, scanner, &newest.session_id, options)?;
+        return Ok((report, trace, Resolution::NewestAnywhere));
     }
 
-    let newest = storage
-        .list_sessions_filtered(&SessionFilter {
-            limit: Some(1),
-            order_by: Some(SessionOrderBy::StartedAtDesc),
-            ..Default::default()
-        })?
-        .into_iter()
-        .next()
-        .context("no sessions are indexed; run `agentworth scan` first")?;
-    let (report, trace) = load_asks(storage, scanner, &newest.session_id, options)?;
-    Ok((report, trace, Resolution::NewestAnywhere))
+    // Nothing given at all: the shared picker. On a TTY this is interactive; off a TTY, or
+    // with `--json`, it prints the same listing and exits 2 rather than silently guessing.
+    let arg = crate::ui::picker::SessionArg::new(None, false, false);
+    match crate::ui::picker::resolve(storage, ui, json, &arg)? {
+        crate::ui::picker::Resolved::Id(id) => {
+            let (report, trace) = load_asks(storage, scanner, &id, options)?;
+            Ok((report, trace, Resolution::Explicit))
+        }
+        crate::ui::picker::Resolved::NotFound(_) => {
+            unreachable!("picker::resolve with no id_or_prefix never returns NotFound")
+        }
+    }
 }
 
 /// Parses a raw Claude Code JSONL transcript straight off disk, bypassing the index -- the
@@ -355,8 +385,7 @@ fn command_line(report: &AsksReport, resolution: &Resolution) -> String {
 }
 
 fn short(session_id: &str) -> &str {
-    let cut = session_id.char_indices().nth(8).map_or(session_id.len(), |(i, _)| i);
-    &session_id[..cut]
+    agentworth_schema::text::truncate_chars(session_id, 8)
 }
 
 #[cfg(test)]

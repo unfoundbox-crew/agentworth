@@ -144,8 +144,10 @@ fn flags_the_commit_whose_session_never_proved_anything() {
     assert!(session.evidence_path.ends_with("src/app.rs"));
 
     assert!(report.prompt.contains("feat: add b"), "prompt: {}", report.prompt);
+    #[allow(clippy::string_slice, reason = "session_id is a hardcoded ASCII test fixture")]
+    let session_id_prefix = &session.session_id[..8];
     assert!(
-        report.prompt.contains(&session.session_id[..8]),
+        report.prompt.contains(session_id_prefix),
         "the prompt hands over a session id to query, not a fix: {}",
         report.prompt
     );

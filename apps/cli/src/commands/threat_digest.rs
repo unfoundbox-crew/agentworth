@@ -445,7 +445,7 @@ fn render_threat_digest_view(ui: &crate::ui::Ui, report: &ThreatDigestReport) ->
         .totals
         .breakdown_by_category
         .iter()
-        .map(|(k, v)| (k.to_string(), *v))
+        .map(|(k, v)| (k.clone(), *v))
         .collect();
 
     let top_sessions: Vec<crate::ui::views::ThreatDigestSessionRow> = report

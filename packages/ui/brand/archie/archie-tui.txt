@@ -1,0 +1,97 @@
+ARCHIE — TERMINAL SHORT FORM
+Drawn at 100 columns, monospace, exactly as it prints. Glyph set: the U+2500
+box-drawing block, ✓ ✗ · —, and ASCII. No emoji, ever: half the terminals
+people run agents in render an emoji at the wrong width and shear the box.
+
+Archie survives the reduction to three things: the drop ears (the parentheses),
+the low muzzle (the third line), and the lamp (the glyph between the ears).
+Only the lamp glyph changes between states. Everything else is fixed, because a
+figure that redraws every frame reads as noise in a scrolling log.
+
+
+THE FIGURE                                                   7 columns × 3 lines
+
+     ,-*-.        the strap, with the lamp on it
+    ( o o )       the ears, hanging past the eyes
+     '\_/'        the low muzzle
+
+
+THE LAMP GLYPH IS THE STATE
+
+     *    on         idle, and the moment he finds something
+     o    sweeping   digging — the light is moving
+     -    dim        searched here, nothing
+     .    off        error
+
+     No colour is required for any of this. It reads over ssh, in a pipe, and
+     in a CI log with the colour stripped.
+
+
+THE COCKPIT PANEL                                                    100 columns
+
+┌─ archie ────────────────────────────────────────────────────────────────────────────── digging ──┐
+│  ,-*-.   ~/.claude/projects            ──────────────────────·······  68%                        │
+│ ( o o )  1,204 sessions · 38 repos     last dig 2m ago                                           │
+│  '\_/'   ✓ 902 verified  ✗ 14 off      3 asks still unanswered                                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+THE SCAN LINE                                            one line, any width ≥ 46
+
+ (*) archie  scanning  ──────────────────·······  68%  1,204 sessions
+
+     The one-line form is the ears and the lamp: ( * ). It is the whole
+     character at three characters wide, and it is the only form that fits a
+     status bar, a spinner slot, or the right edge of a prompt.
+
+ (*) on      ( o ) sweeping      (-) nothing      ( ) error
+
+
+THE DIG LOOP                                     4 text frames · 1400ms · 350ms a frame
+
+   frame 1        frame 2        frame 3        frame 4
+
+    ,-*-.          ,-o-.          ,-*-.          ,-o-.
+   ( o o )        ( o o )        ( o o )        ( o o )
+    '\_/'  .       '\_/' ·        '\_/'  ·       '\_/' .
+   ──────         ─────· ·       ────·  ·       ─────  ·
+
+     The ground line frays and the chips walk right, then reset. In a terminal
+     that cannot repaint in place — a piped log, a CI transcript — print frame
+     1 once and nothing after it. A loop that scrolls is a loop that lies.
+
+
+THE FOUND BEAT                                        plays once, 220ms, then holds
+
+   digging                found                  handed over
+
+    ,-o-.                  ,-*-.                  ,-*-.       ,--.
+   ( o o )                ( O O )                ( o o )      |==|
+    '\_/' ·                '\_/'                  '\_/'--     |= |
+   ────·  ·                 ────                              |##|
+                                                              '~~'
+
+     Three steps: the light stops sweeping and holds, the eyes widen, the
+     receipt comes up. The receipt is the brand mark — the two neutral line
+     items and the one violet total. In the terminal the total is the ### row,
+     and it is the only row drawn heavy.
+
+
+THE ERROR BEAT                                    120ms, no travel, then it stops
+
+    ,-.-.          the lamp goes out first
+   ( - - )         then the ears drop and the eyes flatten
+    '\_/'
+
+     Nothing slides, nothing bounces, nothing spins afterwards. The failure
+     line prints under it and the figure holds still:
+
+ ( ) archie  ✗ no session index at ~/.claude/projects — run `agentworth scan`
+
+
+WHAT NEVER APPEARS IN THE TERMINAL
+
+     · Archie in the receipt itself. The receipt is evidence; a mascot on it
+       makes it look like marketing.
+     · Archie on `--json`, `--quiet`, or any machine-readable output.
+     · A spinner made out of Archie. He is a state, not a progress indicator.

@@ -127,6 +127,13 @@ parse — new or corrected fields, different normalization, changed token accoun
 incremental scan skips unchanged bytes, so without the bump the index keeps serving what the
 old parser produced until someone runs `--force`.
 
+Every PR that touches an adapter or a CLI command adds a fixture shaped like the data it
+handles. Every bug that came from real data ships with a redacted fixture that reproduces
+it (see `apps/cli/tests/doctor_self_test.rs` for the pattern: a small synthetic index built
+from `.jsonl` transcripts, scanned into a temp SQLite db, then exercised through the real
+CLI binary). Before a subagent reports a CLI change as verified, it runs
+`agentworth doctor --self-test` against a fixture index and pastes the pass/fail table.
+
 ## Canonical model
 
 Use `AgentWorthTrace` internally.

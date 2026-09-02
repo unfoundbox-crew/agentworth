@@ -121,8 +121,8 @@ pub fn bisect_session_trajectory(trace: &AgentWorthTrace) -> BisectResult {
                         reason: Some(RegressionReason::ApologyRemorseTrigger),
                         summary: "Agent recognized a failure and entered an apology loop."
                             .to_string(),
-                        context_snippet: Some(if content.len() > 120 {
-                            format!("{}...", &content[..117])
+                        context_snippet: Some(if content.chars().count() > 120 {
+                            format!("{}...", agentworth_schema::text::truncate_chars(content, 117))
                         } else {
                             content.clone()
                         }),

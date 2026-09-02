@@ -20,6 +20,10 @@ use std::collections::{HashMap, HashSet};
 /// Only meaningful on text the harness itself marked as an error. On a *successful* result the
 /// same phrase routinely appears inside ordinary stdout (a grep hit, a pasted log), so calling
 /// this on passing output would invent failures out of a command's own words.
+#[allow(
+    clippy::string_slice,
+    reason = "idx comes from find() on an ASCII literal, offset by its own byte length: always a char boundary"
+)]
 pub fn parse_exit_code_phrase(text: &str) -> Option<i32> {
     let lower = text.to_lowercase();
     let idx = lower.find("exit code")?;

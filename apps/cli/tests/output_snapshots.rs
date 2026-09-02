@@ -91,12 +91,21 @@ fn screens() -> Vec<(&'static str, Vec<&'static str>)> {
         ("stats", vec!["stats"]),
         ("traces", vec!["traces", "--limit", "5"]),
         ("usage", vec!["usage", "--period", "day"]),
-        ("usage-by-model", vec!["usage", "--period", "day", "--by-model"]),
+        ("usage-by-model", vec!["usage", "--period", "day", "--by", "model"]),
+        ("usage-year-by-model", vec!["usage", "--period", "year", "--by", "model"]),
+        ("usage-all-by-repo", vec!["usage", "--period", "all", "--by", "repo"]),
         ("usage-pacing", vec!["usage", "--pacing"]),
         ("blame", vec!["blame", "crates/storage/src/vector.rs"]),
         ("scan", vec!["scan"]),
         ("doctor", vec!["doctor"]),
         ("matrix", vec!["matrix"]),
+        ("audit", vec!["audit"]),
+        ("blind-spots", vec!["blind-spots"]),
+        ("threat-digest", vec!["threat-digest"]),
+        ("pr-blame", vec!["pr-blame", "crates/storage/src/vector.rs"]),
+        ("watch-once", vec!["watch", "--poll-once"]),
+        ("blunder", vec!["blunder"]),
+        ("blunder-blame", vec!["blunder-blame"]),
     ]
 }
 
@@ -237,6 +246,7 @@ fn the_error_screen_names_the_noun_and_the_way_out() {
 fn inspect_resolves_a_unique_prefix() {
     let (_t, db) = fixture();
     let full_id = session_id(&db);
+    #[allow(clippy::string_slice, reason = "full_id is an ASCII test fixture id (e.g. session_tested)")]
     let prefix = &full_id[..full_id.len() - 1];
 
     let out = render(&db, &["inspect", prefix, "--json"], 80, false);
@@ -388,9 +398,98 @@ fn the_suspect_screen_holds_the_grid() {
     assert!(!hook.contains("exit 1"), "a pre-push note must never block a push: {hook}");
 }
 
+/// `inspect`, `export`, and `receipt` used to require a session id as a positional clap
+/// argument, so omitting it failed before any of this code ran ("required arguments were
+/// not provided"). It is now optional and this is what fills the gap: on a TTY, a picker;
+/// otherwise, the same listing as `--json` or a plain table, and exit 2 rather than a
+/// silent guess.
+#[test]
+fn picker_lists_sessions_and_exits_2_without_an_id_or_last() {
+    let (_t, db) = fixture();
+    let mut cmd = Command::cargo_bin("agentworth").unwrap();
+    let assert = cmd
+        .arg("--db-path")
+        .arg(&db)
+        .arg("inspect")
+        .env("COLUMNS", "80")
+        .env("NO_COLOR", "1")
+        .assert()
+        .code(2);
+    let output = assert.get_output();
+    let out = String::from_utf8(output.stdout.clone()).unwrap();
+    let err = String::from_utf8(output.stderr.clone()).unwrap();
+
+    assert!(out.contains("SESSION"), "{out}");
+    assert!(out.contains("ADAPTER"), "{out}");
+    assert!(
+        out.contains("session_tested") || out.contains("session_claimed"),
+        "the plain fallback must print full, copyable ids: {out}"
+    );
+    assert!(err.contains("pass a session id or prefix"), "{err}");
+    for line in out.lines() {
+        assert!(console::measure_text_width(line) <= 78, "{line}");
+        for c in line.chars() {
+            assert!(is_allowed(c), "picker listing ships U+{:04X}", c as u32);
+        }
+    }
+}
+
+/// The `--json` fallback carries the same rows a person would pick from interactively --
+/// enough for a script to resolve a session on its own instead of parsing the plain table.
+#[test]
+fn picker_json_listing_is_well_formed_and_exits_2() {
+    let (_t, db) = fixture();
+    let mut cmd = Command::cargo_bin("agentworth").unwrap();
+    let assert = cmd
+        .arg("--db-path")
+        .arg(&db)
+        .arg("inspect")
+        .arg("--json")
+        .assert()
+        .code(2);
+    let out = assert.get_output().stdout.clone();
+    let rows: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.len(), 2, "the fixture has two non-stub sessions");
+    for row in rows {
+        assert!(row["session_id"].is_string());
+        assert!(row["rung"].is_u64());
+        assert!(row["number"].is_u64());
+    }
+}
+
+/// `export` and `receipt` only ever matched an exact id; `agentworth inspect` (#76) made a
+/// unique prefix the normal way to name a session and this brings the other two in line.
+#[test]
+fn export_and_receipt_resolve_a_unique_prefix() {
+    let (_t, db) = fixture();
+    let full_id = session_id(&db);
+    #[allow(clippy::string_slice, reason = "full_id is an ASCII test fixture id (e.g. session_tested)")]
+    let prefix = &full_id[..full_id.len() - 1];
+
+    let out = render(&db, &["export", prefix, "--format", "json"], 80, false);
+    let trace: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(trace["session_id"].as_str().unwrap(), full_id);
+
+    let out = render(&db, &["receipt", prefix, "--format", "json"], 80, false);
+    let receipt: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(receipt["session_id"].as_str().unwrap(), full_id);
+}
+
 #[test]
 fn json_payloads_are_untouched_by_the_redesign() {
     let (_t, db) = fixture();
+    let id = session_id(&db);
+    for args in [
+        vec!["bisect".to_string(), id.clone(), "--json".to_string()],
+        vec!["cache-doctor".to_string(), id.clone(), "--json".to_string()],
+    ] {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = render(&db, &args, 80, false);
+        serde_json::from_str::<serde_json::Value>(out.trim())
+            .unwrap_or_else(|e| panic!("{:?} is no longer valid JSON: {}", args, e));
+        assert!(!out.contains('\x1b'), "{:?} leaked an escape into --json", args);
+    }
     for args in [
         vec!["stats", "--json"],
         vec!["traces", "--json"],
@@ -398,10 +497,100 @@ fn json_payloads_are_untouched_by_the_redesign() {
         vec!["blame", "crates/storage/src/vector.rs", "--json"],
         vec!["doctor", "--json"],
         vec!["matrix", "--json"],
+        vec!["audit", "--json"],
+        vec!["blind-spots", "--json"],
+        vec!["threat-digest", "--json"],
+        vec!["pr-blame", "crates/storage/src/vector.rs", "--json"],
+        vec!["blunder", "--json"],
+        vec!["blunder-blame", "--json"],
     ] {
         let out = render(&db, &args, 80, false);
         serde_json::from_str::<serde_json::Value>(out.trim())
             .unwrap_or_else(|e| panic!("{:?} is no longer valid JSON: {}", args, e));
         assert!(!out.contains('\x1b'), "{:?} leaked an escape into --json", args);
+    }
+}
+
+/// `bisect` and `cache-doctor` need a real session id from the fixture, so they cannot ride
+/// the static `screens()` list -- same reason `receipt`/`inspect` get their own tests above.
+/// Same three grid rules as `screens()`: nothing wraps, colour never moves a column, no
+/// glyph outside the allowed set.
+#[test]
+fn bisect_and_cache_doctor_hold_the_grid() {
+    let (_t, db) = fixture();
+    let id = session_id(&db);
+
+    for args in [vec!["bisect", id.as_str()], vec!["cache-doctor", id.as_str()]] {
+        for columns in [80usize, 120] {
+            let plain = render(&db, &args, columns, false);
+            assert!(!plain.trim().is_empty(), "{:?} rendered nothing", args);
+            for line in plain.lines() {
+                let w = console::measure_text_width(line);
+                assert!(w <= columns.min(78), "{:?} at {columns}: line is {w} wide\n{line}", args);
+            }
+
+            let plain_unicode = render_with(&db, &args, columns, false, true);
+            let colour = render_with(&db, &args, columns, true, true);
+            assert_eq!(
+                console::strip_ansi_codes(&colour),
+                plain_unicode,
+                "{:?} at {columns}: colour and plain disagree on column positions",
+                args
+            );
+        }
+        for c in render(&db, &args, 80, false).chars() {
+            assert!(is_allowed(c), "{:?} ships U+{:04X} ({})", args, c as u32, c);
+        }
+    }
+}
+
+/// `merge` needs a second, real SQLite index to merge from, so it cannot ride the shared
+/// single-db `screens()` list. Same three grid rules as `screens()`.
+#[test]
+fn merge_holds_the_grid() {
+    let (_t, db) = fixture();
+
+    // A second, independent index with one more session, to actually merge something.
+    let temp2 = tempdir().unwrap();
+    let dir2 = temp2.path().join(".claude").join("projects").join("proj2");
+    fs::create_dir_all(&dir2).unwrap();
+    let mut h = File::create(dir2.join("session_other.jsonl")).unwrap();
+    writeln!(h, r#"{{"type":"user","timestamp":"2026-08-31T09:00:00Z","content":"add a cache"}}"#).unwrap();
+    writeln!(h, r#"{{"type":"assistant","timestamp":"2026-08-31T09:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"content":[{{"type":"text","text":"Added the cache layer."}}]}}"#).unwrap();
+    let db2 = temp2.path().join("index2.db");
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db2)
+        .arg("scan")
+        .arg(temp2.path())
+        .arg("--json")
+        .assert()
+        .success();
+
+    let db2_arg = db2.to_string_lossy().to_string();
+    let args = vec!["merge", db2_arg.as_str()];
+
+    for columns in [80usize, 120] {
+        // Each run re-merges the same source db into the target -- idempotent (sessions
+        // already present just get skipped/updated), so rendering twice at two widths is
+        // safe, unlike `scan`'s elapsed-dependent counts.
+        let plain = render(&db, &args, columns, false);
+        assert!(!plain.trim().is_empty(), "merge rendered nothing");
+        for line in plain.lines() {
+            let w = console::measure_text_width(line);
+            assert!(w <= columns.min(78), "merge at {columns}: line is {w} wide\n{line}");
+        }
+
+        let plain_unicode = render_with(&db, &args, columns, false, true);
+        let colour = render_with(&db, &args, columns, true, true);
+        assert_eq!(
+            console::strip_ansi_codes(&colour),
+            plain_unicode,
+            "merge at {columns}: colour and plain disagree on column positions"
+        );
+    }
+    for c in render(&db, &args, 80, false).chars() {
+        assert!(is_allowed(c), "merge ships U+{:04X} ({})", c as u32, c);
     }
 }

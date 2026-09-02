@@ -396,6 +396,7 @@ pub fn evaluate_trace_for_blunder(
     let mut hasher = Sha256::new();
     hasher.update(trace.session_id.as_bytes());
     let hex_digest = hex::encode(hasher.finalize());
+    #[allow(clippy::string_slice, reason = "hex_digest is a hex sha256 digest, ASCII-only")]
     let session_hash = hex_digest[..16].to_string();
 
     Some(BlunderExhibit {
@@ -632,25 +633,19 @@ fn format_compact_tokens(n: u64) -> String {
     }
 }
 
-/// `max_len` is a byte budget, but the cut has to land on a char boundary -- real tool
-/// output and apology text routinely carry multi-byte UTF-8 (CJK apologies are literally in
-/// `APOLOGY_PATTERNS` above), and a plain `&trimmed[..max_len - 3]` panics the moment that
-/// boundary falls inside one (the same bug shape as `recovery.rs::truncate_str`, fixed
-/// alongside this one). Walk char boundaries and stop at the last one at or before the
-/// budget instead.
-fn truncate_snippet(s: &str, max_len: usize) -> String {
+/// Not `agentworth_schema::text::preview` (which this could delegate to): `preview` marks
+/// a cut with `…` (U+2026), a glyph outside `ui/mod.rs`'s allowed set, and this value flows
+/// straight into `BlunderExhibitRow`'s `apology_quote`/`code_snippet` rendered by
+/// `views::blunder`. `truncate_chars` is the same char-boundary-safe cut `preview` uses
+/// internally, kept here with a literal `...` instead so the exhibit stays inside the
+/// allowed glyph set.
+fn truncate_snippet(s: &str, max_chars: usize) -> String {
     let trimmed = s.trim();
-    if trimmed.len() <= max_len {
+    if trimmed.chars().count() <= max_chars {
         trimmed.to_string()
     } else {
-        let budget = max_len.saturating_sub(3);
-        let cut = trimmed
-            .char_indices()
-            .map(|(i, _)| i)
-            .take_while(|&i| i <= budget)
-            .last()
-            .unwrap_or(0);
-        format!("{}...", &trimmed[..cut])
+        let budget = max_chars.saturating_sub(3);
+        format!("{}...", agentworth_schema::text::truncate_chars(trimmed, budget))
     }
 }
 

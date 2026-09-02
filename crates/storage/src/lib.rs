@@ -4,7 +4,7 @@ pub mod embedder;
 pub mod pricing;
 pub mod vector;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -307,6 +307,112 @@ pub struct ModelUsagePeriodSummary {
     pub total_tokens: u64,
     pub estimated_cost_usd: f64,
     pub cache_hit_ratio: f64,
+}
+
+/// Rollup axis for `get_usage_report`: what one row represents besides its period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageGroupBy {
+    Adapter,
+    Model,
+    Repo,
+}
+
+impl UsageGroupBy {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "adapter" => Some(Self::Adapter),
+            "model" => Some(Self::Model),
+            "repo" => Some(Self::Repo),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Adapter => "adapter",
+            Self::Model => "model",
+            Self::Repo => "repo",
+        }
+    }
+}
+
+/// Rollup bucket for `get_usage_report`. `All` collapses every session into one bucket per
+/// group -- see `UsageReport::periods_total`'s doc comment for what that does to the
+/// period/limit fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsagePeriodKind {
+    Day,
+    Week,
+    Month,
+    Year,
+    All,
+}
+
+impl UsagePeriodKind {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "day" => Some(Self::Day),
+            "week" => Some(Self::Week),
+            "month" => Some(Self::Month),
+            "year" => Some(Self::Year),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+            Self::Year => "year",
+            Self::All => "all",
+        }
+    }
+}
+
+/// One (period, group) rollup row from `get_usage_report`. `period` is `None` only for
+/// `UsagePeriodKind::All`, which has no period axis -- one row per group across all time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageReportRow {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub period: Option<String>,
+    pub group: String,
+    pub session_count: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub total_tokens: u64,
+    pub estimated_cost_usd: f64,
+    pub cache_hit_ratio: f64,
+}
+
+/// Result of `get_usage_report`: rows plus the receipt for whatever `limit` cut.
+///
+/// `limit` counts *periods*, not rows -- a day with three adapters is one period, not three.
+/// Applying it to raw rows (the bug this type replaced) starves multi-group days/weeks/months
+/// of their budget and makes older periods disappear silently while the footer still reports
+/// the truncated set as the whole history.
+///
+/// For `UsagePeriodKind::All` there is no period axis, so `limit` instead caps the number of
+/// *groups* kept (the biggest spenders, by total tokens) and `periods_total`/`periods_shown`
+/// describe groups instead of periods -- still "how many of how many did `limit` keep."
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageReport {
+    pub period_kind: UsagePeriodKind,
+    pub group_by: UsageGroupBy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<DateTime<Utc>>,
+    pub rows: Vec<UsageReportRow>,
+    /// Distinct periods (or, for `All`, distinct groups) present in the filtered data
+    /// before `limit` truncated them.
+    pub periods_total: usize,
+    /// Distinct periods (or groups, for `All`) actually kept in `rows` after `limit`.
+    pub periods_shown: usize,
+    pub truncated: bool,
 }
 
 /// Rolling pacing window summary (e.g. 5-hour window).
@@ -2133,6 +2239,227 @@ impl Storage {
         Ok(results)
     }
 
+    /// Usage rollup by day/week/month/year/all, grouped by adapter, model, or repo -- the
+    /// query backing `agentworth usage`.
+    ///
+    /// Unlike `get_daily_usage`/`get_weekly_usage`/`get_monthly_usage`/`get_model_usage`
+    /// (which LIMIT rows in SQL, so a multi-adapter or multi-model day can consume the whole
+    /// row budget and push older days out silently), this fetches every matching row for the
+    /// whole window, groups in Rust, and applies `limit` to the distinct *period* count --
+    /// see `UsageReport`'s doc comment. `since` restricts to sessions started at or after that
+    /// instant; `None` falls back to the same `'2020-01-01'` sanity floor the older queries use.
+    pub fn get_usage_report(
+        &self,
+        period_kind: UsagePeriodKind,
+        group_by: UsageGroupBy,
+        since: Option<DateTime<Utc>>,
+        limit: usize,
+    ) -> Result<UsageReport> {
+        struct FetchedRow {
+            period: String,
+            group: String,
+            session_id: String,
+            input: u64,
+            output: u64,
+            cache_read: u64,
+            cache_creation: u64,
+            total: u64,
+        }
+
+        let period_col = |col: &str| -> String {
+            match period_kind {
+                UsagePeriodKind::Day => format!("DATE({col})"),
+                UsagePeriodKind::Week => format!("strftime('%Y-W%W', {col})"),
+                UsagePeriodKind::Month => format!("strftime('%Y-%m', {col})"),
+                UsagePeriodKind::Year => format!("strftime('%Y', {col})"),
+                // A single sentinel bucket: `All` has no period axis, so every row lands in
+                // the same group and `limit` gets reinterpreted below as a group cap instead.
+                UsagePeriodKind::All => "'__all__'".to_string(),
+            }
+        };
+
+        let mut fetched: Vec<FetchedRow> = Vec::new();
+        {
+            let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+
+            match group_by {
+                UsageGroupBy::Adapter | UsageGroupBy::Repo => {
+                    let sql = format!(
+                        "SELECT {period} AS period, session_id, adapter, source_path, \
+                         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens \
+                         FROM sessions \
+                         WHERE started_at > '2020-01-01' AND ({NON_STUB_SQL_PREDICATE}){since_clause}",
+                        period = period_col("started_at"),
+                        since_clause = if since.is_some() { " AND started_at >= ?1" } else { "" },
+                    );
+                    let mut stmt = conn.prepare(&sql)?;
+                    let mut rows = match since {
+                        Some(since) => stmt.query(params![since.to_rfc3339()])?,
+                        None => stmt.query([])?,
+                    };
+                    while let Some(row) = rows.next()? {
+                        let period: String = row.get(0)?;
+                        let session_id: String = row.get(1)?;
+                        let adapter: String = row.get(2)?;
+                        let source_path: String = row.get(3)?;
+                        let input: i64 = row.get(4)?;
+                        let output: i64 = row.get(5)?;
+                        let cache_read: i64 = row.get(6)?;
+                        let cache_creation: i64 = row.get(7)?;
+                        let total: i64 = row.get(8)?;
+                        let group = match group_by {
+                            UsageGroupBy::Adapter => adapter,
+                            UsageGroupBy::Repo => extract_repository_or_workspace(&source_path),
+                            UsageGroupBy::Model => unreachable!("handled in the other arm"),
+                        };
+                        fetched.push(FetchedRow {
+                            period,
+                            group,
+                            session_id,
+                            input: input as u64,
+                            output: output as u64,
+                            cache_read: cache_read as u64,
+                            cache_creation: cache_creation as u64,
+                            total: total as u64,
+                        });
+                    }
+                }
+                UsageGroupBy::Model => {
+                    let sql = format!(
+                        "SELECT {period} AS period, smu.session_id, smu.model, \
+                         smu.input_tokens, smu.output_tokens, smu.cache_read_tokens, smu.cache_creation_tokens \
+                         FROM session_model_usage smu \
+                         JOIN sessions s ON s.session_id = smu.session_id \
+                         WHERE s.started_at > '2020-01-01' AND ({NON_STUB_SQL_PREDICATE}){since_clause}",
+                        period = period_col("s.started_at"),
+                        since_clause = if since.is_some() { " AND s.started_at >= ?1" } else { "" },
+                    );
+                    let mut stmt = conn.prepare(&sql)?;
+                    let mut rows = match since {
+                        Some(since) => stmt.query(params![since.to_rfc3339()])?,
+                        None => stmt.query([])?,
+                    };
+                    while let Some(row) = rows.next()? {
+                        let period: String = row.get(0)?;
+                        let session_id: String = row.get(1)?;
+                        let model: String = row.get(2)?;
+                        let input: i64 = row.get(3)?;
+                        let output: i64 = row.get(4)?;
+                        let cache_read: i64 = row.get(5)?;
+                        let cache_creation: i64 = row.get(6)?;
+                        let total = (input + output + cache_read + cache_creation) as u64;
+                        fetched.push(FetchedRow {
+                            period,
+                            group: model,
+                            session_id,
+                            input: input as u64,
+                            output: output as u64,
+                            cache_read: cache_read as u64,
+                            cache_creation: cache_creation as u64,
+                            total,
+                        });
+                    }
+                }
+            }
+        }
+
+        #[derive(Default)]
+        struct Agg {
+            session_ids: HashSet<String>,
+            input: u64,
+            output: u64,
+            cache_read: u64,
+            cache_creation: u64,
+            total: u64,
+        }
+
+        let mut agg: BTreeMap<(String, String), Agg> = BTreeMap::new();
+        for r in &fetched {
+            let entry = agg.entry((r.period.clone(), r.group.clone())).or_default();
+            entry.session_ids.insert(r.session_id.clone());
+            entry.input += r.input;
+            entry.output += r.output;
+            entry.cache_read += r.cache_read;
+            entry.cache_creation += r.cache_creation;
+            entry.total += r.total;
+        }
+
+        // Distinct periods, newest first -- every period string here is a fixed-width,
+        // zero-padded date/week/month/year, so lexical order is chronological order.
+        let mut periods: Vec<String> = agg.keys().map(|(p, _)| p.clone()).collect();
+        periods.sort();
+        periods.dedup();
+        periods.reverse();
+
+        let (kept, periods_total, periods_shown, truncated) = if period_kind == UsagePeriodKind::All {
+            let mut rows: Vec<((String, String), Agg)> = agg.into_iter().collect();
+            rows.sort_by(|a, b| b.1.total.cmp(&a.1.total).then_with(|| a.0 .1.cmp(&b.0 .1)));
+            let groups_total = rows.len();
+            rows.truncate(limit);
+            let groups_shown = rows.len();
+            (rows, groups_total, groups_shown, groups_total > groups_shown)
+        } else {
+            let periods_total = periods.len();
+            let kept_periods: BTreeSet<String> = periods.into_iter().take(limit).collect();
+            let periods_shown = kept_periods.len();
+            let rows: Vec<((String, String), Agg)> = agg
+                .into_iter()
+                .filter(|((p, _), _)| kept_periods.contains(p))
+                .collect();
+            (rows, periods_total, periods_shown, periods_total > periods_shown)
+        };
+
+        let mut rows_out: Vec<UsageReportRow> = kept
+            .into_iter()
+            .map(|((period, group), a)| {
+                let estimated_cost_usd = match group_by {
+                    UsageGroupBy::Model => estimate_model_tokens_cost_usd(
+                        Some(&group),
+                        a.input,
+                        a.output,
+                        a.cache_read,
+                        a.cache_creation,
+                    ),
+                    UsageGroupBy::Adapter | UsageGroupBy::Repo => {
+                        estimate_tokens_cost_usd(a.input, a.output, a.cache_read, a.cache_creation)
+                    }
+                };
+                let cache_hit_ratio = calculate_cache_hit_ratio(a.input, a.cache_read, a.cache_creation);
+                UsageReportRow {
+                    period: (period_kind != UsagePeriodKind::All).then_some(period),
+                    group,
+                    session_count: a.session_ids.len(),
+                    input_tokens: a.input,
+                    output_tokens: a.output,
+                    cache_read_tokens: a.cache_read,
+                    cache_creation_tokens: a.cache_creation,
+                    total_tokens: a.total,
+                    estimated_cost_usd,
+                    cache_hit_ratio,
+                }
+            })
+            .collect();
+
+        // Same order the old views/`get_model_usage` gave: period descending, then biggest
+        // spender first within a period.
+        rows_out.sort_by(|x, y| {
+            y.period
+                .cmp(&x.period)
+                .then_with(|| y.total_tokens.cmp(&x.total_tokens))
+                .then_with(|| x.group.cmp(&y.group))
+        });
+
+        Ok(UsageReport {
+            period_kind,
+            group_by,
+            since,
+            rows: rows_out,
+            periods_total,
+            periods_shown,
+            truncated,
+        })
+    }
+
     /// Calculate rolling pacing summary for the last N hours.
     pub fn get_pacing_window(&self, hours: i64) -> Result<PacingSummary> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3063,6 +3390,182 @@ mod tests {
 
         let monthly = storage.get_monthly_usage(Some(10)).expect("monthly usage");
         assert!(!monthly.is_empty());
+    }
+
+    #[test]
+    fn test_usage_report_year_and_all_buckets() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        for (year, tag) in [("2024-03-01T10:00:00Z", "y24"), ("2025-06-01T10:00:00Z", "y25"), ("2026-08-30T10:00:00Z", "y26")] {
+            let started_at = DateTime::parse_from_rfc3339(year).unwrap().with_timezone(&Utc);
+            let prov = Provenance::new(format!("/path/{tag}.jsonl"), "claude_code", 100, 100, format!("fp_{tag}"));
+            let mut trace = AgentWorthTrace::new(format!("sess_{tag}"), "claude_code", prov, started_at);
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(1000, 200, 0, 0);
+            storage.upsert_trace(&trace).expect("upsert trace");
+        }
+
+        let by_year = storage
+            .get_usage_report(UsagePeriodKind::Year, UsageGroupBy::Adapter, None, 10)
+            .expect("usage report by year");
+        assert_eq!(by_year.periods_total, 3);
+        assert_eq!(by_year.periods_shown, 3);
+        assert!(!by_year.truncated);
+        assert_eq!(by_year.rows.len(), 3, "one adapter row per year");
+        let years: std::collections::BTreeSet<_> =
+            by_year.rows.iter().map(|r| r.period.clone().unwrap()).collect();
+        assert_eq!(
+            years,
+            std::collections::BTreeSet::from(["2024".to_string(), "2025".to_string(), "2026".to_string()])
+        );
+
+        // `all` collapses every year into a single row per group, with no period column.
+        let all_time = storage
+            .get_usage_report(UsagePeriodKind::All, UsageGroupBy::Adapter, None, 10)
+            .expect("usage report all-time");
+        assert_eq!(all_time.rows.len(), 1, "one adapter, so one row across all time");
+        let row = &all_time.rows[0];
+        assert!(row.period.is_none(), "`all` carries no period column");
+        assert_eq!(row.session_count, 3);
+        assert_eq!(row.input_tokens, 3000);
+        assert_eq!(row.output_tokens, 600);
+        assert_eq!(all_time.periods_total, 1);
+        assert_eq!(all_time.periods_shown, 1);
+        assert!(!all_time.truncated);
+    }
+
+    #[test]
+    fn test_usage_report_model_and_repo_grouping() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let started_at = DateTime::parse_from_rfc3339("2026-08-30T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // One session, two models -- `get_usage_report(.., Model, ..)` must attribute tokens
+        // per model, and count the session once within each model's own row (not once total
+        // and not twice against a single model).
+        let prov = Provenance::new(
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/multi.jsonl",
+            "claude_code",
+            100,
+            100,
+            "fp_multi",
+        );
+        let mut trace = AgentWorthTrace::new("sess_multi", "claude_code", prov, started_at);
+        trace.stats.total_events = 4;
+        trace.stats.models_used = vec!["claude-opus-5".to_string(), "claude-fable-5".to_string()];
+        trace
+            .stats
+            .per_model_token_usage
+            .insert("claude-opus-5".to_string(), TokenUsage::new(600, 160, 200, 50));
+        trace
+            .stats
+            .per_model_token_usage
+            .insert("claude-fable-5".to_string(), TokenUsage::new(300, 80, 0, 0));
+        trace.stats.token_usage = TokenUsage::new(900, 240, 200, 50);
+        storage.upsert_trace(&trace).expect("upsert multi-model trace");
+
+        // A second session in a different repository, for the repo grouping assertion.
+        let other_prov = Provenance::new(
+            "/Users/dev/.claude/projects/-Users-dev-code-motionvector-studio/other.jsonl",
+            "claude_code",
+            100,
+            100,
+            "fp_other",
+        );
+        let mut other = AgentWorthTrace::new("sess_other_repo", "claude_code", other_prov, started_at);
+        other.stats.total_events = 3;
+        other.stats.token_usage = TokenUsage::new(500, 100, 0, 0);
+        storage.upsert_trace(&other).expect("upsert other-repo trace");
+
+        let by_model = storage
+            .get_usage_report(UsagePeriodKind::Day, UsageGroupBy::Model, None, 10)
+            .expect("usage report by model");
+        assert_eq!(by_model.rows.len(), 2, "one row per model, the other-repo session has no model_usage rows");
+        let opus = by_model.rows.iter().find(|r| r.group == "claude-opus-5").expect("opus row");
+        assert_eq!(opus.session_count, 1);
+        assert_eq!(opus.input_tokens, 600);
+        assert_eq!(opus.cache_read_tokens, 200);
+        let fable = by_model.rows.iter().find(|r| r.group == "claude-fable-5").expect("fable row");
+        assert_eq!(fable.session_count, 1);
+        assert_eq!(fable.input_tokens, 300);
+
+        let by_repo = storage
+            .get_usage_report(UsagePeriodKind::Day, UsageGroupBy::Repo, None, 10)
+            .expect("usage report by repo");
+        assert_eq!(by_repo.rows.len(), 2, "two sessions, two repositories");
+        let agentworth_row = by_repo
+            .rows
+            .iter()
+            .find(|r| r.group == "unfoundbox/agentworth")
+            .expect("agentworth repo row");
+        assert_eq!(agentworth_row.session_count, 1);
+        assert_eq!(agentworth_row.total_tokens, 1390, "900 + 240 + 200 + 50, the session's own stored total");
+        let studio_row = by_repo
+            .rows
+            .iter()
+            .find(|r| r.group == "motionvector/studio")
+            .expect("studio repo row");
+        assert_eq!(studio_row.session_count, 1);
+        assert_eq!(studio_row.input_tokens, 500);
+    }
+
+    /// Reproduces the truncation bug a real 0.1.14 run hit: `--period day` reported "13 days,
+    /// 910 sessions" when 40 days were actually indexed, because the old row-count `LIMIT` let
+    /// multi-adapter days consume the row budget meant for whole periods. Two adapters, one
+    /// session each, every day for 40 days -- so every period has 2 rows, and the default day
+    /// limit of 30 must keep the 30 newest days (60 rows), not the first 30 rows (15 days).
+    #[test]
+    fn test_usage_report_limit_counts_periods_not_rows() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base_date = DateTime::parse_from_rfc3339("2026-09-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        for day_offset in 0..40i64 {
+            let day = base_date - Duration::days(day_offset);
+            for (adapter, tag) in [("claude_code", "cc"), ("codex", "cx")] {
+                let prov = Provenance::new(
+                    format!("/path/day{day_offset}_{tag}.jsonl"),
+                    adapter,
+                    100,
+                    100,
+                    format!("fp_{day_offset}_{tag}"),
+                );
+                let mut trace =
+                    AgentWorthTrace::new(format!("sess_{day_offset}_{tag}"), adapter, prov, day);
+                trace.stats.total_events = 5;
+                trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+                storage.upsert_trace(&trace).expect("upsert trace");
+            }
+        }
+
+        let report = storage
+            .get_usage_report(UsagePeriodKind::Day, UsageGroupBy::Adapter, None, 30)
+            .expect("usage report");
+
+        assert_eq!(report.periods_total, 40, "40 distinct days are indexed");
+        assert_eq!(report.periods_shown, 30, "the default day limit keeps 30 periods");
+        assert!(report.truncated);
+        assert_eq!(report.rows.len(), 60, "30 days x 2 adapters each, not 30 rows total");
+
+        let distinct_periods: BTreeSet<String> =
+            report.rows.iter().map(|r| r.period.clone().unwrap()).collect();
+        assert_eq!(distinct_periods.len(), 30);
+
+        let newest_kept = base_date.format("%Y-%m-%d").to_string();
+        let oldest_kept = (base_date - Duration::days(29)).format("%Y-%m-%d").to_string();
+        let oldest_dropped = (base_date - Duration::days(30)).format("%Y-%m-%d").to_string();
+        assert!(distinct_periods.contains(&newest_kept), "the newest day must survive the cut");
+        assert!(distinct_periods.contains(&oldest_kept), "the 30th-newest day must survive the cut");
+        assert!(
+            !distinct_periods.contains(&oldest_dropped),
+            "the 31st-newest day must NOT survive -- this is the bug: it used to, at half the rate"
+        );
+
+        // Totals cover the shown periods only: 30 days x 2 adapters x 1 session each.
+        let total_sessions: usize = report.rows.iter().map(|r| r.session_count).sum();
+        assert_eq!(total_sessions, 60);
     }
 
     #[test]

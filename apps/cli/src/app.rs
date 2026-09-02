@@ -33,6 +33,8 @@ mod pr_blame;
 mod config;
 #[path = "commands/version_info.rs"]
 mod version_info;
+#[path = "commands/self_test.rs"]
+mod self_test;
 // Declared here rather than in `commands/mod.rs`, which `lib.rs` glob-re-exports: a public
 // `commands::handoff` would collide with the `crate::handoff` module this command renders.
 #[path = "commands/handoff.rs"]
@@ -147,8 +149,19 @@ enum Commands {
 
     /// Inspect a specific trace session in detail with timeline visualization
     Inspect {
-        /// The session ID to inspect
-        session_id: String,
+        /// The session ID to inspect, by full ID or a unique prefix. With nothing given on
+        /// a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+
+        /// Inspect the newest session for this directory's repository. The default when
+        /// no ID is given and stdout is not a TTY
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// Output raw trace structure as formatted JSON
         #[arg(long)]
@@ -157,8 +170,19 @@ enum Commands {
 
     /// Export a trace session safely in JSON or ATIF format
     Export {
-        /// The session ID to export
-        session_id: String,
+        /// The session ID to export, by full ID or a unique prefix. With nothing given on
+        /// a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+
+        /// Export the newest session for this directory's repository. The default when
+        /// no ID is given and stdout is not a TTY
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// Apply redaction to mask secrets, API keys, tokens, emails, and home paths
         #[arg(short, long)]
@@ -175,8 +199,20 @@ enum Commands {
 
     /// Generate and render an authentic ANSI or SVG Flight Receipt for a trace session
     Receipt {
-        /// The session ID to generate flight receipt for
-        session_id: String,
+        /// The session ID to generate flight receipt for, by full ID or a unique prefix.
+        /// With nothing given on a TTY, a picker lists the newest sessions; elsewhere,
+        /// pass an ID or `--last`
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+
+        /// Generate the receipt for the newest session for this directory's repository.
+        /// The default when no ID is given and stdout is not a TTY
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// Output format: terminal (default), ansi, svg, receipt, or json
         #[arg(short, long, default_value = "terminal", value_parser = ["terminal", "ansi", "svg", "receipt", "json"])]
@@ -258,8 +294,10 @@ enum Commands {
 
     /// View deep usage, pacing, and token expenditure rollups
     Usage {
-        /// Rollup period: day, week, or month (default day, or persisted `config period`)
-        #[arg(short, long, value_parser = ["day", "week", "month"])]
+        /// Rollup period: day, week, month, year, or all -- `all` is one row per group across
+        /// all time, with no period column. Single-letter aliases d/w/m/y also work. Default
+        /// day, or persisted `config period`.
+        #[arg(short, long, value_parser = parse_period_arg)]
         period: Option<String>,
 
         /// Show 5-hour rolling pacing window (burn rate, active models, quota headroom)
@@ -274,14 +312,22 @@ enum Commands {
         #[arg(long)]
         alert_above: Option<f64>,
 
-        /// Maximum number of rows to display (default 20, or persisted `config limit`)
+        /// Maximum number of periods to keep (default 30 for day, 26 for week, 24 for month,
+        /// unbounded for year) -- or, under `--period all`, the number of top groups by
+        /// spend to keep (default 20, or persisted `config limit`). Counts periods, not rows:
+        /// a day with two adapters is one period, not two.
         #[arg(short, long)]
         limit: Option<usize>,
 
-        /// Group the rollup by model instead of adapter (e.g. how many tokens
-        /// each of claude-opus-5 / claude-sonnet-5 / claude-fable-5 used)
+        /// Group the rollup by adapter (default; most informative when nearly every session
+        /// shares one adapter, e.g. Claude Code), model (usually the useful one), or repo
+        #[arg(long, default_value = "adapter", value_parser = ["adapter", "model", "repo"])]
+        by: String,
+
+        /// Only include sessions started at or after this time: an absolute date
+        /// (`2026-08-01` or RFC 3339), or a relative shorthand (`1d`, `7d`, `2w`, `3m`)
         #[arg(long)]
-        by_model: bool,
+        since: Option<String>,
 
         /// Output usage data as JSON
         #[arg(long)]
@@ -300,13 +346,18 @@ enum Commands {
 
     /// Hand a session over: what it promised and dropped, decided, changed, ran, and proved
     Handoff {
-        /// Session to hand over. Defaults to the newest session indexed for this directory's
-        /// repository, which is what `--last` also selects.
+        /// Session to hand over, by full ID or a unique prefix. With nothing given on a
+        /// TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`
         session_id: Option<String>,
 
-        /// Hand over the newest session for this repository. The default when no ID is given.
+        /// Hand over the newest session for this repository. The default when no ID is
+        /// given and stdout is not a TTY
         #[arg(long)]
         last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// Mask secrets, paths, and this session's own repository name before printing
         #[arg(short, long)]
@@ -327,9 +378,19 @@ enum Commands {
 
     /// What compaction dropped: decisions this session made and its own summaries did not keep
     Forgotten {
-        /// Session to diff, by full ID or a unique prefix. Defaults to the newest session
-        /// indexed for this directory's repository.
+        /// Session to diff, by full ID or a unique prefix. With nothing given on a TTY, a
+        /// picker lists the newest sessions; elsewhere, defaults to the newest session
+        /// indexed for this directory's repository (same as `--last`)
         session_id: Option<String>,
+
+        /// Diff the newest session for this directory's repository. The default when no
+        /// ID is given and stdout is not a TTY
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long)]
+        current: bool,
 
         /// One 1-based compaction round. Defaults to every round.
         #[arg(long)]
@@ -356,14 +417,17 @@ enum Commands {
     /// re-scroll or re-ask because the answer landed several messages later
     Asks {
         /// Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed
-        /// directly if it isn't an indexed session). Defaults to the newest session for this
-        /// directory's repository, same as `--current`.
-        #[arg(long, conflicts_with = "current")]
+        /// directly if it isn't an indexed session). With neither this nor `--last` given
+        /// on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`.
+        #[arg(long, conflicts_with_all = ["current", "last"])]
         session: Option<String>,
 
-        /// Resolve the newest session for this directory's repository. The default when
-        /// `--session` is not given -- this flag exists so an invocation can say that on
-        /// purpose.
+        /// Resolve the newest session for this directory's repository, falling back to the
+        /// newest session anywhere.
+        #[arg(long)]
+        last: bool,
+
+        /// Alias of `--last`.
         #[arg(long)]
         current: bool,
 
@@ -409,6 +473,13 @@ enum Commands {
         /// Output diagnostic report as formatted JSON
         #[arg(long)]
         json: bool,
+
+        /// Run the real release workflow end to end -- scan, stats, usage, traces,
+        /// inspect, handoff, forgotten, and an MCP round trip -- against the real index
+        /// on this machine, with no network, and report pass/fail/slow and timing for
+        /// each step. Exits non-zero if any step fails
+        #[arg(long)]
+        self_test: bool,
     },
 
     /// Print version details: binary version, npm install detection, and a live
@@ -563,10 +634,19 @@ enum Commands {
         #[arg(long, conflicts_with = "session")]
         file: Option<String>,
 
-        /// Blunder -> blame direction: one specific session ID. Resolves it to the
-        /// files AI Code Blame attributes to that session
+        /// Blunder -> blame direction: one specific session ID, by full ID or a unique
+        /// prefix. Resolves it to the files AI Code Blame attributes to that session
         #[arg(long, conflicts_with = "file")]
         session: Option<String>,
+
+        /// Blunder -> blame direction for the newest session in this repository, same as
+        /// `--session` with that session's ID
+        #[arg(long, conflicts_with = "file")]
+        last: bool,
+
+        /// Alias of `--last`
+        #[arg(long, conflicts_with = "file")]
+        current: bool,
 
         /// In default mode (no --file or --session), number of top blunders to bridge
         #[arg(short, long, default_value_t = 5)]
@@ -724,8 +804,12 @@ pub fn run() -> Result<()> {
         Commands::Stats { json } => {
             run_stats_command(resolve_json(json), cli.db_path, &ui)?;
         }
-        Commands::Doctor { json } => {
-            run_doctor_command(resolve_json(json), cli.db_path, &ui)?;
+        Commands::Doctor { json, self_test } => {
+            if self_test {
+                self_test::run_self_test_command(resolve_json(json), cli.db_path, &ui)?;
+            } else {
+                run_doctor_command(resolve_json(json), cli.db_path, &ui)?;
+            }
         }
         Commands::Version { offline, json } => {
             version_info::run_version_command(resolve_json(json), offline)?;
@@ -754,32 +838,50 @@ pub fn run() -> Result<()> {
                 &ui,
             )?;
         }
-        Commands::Inspect { session_id, json } => {
+        Commands::Inspect {
+            session_id,
+            last,
+            current,
+            json,
+        } => {
             let json = resolve_json(json);
-            if let Err(e) = run_inspect_command(&session_id, json, cli.db_path.clone(), &ui) {
-                if json {
-                    return Err(e);
-                }
-                // An error screen is a navigation screen, so it replaces the anyhow dump
-                // rather than following it. Every storage handle is already dropped here.
-                print!("{}", inspect_not_found(&session_id, cli.db_path, &ui));
-                std::process::exit(1);
-            }
+            run_inspect_command(session_id, last, current, json, cli.db_path.clone(), &ui)?;
         }
         Commands::Export {
             session_id,
+            last,
+            current,
             redact,
             format,
             output,
         } => {
-            run_export_command(&session_id, redact, &format, output.as_deref(), cli.db_path, &ui)?;
+            run_export_command(
+                session_id,
+                last,
+                current,
+                redact,
+                &format,
+                output.as_deref(),
+                cli.db_path,
+                &ui,
+            )?;
         }
         Commands::Receipt {
             session_id,
+            last,
+            current,
             format,
             output,
         } => {
-            crate::run_receipt_command(&session_id, &format, output, cli.db_path, &ui)?;
+            crate::run_receipt_command(
+                session_id,
+                last,
+                current,
+                &format,
+                output,
+                cli.db_path,
+                &ui,
+            )?;
         }
 
         Commands::Search {
@@ -811,18 +913,32 @@ pub fn run() -> Result<()> {
             hours,
             alert_above,
             limit,
-            by_model,
+            by,
+            since,
             json,
         } => {
             let period = config::resolve_period(period, persisted_config.period.clone(), "day")?;
-            let limit = config::resolve_limit(limit, persisted_config.limit, 20);
+            // Periods, not rows (see `UsageReport`'s doc comment): each period kind gets its
+            // own sane default, and "year" has no cap because there are rarely more than a
+            // handful of them to begin with. `--period all` has no period axis, so its
+            // `limit` caps *groups* instead, at the same 20 every other command defaults to.
+            let builtin_limit_default = match period.as_str() {
+                "day" => 30,
+                "week" => 26,
+                "month" => 24,
+                "year" => usize::MAX,
+                _ => 20,
+            };
+            let limit = config::resolve_limit(limit, persisted_config.limit, builtin_limit_default);
+            let since = since.as_deref().map(parse_since_arg).transpose()?;
             run_usage_command(UsageCommandArgs {
                 period: &period,
                 pacing,
                 hours,
                 alert_above,
                 limit,
-                by_model,
+                by: &by,
+                since,
                 json: resolve_json(json),
                 db_path: cli.db_path,
                 ui: &ui,
@@ -833,10 +949,8 @@ pub fn run() -> Result<()> {
         }
         Commands::Handoff {
             session_id,
-            // `--last` and "no session id" mean the same thing, so the flag exists to be
-            // typed rather than to change behaviour. Accepting both keeps the documented
-            // `agentworth handoff [session-id | --last]` shape honest.
-            last: _,
+            last,
+            current,
             redact,
             markdown,
             max_lines,
@@ -844,6 +958,8 @@ pub fn run() -> Result<()> {
         } => {
             handoff_command::run_handoff_command(
                 session_id,
+                last,
+                current,
                 redact,
                 max_lines,
                 markdown,
@@ -854,6 +970,8 @@ pub fn run() -> Result<()> {
         }
         Commands::Forgotten {
             session_id,
+            last,
+            current,
             round,
             classes,
             limit,
@@ -862,6 +980,8 @@ pub fn run() -> Result<()> {
         } => {
             forgotten_command::run_forgotten_command(
                 session_id,
+                last,
+                current,
                 round,
                 classes,
                 limit,
@@ -873,6 +993,7 @@ pub fn run() -> Result<()> {
         }
         Commands::Asks {
             session,
+            last,
             current,
             since,
             unanswered,
@@ -880,6 +1001,7 @@ pub fn run() -> Result<()> {
         } => {
             asks_command::run_asks_command(
                 session,
+                last,
                 current,
                 since,
                 unanswered,
@@ -971,12 +1093,16 @@ pub fn run() -> Result<()> {
         Commands::BlunderBlame {
             file,
             session,
+            last,
+            current,
             top,
             json,
         } => {
             crate::run_blunder_blame_command(
                 file,
                 session,
+                last,
+                current,
                 top,
                 resolve_json(json),
                 cli.db_path,
@@ -1021,6 +1147,50 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Clap `value_parser` for `usage --period`: canonicalizes `d`/`w`/`m`/`y` to their full
+/// words via `config::normalize_period`, so `agentworth usage --period y` and `--period year`
+/// parse identically.
+fn parse_period_arg(s: &str) -> std::result::Result<String, String> {
+    config::normalize_period(s).map(str::to_string).ok_or_else(|| {
+        format!("invalid period {s:?}: expected one of day, week, month, year, all (or d/w/m/y)")
+    })
+}
+
+/// Parse `usage --since`: an absolute date (RFC 3339, or bare `YYYY-MM-DD` read as midnight
+/// UTC) or a relative shorthand (`<n>d`, `<n>w`, `<n>m` for days/weeks/months ago, e.g. `7d`,
+/// `2w`, `3m`), anchored to now.
+fn parse_since_arg(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    use chrono::{Months, TimeZone, Utc};
+
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(value) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        if let Some(naive) = date.and_hms_opt(0, 0, 0) {
+            return Ok(Utc.from_utc_datetime(&naive));
+        }
+    }
+    if value.len() >= 2 {
+        let (count, unit) = value.split_at(value.len() - 1);
+        if let Ok(n) = count.parse::<u32>() {
+            let now = Utc::now();
+            let parsed = match unit {
+                "d" => Some(now - chrono::Duration::days(n as i64)),
+                "w" => Some(now - chrono::Duration::weeks(n as i64)),
+                "m" => now.checked_sub_months(Months::new(n)),
+                _ => None,
+            };
+            if let Some(dt) = parsed {
+                return Ok(dt);
+            }
+        }
+    }
+    anyhow::bail!(
+        "invalid --since {value:?}: expected a date (2026-08-01, or RFC 3339), or a relative \
+         shorthand (1d, 7d, 2w, 3m)"
+    );
 }
 
 /// The full clap command tree for `Cli`, for `agentworth docs` to introspect. Not exposing
@@ -1288,6 +1458,7 @@ fn build_stats_view(
 /// index, that reparse cost dominated the whole command. See
 /// `test_traces_reads_the_index_without_reparsing_every_transcript` below.
 fn build_trace_rows(
+    storage: &Arc<Storage>,
     sessions: Vec<agentworth_storage::SessionSummary>,
 ) -> Vec<(
     String,
@@ -1295,6 +1466,18 @@ fn build_trace_rows(
     Option<agentworth_schema::OutcomeKind>,
     agentworth_storage::SessionSummary,
 )> {
+    // `sessions.composite_score` is `NULL` only for a row a scan never actually scored
+    // (see `crates/core/src/lib.rs`'s scan loop: "every session that gets stored gets both
+    // passes, unconditionally" -- a `NULL` here means something other than a scan wrote the
+    // row, and the next scan's `needs_backfill` pulls it back through to fix it). That's
+    // rare and self-healing, but the old code recomputed a real score for every row via
+    // `Scanner::load_trace` regardless, so falling back to the same per-row reparse ONLY for
+    // that rare unscored case keeps `--json` byte-identical without giving up the fast path
+    // for the overwhelming common (scored) case this fix exists for. `primary_outcome` being
+    // `None` is not the same kind of gap -- it means "the detector found no outcome
+    // evidence", the normal shape of an unverified session -- so it's read straight off the
+    // index either way.
+    let scanner = Scanner::new(storage.clone());
     sessions
         .into_iter()
         .map(|s| {
@@ -1307,7 +1490,13 @@ fn build_trace_rows(
                 Some(agentworth_schema::OutcomeKind::DoneClaimed) => "[CLAIM_ONLY]".to_string(),
                 None => "[UNVERIFIED]".to_string(),
             };
-            let score_val = s.composite_score.unwrap_or(0.0) * 100.0;
+            let score_val = match s.composite_score {
+                Some(score) => score * 100.0,
+                None => scanner
+                    .load_trace(&s.session_id)
+                    .map(|t| agentworth_scoring::TraceScorer::default().score(&t).composite_score * 100.0)
+                    .unwrap_or(0.0),
+            };
             (badge, score_val, highest_kind, s)
         })
         .collect()
@@ -1340,7 +1529,7 @@ fn run_traces_command(
         .take(limit)
         .collect();
 
-    let rows = build_trace_rows(filtered_sessions);
+    let rows = build_trace_rows(&storage, filtered_sessions);
 
     if json {
         // When filtering by model, the session-wide `total_tokens` can be misleading
@@ -1483,15 +1672,30 @@ fn format_duration(seconds: f64) -> String {
 // -----------------------------------------------------------------------------
 
 fn run_inspect_command(
-    session_id: &str,
+    session_id: Option<String>,
+    last: bool,
+    current: bool,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &crate::ui::Ui,
 ) -> Result<()> {
-    let storage = open_storage(db_path)?;
+    let storage = open_storage(db_path.clone())?;
     let scanner = Scanner::new(storage.clone());
 
-    let resolved_id = resolve_inspect_session_id(&storage, session_id)?;
+    let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
+    let resolved_id = match crate::ui::picker::resolve(&storage, ui, json, &arg)? {
+        crate::ui::picker::Resolved::Id(id) => id,
+        crate::ui::picker::Resolved::NotFound(input) => {
+            if json {
+                anyhow::bail!(
+                    "Session '{}' not found in SQLite index. Try running 'agentworth scan' first.",
+                    input
+                );
+            }
+            print!("{}", inspect_not_found(&input, db_path, ui));
+            std::process::exit(1);
+        }
+    };
     let trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(&resolved_id))?;
 
     if json {
@@ -1501,25 +1705,6 @@ fn run_inspect_command(
     }
 
     Ok(())
-}
-
-/// Resolve what the caller typed to one exact session id. An exact match wins immediately
-/// -- the common case, and the one that must stay fastest. Failing that, a *unique* prefix
-/// match resolves silently to the id it names; an absent or ambiguous prefix is left
-/// unresolved so the caller's own not-found screen takes over, which already lists the
-/// nearest ids (an ambiguous prefix's candidates all start with it, so they surface there
-/// as the "closest three" without this function needing its own listing).
-fn resolve_inspect_session_id(storage: &Storage, input: &str) -> Result<String> {
-    if storage.get_session_by_id(input)?.is_some() {
-        return Ok(input.to_string());
-    }
-    match storage.find_sessions_by_id_prefix(input, 2)?.as_slice() {
-        [only] => Ok(only.session_id.clone()),
-        _ => anyhow::bail!(
-            "Session '{}' not found in SQLite index. Try running 'agentworth scan' first.",
-            input
-        ),
-    }
 }
 
 fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
@@ -1595,8 +1780,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
             .map(|(k, v)| format!("{}({})", k, v))
             .collect::<Vec<_>>()
             .join(", ");
-        let display = if tools_str.len() > 66 {
-            format!("{}...", &tools_str[..63])
+        let display = if tools_str.chars().count() > 66 {
+            format!("{}...", agentworth_schema::text::truncate_chars(&tools_str, 63))
         } else {
             tools_str
         };
@@ -1626,8 +1811,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
 
         let supporting: Vec<_> = outcomes.iter().filter(|o| o.kind == strongest.kind).collect();
         for ev in &supporting {
-            let summary_display = if ev.summary.len() > 64 {
-                format!("{}...", &ev.summary[..61])
+            let summary_display = if ev.summary.chars().count() > 64 {
+                format!("{}...", agentworth_schema::text::truncate_chars(&ev.summary, 61))
             } else {
                 ev.summary.clone()
             };
@@ -1644,8 +1829,8 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
                 other_signals.len()
             );
             for ev in other_signals.iter().take(3) {
-                let summary_display = if ev.summary.len() > 48 {
-                    format!("{}...", &ev.summary[..45])
+                let summary_display = if ev.summary.chars().count() > 48 {
+                    format!("{}...", agentworth_schema::text::truncate_chars(&ev.summary, 45))
                 } else {
                     ev.summary.clone()
                 };
@@ -1919,8 +2104,11 @@ fn print_inspect_view(trace: &agentworth_schema::AgentWorthTrace) {
 // Command: Export
 // -----------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn run_export_command(
-    session_id: &str,
+    session_id: Option<String>,
+    last: bool,
+    current: bool,
     redact: bool,
     format: &str,
     output: Option<&std::path::Path>,
@@ -1929,6 +2117,28 @@ fn run_export_command(
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
     let scanner = Scanner::new(storage.clone());
+
+    let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
+    let session_id = match crate::ui::picker::resolve(&storage, ui, false, &arg)? {
+        crate::ui::picker::Resolved::Id(id) => id,
+        crate::ui::picker::Resolved::NotFound(input) => {
+            print!(
+                "{}",
+                crate::ui::picker::not_found(
+                    ui,
+                    &storage,
+                    &format!("agentworth export {input}"),
+                    &input,
+                    &[(
+                        "agentworth export --last".to_string(),
+                        "export the newest session in this repo".to_string(),
+                    )],
+                )
+            );
+            std::process::exit(1);
+        }
+    };
+    let session_id = session_id.as_str();
 
     let mut trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(session_id))?;
 
@@ -2292,10 +2502,21 @@ struct UsageCommandArgs<'a> {
     hours: i64,
     alert_above: Option<f64>,
     limit: usize,
-    by_model: bool,
+    by: &'a str,
+    since: Option<chrono::DateTime<chrono::Utc>>,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &'a crate::ui::Ui,
+}
+
+/// Noun for one period, for the footer's "N of M <noun>s" phrasing.
+fn period_noun(period: &str) -> &'static str {
+    match period {
+        "week" => "week",
+        "month" => "month",
+        "year" => "year",
+        _ => "day",
+    }
 }
 
 fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
@@ -2305,7 +2526,8 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
         hours,
         alert_above,
         limit,
-        by_model,
+        by,
+        since,
         json,
         db_path,
         ui,
@@ -2335,84 +2557,89 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
         return Ok(());
     }
 
-    if by_model {
-        let records = storage.get_model_usage(period, limit)?;
-
-        if json {
-            println!("{}", serde_json::to_string_pretty(&records)?);
-            return Ok(());
-        }
-
-        if records.is_empty() {
-            print!("{}", no_usage_records(ui));
-            return Ok(());
-        }
-
-        let rows: Vec<crate::ui::views::UsageRow> = records
-            .iter()
-            .map(|r| crate::ui::views::UsageRow {
-                period: r.period.clone(),
-                who: r.model.clone(),
-                sessions: r.session_count,
-                input: r.input_tokens,
-                output: r.output_tokens,
-                cache_read: r.cache_read_tokens,
-                cost_usd: r.estimated_cost_usd,
-                measured: r.total_tokens > 0,
-            })
-            .collect();
-        print!(
-            "{}",
-            crate::ui::views::usage(
-                ui,
-                &format!("agentworth usage --period {} --by-model", period),
-                "MODEL",
-                period,
-                &rows
-            )
-        );
-        return Ok(());
-    }
-
-    let records = match period {
-        "week" => storage.get_weekly_usage(Some(limit))?,
-        "month" => storage.get_monthly_usage(Some(limit))?,
-        _ => storage.get_daily_usage(Some(limit))?,
-    };
+    let period_kind = agentworth_storage::UsagePeriodKind::parse(period)
+        .expect("period already validated by clap's value_parser / config::resolve_period");
+    let group_by = agentworth_storage::UsageGroupBy::parse(by)
+        .expect("by already validated by clap's value_parser");
+    let report = storage.get_usage_report(period_kind, group_by, since, limit)?;
+    let cost_basis = crate::cost_basis::CostBasis::detect();
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&records)?);
+        let mut val = serde_json::to_value(&report)?;
+        if let Some(obj) = val.as_object_mut() {
+            obj.insert("cost_basis".to_string(), json!(cost_basis.cost_basis));
+            if let Some(tier) = &cost_basis.subscription_tier {
+                obj.insert("subscription_tier".to_string(), json!(tier));
+            }
+        }
+        println!("{}", serde_json::to_string_pretty(&val)?);
         return Ok(());
     }
 
-    if records.is_empty() {
+    if report.rows.is_empty() {
         print!("{}", no_usage_records(ui));
         return Ok(());
     }
 
-    let rows: Vec<crate::ui::views::UsageRow> = records
+    let who_head = match group_by {
+        agentworth_storage::UsageGroupBy::Adapter => "ADAPTER",
+        agentworth_storage::UsageGroupBy::Model => "MODEL",
+        agentworth_storage::UsageGroupBy::Repo => "REPO",
+    };
+    let show_period = period_kind != agentworth_storage::UsagePeriodKind::All;
+
+    let rows: Vec<crate::ui::views::UsageRow> = report
+        .rows
         .iter()
         .map(|r| crate::ui::views::UsageRow {
-            period: r.period.clone(),
-            who: r.adapter.clone(),
+            period: r.period.clone().unwrap_or_default(),
+            who: r.group.clone(),
             sessions: r.session_count,
             input: r.input_tokens,
             output: r.output_tokens,
             cache_read: r.cache_read_tokens,
             cost_usd: r.estimated_cost_usd,
-            // Nine of today's eleven adapters keep no token counts. Printing 0 and $0.00
-            // for them asserts something false, so the row prints dashes instead.
             measured: r.total_tokens > 0,
         })
         .collect();
+
+    let truncation_note = report.truncated.then(|| {
+        if show_period {
+            let noun = period_noun(period);
+            let plural = if report.periods_total == 1 { noun.to_string() } else { format!("{noun}s") };
+            format!(
+                "last {} of {} {plural}: totals cover the shown periods only.",
+                report.periods_shown, report.periods_total
+            )
+        } else {
+            let noun = who_head.to_lowercase();
+            let plural = if report.periods_total == 1 { noun } else { format!("{noun}s") };
+            format!(
+                "top {} of {} {plural} by spend: totals cover the shown groups only.",
+                report.periods_shown, report.periods_total
+            )
+        }
+    });
+
+    let mut command = format!("agentworth usage --period {period}");
+    if by != "adapter" {
+        command.push_str(&format!(" --by {by}"));
+    }
+    let cost_note = cost_basis.label_long();
+
     print!(
         "{}",
         crate::ui::views::usage(
             ui,
-            &format!("agentworth usage --period {}", period),
-            "ADAPTER",
-            period,
-            &rows
+            &crate::ui::views::UsageView {
+                command: &command,
+                who_head,
+                period_noun: period_noun(period),
+                rows: &rows,
+                show_period,
+                cost_note: &cost_note,
+                truncation_note: truncation_note.as_deref(),
+            }
         )
     );
 
@@ -2809,14 +3036,30 @@ mod tests {
         // Test parsing command using "agentworth" binary name
         let parsed_agentworth = Cli::try_parse_from(["agentworth", "doctor", "--json"]).unwrap();
         match parsed_agentworth.command {
-            Commands::Doctor { json } => assert!(json),
+            Commands::Doctor { json, self_test } => {
+                assert!(json);
+                assert!(!self_test);
+            }
             _ => panic!("Expected Doctor command"),
         }
 
         // Test parsing command using "agwt" binary alias
         let parsed_agwt = Cli::try_parse_from(["agwt", "doctor", "--json"]).unwrap();
         match parsed_agwt.command {
-            Commands::Doctor { json } => assert!(json),
+            Commands::Doctor { json, self_test } => {
+                assert!(json);
+                assert!(!self_test);
+            }
+            _ => panic!("Expected Doctor command"),
+        }
+
+        // Test parsing "doctor --self-test"
+        let parsed_self_test = Cli::try_parse_from(["agentworth", "doctor", "--self-test"]).unwrap();
+        match parsed_self_test.command {
+            Commands::Doctor { json, self_test } => {
+                assert!(!json);
+                assert!(self_test);
+            }
             _ => panic!("Expected Doctor command"),
         }
 
@@ -2881,8 +3124,9 @@ mod tests {
             .unwrap();
         assert_eq!(sessions.len(), SESSION_COUNT as usize);
 
+        let storage = Arc::new(storage);
         let started = std::time::Instant::now();
-        let rows = build_trace_rows(sessions);
+        let rows = build_trace_rows(&storage, sessions);
         let elapsed = started.elapsed();
 
         assert!(
@@ -2898,6 +3142,83 @@ mod tests {
             matches!(kind, Some(agentworth_schema::OutcomeKind::DoneClaimed))
         });
         assert_eq!(done_claimed_row.unwrap().0, "[CLAIM_ONLY]");
+    }
+
+    /// `--json`'s `score` field must stay byte-identical to the pre-fix behaviour even for a
+    /// `NULL composite_score` row -- a row a scan never actually scored (see
+    /// `build_trace_rows`'s doc comment: "every session that gets stored gets both passes,
+    /// unconditionally", so `NULL` here can only mean something other than a scan wrote it).
+    /// The old code recomputed a real score from the trace file for every row regardless of
+    /// what the index held; this proves the `None`-score fallback path still does exactly
+    /// that, rather than silently reporting 0.0.
+    #[test]
+    fn test_traces_recomputes_a_score_only_for_the_rare_null_composite_score_row() {
+        let tmp = NamedTempFile::new().unwrap();
+        let storage = Arc::new(Storage::open_path(tmp.path()).unwrap());
+
+        // A real on-disk session, scanned normally, so `sessions_scanned`'s row carries a
+        // real `composite_score` -- this is the fixture the *fallback* has to succeed
+        // against, so the temp dir (not a nonexistent path) is deliberate here, unlike the
+        // timing guards above.
+        let dir = tempfile::tempdir().unwrap();
+        let session_path = dir.path().join("unscored-session.jsonl");
+        std::fs::write(
+            &session_path,
+            concat!(
+                r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z","content":"fix the bug"}"#,
+                "\n",
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:00:02Z","model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cargo test"}}]}"#,
+                "\n",
+                r#"{"type":"tool_result","timestamp":"2026-01-01T00:00:04Z","tool_use_id":"t1","content":"test result: ok. 3 passed; 0 failed","is_error":false}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let scanner = Scanner::new(storage.clone());
+        let summary = scanner
+            .run_scan(
+                &ScanOptions { custom_paths: vec![session_path.clone()], force: true, ..Default::default() },
+                |_, _| {},
+            )
+            .expect("scan the real session");
+        assert_eq!(summary.scanned_sessions, 1);
+
+        let scored = storage
+            .list_sessions_filtered(&SessionFilter { limit: None, ..Default::default() })
+            .unwrap();
+        assert_eq!(scored.len(), 1);
+        let real_score = scored[0]
+            .composite_score
+            .expect("a real scan always scores what it stores");
+        assert!(real_score > 0.0, "this session has real evidence, it must not score zero");
+
+        // Now simulate the anomalous "written by something other than a scan" row this
+        // fallback exists for: same session, same file on disk, but re-written with `None`
+        // for the score the way a non-scan writer (or a pre-scoring-era row) would leave it.
+        let trace = scanner.load_trace(&scored[0].session_id).unwrap();
+        storage
+            .upsert_session(&trace, scored[0].primary_outcome.as_deref(), None, 1)
+            .unwrap();
+
+        let unscored = storage
+            .list_sessions_filtered(&SessionFilter { limit: None, ..Default::default() })
+            .unwrap();
+        assert_eq!(unscored.len(), 1);
+        assert!(unscored[0].composite_score.is_none(), "fixture must be unscored now");
+
+        let rows = build_trace_rows(&storage, unscored);
+        assert_eq!(rows.len(), 1);
+        // `build_trace_rows` fell back to `Scanner::load_trace` for this one `None`-score
+        // row, recomputed the same real score the initial scan found, and did not silently
+        // report 0.0 -- proving `--json`'s `score` field stays correct for this row, not
+        // just fast for the common already-scored case.
+        assert!(
+            (rows[0].1 - real_score * 100.0).abs() < 1e-9,
+            "expected the recomputed score {} to match the original scan's {}",
+            rows[0].1,
+            real_score * 100.0
+        );
     }
 
     #[test]

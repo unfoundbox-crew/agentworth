@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.15] - 2026-09-02
+
+### Fixed
+
+- Fixed: `scan` panicked on transcripts containing non-ASCII text (a byte-index slice inside recovery detection). Every text truncation now cuts on character boundaries, and a workspace clippy lint denies byte slicing of strings so this class cannot ship again.
+
+---
+
 ## [0.1.14] - 2026-09-02
 
 ### Added

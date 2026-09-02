@@ -453,6 +453,10 @@ fn parse_timestamp(val: &Value) -> Option<DateTime<Utc>> {
 fn extract_xml_tag_content(text: &str, tag: &str) -> Option<String> {
     let open_tag = format!("<{}>", tag);
     let close_tag = format!("</{}>", tag);
+    #[allow(
+        clippy::string_slice,
+        reason = "content_start/end_pos come from find(), always char boundaries"
+    )]
     if let Some(start_pos) = text.find(&open_tag) {
         let content_start = start_pos + open_tag.len();
         if let Some(end_pos) = text[content_start..].find(&close_tag) {

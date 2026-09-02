@@ -25,13 +25,28 @@ pub struct CliConfig {
     /// `blind-spots`, `threat-digest`, and `recall`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
-    /// Default lookback window (`day` | `week` | `month`) for `usage --period`.
+    /// Default lookback window (`day` | `week` | `month` | `year` | `all`) for `usage --period`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub period: Option<String>,
 }
 
 const CONFIG_KEYS: &[&str] = &["json", "limit", "period"];
-const VALID_PERIODS: &[&str] = &["day", "week", "month"];
+const VALID_PERIODS: &[&str] = &["day", "week", "month", "year", "all"];
+
+/// Canonicalize a `--period` value, accepting the single-letter aliases `d`/`w`/`m`/`y`
+/// alongside the full words. `None` means the input matches none of them -- the caller
+/// decides how to phrase the error (clap's own message for the flag, a config-specific one
+/// for `agentworth config set period`).
+pub fn normalize_period(raw: &str) -> Option<&'static str> {
+    match raw {
+        "day" | "d" => Some("day"),
+        "week" | "w" => Some("week"),
+        "month" | "m" => Some("month"),
+        "year" | "y" => Some("year"),
+        "all" => Some("all"),
+        _ => None,
+    }
+}
 
 /// Path to the persisted config file: `<default_db_dir>/config.toml`, i.e. right beside
 /// `agentworth.db`. Honors `AGENTWORTH_CONFIG_PATH` first, purely as an escape hatch for
@@ -95,14 +110,14 @@ pub fn resolve_period(
     builtin_default: &str,
 ) -> Result<String> {
     let value = explicit.unwrap_or_else(|| config_default.unwrap_or_else(|| builtin_default.to_string()));
-    if !VALID_PERIODS.contains(&value.as_str()) {
-        return Err(anyhow!(
-            "invalid persisted config value for 'period': {:?} (expected one of: {})",
+    match normalize_period(&value) {
+        Some(canonical) => Ok(canonical.to_string()),
+        None => Err(anyhow!(
+            "invalid persisted config value for 'period': {:?} (expected one of: {}, or d/w/m/y)",
             value,
             VALID_PERIODS.join(", ")
-        ));
+        )),
     }
-    Ok(value)
 }
 
 fn parse_bool_value(raw: &str) -> Result<bool> {
@@ -122,15 +137,13 @@ fn parse_limit_value(raw: &str) -> Result<usize> {
 }
 
 fn parse_period_value(raw: &str) -> Result<String> {
-    if VALID_PERIODS.contains(&raw) {
-        Ok(raw.to_string())
-    } else {
-        Err(anyhow!(
-            "invalid value {:?} for 'period': expected one of: {}",
+    normalize_period(raw).map(str::to_string).ok_or_else(|| {
+        anyhow!(
+            "invalid value {:?} for 'period': expected one of: {}, or d/w/m/y",
             raw,
             VALID_PERIODS.join(", ")
-        ))
-    }
+        )
+    })
 }
 
 fn unknown_key_error(key: &str) -> anyhow::Error {

@@ -132,6 +132,25 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace
 
+      # The `recovery.rs:571` panic (v0.1.15) happened during a real `agwt scan`, on real
+      # transcripts, not in a unit test -- so the regression gate is the built binary doing a
+      # real scan over a real (synthetic) multilingual corpus. ubuntu-only: this is about the
+      # binary's behavior, not the OS, and one leg is enough.
+      - name: Generate multilingual corpus (Hebrew, Arabic, CJK, emoji, combining marks)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 apps/cli/tests/fixtures/gen_multilingual_corpus.py "${{ runner.temp }}/multilingual-corpus"
+
+      - name: Scan and stats over the multilingual corpus must not crash
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          BIN=target/debug/agentworth
+          DB="${{ runner.temp }}/multilingual-corpus.db"
+          "$BIN" --db-path "$DB" scan "${{ runner.temp }}/multilingual-corpus" \
+            || { echo "::error::agentworth scan crashed or failed on the multilingual corpus"; exit 1; }
+          "$BIN" --db-path "$DB" stats \
+            || { echo "::error::agentworth stats crashed or failed after the multilingual scan"; exit 1; }
+
       # ubuntu only -- one machine's worth of "does the committed reference match the
       # code" is enough, and it saves paying for this on macOS too. Regenerates
       # docs/REFERENCE.md and docs/reference.json (apps/cli/src/commands/docs.rs) and

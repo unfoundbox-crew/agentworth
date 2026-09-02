@@ -597,13 +597,8 @@ fn detect_credential_leak(
     })
 }
 
-fn truncate_str(s: &str, max_len: usize) -> String {
-    let trimmed = s.trim();
-    if trimmed.len() <= max_len {
-        trimmed.to_string()
-    } else {
-        format!("{}...", &trimmed[..max_len - 3])
-    }
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    agentworth_schema::text::preview(s, max_chars)
 }
 
 /// Render the ASCII Safety Audit Report.
