@@ -508,7 +508,7 @@ impl Lamp {
     /// The dig loop: four text frames on one clock, the light alternating between held
     /// and sweeping. Frame 1 is what a terminal that cannot repaint in place prints once.
     pub fn dig_frame(frame: u64) -> Lamp {
-        if frame % 2 == 0 {
+        if frame.is_multiple_of(2) {
             Lamp::On
         } else {
             Lamp::Sweeping

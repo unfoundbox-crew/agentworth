@@ -239,11 +239,11 @@ pub fn apply_config_value(cfg: &mut CliConfig, key: &str, value: &str) -> Result
         "limit" => cfg.limit = Some(parse_limit_value(value)?),
         "period" => cfg.period = Some(parse_period_value(value)?),
         "archie.accessory" => {
-            cfg.archie.get_or_insert_with(Default::default).accessory =
+            cfg.archie.get_or_insert_default().accessory =
                 Some(parse_accessory_value(value)?)
         }
         "archie.colourway" => {
-            cfg.archie.get_or_insert_with(Default::default).colourway =
+            cfg.archie.get_or_insert_default().colourway =
                 Some(parse_colourway_value(value)?)
         }
         other => return Err(unknown_key_error(other)),

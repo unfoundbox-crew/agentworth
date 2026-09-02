@@ -373,17 +373,21 @@ fn the_scan_line_draws_archie_and_prints_one_frame_to_a_pipe() {
     );
 }
 
-/// Under 46 columns the block does not leave room for the label and the track beside it,
-/// so the whole character collapses to the ears and the lamp.
+/// Under 46 columns the progress block does not leave room for the label and the track
+/// beside it, so the scan line collapses to the ears and the lamp. The summary that
+/// follows is a different screen and keeps its three lines.
 #[test]
 fn the_scan_line_collapses_to_one_line_in_a_narrow_window() {
     let (t, db) = fixture();
     let root = t.path().display().to_string();
     let out = render(&db, &["scan", &root], 40, false);
 
-    assert!(!out.contains("( o o )"), "the block should not draw at 40 columns:\n{}", out);
-    let inline = out.lines().filter(|l| l.contains("archie")).count();
-    assert_eq!(inline, 1, "expected one archie status line:\n{}", out);
+    let first = out.lines().find(|l| !l.trim().is_empty()).unwrap_or_default();
+    assert!(
+        first.trim_start().starts_with("(*) archie") || first.trim_start().starts_with("(o) archie"),
+        "the scan line should be the one-line form at 40 columns, got:\n{}",
+        out
+    );
     for line in out.lines() {
         assert!(console::measure_text_width(line) <= 40, "{}", line);
     }

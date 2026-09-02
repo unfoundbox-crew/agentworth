@@ -37,6 +37,10 @@ let state: ArchieSettings = {
 
 const listeners = new Set<() => void>();
 
+/** The default is stamped before anything asks for it, so a surface that reads the
+ *  attribute never sees it missing. */
+queueMicrotask(() => applyToDocument());
+
 function emit(next: Partial<ArchieSettings>) {
   state = { ...state, ...next };
   applyToDocument();
