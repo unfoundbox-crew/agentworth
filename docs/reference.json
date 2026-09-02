@@ -589,6 +589,52 @@
       ]
     },
     {
+      "path": "agentworth asks",
+      "about": "The questions you asked and where their answers are -- built so you never have to re-scroll or re-ask because the answer landed several messages later",
+      "args": [
+        {
+          "name": "--session",
+          "positional": false,
+          "required": false,
+          "help": "Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed directly if it isn't an indexed session). Defaults to the newest session for this directory's repository, same as `--current`",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Resolve the newest session for this directory's repository. The default when `--session` is not given -- this flag exists so an invocation can say that on purpose",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--since",
+          "positional": false,
+          "required": false,
+          "help": "Only questions asked at or after this time: RFC 3339, `YYYY-MM-DD`, or a relative duration like `2h`, `30m`, `1d`, `3w`",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--unanswered",
+          "positional": false,
+          "required": false,
+          "help": "Only questions that are not `answered` -- still open, or flagged back to you",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the structured index as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "agentworth loose-ends",
       "about": "The handoff's loose-ends section alone: what a session said it would do and did not",
       "args": [
@@ -1493,6 +1539,49 @@
               "integer",
               "null"
             ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "session_asks",
+      "description": "The questions-to-answers index for one session: every question asked (a `?` sentence in a user turn, or a flag-prefixed `⚑`/`🚩` line in an assistant turn asking the user something) matched to the first substantive assistant text that follows it, before the next user turn. Exists so an agent can be told where an answer already landed instead of the user re-scrolling or re-asking. Each result carries the question (trimmed to 120 chars), a status (answered, flagged_back_to_user -- either a flag line or a reply that was itself a question, or no_reply_yet), an answer excerpt when one was found (trimmed to 200 chars), and a pointer (event sequence and timestamp) to jump to: the answer's location when there is one, otherwise the question's own. Filter with since (RFC 3339) and unanswered_only; limit defaults to 50, ceiling 500, and the totals describe the whole session regardless of it. No model is involved -- three deterministic patterns, same `regex_v1` method `forgotten_context` uses. Defaults to the newest session for the repo this server runs in. Redacted by default; include_raw=true opts out, per call.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "include_raw": {
+            "default": false,
+            "description": "Return unredacted questions and answer excerpts. Defaults to false -- everything this\ntool returns is transcript text (docs/specs/mcp-server.md, \"What it must not expose\").",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "How many questions to return, newest first. Defaults to 50, hard ceiling 500. The\ntotals in the response describe the whole session regardless of this.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "session_id": {
+            "description": "Session to index. Defaults to the most recent indexed session for the repository this\nserver process is running in, same default `session_handoff` uses.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since": {
+            "description": "RFC 3339 timestamp; only questions asked at or after this instant.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unanswered_only": {
+            "default": false,
+            "description": "Only questions that are not `answered` -- still open, or handed back to the user.\nDefaults to false.",
+            "type": "boolean"
           }
         },
         "type": "object"
