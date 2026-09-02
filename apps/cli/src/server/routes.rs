@@ -27,7 +27,7 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tokio_stream::{Stream, StreamExt};
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::app::config;
@@ -372,10 +372,35 @@ pub fn route_entries() -> Vec<RouteEntry> {
     ]
 }
 
+/// Whether a browser `Origin` may talk to this server cross-origin.
+///
+/// The server binds to loopback and holds one person's whole session history, so `Any`
+/// was wrong: every page that person visits could read `/api/traces` and, since
+/// `/api/config`, write their preferences too. Only a page served from this machine
+/// gets through -- which still covers the dashboard's own origin and the Vite dev
+/// server on another port. Same-origin requests carry no `Origin` header at all and
+/// never reach this.
+fn is_local_origin(origin: &axum::http::HeaderValue) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    // `http://host` or `http://host:port`; https is not offered by this server and an
+    // https page reaching a loopback http API is not a case worth opening up for.
+    let Some(authority) = origin.strip_prefix("http://") else {
+        return false;
+    };
+    let host = match authority.rsplit_once(':') {
+        // An IPv6 literal ends in `]`, so a colon inside one is not a port separator.
+        Some((head, port)) if !head.ends_with(']') && port.chars().all(|c| c.is_ascii_digit()) => head,
+        _ => authority,
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
 /// Builds the complete Axum router with all API routes, CORS, tracing, and static fallback.
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::predicate(|origin, _| is_local_origin(origin)))
         .allow_methods(Any)
         .allow_headers(Any);
 
@@ -1217,11 +1242,12 @@ async fn post_scan_handler(
     Ok(Json(summary))
 }
 
-/// GET /api/config -> the persisted CLI defaults, every key present and unset ones null
-async fn get_config_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
-{
-    let (path, cfg) = read_config().map_err(config_read_error)?;
-    Ok(Json(config::config_as_json(&path, &cfg)))
+/// GET /api/config -> the persisted CLI defaults, every key present and unset ones null.
+/// The config file's own path is not in the payload; see `config::config_as_json`.
+async fn get_config_handler(
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let cfg = config::load_config().map_err(config_read_error)?;
+    Ok(Json(config::config_as_json(&cfg)))
 }
 
 /// POST /api/config -> writes a partial set of keys into the same config.toml
@@ -1229,17 +1255,22 @@ async fn get_config_handler() -> Result<Json<serde_json::Value>, (StatusCode, Js
 /// rather than a silent no-op: this is the only write route that persists a preference,
 /// and a typo that appears to succeed is worse than one that fails.
 async fn post_config_handler(
-    Json(body): Json<serde_json::Value>,
+    // `Result<Json<_>, JsonRejection>` rather than a bare `Json<_>`: axum's own rejection
+    // is plain text, and every other route here answers a bad request with {"error": ...}.
+    // A client should not have to parse two shapes to find out what went wrong.
+    body: Result<Json<serde_json::Value>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let object = body.as_object().ok_or_else(|| {
-        bad_request("body must be a JSON object of config keys")
-    })?;
+    let Json(body) = body.map_err(|e| bad_request(&e.body_text()))?;
+    let object = body
+        .as_object()
+        .ok_or_else(|| bad_request("body must be a JSON object of config keys"))?;
 
-    let (path, mut cfg) = read_config().map_err(config_read_error)?;
+    let mut cfg = config::load_config().map_err(config_read_error)?;
 
     for (key, value) in object {
-        // GET returns config_path alongside the keys; accepting it back unchanged means a
-        // client can round-trip the whole object without stripping a field first.
+        // GET used to carry config_path alongside the keys and no longer does. A client
+        // round-tripping an older payload should not have its own read called invalid,
+        // so the field is ignored rather than rejected.
         if key == "config_path" {
             continue;
         }
@@ -1271,13 +1302,7 @@ async fn post_config_handler(
         )
     })?;
 
-    Ok(Json(config::config_as_json(&path, &cfg)))
-}
-
-fn read_config() -> Result<(PathBuf, config::CliConfig)> {
-    let path = config::config_file_path()?;
-    let cfg = config::load_config()?;
-    Ok((path, cfg))
+    Ok(Json(config::config_as_json(&cfg)))
 }
 
 fn config_read_error(e: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {

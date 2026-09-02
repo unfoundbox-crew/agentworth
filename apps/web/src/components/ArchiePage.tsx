@@ -55,7 +55,7 @@ const COLOURWAY_NAMES: Record<ArchieColourway, string> = {
 const TERMINAL_BLOCK = `┌─ archie ────────────────────────────────────────────────────────────────────────────── digging ──┐
 │  ,-*-.   ~/.claude/projects            ──────────────────────·······  68%                        │
 │ ( o o )  1,204 sessions · 38 repos     last dig 2m ago                                           │
-│  '\\_/'   ✓ 902 verified  ✗ 14 off      3 asks still unanswered                                   │
+│  '\\_/'   ● 902 verified  ○ 14 off      3 asks still unanswered                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
  (*) archie  scanning  ──────────────────·······  68%  1,204 sessions`;
@@ -112,8 +112,13 @@ const KitSwitch: React.FC<{
         One drawing. The kit is <code>data-accessory</code> on the SVG and the colourway is
         a <code>.archie-c1</code>&hellip;<code>.archie-c4</code> class on any ancestor, so
         neither is ever a second file to keep in sync. C3 is the default and the only one
-        that ships on this site. Your own copy remembers a choice:{" "}
-        <code>agentworth config set archie.colourway C4</code>.
+        that ships on this site.
+      </p>
+      <p className="ar-try-note">
+        <code>agentworth config set archie.colourway C4</code> stores a choice for the
+        surfaces that draw him: the local dashboard, and anything else rendering the SVG.
+        The terminal form does not read it — there the lamp glyph <em>is</em> the state, so
+        it is fixed.
       </p>
     </div>
   </div>

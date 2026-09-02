@@ -82,12 +82,15 @@ Full inventory and usage rules are on the cards, not duplicated here — see the
 
 Settled 2026-09-02: the D2 hound with a headlamp. Poses, colourways, motion and the
 terminal short form live in `packages/ui/brand/archie/` — read that README before
-drawing him anywhere. Four rules from the placement board:
+drawing him anywhere. Five rules from the placement board:
 
-- **Where he belongs**: the ⌘K empty state, the scan line, the 404, and
-  `agentworth.dev/archie`. Nowhere else.
-- **Where he never goes**: the landing hero, the receipt, `--json` or `--quiet` output,
-  and twice on one screen. He is a state, not a texture.
+- **Where he belongs**: the ⌘K empty state, the scan line, the 404, the dashboard's kit
+  picker, and `agentworth.dev/archie`. Nowhere else.
+- **Where he never goes**: the landing hero, the receipt, `--json` or `--quiet` output.
+  He is a state, not a texture.
+- **Once per screen** — two Archies are two states and one of them is lying. The one
+  exception is `agentworth.dev/archie`, where he is the subject rather than the
+  furniture and the page is the kit.
 - **C3 is the default** and the only colourway that ships on the site. C4 is for dense
   chrome, where he must not out-shout the data.
 - **Inline the SVG, never an `<img>`**: the colourways are CSS custom properties, and a

@@ -228,17 +228,31 @@
   border-radius: 4px;
 }
 
+/* The names column runs out of room first, so it drops under the prose here and the
+   prose stays — a tablet has the width to read it. */
 @media (max-width: 900px) {
   .ar-verb {
     grid-template-columns: auto minmax(0, 1fr);
     gap: 14px 16px;
+    padding: 20px 0;
+  }
+  .ar-names {
+    grid-column: 2;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    padding-top: 10px;
+  }
+}
+
+/* Phone only. The board's 375 board is a row per verb: the figure, the title, and the
+   MCP tool — the one name you would be looking up away from a keyboard. */
+@media (max-width: 640px) {
+  .ar-verb {
     align-items: center;
     padding: 16px 0;
   }
-  /* The board drops the CLI name at a phone width and keeps the MCP tool: it
-     is the one you would actually be looking up away from a keyboard. */
   .ar-names {
-    grid-column: 2;
     padding-top: 0;
   }
   .ar-names .ar-name.is-cli {

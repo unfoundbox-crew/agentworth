@@ -1,7 +1,12 @@
 ARCHIE — TERMINAL SHORT FORM
-Drawn at 100 columns, monospace, exactly as it prints. Glyph set: the U+2500
-box-drawing block, ✓ ✗ · —, and ASCII. No emoji, ever: half the terminals
-people run agents in render an emoji at the wrong width and shear the box.
+Drawn at 100 columns, monospace, exactly as it prints. Glyph set: ASCII, the
+box-drawing and block ranges U+2500-259F, and exactly five more — ● ○ · — →.
+That is the CLI's whole allowed set (docs/DESIGN.md, apps/cli/src/ui/mod.rs); a
+tick and a cross are outside it, because Geist Mono and SF Mono are both
+missing them and a missing glyph falls back to another face at a different
+advance width, shifting every column to its right. No emoji, ever, for the
+same reason: half the terminals people run agents in render one at the wrong
+width and shear the box open.
 
 Archie survives the reduction to three things: the drop ears (the parentheses),
 the low muzzle (the third line), and the lamp (the glyph between the ears).
@@ -32,7 +37,7 @@ THE COCKPIT PANEL                                                    100 columns
 ┌─ archie ────────────────────────────────────────────────────────────────────────────── digging ──┐
 │  ,-*-.   ~/.claude/projects            ──────────────────────·······  68%                        │
 │ ( o o )  1,204 sessions · 38 repos     last dig 2m ago                                           │
-│  '\_/'   ✓ 902 verified  ✗ 14 off      3 asks still unanswered                                   │
+│  '\_/'   ● 902 verified  ○ 14 off      3 asks still unanswered                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 
@@ -86,7 +91,7 @@ THE ERROR BEAT                                    120ms, no travel, then it stop
      Nothing slides, nothing bounces, nothing spins afterwards. The failure
      line prints under it and the figure holds still:
 
- ( ) archie  ✗ no session index at ~/.claude/projects — run `agentworth scan`
+ ( ) archie  ○ no session index at ~/.claude/projects — run `agentworth scan`
 
 
 WHAT NEVER APPEARS IN THE TERMINAL

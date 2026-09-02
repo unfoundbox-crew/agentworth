@@ -505,8 +505,10 @@ impl Lamp {
         }
     }
 
-    /// The dig loop: four text frames on one clock, the light alternating between held
-    /// and sweeping. Frame 1 is what a terminal that cannot repaint in place prints once.
+    /// The dig loop, as far as the lamp is concerned: held, sweeping, held, sweeping.
+    /// The board draws four frames, but only two lamp glyphs — the other half of each
+    /// frame is the ground line and the chips, which this figure does not carry.
+    /// Frame 0 is what a terminal that cannot repaint in place prints once.
     pub fn dig_frame(frame: u64) -> Lamp {
         if frame.is_multiple_of(2) {
             Lamp::On

@@ -57,10 +57,11 @@ const VALID_PERIODS: &[&str] = &["day", "week", "month", "year", "all"];
 const VALID_ACCESSORIES: &[&str] = &["lamp", "goggles", "none"];
 const VALID_COLOURWAYS: &[&str] = &["C1", "C2", "C3", "C4"];
 
-/// What the product draws when `archie.accessory` is unset.
-pub const DEFAULT_ACCESSORY: &str = "lamp";
-/// What the product draws when `archie.colourway` is unset.
-pub const DEFAULT_COLOURWAY: &str = "C3";
+// No default constants here on purpose. The CLI stores these two keys but never draws
+// the SVG -- the terminal short form's lamp glyph is the state, not an accessory, and it
+// is fixed. Unset reads back as null and the surface that renders him applies its own
+// default (packages/ui/Archie.tsx). A second copy of "lamp"/"C3" in Rust would be one
+// more thing to keep in step for no reader.
 
 /// Canonicalize a `--period` value, accepting the single-letter aliases `d`/`w`/`m`/`y`
 /// alongside the full words. `None` means the input matches none of them -- the caller
@@ -286,12 +287,15 @@ pub fn config_value(cfg: &CliConfig, key: &str) -> Result<Option<String>> {
     Ok(value)
 }
 
-/// The whole config as JSON, one key per line of `config list`, unset values as `null`
-/// rather than absent -- a client reading this should not have to tell "not set" from
-/// "key I have never heard of". `config list --json` and `GET /api/config` both use it.
-pub fn config_as_json(path: &Path, cfg: &CliConfig) -> serde_json::Value {
+/// The whole config as JSON, unset values as `null` rather than absent -- a client
+/// reading this should not have to tell "not set" from "key I have never heard of".
+///
+/// The file's own path is deliberately NOT in here. `GET /api/config` serves this over
+/// HTTP, and that path is an absolute home directory: it names the user and it is of no
+/// use to a browser. `config list --json` adds it back, where the caller already has the
+/// filesystem in front of them.
+pub fn config_as_json(cfg: &CliConfig) -> serde_json::Value {
     json!({
-        "config_path": path.to_string_lossy(),
         "json": cfg.json,
         "limit": cfg.limit,
         "period": cfg.period,
@@ -309,7 +313,9 @@ fn run_config_list_at(path: &Path, json: bool) -> Result<()> {
     let cfg = load_config_from(path)?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&config_as_json(path, &cfg))?);
+        let mut payload = config_as_json(&cfg);
+        payload["config_path"] = json!(path.to_string_lossy());
+        println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
 
@@ -504,13 +510,15 @@ mod tests {
     }
 
     #[test]
-    fn test_config_as_json_names_every_key_even_unset() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        let value = config_as_json(&path, &CliConfig::default());
+    fn test_config_as_json_names_every_key_even_unset_and_never_the_path() {
+        let value = config_as_json(&CliConfig::default());
         for key in CONFIG_KEYS {
             assert!(value.get(*key).is_some_and(|v| v.is_null()), "{} missing or not null", key);
         }
+        assert!(
+            value.get("config_path").is_none(),
+            "the config file's absolute path must not reach the HTTP payload"
+        );
     }
 
     #[test]

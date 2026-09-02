@@ -37,21 +37,13 @@ let state: ArchieSettings = {
 
 const listeners = new Set<() => void>();
 
-/** The default is stamped before anything asks for it, so a surface that reads the
- *  attribute never sees it missing. */
-queueMicrotask(() => applyToDocument());
-
+// The kit is not stamped on <html>. `data-accessory` only means anything on the SVG
+// element itself — that is where the pose files' own rules read it — so a copy on the
+// root would be a value nothing consults, drifting the first time one of them changed.
+// Components take the accessory from `useArchieSettings` and pass it to <Archie>.
 function emit(next: Partial<ArchieSettings>) {
   state = { ...state, ...next };
-  applyToDocument();
   listeners.forEach((l) => l());
-}
-
-/** The kit as a root attribute, so anything on the page can read the current choice
- *  without threading a prop through every pane. */
-function applyToDocument() {
-  if (typeof document === 'undefined') return;
-  document.documentElement.setAttribute('data-accessory', state.accessory);
 }
 
 function readLocal(): Partial<ArchieSettings> {
@@ -79,11 +71,15 @@ function writeLocal(next: Partial<ArchieSettings>) {
 
 let loading: Promise<void> | null = null;
 
-/** Reads the persisted config once. Called when the picker opens, not on shell mount:
- *  nothing else on the dashboard needs it, so nothing else should pay for the request. */
+/** Reads the persisted config. Called when the picker opens, not on shell mount:
+ *  nothing else on the dashboard needs it, so nothing else should pay for the request.
+ *
+ *  A successful read is cached; a failed one is not. The server coming up after the
+ *  page did is the ordinary case — retrying on the next open is how the picker
+ *  recovers, rather than staying on browser storage for the life of the tab. */
 export function loadArchieSettings(): Promise<void> {
   if (loading) return loading;
-  loading = fetch('/api/config')
+  const attempt = fetch('/api/config')
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
     .then((body: Record<string, unknown>) => {
       const accessory = body['archie.accessory'];
@@ -97,8 +93,10 @@ export function loadArchieSettings(): Promise<void> {
     })
     .catch(() => {
       emit({ ...readLocal(), source: 'local', loaded: true });
+      if (loading === attempt) loading = null;
     });
-  return loading;
+  loading = attempt;
+  return attempt;
 }
 
 /** Applies the choice immediately, then tries to persist it. A write that cannot reach

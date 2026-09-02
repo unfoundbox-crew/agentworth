@@ -87,9 +87,10 @@ fn session_id(db: &std::path::Path) -> String {
 
 /// Every screen, in the form the tests iterate over.
 ///
-/// `scan` is given `root` — the fixture directory — explicitly. A bare `scan` here
-/// defaults to the machine's own agent directories, so on a developer's laptop this
-/// list would index their real `~/.claude` history into the shared test db.
+/// `scan` and `watch` are both given `root` — the fixture directory — explicitly. With
+/// no path either one falls back to the machine's own agent directories, so on a
+/// developer's laptop this list would read their real `~/.claude` history, and `scan`
+/// would index it into the shared test db.
 fn screens(root: &std::path::Path) -> Vec<(&'static str, Vec<String>)> {
     let argv = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
     vec![
@@ -108,7 +109,15 @@ fn screens(root: &std::path::Path) -> Vec<(&'static str, Vec<String>)> {
         ("blind-spots", argv(&["blind-spots"])),
         ("threat-digest", argv(&["threat-digest"])),
         ("pr-blame", argv(&["pr-blame", "crates/storage/src/vector.rs"])),
-        ("watch-once", argv(&["watch", "--poll-once"])),
+        (
+            "watch-once",
+            vec![
+                "watch".to_string(),
+                "--poll-once".to_string(),
+                "--paths".to_string(),
+                root.display().to_string(),
+            ],
+        ),
         ("blunder", argv(&["blunder"])),
         ("blunder-blame", argv(&["blunder-blame"])),
     ]
