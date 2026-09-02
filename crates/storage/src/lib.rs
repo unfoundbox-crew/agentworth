@@ -93,14 +93,37 @@ pub struct SessionSummary {
     pub total_events: usize,
     pub tool_calls_count: usize,
     pub models_used: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // Unlike the other Option fields below, these two are never skipped when absent: the
+    // `/api/traces` list endpoint (apps/cli/src/server/routes.rs::get_traces_handler) returns
+    // `SessionSummary` directly, and a client scanning that list for outcome/score needs the
+    // key present (as `null`) to distinguish "not yet scored" from "field doesn't exist" --
+    // omitting it silently on every un-scored session made the field look dropped entirely.
+    #[serde(default)]
     pub primary_outcome: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub composite_score: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_preview: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_mtime_epoch_secs: Option<i64>,
+    /// Number of times this session's context was compacted. 0 (the common case, not
+    /// `None`) means never compacted -- matches `tool_calls_count`'s own convention rather
+    /// than `primary_outcome`'s, since this is always knowable once a session is parsed.
+    #[serde(default)]
+    pub compaction_count: usize,
+    /// Total tokens dropped across every compaction round in this session. See
+    /// `agentworth_schema::TraceStats::compaction_tokens_dropped` for how it's computed.
+    #[serde(default)]
+    pub compaction_tokens_dropped: u64,
+}
+
+/// One bucket of `Storage::get_compaction_outcome_correlation`'s result: a session count for
+/// one (compacted-or-not, outcome) combination.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompactionOutcomeBucket {
+    pub compacted: bool,
+    pub outcome: String,
+    pub session_count: usize,
 }
 
 /// Usage aggregation rollup for a time period (Day, Week, Month).
@@ -291,6 +314,8 @@ impl Storage {
                 primary_outcome TEXT,
                 composite_score REAL,
                 prompt_preview TEXT,
+                compaction_count INTEGER NOT NULL DEFAULT 0,
+                compaction_tokens_dropped INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
 
@@ -334,6 +359,18 @@ impl Storage {
             if !columns.contains(&"prompt_preview".to_string()) {
                 let _ = conn.execute("ALTER TABLE sessions ADD COLUMN prompt_preview TEXT", []);
             }
+            if !columns.contains(&"compaction_count".to_string()) {
+                let _ = conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN compaction_count INTEGER NOT NULL DEFAULT 0",
+                    [],
+                );
+            }
+            if !columns.contains(&"compaction_tokens_dropped".to_string()) {
+                let _ = conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN compaction_tokens_dropped INTEGER NOT NULL DEFAULT 0",
+                    [],
+                );
+            }
         }
 
         // Data migration: `primary_outcome` used to be written in hand-rolled PascalCase
@@ -375,6 +412,7 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
             CREATE INDEX IF NOT EXISTS idx_sessions_primary_outcome ON sessions(primary_outcome);
             CREATE INDEX IF NOT EXISTS idx_sessions_composite_score ON sessions(composite_score);
+            CREATE INDEX IF NOT EXISTS idx_sessions_compaction_count ON sessions(compaction_count);
             CREATE INDEX IF NOT EXISTS idx_sources_fingerprint ON sources(fingerprint);
             CREATE INDEX IF NOT EXISTS idx_file_modifications_path ON file_modifications(file_path);
             CREATE INDEX IF NOT EXISTS idx_file_modifications_session ON file_modifications(session_id);
@@ -555,9 +593,10 @@ impl Storage {
                 duration_seconds, total_events, user_messages_count, assistant_messages_count,
                 tool_calls_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata, scanned_at,
-                primary_outcome, composite_score, prompt_preview
+                primary_outcome, composite_score, prompt_preview,
+                compaction_count, compaction_tokens_dropped
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
             ON CONFLICT(session_id) DO UPDATE SET
                 adapter = excluded.adapter,
                 source_path = excluded.source_path,
@@ -580,7 +619,9 @@ impl Storage {
                 scanned_at = excluded.scanned_at,
                 primary_outcome = excluded.primary_outcome,
                 composite_score = excluded.composite_score,
-                prompt_preview = excluded.prompt_preview;
+                prompt_preview = excluded.prompt_preview,
+                compaction_count = excluded.compaction_count,
+                compaction_tokens_dropped = excluded.compaction_tokens_dropped;
             "#,
             params![
                 trace.session_id,
@@ -606,6 +647,8 @@ impl Storage {
                 primary_outcome,
                 composite_score,
                 prompt_preview,
+                trace.stats.compaction_count as i64,
+                trace.stats.compaction_tokens_dropped as i64,
             ],
         )?;
 
@@ -842,6 +885,57 @@ impl Storage {
         Ok(results)
     }
 
+    /// Groups sessions by whether they were ever compacted (`compaction_count > 0`) and by
+    /// `primary_outcome`, with a session count for each combination -- answers the open
+    /// question from issue #32 ("do compacted sessions reach lower outcome rungs?") as a
+    /// single indexed aggregate query, no per-session trace loading required.
+    ///
+    /// Excludes stubs (`NON_STUB_SQL_PREDICATE`), matching `list_sessions_filtered`'s own
+    /// default and `get_aggregate_stats(false)` -- this is an analytics/verdict surface in
+    /// the same sense those are (see their doc comments and docs/DECISION-INBOX.md's
+    /// stats/stub-count-mismatch entry for why that population has to agree across every
+    /// query like this one, not just the ones that happened to get audited first).
+    ///
+    /// Caveat that matters when reading the result: `compaction_count` only reflects reality
+    /// for sessions that have been scanned since this column was introduced. A row carried
+    /// over from before this feature existed reads as `compacted = false` regardless of
+    /// whether that session was actually compacted, until it's rescanned (`agentworth scan
+    /// --force`) from its original source file. This query doesn't know the difference
+    /// between "never compacted" and "not yet rescanned" -- treat a near-zero compacted count
+    /// against a large, old index as a sign a rescan hasn't happened yet, not as the finding.
+    pub fn get_compaction_outcome_correlation(&self) -> Result<Vec<CompactionOutcomeBucket>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&format!(
+            r#"
+            SELECT
+                CASE WHEN compaction_count > 0 THEN 1 ELSE 0 END AS compacted,
+                COALESCE(primary_outcome, 'Unresolved') AS outcome,
+                COUNT(*) AS session_count
+            FROM sessions
+            WHERE {NON_STUB_SQL_PREDICATE}
+            GROUP BY compacted, COALESCE(primary_outcome, 'Unresolved')
+            ORDER BY compacted, session_count DESC
+            "#,
+        ))?;
+
+        let mut rows = stmt.query([])?;
+        let mut results = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            let compacted: i64 = row.get(0)?;
+            let outcome: String = row.get(1)?;
+            let session_count: i64 = row.get(2)?;
+
+            results.push(CompactionOutcomeBucket {
+                compacted: compacted != 0,
+                outcome,
+                session_count: session_count as usize,
+            });
+        }
+
+        Ok(results)
+    }
+
     /// Retrieve a single session summary by its unique session ID.
     pub fn get_session_by_id(&self, session_id: &str) -> Result<Option<SessionSummary>> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -850,7 +944,8 @@ impl Storage {
             SELECT sessions.session_id, sessions.adapter, sessions.source_path, sessions.started_at,
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
-                   sessions.composite_score, sessions.prompt_preview, sources.mtime
+                   sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
+                   sessions.compaction_tokens_dropped, sources.mtime
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE sessions.session_id = ?1
@@ -915,7 +1010,8 @@ impl Storage {
             SELECT sessions.session_id, sessions.adapter, sessions.source_path, sessions.started_at,
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
-                   sessions.composite_score, sessions.prompt_preview, sources.mtime
+                   sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
+                   sessions.compaction_tokens_dropped, sources.mtime
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE 1=1
@@ -1454,7 +1550,9 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
     let primary_outcome: Option<String> = row.get(9).ok();
     let composite_score: Option<f64> = row.get(10).ok();
     let prompt_preview: Option<String> = row.get(11).ok();
-    let source_mtime_epoch_secs: Option<i64> = row.get(12).ok();
+    let compaction_count: i64 = row.get(12).unwrap_or(0);
+    let compaction_tokens_dropped: i64 = row.get(13).unwrap_or(0);
+    let source_mtime_epoch_secs: Option<i64> = row.get(14).ok();
 
     let started_at = DateTime::parse_from_rfc3339(&started_str)
         .map(|dt| dt.with_timezone(&Utc))
@@ -1476,6 +1574,8 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
         composite_score,
         prompt_preview,
         source_mtime_epoch_secs,
+        compaction_count: compaction_count as usize,
+        compaction_tokens_dropped: compaction_tokens_dropped as u64,
     })
 }
 
@@ -2085,6 +2185,117 @@ mod tests {
         assert_eq!(dist_map.get("artifact_changed"), Some(&1));
         assert_eq!(dist_map.get("done_claimed"), Some(&1));
         assert_eq!(dist_map.get("Unresolved"), Some(&1));
+    }
+
+    #[test]
+    fn test_compaction_count_and_dropped_tokens_persistence() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        // Never-compacted session: must read back as 0, not absent/error -- matches
+        // tool_calls_count's own convention (see SessionSummary's doc comment).
+        let prov1 = Provenance::new("/path/plain.jsonl", "claude_code", 100, 100, "fp_plain");
+        let mut plain = AgentWorthTrace::new("sess_plain", "claude_code", prov1, Utc::now());
+        plain.stats.total_events = 3;
+        plain.stats.token_usage = TokenUsage::new(50, 20, 0, 0);
+        storage.upsert_trace(&plain).expect("upsert plain");
+
+        let loaded_plain = storage
+            .get_session_by_id("sess_plain")
+            .expect("get session")
+            .expect("found");
+        assert_eq!(loaded_plain.compaction_count, 0);
+        assert_eq!(loaded_plain.compaction_tokens_dropped, 0);
+
+        // Compacted session: values set on trace.stats (as ClaudeCodeAdapter::parse's
+        // recalculate_stats call would produce) must round-trip through both
+        // get_session_by_id and list_sessions_filtered.
+        let prov2 = Provenance::new("/path/compacted.jsonl", "claude_code", 100, 100, "fp_compacted");
+        let mut compacted = AgentWorthTrace::new("sess_compacted", "claude_code", prov2, Utc::now());
+        compacted.stats.total_events = 20;
+        compacted.stats.token_usage = TokenUsage::new(5000, 1200, 0, 0);
+        compacted.stats.compaction_count = 3;
+        compacted.stats.compaction_tokens_dropped = 1_234_567;
+        storage.upsert_trace(&compacted).expect("upsert compacted");
+
+        let loaded_compacted = storage
+            .get_session_by_id("sess_compacted")
+            .expect("get session")
+            .expect("found");
+        assert_eq!(loaded_compacted.compaction_count, 3);
+        assert_eq!(loaded_compacted.compaction_tokens_dropped, 1_234_567);
+
+        let list = storage
+            .list_sessions_filtered(&SessionFilter::default())
+            .expect("list");
+        let listed_compacted = list
+            .iter()
+            .find(|s| s.session_id == "sess_compacted")
+            .expect("compacted session present in list");
+        assert_eq!(listed_compacted.compaction_count, 3);
+        assert_eq!(listed_compacted.compaction_tokens_dropped, 1_234_567);
+
+        // A rescan (upsert of the same session_id again, e.g. after a fix landed
+        // upstream) must overwrite, not accumulate.
+        compacted.stats.compaction_count = 4;
+        compacted.stats.compaction_tokens_dropped = 2_000_000;
+        storage.upsert_trace(&compacted).expect("re-upsert compacted");
+        let rescanned = storage
+            .get_session_by_id("sess_compacted")
+            .expect("get session")
+            .expect("found");
+        assert_eq!(rescanned.compaction_count, 4);
+        assert_eq!(rescanned.compaction_tokens_dropped, 2_000_000);
+    }
+
+    #[test]
+    fn test_get_compaction_outcome_correlation() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        // (session_id, primary_outcome, compaction_count)
+        let specs: [(&str, Option<&str>, usize); 6] = [
+            ("c1", Some("commit_observed"), 2),
+            ("c2", Some("done_claimed"), 5),
+            ("c3", Some("done_claimed"), 1),
+            ("u1", Some("commit_observed"), 0),
+            ("u2", Some("commit_observed"), 0),
+            ("u3", None, 0),
+        ];
+
+        for (id, outcome, compactions) in specs {
+            let prov = Provenance::new(format!("/path/{id}.jsonl"), "claude_code", 100, 100, format!("fp_{id}"));
+            let mut trace = AgentWorthTrace::new(id, "claude_code", prov, Utc::now());
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            trace.stats.compaction_count = compactions;
+            storage
+                .upsert_session(&trace, outcome, Some(0.5))
+                .expect("seed row");
+        }
+
+        let buckets = storage
+            .get_compaction_outcome_correlation()
+            .expect("correlation query");
+
+        let find = |compacted: bool, outcome: &str| -> Option<usize> {
+            buckets
+                .iter()
+                .find(|b| b.compacted == compacted && b.outcome == outcome)
+                .map(|b| b.session_count)
+        };
+
+        // Compacted bucket: c1 (commit_observed), c2 + c3 (done_claimed).
+        assert_eq!(find(true, "commit_observed"), Some(1));
+        assert_eq!(find(true, "done_claimed"), Some(2));
+        assert_eq!(find(true, "Unresolved"), None);
+
+        // Uncompacted bucket: u1 + u2 (commit_observed), u3 (Unresolved).
+        assert_eq!(find(false, "commit_observed"), Some(2));
+        assert_eq!(find(false, "Unresolved"), Some(1));
+        assert_eq!(find(false, "done_claimed"), None);
+
+        // Every session accounted for exactly once.
+        let total: usize = buckets.iter().map(|b| b.session_count).sum();
+        assert_eq!(total, 6);
     }
 
     /// Real regression test for the PascalCase/snake_case `primary_outcome` encoding bug: builds

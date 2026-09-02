@@ -63,6 +63,19 @@ describe('npm-wrapper / launcher', () => {
       assert.equal(getBinaryName('linux'), 'agentworth');
       assert.equal(getBinaryName('win32'), 'agentworth.exe');
     });
+
+    it('resolves the agwt binary name only when explicitly invoked as agwt', () => {
+      // The release tarball ships both native binaries (apps/cli/Cargo.toml's two
+      // [[bin]] targets); the npm 'agwt' alias must resolve to the extracted 'agwt'
+      // file rather than silently falling back to 'agentworth'.
+      assert.equal(getBinaryName('darwin', 'agwt'), 'agwt');
+      assert.equal(getBinaryName('linux', 'agwt'), 'agwt');
+      assert.equal(getBinaryName('win32', 'agwt'), 'agwt.exe');
+      // Anything else -- undefined, 'agentworth', garbage -- still gets the primary binary.
+      assert.equal(getBinaryName('darwin', undefined), 'agentworth');
+      assert.equal(getBinaryName('darwin', 'agentworth'), 'agentworth');
+      assert.equal(getBinaryName('darwin', 'something-else'), 'agentworth');
+    });
   });
 
   describe('argument parsing & defaults', () => {
@@ -225,6 +238,30 @@ describe('npm-wrapper / launcher', () => {
       assert.equal(res.source, 'path');
     });
 
+    it('resolves the agwt binary specifically from a cache dir holding both extracted binaries', () => {
+      // Mirrors the real extracted layout: `tar -xzf` drops both native binaries from
+      // the tarball into the same versioned cache dir (see downloadAndExtractBinary).
+      const binDir = path.join(tempDir, 'both-binaries');
+      fs.mkdirSync(binDir, { recursive: true });
+      writeMockBinary(path.join(binDir, 'agentworth'));
+      const agwtBin = path.join(binDir, 'agwt');
+      writeMockBinary(agwtBin);
+
+      const isolatedDir = path.join(tempDir, 'isolated-agwt');
+      fs.mkdirSync(isolatedDir, { recursive: true });
+
+      const res = resolveBinary({
+        cwd: isolatedDir,
+        env: { PATH: binDir },
+        baseDir: isolatedDir,
+        homeDir: tempDir,
+        invokedAs: 'agwt',
+      });
+
+      assert.equal(res.found, true);
+      assert.equal(res.path, agwtBin);
+    });
+
     it('returns found: false when binary is not located', () => {
       const emptyDir = path.join(tempDir, 'empty-dir');
       fs.mkdirSync(emptyDir, { recursive: true });
@@ -292,12 +329,15 @@ describe('npm-wrapper / launcher', () => {
     });
 
     it('formats missing binary error message with helpful installation hints', () => {
+      // Brew was never a real fallback here (npm launcher, not the README's install
+      // matrix) and #55 dropped it from the READMEs too -- this message's actual
+      // fallbacks are the standalone install script, Cargo, npx, the GitHub release
+      // download, and AGENTWORTH_BIN.
       const msg = formatMissingBinaryMessage('darwin-arm64');
       assert.ok(msg.includes('darwin-arm64'));
-      assert.ok(msg.includes('cargo build --release -p agentworth-cli'));
-      assert.ok(msg.includes('cargo install --path apps/cli'));
-      assert.ok(msg.includes('brew install agentworth'));
       assert.ok(msg.includes('curl -fsSL https://agentworth.dev/install.sh | sh'));
+      assert.ok(msg.includes('cargo install agentworth-cli'));
+      assert.ok(msg.includes('npx -y agentworth'));
       assert.ok(msg.includes('AGENTWORTH_BIN'));
     });
   });

@@ -1,341 +1,277 @@
-import React, { useRef, useState } from "react";
-import { trackEvent } from "../analytics";
+import React, { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@ui/ThemeToggle";
-import { VerdictBoard } from "./VerdictBoard";
-import { CacheCliffWidget } from "./CacheCliffWidget";
-import { VerdictStamp } from "./VerdictStamp";
-import { ArchieMascot } from "./ArchieMascot";
-import { IconArrowRight, IconCheck, IconCopy, IconGithub, IconShieldCheck } from "@ui/icons";
-import { useScrollReveal } from "../hooks/useScrollReveal";
-import { APP_VERSION } from "../version";
+import { BrandMark } from "@ui/BrandMark";
+import { Wordmark } from "@ui/Wordmark";
+import { IconCheck, IconCopy, IconGithub } from "@ui/icons";
+import { trackEvent } from "../analytics";
 
-interface LandingPageProps {
-  onOpenExplorer?: () => void;
-}
+const SCAN_CMD = "npx -y agentworth scan";
+const CURL_CMD = "curl -fsSL https://agentworth.dev/install.sh | sh";
+const REPO = "https://github.com/unfoundbox-crew/agentworth";
 
-const INVARIANTS = [
-  {
-    title: "Never upload user data",
-    body: "Scanning works completely offline. Raw histories remain on your disk untouched. Zero network telemetry.",
-  },
-  {
-    title: "No raw-log duplication",
-    body: "AgentWorth never copies multi-gigabyte transcripts into SQLite. It stores only derived indexes, scores, and fingerprints.",
-  },
-  {
-    title: "Streaming JSONL parsing",
-    body: "Bounded-memory parsers handle 100+ GB logs without crashing. Rescans skip unchanged files in milliseconds via SHA-256.",
-  },
-  {
-    title: "Deterministic verification",
-    body: "Never trusts self-claimed completion. Scores are backed by compiler exit codes, positive diffs, and git commits.",
-  },
+/**
+ * The outcome distribution from one real machine.
+ *
+ * Source: `agentworth stats` on the author's laptop, 2026-09-02, over an
+ * index of 2,960 sessions. Every figure here is copied from that output —
+ * nothing on this page is illustrative. All six rows together are the whole
+ * index: 7 + 449 + 808 + 120 + 86 + 1,490 = 2,960, and the percentages sum
+ * to 100.0. Keep it that way — a column a reader can add up is the point.
+ */
+const RUNGS = [
+  { label: "Nothing verified, or still running", n: 1490, pct: 50.3, evidence: false },
+  { label: "The agent said it was done", n: 7, pct: 0.2, evidence: false },
+  { label: "Some files on disk changed", n: 449, pct: 15.2, evidence: false },
+  { label: "A test or a build passed", n: 808, pct: 27.3, evidence: true },
+  { label: "A commit landed in git", n: 120, pct: 4.1, evidence: true },
+  { label: "CI or a deploy went green", n: 86, pct: 2.9, evidence: true },
 ];
 
-const COMMANDS = [
-  {
-    cmd: "$ agentworth stats",
-    lines: [
-      ["Sessions", "9,713"],
-      ["Total tokens", "77.9B"],
-      ["Cache read", "97.2%"],
-      ["List equivalent", "$33,234"],
-    ],
-    body: "Full token math across input, output, cache-read, and cache-creation.",
-  },
-  {
-    cmd: "$ agentworth usage --pacing",
-    lines: [
-      ["Pacing window", "5 hours"],
-      ["Burn rate", "1.4M tok/hr"],
-      ["Cache hit", "98.1%"],
-      ["5h spend", "$4.18"],
-    ],
-    body: "Real-time burn-rate pacing aligned with Anthropic's 5-hour rate limits.",
-  },
-  {
-    cmd: "$ agentworth blame src/api.ts",
-    lines: [
-      ["L10-45", "Claude Opus"],
-      ["Session", "#89312 (Rung 5)"],
-      ["Modified", "2026-08-31"],
-      ["Diff", "+45 -12 lines"],
-    ],
-    body: "Trace any line of source code back to the exact agent session and prompt that wrote it.",
-  },
-];
+const HARNESSES =
+  "Claude Code · Codex · Cursor · Antigravity · Gemini · Goose · Aider · " +
+  "Cline & Roo-Code · Windsurf · OpenCode · Grok · Kimi · Qwen · DeepSeek · " +
+  "MiniMax · Zhipu · Manus · Hermes · OpenClaw · Herdr · Pi";
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onOpenExplorer }) => {
+function CopyBlock({ cmd, id }: { cmd: string; id: string }) {
   const [copied, setCopied] = useState(false);
-  const mainRef = useRef<HTMLElement>(null);
-  useScrollReveal(mainRef);
 
-  const installCommand = "npx agentworth";
-
-  const handleCopy = (cmd: string) => {
-    navigator.clipboard.writeText(cmd);
+  const copy = () => {
+    navigator.clipboard?.writeText(cmd).catch(() => undefined);
     setCopied(true);
-    trackEvent("npx_command_copied", { command: cmd });
-    setTimeout(() => setCopied(false), 2000);
+    trackEvent("install_command_copied", { command: cmd, position: id });
+    setTimeout(() => setCopied(false), 1800);
   };
 
   return (
-    <div>
-      <div className="bg-grid" aria-hidden="true" />
-      <a className="skip-link" href="#main">
+    <div className="install">
+      <code>
+        <span className="sigil" aria-hidden="true">
+          $
+        </span>
+        {cmd}
+      </code>
+      <button type="button" onClick={copy} aria-label={`Copy: ${cmd}`}>
+        {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+        <span>{copied ? "Copied" : "Copy"}</span>
+      </button>
+    </div>
+  );
+}
+
+/** Adds `.in` to every `.reveal` as it enters the viewport, once. */
+function useReveal() {
+  const root = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const nodes = root.current?.querySelectorAll<HTMLElement>(".reveal");
+    if (!nodes?.length) return;
+    if (!("IntersectionObserver" in window)) {
+      nodes.forEach((n) => n.classList.add("in"));
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            e.target.classList.add("in");
+            io.unobserve(e.target);
+          }
+        });
+      },
+      { rootMargin: "0px 0px -12% 0px", threshold: 0.05 }
+    );
+    nodes.forEach((n) => io.observe(n));
+    return () => io.disconnect();
+  }, []);
+
+  return root;
+}
+
+export const LandingPage: React.FC = () => {
+  const main = useReveal();
+
+  const verifiedPct = 34.3;
+  const indexed = 2960;
+
+  return (
+    <>
+      <a className="skip" href="#main">
         Skip to content
       </a>
 
-      <header className="topbar">
-        <span className="wordmark">
-          <span className="dot" />
-          AgentWorth
-        </span>
-        <div className="flex items-center gap-1.5 sm:gap-3">
-          {onOpenExplorer && (
-            <button
-              onClick={onOpenExplorer}
-              aria-label="Launch explorer"
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-ink text-ground text-xs font-mono font-semibold hover:opacity-85 transition-opacity"
-            >
-              <span className="hidden sm:inline">Launch explorer</span>
-              <IconArrowRight size={13} />
-            </button>
-          )}
-          <a
-            href="https://github.com/unfoundbox-crew/agentworth"
-            target="_blank"
-            rel="noreferrer"
-            title="GitHub repository"
-            aria-label="GitHub repository"
-            className="p-2 rounded-lg text-muted hover:text-ink hover:bg-surface transition-colors"
-          >
-            <IconGithub size={16} />
+      <header className="wrap">
+        <nav className="nav">
+          <a className="mark" href="/">
+            <BrandMark size={20} />
+            <Wordmark height={13} />
           </a>
-          <div className="hidden sm:block h-4 w-px bg-border" />
-          <ThemeToggle />
-        </div>
+          <div className="nav-right">
+            <a
+              className="nav-link"
+              href={REPO}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <IconGithub size={14} />
+              <span>GitHub</span>
+            </a>
+            <ThemeToggle />
+          </div>
+        </nav>
       </header>
 
-      <main id="main" ref={mainRef}>
-        {/* Hero */}
+      <main id="main" ref={main}>
         <section className="hero">
-          <div className="shell prose-shell" style={{ maxWidth: 820, paddingInline: 0, marginInline: "auto" }}>
-            <span className="eyebrow">The verdict layer for AI coding agents</span>
-            <h1 className="thesis" style={{ maxWidth: "18ch" }}>
-              Every agent says it&apos;s done. AgentWorth checks the git log.
-            </h1>
-            <p className="dek" style={{ maxWidth: "60ch" }}>
-              AgentWorth reads the session logs already on your disk &mdash; Claude Code,
-              Codex, Cursor, Antigravity and <em>20+ CLIs</em> &mdash; and grades every
-              session against evidence it can check: files changed, tests passed,
-              commits landed, CI green. Native Rust, local SQLite, zero telemetry.
-            </p>
+          <div className="wrap hero-grid">
+            <div>
+              <p className="kicker rise" style={{ ["--i" as string]: 0 }}>
+                Runs on your machine. Sends nothing anywhere.
+              </p>
 
-            <div className="hero-meta" style={{ marginBottom: 32 }}>
-              <span>100% offline</span>
-              <span>Local SQLite WAL</span>
-              <span>Zero telemetry</span>
-              <span>Apache-2.0</span>
-            </div>
+              <h1 className="rise" style={{ ["--i" as string]: 1 }}>
+                <span className="setup">Every agent says it&rsquo;s done.</span>
+                AgentWorth checks the git log.
+              </h1>
 
-            <div
-              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface p-3"
-              style={{ maxWidth: 420 }}
-            >
-              <code className="font-mono text-sm font-semibold text-ink select-all">
-                $ {installCommand}
-              </code>
-              <button
-                onClick={() => handleCopy(installCommand)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-ink text-ground font-mono text-xs font-semibold hover:opacity-85 transition-opacity shrink-0"
-              >
-                {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
-                <span>{copied ? "Copied" : "Copy"}</span>
-              </button>
-            </div>
+              <p className="lede rise" style={{ ["--i" as string]: 2 }}>
+                Claude Code, Codex, Cursor and eighteen others already write
+                down everything they do, in dot-directories you have never
+                opened. AgentWorth reads those logs and checks each claim
+                against what actually happened &mdash;{" "}
+                <b>files changed, tests run, commits made, CI green</b>.
+              </p>
 
-            {/* Hero visual: a real scored session card */}
-            <figure className="diagram" style={{ marginTop: 48 }}>
-              <div className="diagram-frame">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border font-mono">
-                  <div className="flex items-center gap-3">
-                    <span className="w-2 h-2 rounded-full bg-accent inline-block" aria-hidden="true" />
-                    <span className="font-semibold text-xs text-ink">Session audit #98893-claude</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted">
-                      claude-opus-5
-                    </span>
-                  </div>
-                  <VerdictStamp status="ci_or_deployment_verified" size="sm" />
-                </div>
-
-                <div
-                  className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4 border-b border-border-soft font-mono text-xs"
-                  style={{ fontVariantNumeric: "tabular-nums" }}
-                >
-                  <div>
-                    <div className="text-[10px] text-faint uppercase">Outcome rung</div>
-                    <div className="font-semibold text-ink mt-0.5">Rung 5 &middot; CI green</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-faint uppercase">Composite score</div>
-                    <div className="font-semibold text-ink mt-0.5">94.2 / 100</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-faint uppercase">Token volume</div>
-                    <div className="font-semibold text-ink mt-0.5">14.2M (97.4% cache)</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-faint uppercase">List equivalent</div>
-                    <div className="font-semibold text-ink mt-0.5">$6.12 USD</div>
-                  </div>
-                </div>
-
-                <div className="pt-4 font-mono text-xs">
-                  <div className="text-faint text-[10px] font-semibold uppercase mb-2">
-                    Empirical evidence quoted from disk
-                  </div>
-                  <div className="p-2.5 rounded-lg border border-border-soft bg-ground text-text text-[11px]">
-                    <code>✓ Git commit 4c901e8 observed → CI test-suite exit code 0 on branch main</code>
-                  </div>
-                </div>
+              <div className="rise" style={{ ["--i" as string]: 3 }}>
+                <CopyBlock cmd={SCAN_CMD} id="hero" />
+                <p className="alt-install">
+                  <span className="sep">or</span>{" "}
+                  <code>{CURL_CMD}</code>
+                </p>
               </div>
-              <figcaption>
-                A real session, scored against evidence it can check on disk &mdash; not a
-                self-report the agent typed into the chat.
-              </figcaption>
-            </figure>
-          </div>
-        </section>
 
-        {/* The ladder */}
-        <section className="sec" id="ladder">
-          <div className="shell">
-            <span className="eyebrow">01 &mdash; The verdict ladder</span>
-            <h2 className="sec-title">Five rungs, from claim to CI-verified.</h2>
-            <p className="lede">
-              Every session lands on a rung backed by evidence AgentWorth can check on
-              disk &mdash; never on what the agent says it did.
-            </p>
-            <VerdictBoard />
-          </div>
-        </section>
-
-        {/* The cache cliff */}
-        <section className="sec" id="cache-cliff">
-          <div className="shell">
-            <span className="eyebrow">02 &mdash; The cache cliff</span>
-            <h2 className="sec-title">Long sessions get expensive fast.</h2>
-            <p className="lede">
-              Cache writes are cheap. Cache misses, past a context-window cliff, are not.
-              This is what that curve actually looks like.
-            </p>
-            <CacheCliffWidget />
-          </div>
-        </section>
-
-        {/* What you get today */}
-        <section className="sec" id="features">
-          <div className="shell">
-            <span className="eyebrow">03 &mdash; What you get today</span>
-            <h2 className="sec-title">Three real CLI commands. No fabricated data.</h2>
-            <p className="lede">Shipped in the native Rust binary today.</p>
-
-            <div className="term-grid cols-3">
-              {COMMANDS.map((block) => (
-                <div key={block.cmd} className="term-card">
-                  <div className="font-mono text-[11px] text-muted mb-3">{block.cmd}</div>
-                  <div className="space-y-1.5 font-mono text-[11px] mb-4" style={{ fontVariantNumeric: "tabular-nums" }}>
-                    {block.lines.map(([k, v]) => (
-                      <div key={k} className="flex justify-between">
-                        <span className="text-muted">{k}</span>
-                        <span className="text-ink font-semibold">{v}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <p>{block.body}</p>
-                </div>
-              ))}
+              <p className="trust rise" style={{ ["--i" as string]: 4 }}>
+                <b>It never phones home.</b> No account, no server, no upload
+                &mdash; it reads files that are already on your disk and writes
+                an index next to them.
+              </p>
             </div>
-          </div>
-        </section>
 
-        {/* Local means local */}
-        <section className="sec" id="invariants">
-          <div className="shell">
-            <span className="eyebrow">04 &mdash; AGENTS.md contract</span>
-            <h2 className="sec-title">Local means local. Always.</h2>
-            <p className="lede">Four invariants AgentWorth&apos;s own contributor contract enforces.</p>
+            <div className="ladder rise" style={{ ["--i" as string]: 3 }}>
+              <div className="ladder-head">
+                <h2>How far did it actually get?</h2>
+                <p>
+                  {indexed.toLocaleString()} sessions on one laptop, graded
+                </p>
+              </div>
 
-            <div className="term-grid">
-              {INVARIANTS.map((inv, i) => (
-                <div key={inv.title} className="term-card">
-                  <h3 className="flex items-center gap-2">
-                    <IconShieldCheck size={16} className="text-accent shrink-0" />
-                    <span>
-                      {i + 1}. {inv.title}
+              {RUNGS.map((r, i) => (
+                <React.Fragment key={r.label}>
+                  {i === 3 && (
+                    <div className="ladder-rule">Evidence starts here</div>
+                  )}
+                  <div className={`rung${r.evidence ? " evidence" : ""}`}>
+                    <span
+                      className="bar"
+                      style={{ ["--w" as string]: `${r.pct * 1.24}%` }}
+                      aria-hidden="true"
+                    />
+                    <span className="label">{r.label}</span>
+                    <span className="n">
+                      {r.n.toLocaleString()} <em>{r.pct}%</em>
                     </span>
-                  </h3>
-                  <p>{inv.body}</p>
-                </div>
+                  </div>
+                </React.Fragment>
               ))}
-            </div>
-          </div>
-        </section>
 
-        {/* Roadmap */}
-        <section className="sec" id="roadmap">
-          <div className="shell prose-shell" style={{ maxWidth: 820, paddingInline: 0, marginInline: "auto" }}>
-            <div className="flex items-center justify-between gap-2">
-              <span className="eyebrow" style={{ marginBottom: 0 }}>
-                05 &mdash; Phase 2 roadmap
-              </span>
-              <VerdictStamp status="not_built" size="sm" />
-            </div>
-            <h2 className="sec-title" style={{ marginTop: 14 }}>
-              Policy engine: route, explain, run.
-            </h2>
-            <p className="body-text">
-              Transparently marked <strong>not built</strong>. Routing off your own
-              repo&apos;s verified build/test/CI history, computed locally on your machine.
-            </p>
-
-            <div className="provenance-note">
-              <span className="label">Preview &mdash; not shipped</span>
-              <p className="font-mono" style={{ fontVariantNumeric: "tabular-nums" }}>
-                $ aw route --task &apos;fix race condition in queue&apos;
-                <br />
-                RECOMMENDED: Claude Sonnet 4.6 (92.4% success on async Rust tasks in this repo)
-                <br />
-                Estimated cost: $0.18 &middot; Expected turns: 4 &middot; Context cache: warm
+              <p className="ladder-foot">
+                Half of them never got far enough to tell, and the two rows
+                above the line are things an agent can say without doing much.
+                Only the last three left a trace someone else can check.{" "}
+                <b>{verifiedPct}% of all {indexed.toLocaleString()} cleared
+                that line.</b>
               </p>
             </div>
           </div>
         </section>
-      </main>
 
-      <footer className="sec">
-        <div className="shell flex flex-col sm:flex-row items-center justify-between gap-8">
-          <ArchieMascot />
-          <div className="footer" style={{ padding: 0, border: 0, flex: 1 }}>
+        <section className="shot wrap">
+          <div className="shot-head reveal">
+            <h2>Then open it and look.</h2>
             <p>
-              <span className="dot" />
-              <span>
-                AgentWorth v{APP_VERSION} &middot; Apache-2.0 license &middot; native Rust core
-              </span>
-              <a
-                href="https://github.com/unfoundbox-crew/agentworth"
-                target="_blank"
-                rel="noreferrer"
-                className="ml-auto inline-flex items-center gap-1 text-ink hover:text-accent transition-colors"
-              >
-                <IconGithub size={12} />
-                <span>GitHub</span>
-              </a>
+              <code className="mono">agentworth serve</code> runs a local
+              explorer on your own index. Every session, what it claimed, and
+              the evidence behind the claim.
             </p>
           </div>
+
+          <figure className="reveal" style={{ margin: 0 }}>
+            <div className="plate">
+              <img
+                src="/explorer-1440.webp"
+                width={1440}
+                height={560}
+                alt="The AgentWorth explorer showing one session scored 89, with its outcome ladder: CI or deployment green, commit observed in git log, test or build passed, artifact changed on disk, and done claimed by the agent."
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
+            <figcaption>
+              A real session from the index above &mdash; a 56-minute
+              claude-sonnet-5 run that scored 89, with the command behind each
+              rung quoted from the transcript.
+            </figcaption>
+          </figure>
+        </section>
+
+        <section className="wrap">
+          <div className="facts">
+            <div className="fact reveal">
+              <h3>21 harnesses</h3>
+              <p>
+                One index across all of them, so the answer to{" "}
+                <b>&ldquo;what has been running on this machine?&rdquo;</b> is
+                a single command.
+              </p>
+              <p className="harnesses">{HARNESSES}</p>
+            </div>
+
+            <div className="fact reveal">
+              <h3>Blame, for agents</h3>
+              <p>
+                <code>agentworth blame src/main.rs</code> names the session,
+                the model and the prompt behind a line of code &mdash; months
+                after whoever ran it forgot.
+              </p>
+            </div>
+
+            <div className="fact reveal">
+              <h3>Where the tokens went</h3>
+              <p>
+                Input, output, cache reads and cache writes, rolled up by day,
+                week or month. Your own agent can ask too:{" "}
+                <code>claude mcp add agentworth -- agentworth mcp</code>.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="close wrap">
+          <h2>Point it at your own machine.</h2>
+          <CopyBlock cmd={SCAN_CMD} id="close" />
+          <p className="alt-install">
+            <span className="sep">or</span> <code>{CURL_CMD}</code>
+          </p>
+        </section>
+      </main>
+
+      <footer className="wrap">
+        <div className="foot">
+          <span>Apache-2.0 &middot; native Rust &middot; nothing uploaded</span>
+          <a href={REPO} target="_blank" rel="noreferrer">
+            github.com/unfoundbox-crew/agentworth
+          </a>
         </div>
       </footer>
-    </div>
+    </>
   );
 };

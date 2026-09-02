@@ -4,7 +4,6 @@
 //! 1200x630 dark-mode SVG receipt cards for sharing and social previews,
 //! adhering to the SpacePilot Obsidian and Two-Tone Gold visual language.
 
-use std::fmt::Write as FmtWrite;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,7 +13,6 @@ use agentworth_schema::{AgentWorthTrace, EventPayload, OutcomeKind};
 use agentworth_scoring::{TraceScore, TraceScorer};
 use agentworth_storage::Storage;
 use anyhow::{Context, Result};
-use console::style;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -389,282 +387,39 @@ pub fn extract_flight_data(trace: &AgentWorthTrace, score: &TraceScore) -> Fligh
 // Terminal Receipt Generator (ANSI / ASCII Box)
 // -----------------------------------------------------------------------------
 
-/// Renders a crisp ANSI ASCII box Flight Receipt with Two-Tone Gold and Obsidian styling.
+/// The Flight Receipt: the one enclosed form in the CLI, because it is a receipt.
 pub fn render_terminal_receipt(trace: &AgentWorthTrace, score: &TraceScore) -> String {
-    let data = extract_flight_data(trace, score);
-    let mut out = String::new();
-
-    // Box dimensions: total width = 76, interior width = 72
-    let inner_width = 72;
-
-    // Top Border
-    let _ = writeln!(
-        out,
-        "{}",
-        style("┌──────────────────────────────────────────────────────────────────────────┐")
-            .bold()
-            .yellow()
-    );
-
-    // Header 1: Title & Canonical Record
-    let title_line = format!(
-        "✈️  {}           {}",
-        style("AGENTWORTH FLIGHT RECEIPT").bold().yellow(),
-        style("CANONICAL RECORD").dim()
-    );
-    append_box_line(&mut out, &title_line, inner_width);
-
-    // Header 2: Typed Provenance Badge
-    let prov_styled = match data.provenance_status {
-        TypedProvenanceStatus::Flown => {
-            format!("TYPED PROVENANCE: {}", style("[FLOWN • LOCAL GROUND TRUTH]").bold().green())
-        }
-        TypedProvenanceStatus::OnPaper => {
-            format!("TYPED PROVENANCE: {}", style("[ON PAPER • CLAIMED]").bold().yellow())
-        }
-        TypedProvenanceStatus::Unflown => {
-            format!("TYPED PROVENANCE: {}", style("[UNFLOWN • UNVERIFIED]").dim())
-        }
-    };
-    append_box_line(&mut out, &prov_styled, inner_width);
-
-    // Section Divider
-    append_divider(&mut out);
-
-    // Flight Info Block
-    let flight_line1 = format!(
-        "SESSION ID:   {:<28} STARTED:  {:<20}",
-        style(&data.short_session_id).bold().cyan(),
-        style(&data.started_at_str).dim()
-    );
-    append_box_line(&mut out, &flight_line1, inner_width);
-
-    let flight_line2 = format!(
-        "ADAPTER:      {:<28} DURATION: {} ({} turns)",
-        style(&data.adapter).bold().green(),
-        style(&data.duration_str).yellow(),
-        data.total_events
-    );
-    append_box_line(&mut out, &flight_line2, inner_width);
-
-    let short_path = truncate_path(&data.source_path, 42);
-    let flight_line3 = format!(
-        "PRIMARY MODEL:{:<28} SOURCE:   {:<20}",
-        style(&data.primary_model).magenta(),
-        style(short_path).dim()
-    );
-    append_box_line(&mut out, &flight_line3, inner_width);
-
-    // Section Divider
-    append_divider(&mut out);
-
-    // Hero Score & Verdict
-    let score_str = format!("{:.1} / 100", data.composite_score);
-    let styled_score = if data.composite_score >= 70.0 {
-        style(score_str).bold().green()
-    } else if data.composite_score >= 40.0 {
-        style(score_str).bold().yellow()
-    } else {
-        style(score_str).bold().red()
-    };
-
-    let styled_verdict = match data.verdict_rung {
-        5 => style(&data.verdict_badge).bold().green(),
-        4 => style(&data.verdict_badge).green(),
-        3 => style(&data.verdict_badge).bold().cyan(),
-        2 => style(&data.verdict_badge).yellow(),
-        1 => style(&data.verdict_badge).dim(),
-        _ => style(&data.verdict_badge).dim(),
-    };
-
-    let score_line1 = format!(
-        "COMPOSITE SCORE:  {:<24} VERDICT:  {}",
-        styled_score, styled_verdict
-    );
-    append_box_line(&mut out, &score_line1, inner_width);
-
-    // Score Gauge Bar
-    let gauge = render_ascii_gauge(data.composite_score, 24);
-    let score_line2 = format!(
-        "{}        Rung {}: {}",
-        gauge,
-        data.verdict_rung,
-        style(&data.verdict_label).cyan()
-    );
-    append_box_line(&mut out, &score_line2, inner_width);
-
-    if let Some(ref summary) = data.highest_outcome_summary {
-        let short_summary = truncate_string(summary, 66);
-        let summary_line = format!("  Evidence: {}", style(short_summary).italic().dim());
-        append_box_line(&mut out, &summary_line, inner_width);
-    }
-
-    append_blank_line(&mut out, inner_width);
-
-    // 5 Dimension Breakdown
-    append_box_line(&mut out, &format!("{}", style("SCORE DIMENSIONS:").bold()), inner_width);
-
-    let dim_line1 = format!(
-        "  • Outcome Quality:     {:>3.0}%   • Autonomous Recovery: {:>3.0}%",
-        data.outcome_score, data.recovery_score
-    );
-    append_box_line(&mut out, &dim_line1, inner_width);
-
-    let dim_line2 = format!(
-        "  • Verifiability Signal:{:>3.0}%   • Typed Provenance:    {:>3.0}%",
-        data.verifiability_score, data.provenance_score
-    );
-    append_box_line(&mut out, &dim_line2, inner_width);
-
-    let dim_line3 = format!(
-        "  • Trajectory Depth:    {:>3.0}%",
-        data.complexity_score
-    );
-    append_box_line(&mut out, &dim_line3, inner_width);
-
-    // Section Divider
-    append_divider(&mut out);
-
-    // Token Burn & Financials
-    append_box_line(&mut out, &format!("{}", style("TOKEN USAGE & FINANCIALS:").bold()), inner_width);
-
-    let tok_line1 = format!(
-        "  Total Tokens:     {:<22} Blended Spend: {}",
-        style(format!("{} tok", format_number(data.total_tokens))).bold().magenta(),
-        style(format!("${:.2} USD", data.spend_usd)).bold().green()
-    );
-    append_box_line(&mut out, &tok_line1, inner_width);
-
-    let tok_line2 = format!(
-        "  Input / Output:   {:<22} Cache Read:    {} tok",
-        format!("{}/{}", format_number(data.input_tokens), format_number(data.output_tokens)),
-        format_number(data.cache_read_tokens)
-    );
-    append_box_line(&mut out, &tok_line2, inner_width);
-
-    append_blank_line(&mut out, inner_width);
-
-    // Apology Tax & Remorse Audit
-    append_box_line(&mut out, &format!("{}", style("APOLOGY TAX & REMORSE AUDIT:").bold()), inner_width);
-
-    let apology_status = if data.apology_count == 0 {
-        style("0 (Zero Groveling)".to_string()).green()
-    } else {
-        style(format!("{} Remorse Turns", data.apology_count)).yellow()
-    };
-
-    let tax_styled = if data.apology_tax_usd > 0.0 {
-        style(format!("${:.2} USD", data.apology_tax_usd)).bold().red()
-    } else {
-        style("$0.00 USD".to_string()).dim()
-    };
-
-    let ap_line = format!(
-        "  Apology Turns:    {:<22} Apology Tax:   {}",
-        apology_status, tax_styled
-    );
-    append_box_line(&mut out, &ap_line, inner_width);
-
-    if let Some(ref quote) = data.best_apology_quote {
-        let quote_line = format!("  Remorse: {}", style(truncate_string(quote, 62)).italic().dim());
-        append_box_line(&mut out, &quote_line, inner_width);
-    }
-
-    append_blank_line(&mut out, inner_width);
-
-    // Autonomous Resilience & Recovery
-    append_box_line(&mut out, &format!("{}", style("AUTONOMOUS RESILIENCE & RECOVERY:").bold()), inner_width);
-
-    let rec_line = format!(
-        "  Recovery Loops:   {:<22} Status:        {}",
-        format!("{} Loop(s)", data.recovery_loops_count),
-        style(&data.resilience_status).bold().cyan()
-    );
-    append_box_line(&mut out, &rec_line, inner_width);
-
-    if !data.top_tools.is_empty() {
-        let tools_formatted = data
-            .top_tools
-            .iter()
-            .take(4)
-            .map(|(t, c)| format!("{}({})", t, c))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let tools_line = format!("  Active Tools:     {}", style(truncate_string(&tools_formatted, 52)).yellow());
-        append_box_line(&mut out, &tools_line, inner_width);
-    }
-
-    // Section Divider
-    append_divider(&mut out);
-
-    // Cryptographic Receipt Seal & Footer
-    let short_hash = if data.receipt_hash.len() > 32 {
-        format!("sha256:{}...", &data.receipt_hash[..28])
-    } else {
-        format!("sha256:{}", data.receipt_hash)
-    };
-    let hash_line = format!("RECEIPT HASH: {}", style(short_hash).dim());
-    append_box_line(&mut out, &hash_line, inner_width);
-
-    let seal_line = format!(
-        "{} • {}",
-        style("VERIFIED BY AGENTWORTH").bold().green(),
-        style("\"FLOWN BEATS ON-PAPER. ALWAYS.\"").italic().dim()
-    );
-    append_box_line(&mut out, &seal_line, inner_width);
-
-    // Bottom Border
-    let _ = writeln!(
-        out,
-        "{}",
-        style("└──────────────────────────────────────────────────────────────────────────┘")
-            .bold()
-            .yellow()
-    );
-
-    out
+    render_terminal_receipt_with(trace, score, &crate::ui::Ui::detect(false, false))
 }
 
-fn append_box_line(out: &mut String, content: &str, inner_width: usize) {
-    let visual_w = console::measure_text_width(content);
-    if visual_w < inner_width {
-        let padding = " ".repeat(inner_width - visual_w);
-        let _ = writeln!(out, "│ {}{} │", content, padding);
-    } else {
-        let _ = writeln!(out, "│ {} │", content);
-    }
+pub fn render_terminal_receipt_with(
+    trace: &AgentWorthTrace,
+    score: &TraceScore,
+    ui: &crate::ui::Ui,
+) -> String {
+    let d = extract_flight_data(trace, score);
+    let view = crate::ui::views::ReceiptView {
+        session_id: d.session_id.clone(),
+        short_session_id: d.short_session_id.clone(),
+        adapter: d.adapter.clone(),
+        model: crate::ui::views::short_model(&d.primary_model),
+        // Seconds and the zone suffix cost eight columns and answer nothing.
+        started: trace.started_at.format("%Y-%m-%d %H:%M").to_string(),
+        duration: d.duration_str.clone(),
+        turns: d.total_events,
+        tool_calls: d.tool_calls_count,
+        errors: d.error_count,
+        recoveries: d.recovery_loops_count,
+        input_tokens: d.input_tokens,
+        output_tokens: d.output_tokens,
+        cache_read_tokens: d.cache_read_tokens,
+        total_tokens: d.total_tokens,
+        spend_usd: d.spend_usd,
+        rung: d.verdict_rung,
+        verdict_label: d.verdict_label.clone(),
+    };
+    crate::ui::views::receipt(ui, &view)
 }
-
-fn append_blank_line(out: &mut String, inner_width: usize) {
-    let padding = " ".repeat(inner_width);
-    let _ = writeln!(out, "│ {} │", padding);
-}
-
-fn append_divider(out: &mut String) {
-    let _ = writeln!(
-        out,
-        "{}",
-        style("├──────────────────────────────────────────────────────────────────────────┤")
-            .bold()
-            .yellow()
-    );
-}
-
-fn render_ascii_gauge(score: f64, width: usize) -> String {
-    let clamped = (score / 100.0).clamp(0.0, 1.0);
-    let filled = ((clamped * width as f64).round() as usize).min(width);
-    let empty = width - filled;
-
-    let fill_char = "=";
-    let empty_char = "░";
-
-    format!(
-        "[{}{}]",
-        style(fill_char.repeat(filled)).bold().yellow(),
-        style(empty_char.repeat(empty)).dim()
-    )
-}
-
 // -----------------------------------------------------------------------------
 // Standalone Dark-Mode 1200x630 SVG Receipt Card Generator
 // -----------------------------------------------------------------------------
@@ -1018,6 +773,7 @@ pub fn run_receipt_command(
     format: &str,
     output: Option<PathBuf>,
     db_path: Option<PathBuf>,
+    ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = if let Some(path) = db_path {
         Arc::new(Storage::open_path(&path)?)
@@ -1043,7 +799,7 @@ pub fn run_receipt_command(
             let flight_data = extract_flight_data(&trace, &score);
             serde_json::to_string_pretty(&flight_data)?
         }
-        "terminal" | "ansi" | "receipt" | _ => render_terminal_receipt(&trace, &score),
+        "terminal" | "ansi" | "receipt" | _ => render_terminal_receipt_with(&trace, &score, ui),
     };
 
     if let Some(out_path) = output {
@@ -1055,7 +811,7 @@ pub fn run_receipt_command(
             .with_context(|| format!("Failed writing receipt to {:?}", out_path))?;
         eprintln!(
             "{} Flight Receipt written to {:?}",
-            style("✔").green().bold(),
+            ui.paint(crate::ui::Role::Verified, "written"),
             out_path
         );
     } else {
@@ -1271,17 +1027,30 @@ mod tests {
     #[test]
     fn test_render_terminal_receipt() {
         let (trace, score) = create_test_trace();
-        let receipt = render_terminal_receipt(&trace, &score);
+        let ui = crate::ui::Ui::new(80, crate::ui::ColorMode::None, false);
+        let receipt = render_terminal_receipt_with(&trace, &score, &ui);
 
-        assert!(receipt.contains("AGENTWORTH FLIGHT RECEIPT"));
-        assert!(receipt.contains("TYPED PROVENANCE:"));
-        assert!(receipt.contains("FLOWN"));
-        assert!(receipt.contains("COMPOSITE SCORE:"));
-        assert!(receipt.contains("TOKEN USAGE & FINANCIALS:"));
-        assert!(receipt.contains("APOLOGY TAX & REMORSE AUDIT"));
-        assert!(receipt.contains("AUTONOMOUS RESILIENCE & RECOVERY:"));
-        assert!(receipt.contains("RECEIPT HASH:"));
-        assert!(receipt.contains("VERIFIED BY AGENTWORTH"));
+        // It reads top to bottom like a till roll: what it was, what it did, what it
+        // cost, and last — where a receipt puts the total — what the evidence says.
+        assert!(receipt.contains("A G E N T W O R T H"));
+        assert!(receipt.contains("FLIGHT RECEIPT"));
+        assert!(receipt.contains("SESSION"));
+        assert!(receipt.contains("TOTAL"));
+        assert!(receipt.contains("EST. COST"));
+        assert!(receipt.contains("EVIDENCE"));
+        assert!(receipt.contains("rung "));
+        assert!(receipt.contains("\\/"), "the torn edge closes the receipt");
+
+        // The box closes: every framed row is the same width and ends on the border.
+        let framed: Vec<&str> = receipt
+            .lines()
+            .filter(|l| l.trim_start().starts_with('│'))
+            .collect();
+        assert!(framed.len() > 10);
+        let w = console::measure_text_width(framed[0]);
+        for line in &framed {
+            assert_eq!(console::measure_text_width(line), w, "unclosed row: {}", line);
+        }
     }
 
     #[test]

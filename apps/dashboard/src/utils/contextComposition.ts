@@ -34,15 +34,22 @@ export interface Contributor {
  * A compaction boundary, with the harness's own exact token accounting.
  *
  * These are not estimates: `preTokens` is what the context actually measured
- * when it overflowed. They reach the dashboard because the adapter passes the
- * raw record through verbatim.
+ * when it overflowed. As of the `EventPayload::Compaction` schema variant,
+ * `droppedCumulative` actually holds that round's own derived delta
+ * (`pre_tokens - post_tokens`), not the harness's raw cumulative counter --
+ * see `CompactionEvent::dropped_tokens` in the Rust schema for why summing
+ * per-round deltas is the only value that's correct across multiple rounds.
  */
 export interface Compaction {
   preTokens: number;
   postTokens: number;
   droppedCumulative: number;
-  /** Tools discovered at that point — a count, not their schemas. */
+  /** Tools discovered at that point. Not carried by the new event; 0 there. */
   toolCount: number;
+  /** The event this round was recorded on — lets a marker layer place it. */
+  eventId: string;
+  /** For ordering rounds chronologically regardless of input event order. */
+  sequence: number;
 }
 
 export interface ContextComposition {
@@ -113,6 +120,26 @@ export function analyzeComposition(events: NormalizedEvent[]): ContextCompositio
       bucket = 'dialogue';
     } else if (type === 'tool_call' || type === 'shell_command' || type === 'file_action') {
       bucket = 'tools';
+    } else if (type === 'compaction') {
+      // A first-class event as of the compaction-tracking schema change. Older parses
+      // (before that change) routed this through the 'custom' branch below instead —
+      // that fallback stays in place for anything still shaped that way.
+      bucket = 'bookkeeping';
+      const meta = data as unknown as {
+        pre_tokens?: number;
+        post_tokens?: number;
+        dropped_tokens?: number;
+      };
+      if (typeof meta.pre_tokens === 'number') {
+        compactions.push({
+          preTokens: meta.pre_tokens,
+          postTokens: meta.post_tokens ?? 0,
+          droppedCumulative: meta.dropped_tokens ?? 0,
+          toolCount: 0,
+          eventId: event.id,
+          sequence: event.sequence,
+        });
+      }
     } else if (type === 'custom') {
       const kind = (data.kind as string | undefined) ?? payload?.kind;
       if (kind === 'attachment') {
@@ -134,6 +161,8 @@ export function analyzeComposition(events: NormalizedEvent[]): ContextCompositio
             toolCount: Array.isArray(meta.preCompactDiscoveredTools)
               ? (meta.preCompactDiscoveredTools as unknown[]).length
               : 0,
+            eventId: event.id,
+            sequence: event.sequence,
           });
         }
       }
@@ -164,6 +193,11 @@ export function analyzeComposition(events: NormalizedEvent[]): ContextCompositio
     .sort((a, b) => b.chars - a.chars);
 
   const overheadShare = totalChars > 0 ? 1 - chars.dialogue / totalChars : 0;
+
+  // Input order is trusted elsewhere in this file, but a compaction round
+  // list is read as a timeline (round 1, round 2, ...), so it gets an
+  // explicit sort rather than inheriting whatever order events arrived in.
+  compactions.sort((a, b) => a.sequence - b.sequence);
 
   const peakTokens = compactions.length
     ? compactions.reduce((max, c) => Math.max(max, c.preTokens), 0)

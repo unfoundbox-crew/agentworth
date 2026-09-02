@@ -73,12 +73,14 @@ fn test_cli_scan_and_stats_commands() {
     stats_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("Total Sessions:"))
-        .stdout(predicate::str::contains("Verdict Breakdown:"))
-        .stdout(predicate::str::contains("Test or Build Passed (Rung 3)"))
-        .stdout(predicate::str::contains("Real Verified Tasks:"))
+        .stdout(predicate::str::contains("agentworth stats"))
+        .stdout(predicate::str::contains("EVIDENCE LADDER"))
+        .stdout(predicate::str::contains("the evidence line"))
+        .stdout(predicate::str::contains("tests passed"))
+        .stdout(predicate::str::contains("VERIFIED"))
         .stdout(predicate::str::contains("claude_code"))
-        .stdout(predicate::str::contains("claude-3-5-sonnet-20241022"))
+        // Models lose the vendor prefix and the release date; the family stays.
+        .stdout(predicate::str::contains("3-5-sonnet"))
         .stdout(predicate::str::contains("FileEdit"))
         .stdout(predicate::str::contains("Bash"));
 
@@ -171,11 +173,16 @@ fn test_cli_traces_list_and_filters() {
     traces_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("VERDICT"))
+        // The bracketed badge became a five-cell meter; the ladder is spatial now.
+        .stdout(predicate::str::contains("EVIDENCE"))
         .stdout(predicate::str::contains("SCORE"))
-        .stdout(predicate::str::contains("[TEST_PASSED]"))
-        .stdout(predicate::str::contains("SESSION ID"))
-        .stdout(predicate::str::contains(&session_id))
+        .stdout(predicate::str::contains("SESSION"))
+        // The column truncates, but the closing command carries the whole id, because
+        // `inspect` resolves an exact id and not a prefix.
+        .stdout(predicate::str::contains(format!(
+            "agentworth inspect {}",
+            session_id
+        )))
         .stdout(predicate::str::contains("claude_code"));
 
     // 2. List traces with --json
@@ -853,14 +860,15 @@ fn test_cli_receipt_command_ansi_svg_and_export() {
     receipt_term_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("AGENTWORTH FLIGHT RECEIPT"))
-        .stdout(predicate::str::contains("TYPED PROVENANCE:"))
-        .stdout(predicate::str::contains("FLOWN"))
-        .stdout(predicate::str::contains("COMPOSITE SCORE:"))
-        .stdout(predicate::str::contains("TOKEN USAGE & FINANCIALS:"))
-        .stdout(predicate::str::contains("APOLOGY TAX & REMORSE AUDIT:"))
-        .stdout(predicate::str::contains("AUTONOMOUS RESILIENCE & RECOVERY:"))
-        .stdout(predicate::str::contains("VERIFIED BY AGENTWORTH"));
+        // A till roll: what it was, what it did, what it cost, and last the evidence.
+        .stdout(predicate::str::contains("A G E N T W O R T H"))
+        .stdout(predicate::str::contains("FLIGHT RECEIPT"))
+        .stdout(predicate::str::contains("SESSION"))
+        .stdout(predicate::str::contains("TOTAL"))
+        .stdout(predicate::str::contains("EST. COST"))
+        .stdout(predicate::str::contains("EVIDENCE"))
+        .stdout(predicate::str::contains("rung "))
+        .stdout(predicate::str::contains("\\/"));
 
     // 2. Run receipt command with format svg
     let mut receipt_svg_cmd = Command::cargo_bin("agwt").unwrap();
@@ -931,8 +939,8 @@ fn test_cli_receipt_command_ansi_svg_and_export() {
     export_receipt_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("AGENTWORTH FLIGHT RECEIPT"))
-        .stdout(predicate::str::contains("TYPED PROVENANCE:"));
+        .stdout(predicate::str::contains("A G E N T W O R T H"))
+        .stdout(predicate::str::contains("FLIGHT RECEIPT"));
 
     // 6. Test export command with --format svg
     let mut export_svg_cmd = Command::cargo_bin("agwt").unwrap();

@@ -1,7 +1,8 @@
 # Trajectory scrubber
 
-Status: draft spec, not yet built. Written for someone implementing this in a
-fresh session with no memory of how this doc came to exist.
+Status: built, #40. Originally written as a draft spec for someone
+implementing this in a fresh session with no memory of how this doc came to
+exist.
 
 ## The problem
 

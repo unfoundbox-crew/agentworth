@@ -1,7 +1,7 @@
 # Context composition — what fills the window before the work does
 
-Status: proposed. Measured against real logs, and one part of the original idea
-turns out not to be measurable at all.
+Status: built, #46. Measured against real logs, and one part of the original
+idea turns out not to be measurable at all.
 
 Working name in conversation was "chewed". This document argues for **context
 composition**, on the grounds below.

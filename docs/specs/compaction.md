@@ -1,5 +1,8 @@
 # Compaction, and what it costs
 
+Status: built, #57 (dashboard pane) and #62 (per-session tracking).
+Follow-up: the session list does not yet show "compacted N times".
+
 Measured on a real index of 612 sessions, not estimated.
 
 ## What compaction is

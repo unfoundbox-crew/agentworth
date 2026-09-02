@@ -494,7 +494,11 @@ async fn get_matrix_handler(
 }
 
 /// Compute capability and detection matrix across all registered adapters.
-fn compute_adapter_matrix(storage: &Storage) -> AdapterMatrixResponse {
+///
+/// `pub(crate)` rather than private: `apps/cli/src/mcp/server.rs`'s `coverage_stats` tool
+/// reuses this exact computation for its `include_matrix` option instead of duplicating the
+/// 20-adapter definition table.
+pub(crate) fn compute_adapter_matrix(storage: &Storage) -> AdapterMatrixResponse {
     // false: per-adapter `sessions_count` below should agree with what `/api/traces?adapter=X`
     // reports for the same adapter, which is stub-excluded by default.
     let stats = storage.get_aggregate_stats(false).unwrap_or_default();

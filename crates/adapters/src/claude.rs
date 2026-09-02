@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, CompactionEvent, EventPayload, FileActionType, ModelSwitch, NormalizedEvent,
+    OutcomeEvidence, OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -484,6 +484,27 @@ fn parse_claude_record(
     }
 
     match event_type {
+        "user" | "human" if val.get("isCompactSummary").and_then(|v| v.as_bool()) == Some(true) => {
+            // Claude Code's own auto-generated compaction summary, not something the user
+            // typed -- it immediately follows a "system"/"compact_boundary" record (see
+            // below) and replaces the conversation from that point. Counting it as a real
+            // UserMessage would inflate user_messages_count and could hijack prompt_preview
+            // with synthetic summary text instead of the session's actual first message.
+            // Nothing is silently dropped: the full content stays available as Custom data.
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::Custom {
+                        kind: "compact_summary".to_string(),
+                        data: val.clone(),
+                    },
+                )
+                .with_raw_ref(&raw_ref),
+            );
+        }
+
         "user" | "human" => {
             let content = if let Some(text) = val.get("content").and_then(|v| v.as_str()) {
                 text.to_string()
@@ -838,6 +859,41 @@ fn parse_claude_record(
             }
         }
 
+        "system" if val.get("subtype").and_then(|v| v.as_str()) == Some("compact_boundary") => {
+            if let Some(cm) = val.get("compactMetadata") {
+                let trigger = cm
+                    .get("trigger")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let pre_tokens = cm.get("preTokens").and_then(|v| v.as_u64());
+                let post_tokens = cm.get("postTokens").and_then(|v| v.as_u64());
+                // Derived, not read from the harness's own `cumulativeDroppedTokens` --
+                // see `CompactionEvent::dropped_tokens`'s doc comment for why.
+                let dropped_tokens = match (pre_tokens, post_tokens) {
+                    (Some(pre), Some(post)) => Some(pre.saturating_sub(post)),
+                    _ => None,
+                };
+                let duration_ms = cm.get("durationMs").and_then(|v| v.as_u64());
+
+                *seq += 1;
+                events.push(
+                    NormalizedEvent::new(
+                        *seq,
+                        ts,
+                        EventPayload::Compaction(CompactionEvent {
+                            trigger,
+                            pre_tokens,
+                            post_tokens,
+                            dropped_tokens,
+                            duration_ms,
+                        }),
+                    )
+                    .with_raw_ref(&raw_ref),
+                );
+            }
+        }
+
         "error" => {
             let message = val
                 .get("error")
@@ -1160,5 +1216,93 @@ mod tests {
                 ("analysis.ipynb".to_string(), FileActionType::Edit),
             ]
         );
+    }
+
+    /// Real-shape fixture: a `system`/`compact_boundary` record carrying `compactMetadata`,
+    /// immediately followed by a `user` record with `isCompactSummary: true` -- the exact two-
+    /// record shape confirmed against real Claude Code session logs on disk (not just the
+    /// field names from issue #32's description, which undersold how the two markers relate).
+    #[test]
+    fn test_parse_claude_compaction_boundary_and_summary() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Fix the flaky test"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","content":[{"type":"text","text":"On it."}]}
+{"type":"system","subtype":"compact_boundary","timestamp":"2026-08-29T10:05:00Z","uuid":"boundary-1","compactMetadata":{"trigger":"manual","preTokens":754356,"postTokens":25834,"durationMs":213832,"cumulativeDroppedTokens":728522}}
+{"type":"user","timestamp":"2026-08-29T10:05:01Z","isCompactSummary":true,"parentUuid":"boundary-1","message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context.\n\nSummary:\n1. Fixed the flaky test in test_foo.rs"}}
+{"type":"assistant","timestamp":"2026-08-29T10:05:05Z","content":[{"type":"text","text":"Continuing from the summary."}]}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+        let trace = result.trace;
+
+        assert_eq!(trace.stats.compaction_count, 1);
+        assert_eq!(trace.stats.compaction_tokens_dropped, 728_522);
+
+        let compactions: Vec<_> = trace
+            .events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::Compaction(c) => Some(c),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(compactions.len(), 1);
+        assert_eq!(compactions[0].trigger, "manual");
+        assert_eq!(compactions[0].pre_tokens, Some(754_356));
+        assert_eq!(compactions[0].post_tokens, Some(25_834));
+        assert_eq!(compactions[0].dropped_tokens, Some(728_522));
+        assert_eq!(compactions[0].duration_ms, Some(213_832));
+
+        // Only the two genuine user messages count -- the compaction summary must not
+        // inflate user_messages_count or be mistakable for something the user typed.
+        assert_eq!(trace.stats.user_messages_count, 1);
+
+        let compact_summaries: Vec<_> = trace
+            .events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::Custom { kind, .. } if kind == "compact_summary" => Some(()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            compact_summaries.len(),
+            1,
+            "the isCompactSummary record must survive as Custom data, not vanish"
+        );
+    }
+
+    /// Real numbers from an actual multi-compaction Claude Code session: the harness's own
+    /// `cumulativeDroppedTokens` counter reset mid-session (828179 after round 2 does NOT equal
+    /// round1's 728522 + round2's own 832179 delta -- it resets to exactly round 2's own delta),
+    /// so summing each round's derived `pre_tokens - post_tokens` is the only value that adds up
+    /// to the true session total. This regression-tests that `parse` never reads
+    /// `cumulativeDroppedTokens` directly.
+    #[test]
+    fn test_parse_claude_multiple_compactions_sum_independently_of_harness_cumulative_counter() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"type":"system","subtype":"compact_boundary","timestamp":"2026-08-29T10:00:00Z","compactMetadata":{"trigger":"manual","preTokens":754356,"postTokens":25834,"durationMs":213832,"cumulativeDroppedTokens":728522}}
+{"type":"user","timestamp":"2026-08-29T10:00:01Z","isCompactSummary":true,"message":{"role":"user","content":"Summary 1"}}
+{"type":"system","subtype":"compact_boundary","timestamp":"2026-08-29T11:00:00Z","compactMetadata":{"trigger":"manual","preTokens":851578,"postTokens":19399,"durationMs":249964,"cumulativeDroppedTokens":832179}}
+{"type":"user","timestamp":"2026-08-29T11:00:01Z","isCompactSummary":true,"message":{"role":"user","content":"Summary 2"}}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+        let trace = result.trace;
+
+        assert_eq!(trace.stats.compaction_count, 2);
+        // 728522 + 832179 = 1560701 -- correct only if each round's OWN delta is summed.
+        // Trusting the harness's raw cumulative field (reading just the last round's
+        // 832179, or worse, summing 728522 + 832179 as if both were deltas) gives a
+        // different, wrong number.
+        assert_eq!(trace.stats.compaction_tokens_dropped, 1_560_701);
     }
 }

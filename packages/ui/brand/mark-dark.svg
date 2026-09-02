@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="256" height="256" role="img" aria-labelledby="t d">
+  <title id="t">AgentWorth mark, dark background</title>
+  <desc id="d">A thermal receipt with a torn bottom edge. Two neutral line items sit above one heavier violet bar: the total, the one number that is checked.</desc>
+  <style>.b{fill:#ffffff} .t{fill:#a396d6}</style>
+  <path class="b" fill-rule="evenodd" d="M7 6.4A2.4 2.4 0 0 1 9.4 4H22.6A2.4 2.4 0 0 1 25 6.4V25.6L22.75 23.2 20.5 25.6 18.25 23.2 16 25.6 13.75 23.2 11.5 25.6 9.25 23.2 7 25.6ZM11.5 8.8H20.5A1.1 1.1 0 0 1 20.5 11H11.5A1.1 1.1 0 0 1 11.5 8.8ZM11.5 13H16.3A1.1 1.1 0 0 1 16.3 15.2H11.5A1.1 1.1 0 0 1 11.5 13Z"/>
+  <path class="t" d="M11.8 17.2H20.2A1.4 1.4 0 0 1 20.2 20H11.8A1.4 1.4 0 0 1 11.8 17.2Z"/>
+</svg>

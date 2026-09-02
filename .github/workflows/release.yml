@@ -45,16 +45,12 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
-            binary_name: agentworth
           - os: macos-latest
             target: x86_64-apple-darwin
-            binary_name: agentworth
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary_name: agentworth
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            binary_name: agentworth
           # Windows dropped 2026-09-02: the npm launcher's tar extraction kept breaking
           # on Windows-style paths (a drive letter before the colon parses as a remote
           # "host:path" tar spec) across multiple releases. macOS/Linux only for now --
@@ -92,24 +88,25 @@ jobs:
             || { echo "::error::apps/dashboard/dist/index.html missing — the binary would ship without a UI"; exit 1; }
           echo "dashboard dist: $(du -sh apps/dashboard/dist | cut -f1)"
 
-      - name: Build binary
+      - name: Build binaries
         run: |
-          cargo build --release --target ${{ matrix.target }} --bin agentworth
+          cargo build --release --target ${{ matrix.target }} --bin agentworth --bin agwt
 
       - name: Package artifact
         shell: bash
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          BIN_PATH="target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
-          
+          RELEASE_DIR="target/${{ matrix.target }}/release"
+
           # Strip symbols to reduce bundle size
           if command -v strip >/dev/null 2>&1; then
-            strip "$BIN_PATH" || true
+            strip "$RELEASE_DIR/agentworth" || true
+            strip "$RELEASE_DIR/agwt" || true
           fi
-          
+
           ARCHIVE_NAME="agentworth-v${VERSION}-${{ matrix.target }}.tar.gz"
-          tar -czvf "$ARCHIVE_NAME" -C "target/${{ matrix.target }}/release" "${{ matrix.binary_name }}"
-          
+          tar -czvf "$ARCHIVE_NAME" -C "$RELEASE_DIR" agentworth agwt
+
           # Generate SHA256 checksum
           if command -v shasum >/dev/null 2>&1; then
             shasum -a 256 "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
