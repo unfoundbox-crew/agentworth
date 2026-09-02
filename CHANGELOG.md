@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.13] - 2026-09-02
+
+### Added
+
+- **MCP server.** `agentworth mcp` (stdio) exposes the index to any coding agent: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`. Redaction on by default. Register with `claude mcp add agentworth -- agentworth mcp` (#56).
+- **Per-session compaction tracking** in the schema, storage and API, and a compaction pane in the dashboard: rounds, context before and after, what survived, marked on the trajectory (#57, #62).
+- **CLI output redesigned.** One design system for `stats`, `usage`, `traces`, `blame`, `scan` and the receipt: the evidence ladder with its evidence line, right-aligned numbers, 100-column max, no emoji, `--plain`, `--no-color`, `NO_COLOR` and non-TTY honoured. `--json` payloads unchanged (#67).
+- Real vendor logos in the coverage matrix, and one brand mark across the site, dashboard, favicons and social card (#59, #63, #65, #66).
+- `curl -fsSL https://agentworth.dev/install.sh | sh` is now a real installer (#55).
+
+### Fixed
+
+- The index stored hundreds of config, telemetry and other non-session files as sessions with zero events. Discovery rules for seven adapters now reject them, the scanner skips zero-event parses, and a full scan prunes existing stubs (#68).
+- `agentworth serve --dist <path>` silently served the embedded dashboard when the path was wrong; it now fails at startup naming the path (#60).
+- `GET /api/traces` dropped `primary_outcome` and `composite_score` when null, so every outcome dot rendered grey; the keys are always present now (#60).
+- Release tarballs ship `agwt` as well as `agentworth`; the npm launcher resolves whichever name it was invoked as (#61).
+- CI now runs `cargo test --workspace` and the npm launcher tests; a test that had been red on main is fixed; one mutex `unwrap` that could wedge `serve` recovers (#54, #61).
+- Dashboard formatters no longer throw on a field the server stopped sending (#53).
+
+---
+
 ## [0.1.12] - 2026-09-02
 
 ### Fixed
