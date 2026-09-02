@@ -112,10 +112,12 @@ struct RenderedSection {
 /// One body section before the budget touches it: heading, true row count, rendered rows.
 type Candidate = (&'static str, usize, Vec<String>);
 
-/// Splits the line budget across the four body sections.
+/// Splits the line budget across the body sections.
 ///
-/// Order is priority order, and it is the argument the whole document makes: what was promised
-/// and never done decays fastest, what ran is the only proof anything worked, what changed is
+/// Order is priority order, and it is the argument the whole document makes: what compaction
+/// already deleted from the model's own view is unrecoverable from anywhere else and goes
+/// first (and is absent entirely for a session that never compacted), what was promised and
+/// never done decays fastest, what ran is the only proof anything worked, what changed is
 /// recoverable from git, and quoted decisions are a convenience. Each section gets one row
 /// before any section gets a second.
 ///
@@ -125,6 +127,24 @@ type Candidate = (&'static str, usize, Vec<String>);
 fn allocate(report: &HandoffReport, budget: usize) -> (Vec<RenderedSection>, Vec<(&'static str, usize)>) {
     let mut candidates: Vec<Candidate> = Vec::new();
 
+    if !report.forgotten.is_empty() {
+        candidates.push((
+            "Decided, then compacted away",
+            report.forgotten_total,
+            report
+                .forgotten
+                .iter()
+                .map(|s| {
+                    format!(
+                        "- \"{}\"  [round {}, seq {}]",
+                        one_line(&s.text, 150),
+                        s.round,
+                        s.sequence
+                    )
+                })
+                .collect(),
+        ));
+    }
     if !report.loose_ends.is_empty() {
         candidates.push((
             "Said it would, no evidence it did",

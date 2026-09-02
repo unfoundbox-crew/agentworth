@@ -845,3 +845,261 @@ async fn test_carry_forward_names_a_session_it_could_not_read() {
     assert_eq!(unreadable.len(), 1);
     assert_eq!(unreadable[0]["session_id"], id);
 }
+
+use super::params::ForgottenContextParams;
+
+/// A synthetic two-round compacted session in the exact shape Claude Code writes it: a
+/// `system`/`compact_boundary` record carrying `compactMetadata`, immediately followed by a
+/// `user` record with `isCompactSummary: true`. Round 1 drops two decision-shaped sentences,
+/// one of which the summary restates; round 2 drops one more and restates nothing.
+fn write_compacted_session(dir: &std::path::Path, session_id: &str) -> std::path::PathBuf {
+    let project = dir.join("projects").join("-Users-x-code-unfoundbox-agentworth");
+    std::fs::create_dir_all(&project).expect("create project dir");
+
+    let lines = [
+        r#"{"type":"user","timestamp":"2026-09-01T10:00:00Z","content":"build the compaction diff"}"#,
+        r#"{"type":"assistant","timestamp":"2026-09-01T10:01:00Z","model":"claude-opus-5","usage":{"input_tokens":500,"output_tokens":120,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"We decided to store the round boundaries rather than rescan the file. The splitter is hand-rolled because the regex crate has no lookbehind."}]}"#,
+        r#"{"type":"assistant","timestamp":"2026-09-01T10:02:00Z","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"crates/storage/src/lib.rs","old_string":"a","new_string":"b"}}]}"#,
+        r#"{"type":"system","subtype":"compact_boundary","timestamp":"2026-09-01T10:30:00Z","uuid":"b1","compactMetadata":{"trigger":"manual","preTokens":754356,"postTokens":25834,"durationMs":1000,"cumulativeDroppedTokens":728522}}"#,
+        r#"{"type":"user","timestamp":"2026-09-01T10:30:01Z","isCompactSummary":true,"parentUuid":"b1","message":{"role":"user","content":"Carried forward: we decided to store the round boundaries rather than rescan the file."}}"#,
+        r#"{"type":"assistant","timestamp":"2026-09-01T11:00:00Z","content":[{"type":"text","text":"Going with 0.6 Jaccard instead of an exact match on the sentence text."}]}"#,
+        r#"{"type":"system","subtype":"compact_boundary","timestamp":"2026-09-01T11:30:00Z","uuid":"b2","compactMetadata":{"trigger":"manual","preTokens":851578,"postTokens":19399,"durationMs":1000,"cumulativeDroppedTokens":832179}}"#,
+        r#"{"type":"user","timestamp":"2026-09-01T11:30:01Z","isCompactSummary":true,"parentUuid":"b2","message":{"role":"user","content":"The work continues on the extractor and on its tests."}}"#,
+        r#"{"type":"assistant","timestamp":"2026-09-01T11:31:00Z","content":[{"type":"text","text":"We decided this last one is after every round and is still in context."}]}"#,
+    ];
+
+    let path = project.join(format!("{session_id}.jsonl"));
+    std::fs::write(&path, lines.join("\n")).expect("write compacted transcript");
+    path
+}
+
+/// Seeds a compacted session the way a real scan would: parsed by the adapter, so the round
+/// boundaries land in `session_compaction` rather than being hand-written into it.
+fn seed_compacted_session(storage: &Storage, dir: &std::path::Path, session_id: &str) {
+    use agentworth_adapter_sdk::{AgentAdapter, SessionSource};
+
+    let path = write_compacted_session(dir, session_id);
+    let adapter = agentworth_adapters::ClaudeCodeAdapter::new();
+    let source = SessionSource::from_path(&path, adapter.name()).expect("source");
+    let mut trace = adapter.parse(&source).expect("parse compacted fixture").trace;
+    trace.session_id = session_id.to_string();
+    storage.upsert_trace(&trace).expect("seed compacted session");
+}
+
+fn forgotten_params(session_id: &str) -> ForgottenContextParams {
+    ForgottenContextParams {
+        session_id: Some(session_id.to_string()),
+        include_raw: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_forgotten_context_include_raw_defaults_false() {
+    let params: ForgottenContextParams =
+        serde_json::from_value(serde_json::json!({ "session_id": "abc" })).unwrap();
+    assert!(
+        !params.include_raw,
+        "everything this tool returns is transcript text; redacted is the default"
+    );
+    assert_eq!(params.limit, None);
+    assert_eq!(params.round, None);
+}
+
+#[tokio::test]
+async fn test_forgotten_context_diffs_a_two_round_session_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "cccccccc-0000-0000-0000-000000000001";
+    seed_compacted_session(&storage, dir.path(), id);
+
+    // The boundaries came off the scan, not off a rescan inside the tool.
+    assert_eq!(storage.get_compaction_rounds(id).unwrap().len(), 2);
+
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+    let value = call_result_json(
+        server
+            .forgotten_context(Parameters(forgotten_params(id)))
+            .await
+            .expect("diff for a seeded compacted session"),
+    );
+
+    assert_eq!(value["compactions"], 2);
+    assert_eq!(value["receipt"]["rounds_source"], "index");
+    assert_eq!(value["receipt"]["method"], "regex_v1");
+    assert_eq!(value["receipt"]["no_model"], true);
+
+    // Round 1 dropped two, one of which the summary restates; round 2 dropped one.
+    assert_eq!(value["dropped_total"], 3);
+    assert_eq!(value["survived_in_summary"], 1);
+    assert_eq!(value["forgotten_total"], 2);
+
+    let forgotten = value["forgotten"].as_array().unwrap();
+    assert_eq!(forgotten.len(), 2);
+    assert_eq!(forgotten[0]["round"], 2, "newest first");
+    assert!(forgotten[0]["text"].as_str().unwrap().contains("0.6 Jaccard"));
+    assert_eq!(forgotten[1]["round"], 1);
+    assert!(
+        forgotten[1]["text"].as_str().unwrap().contains("because"),
+        "the reason survives extraction even though it did not survive compaction"
+    );
+    assert!(
+        !forgotten
+            .iter()
+            .any(|f| f["text"].as_str().unwrap().contains("still in context")),
+        "a sentence after the last boundary was never dropped"
+    );
+
+    // The reason sentence was followed by an Edit, which is what makes it checkable.
+    assert_eq!(forgotten[1]["followed_by"][0]["what"], "tool_call:Edit");
+
+    assert!(
+        value["headline"]
+            .as_str()
+            .unwrap()
+            .starts_with("Things you decided"),
+        "{}",
+        value["headline"]
+    );
+    assert!(value["notes"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_forgotten_context_round_and_class_filters() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "cccccccc-0000-0000-0000-000000000002";
+    seed_compacted_session(&storage, dir.path(), id);
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let round_one = call_result_json(
+        server
+            .forgotten_context(Parameters(ForgottenContextParams {
+                round: Some(1),
+                ..forgotten_params(id)
+            }))
+            .await
+            .expect("round filter"),
+    );
+    let rows = round_one["forgotten"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["round"], 1);
+
+    let reasons = call_result_json(
+        server
+            .forgotten_context(Parameters(ForgottenContextParams {
+                classes: Some(vec!["reason".to_string()]),
+                ..forgotten_params(id)
+            }))
+            .await
+            .expect("class filter"),
+    );
+    assert_eq!(reasons["returned"], 1);
+    assert_eq!(
+        reasons["forgotten_total"], 2,
+        "the totals describe the session, not the filter"
+    );
+
+    let bad = server
+        .forgotten_context(Parameters(ForgottenContextParams {
+            classes: Some(vec!["everything".to_string()]),
+            ..forgotten_params(id)
+        }))
+        .await
+        .expect_err("an unknown class must be rejected, not ignored");
+    assert!(bad.message.contains("everything"), "{}", bad.message);
+}
+
+#[tokio::test]
+async fn test_forgotten_context_is_redacted_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "cccccccc-0000-0000-0000-000000000003";
+    seed_compacted_session(&storage, dir.path(), id);
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let value = call_result_json(
+        server
+            .forgotten_context(Parameters(ForgottenContextParams {
+                session_id: Some(id.to_string()),
+                ..Default::default()
+            }))
+            .await
+            .expect("default call"),
+    );
+    assert_eq!(value["receipt"]["redacted"], true);
+    assert!(
+        !value["receipt"]["source_path"]
+            .as_str()
+            .unwrap()
+            .contains("unfoundbox/agentworth"),
+        "the session's own repository identity must be masked: {}",
+        value["receipt"]["source_path"]
+    );
+}
+
+/// A session that never compacted returns a named "nothing here" rather than an empty list a
+/// caller could read as a finding.
+#[tokio::test]
+async fn test_forgotten_context_never_compacted_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "cccccccc-0000-0000-0000-000000000004";
+    seed_fixture_session(&storage, dir.path(), id, "2026-09-01");
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let value = call_result_json(
+        server
+            .forgotten_context(Parameters(forgotten_params(id)))
+            .await
+            .expect("a never-compacted session is not an error"),
+    );
+    assert_eq!(value["compactions"], 0);
+    assert!(value["forgotten"].as_array().unwrap().is_empty());
+    let notes: Vec<&str> = value["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n.as_str().unwrap())
+        .collect();
+    assert_eq!(notes, vec!["no_compactions_in_this_session"]);
+}
+
+#[tokio::test]
+async fn test_forgotten_context_rejects_a_limit_over_the_ceiling() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let err = server
+        .forgotten_context(Parameters(ForgottenContextParams {
+            limit: Some(500),
+            ..forgotten_params("anything")
+        }))
+        .await
+        .expect_err("a limit over the ceiling is an error, not a silent clamp");
+    assert!(err.message.contains("200"), "{}", err.message);
+}
+
+/// `sessions.source_path` can point at a file that has since been deleted. Returning a partial
+/// diff assembled from the index row would be inventing content, so the tool refuses.
+#[tokio::test]
+async fn test_forgotten_context_refuses_when_the_transcript_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "cccccccc-0000-0000-0000-000000000005";
+    seed_compacted_session(&storage, dir.path(), id);
+    std::fs::remove_file(
+        dir.path()
+            .join("projects")
+            .join("-Users-x-code-unfoundbox-agentworth")
+            .join(format!("{id}.jsonl")),
+    )
+    .unwrap();
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let err = server
+        .forgotten_context(Parameters(forgotten_params(id)))
+        .await
+        .expect_err("a missing transcript must refuse rather than answer from the index");
+    assert!(err.message.contains(id), "{}", err.message);
+}

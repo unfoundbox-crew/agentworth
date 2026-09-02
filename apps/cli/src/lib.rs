@@ -1,5 +1,6 @@
 pub mod app;
 pub mod commands;
+pub mod forgotten;
 pub mod handoff;
 pub mod mcp;
 pub mod server;
