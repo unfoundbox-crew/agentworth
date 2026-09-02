@@ -21,8 +21,9 @@
 | `loose-ends.md` | built | #77 — `agentworth loose-ends`, the dashboard's detector ported to Rust |
 | `compaction-diff.md` | built | #83 — `forgotten_context`, `agentworth forgotten`, stored round boundaries, and a handoff section |
 | `market-autofix.md` | research doc, not a build item | — |
+| `beliefs.md` | proposed, measured | — |
 
-Seventeen specs sit beside this file. They are independent of each other but not of
+Eighteen specs sit beside this file. They are independent of each other but not of
 the backend, and two of them are worth less than they look until a bug lands
 first. This is the sequencing.
 
@@ -112,7 +113,7 @@ can't answer, then decide whether 9 is worth it.
 
 The table above is a build order for a dashboard. The consumer of an answer is
 an agent over MCP, or a person in a chat app — neither of them opens a pane.
-Five documents cover what to build next on that basis. Nothing above gets
+Six documents cover what to build next on that basis. Nothing above gets
 deleted; the panes are built and they stay.
 
 **The MCP tool ships before any UI, for every one of these.** A tool is
@@ -128,6 +129,7 @@ worth drawing.
 | C | `handoff.md` — **built, #TBD** | `session_handoff`, `carry_forward` | nothing left: loose ends are ported, and `prompt_preview` has been populated since #47 |
 | D | `suspect-commits.md` | `suspect_commits` | absolute-path filtering, then a `session_risk` table |
 | E | `compaction-diff.md` — **built, #83** | `forgotten_context` | nothing left: the round boundaries are stored and backfilled |
+| F | `beliefs.md` | `claim_check` | D's absolute-path anchoring, which the same-file claims reuse |
 
 ### Why that order
 
@@ -160,6 +162,13 @@ main, the obvious join flags 33% of commits and nine of ten sampled flags are
 false, all from relative blame paths that suffix-match every repo on the disk.
 Anchored properly it flags 2.6%. Ship the anchoring, or ship a feature that
 loses trust on its first run.
+
+**F is after D because it is D's shape applied to facts instead of commits.**
+E proves a session forgets what it decided; F measures that it also keeps what
+stopped being true — one entity's belief reversed, was corrected by hand, and
+four later sessions still asserted the dead version. Ship the lookup
+(`claim_check`), not the detector: measured, the detector runs at 30% precision
+and the lookup inherits none of it.
 
 **E is last because it needs a new table and serves 4% of sessions.** It is
 also the only one nothing else can do: 402 decision-shaped sentences went into
