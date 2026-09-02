@@ -15,6 +15,7 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::exit_status::backfill_shell_exit_codes;
 use crate::normalize_mcp_tool_name;
 
 /// Adapter for discovering and normalizing MiniMax (abab / MiniMax Agent) coding plan JSON and trajectory logs.
@@ -232,6 +233,7 @@ impl AgentAdapter for MiniMaxAdapter {
                         trace.ended_at = Some(latest);
                     }
 
+                    backfill_shell_exit_codes(&mut trace.events);
                     trace.recalculate_stats();
 
                     return Ok(ParseResult {
@@ -278,6 +280,7 @@ impl AgentAdapter for MiniMaxAdapter {
             trace.ended_at = Some(latest);
         }
 
+        backfill_shell_exit_codes(&mut trace.events);
         trace.recalculate_stats();
 
         Ok(ParseResult {

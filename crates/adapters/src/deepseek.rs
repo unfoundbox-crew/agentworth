@@ -15,6 +15,7 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::exit_status::backfill_shell_exit_codes;
 use crate::normalize_mcp_tool_name;
 
 /// Adapter for discovering and normalizing DeepSeek (DeepSeek-Coder, R1, V3) agent traces.
@@ -234,6 +235,7 @@ impl AgentAdapter for DeepSeekAdapter {
                         trace.ended_at = Some(latest);
                     }
 
+                    backfill_shell_exit_codes(&mut trace.events);
                     trace.recalculate_stats();
 
                     return Ok(ParseResult {
@@ -280,6 +282,7 @@ impl AgentAdapter for DeepSeekAdapter {
             trace.ended_at = Some(latest);
         }
 
+        backfill_shell_exit_codes(&mut trace.events);
         trace.recalculate_stats();
 
         Ok(ParseResult {

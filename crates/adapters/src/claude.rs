@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::exit_status::backfill_shell_exit_codes_except;
 use crate::normalize_mcp_tool_name;
 
 /// Adapter for discovering and normalizing Claude Code sessions.
@@ -206,6 +208,8 @@ impl AgentAdapter for ClaudeCodeAdapter {
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
+        // Tool calls whose result describes something other than a finished command.
+        let mut unfinished_calls: HashSet<String> = HashSet::new();
 
         let file = File::open(&source.path)?;
         let mut reader = BufReader::new(file);
@@ -251,9 +255,12 @@ impl AgentAdapter for ClaudeCodeAdapter {
                             latest_ts = Some(timestamp);
                         }
 
+                        collect_unfinished_calls(item, &mut unfinished_calls);
                         let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
+
+                    backfill_shell_exit_codes_except(&mut trace.events, &unfinished_calls);
 
                     if let Some(earliest) = earliest_ts {
                         trace.started_at = earliest;
@@ -296,9 +303,12 @@ impl AgentAdapter for ClaudeCodeAdapter {
                     latest_ts = Some(timestamp);
                 }
 
+                collect_unfinished_calls(&val, &mut unfinished_calls);
                 let events = parse_claude_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
+
+            backfill_shell_exit_codes_except(&mut trace.events, &unfinished_calls);
         }
 
         if let Some(earliest) = earliest_ts {
@@ -315,6 +325,43 @@ impl AgentAdapter for ClaudeCodeAdapter {
             malformed_lines,
             warnings,
         })
+    }
+}
+
+/// Claude Code writes a `toolUseResult` sidecar next to each `tool_result` block. Two of its
+/// fields mean the result is not the command's verdict: `backgroundTaskId` (the tool returned as
+/// soon as the process was launched, and it is still running) and `interrupted` (the run was cut
+/// short). Both come back with `is_error: false`, so without this the success envelope would read
+/// as "exit 0" for a `cargo test` that has not finished — the exact over-trust this path exists
+/// to remove. Their tool-call ids are collected here and left at `exit_code: None`.
+fn collect_unfinished_calls(val: &Value, out: &mut HashSet<String>) {
+    let Some(sidecar) = val.get("toolUseResult").and_then(|v| v.as_object()) else {
+        return;
+    };
+    let unfinished = sidecar.contains_key("backgroundTaskId")
+        || sidecar.get("interrupted").and_then(|v| v.as_bool()) == Some(true);
+    if !unfinished {
+        return;
+    }
+
+    let Some(blocks) = val
+        .get("content")
+        .or_else(|| val.get("message").and_then(|m| m.get("content")))
+        .and_then(|c| c.as_array())
+    else {
+        return;
+    };
+    for block in blocks {
+        if block.get("type").and_then(|v| v.as_str()) != Some("tool_result") {
+            continue;
+        }
+        if let Some(id) = block
+            .get("tool_use_id")
+            .or_else(|| block.get("call_id"))
+            .and_then(|v| v.as_str())
+        {
+            out.insert(id.to_string());
+        }
     }
 }
 
