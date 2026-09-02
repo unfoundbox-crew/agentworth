@@ -189,9 +189,10 @@ efficiency detector produces it.
 
 ## 5. Open questions
 
-Four of these had to be answered to build #118. What was decided, and what is still open:
+Four had to be answered to build #118, and the cockpit answered the fifth in #121. What
+was decided, and what is still open:
 
-| Question | Answered in #118 |
+| Question | Answered |
 | :--- | :--- |
 | Where does `blunder-blame` live? | `repo blunder-blame`, as mapped above. File-first is its trusted direction. |
 | Should an `index` noun exist? | Still open. `merge` stayed top-level and `--db-path` stayed global. |
