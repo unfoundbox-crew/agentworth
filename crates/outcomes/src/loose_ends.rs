@@ -177,8 +177,7 @@ pub fn find_loose_ends(events: &[NormalizedEvent]) -> Vec<LooseEnd> {
             .into_iter()
             .filter(|s| {
                 let len = js_length(s);
-                len >= MIN_LEN
-                    && len <= MAX_LEN
+                (MIN_LEN..=MAX_LEN).contains(&len)
                     && intent_re().is_match(s)
                     && !gated_re().is_match(s)
                     && !awaiting_user_re().is_match(s)

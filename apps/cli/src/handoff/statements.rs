@@ -54,7 +54,7 @@ pub fn find_decisions(events: &[&NormalizedEvent]) -> Vec<Statement> {
         };
         for sentence in split_sentences(content) {
             let len = sentence.encode_utf16().count();
-            if len < MIN_LEN || len > MAX_LEN || !decision_re().is_match(sentence) {
+            if !(MIN_LEN..=MAX_LEN).contains(&len) || !decision_re().is_match(sentence) {
                 continue;
             }
             out.push(Statement {

@@ -186,7 +186,7 @@ fn allocate(report: &HandoffReport, budget: usize) -> (Vec<RenderedSection>, Vec
     // without it; if anything was dropped, re-plan with the line reserved so the notice cannot
     // push the document one line over its own budget.
     let caps = plan(&candidates, budget, FIXED_LINES);
-    let caps = if caps.iter().any(|c| *c == 0) {
+    let caps = if caps.contains(&0) {
         plan(&candidates, budget, FIXED_LINES + 1)
     } else {
         caps

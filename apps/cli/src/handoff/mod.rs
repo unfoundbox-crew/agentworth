@@ -402,10 +402,13 @@ fn collect_commands(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<RanC
     // call id -> did the harness report the call as an error.
     let mut errored: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
     for event in events {
-        if let EventPayload::ToolResult(ToolResult { call_id, is_error, .. }) = &event.payload {
-            if let Some(id) = call_id {
-                errored.insert(id.clone(), *is_error);
-            }
+        if let EventPayload::ToolResult(ToolResult {
+            call_id: Some(id),
+            is_error,
+            ..
+        }) = &event.payload
+        {
+            errored.insert(id.clone(), *is_error);
         }
     }
 
