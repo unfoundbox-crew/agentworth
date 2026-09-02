@@ -1,8 +1,8 @@
 # Archie bench
 
-Status: the local table is **built** in #TBD; measured 2026-09-02.
+Status: the local table is **built** in #124; measured 2026-09-02.
 
-**What #TBD shipped, and what it did not.** The local leaderboard is
+**What #124 shipped, and what it did not.** The local leaderboard is
 `archie stats ladder` and the `stats_ladder` MCP tool: the ladder with the
 API-equivalent spend below the evidence line, cost per verified outcome by
 model, repo, adapter or effort, and the newest verified sessions. Three
@@ -27,7 +27,7 @@ Two preconditions cleared since this was written. Pricing was refreshed in
 `sessions.effort` landed in #116, so `--by effort` reads what Codex records and
 names the sessions that carry none rather than faking a value.
 
-**Not built here:** the opt-in aggregate export across users. Nothing in #TBD
+**Not built here:** the opt-in aggregate export across users. Nothing in #124
 sends anything anywhere.
 
 ## The one-line version
