@@ -77,7 +77,9 @@ tar -xzf "$tmpdir/$asset" -C "$tmpdir"
 
 mkdir -p "$INSTALL_DIR"
 
-for bin in agentworth agwt; do
+# `archie` is the short name; `agwt` still installs so an existing shell history, alias or
+# script keeps working. Both are the same binary.
+for bin in agentworth archie agwt; do
   found=""
   if [ -f "$tmpdir/$bin" ]; then
     found="$tmpdir/$bin"
@@ -103,4 +105,4 @@ case ":$PATH:" in
 esac
 
 echo ""
-echo "Done. Run 'agentworth --version' to verify."
+echo "Done. Run 'archie --version' to verify."

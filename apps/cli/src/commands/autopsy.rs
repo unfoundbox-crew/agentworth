@@ -1,6 +1,6 @@
 //! Prompt Autopsy command for AgentWorth.
 //!
-//! Subcommand: `agentworth autopsy [--min-occurrences N] [--json]`
+//! Subcommand: `archie session autopsy [--min-occurrences N] [--json]`
 //! Scans user prompt turns across all indexed sessions to surface recurring human corrections,
 //! frustrations, and guardrail reminders, aggregating frequency and estimated token expenditure.
 
@@ -84,7 +84,7 @@ pub fn perform_prompt_autopsy(
     // session (a disk read plus a full adapter parse), not just a summary-row scan. Still safe
     // to leave unbounded: `autopsy` is a CLI command a person runs on demand, not an HTTP
     // response someone is blocked on, and compute_verdict_breakdown already runs this same
-    // unbounded per-session trace-load pattern on every `agentworth stats` call, which is
+    // unbounded per-session trace-load pattern on every `archie stats` call, which is
     // invoked far more often than autopsy will be.
     let sessions = storage.list_sessions_filtered(&SessionFilter {
         limit: None,
@@ -153,7 +153,7 @@ pub fn perform_prompt_autopsy(
     })
 }
 
-/// Execute the `agentworth autopsy` subcommand.
+/// Execute the `archie session autopsy` subcommand.
 pub fn run_autopsy_command(
     min_occurrences: usize,
     json: bool,

@@ -190,7 +190,7 @@ pub fn stats(ui: &Ui, v: &StatsView<'_>) -> String {
     let i = ui.inner();
 
     let right = v.db_path.map(shorten_home).unwrap_or_default();
-    out.push_str(&ui.header("agentworth stats", &right));
+    out.push_str(&ui.header("archie stats", &right));
     out.push('\n');
 
     // The one-line summary: what is indexed, over what span, how much of it.
@@ -411,7 +411,7 @@ pub fn stats(ui: &Ui, v: &StatsView<'_>) -> String {
     }
 
     out.push_str(&ui.next(
-        "agentworth traces --limit 20",
+        "archie session list --limit 20",
         "the newest sessions, ladder first",
     ));
     out
@@ -520,7 +520,7 @@ pub fn traces(ui: &Ui, command: &str, indexed: usize, rows: &[TraceRow]) -> Stri
     // The SESSION column truncates, but this line must be runnable: `inspect` resolves an
     // exact id, not a prefix, so the closing command carries the whole thing.
     let hint = pick
-        .map(|r| format!("agentworth inspect {}", r.session_id))
+        .map(|r| format!("archie session show {}", r.session_id))
         .unwrap_or_default();
 
     if display_width(&finding) + display_width(&hint) + 2 <= i {
@@ -833,7 +833,7 @@ pub fn blame(ui: &Ui, path: &str, rows: &[BlameRow]) -> String {
     let i = ui.inner();
 
     out.push_str(&ui.header(
-        &format!("agentworth blame {}", path),
+        &format!("archie repo blame {}", path),
         &format!(
             "{} session{} touched it",
             rows.len(),
@@ -852,7 +852,7 @@ pub fn blame(ui: &Ui, path: &str, rows: &[BlameRow]) -> String {
             ),
         );
         out.push('\n');
-        out.push_str(&ui.next("agentworth scan", "re-index, if it should be here"));
+        out.push_str(&ui.next("archie scan", "re-index, if it should be here"));
         return out;
     }
 
@@ -980,7 +980,7 @@ pub fn doctor(ui: &Ui, v: &DoctorView) -> String {
     let mut out = String::new();
     let i = ui.inner();
 
-    out.push_str(&ui.header("agentworth doctor", &format!("v{}", v.version)));
+    out.push_str(&ui.header("archie doctor", &format!("v{}", v.version)));
     out.push('\n');
 
     section(&mut out, ui, "ENVIRONMENT", "");
@@ -1058,7 +1058,7 @@ pub fn doctor(ui: &Ui, v: &DoctorView) -> String {
     }
     out.push('\n');
 
-    out.push_str(&ui.next("agentworth scan", "pick up anything new since the last index"));
+    out.push_str(&ui.next("archie scan", "pick up anything new since the last index"));
     out
 }
 
@@ -1086,7 +1086,7 @@ pub fn matrix(ui: &Ui, coverage_pct: &str, rows: &[MatrixRow]) -> String {
     let i = ui.inner();
 
     out.push_str(&ui.header(
-        "agentworth matrix",
+        "archie agent list",
         &format!("{} adapters {} {} grounded coverage", rows.len(), ui.dot(), coverage_pct),
     ));
     out.push('\n');
@@ -1147,7 +1147,7 @@ pub fn matrix(ui: &Ui, coverage_pct: &str, rows: &[MatrixRow]) -> String {
     );
     out.push('\n');
     out.push_str(&ui.next(
-        "agentworth doctor",
+        "archie doctor",
         "which of these are actually installed here",
     ));
     out
@@ -1341,7 +1341,7 @@ pub fn scan_summary(ui: &Ui, v: &ScanView) -> String {
         );
     }
     out.push('\n');
-    out.push_str(&ui.next("agentworth stats", "the ladder across everything indexed"));
+    out.push_str(&ui.next("archie stats", "the ladder across everything indexed"));
     out
 }
 
@@ -1616,7 +1616,7 @@ pub fn suspect(ui: &Ui, v: &SuspectView<'_>) -> String {
     let i = ui.inner();
 
     out.push_str(&ui.header(
-        "agentworth suspect",
+        "archie repo suspect",
         &format!(
             "{} of {} commit{}",
             v.rows.len(),
@@ -1788,7 +1788,7 @@ pub fn suspect(ui: &Ui, v: &SuspectView<'_>) -> String {
         }
     }
 
-    out.push_str(&ui.next("agentworth suspect --hook", "install it as a pre-push note"));
+    out.push_str(&ui.next("archie repo suspect --hook", "install it as a pre-push note"));
     out
 }
 
@@ -1845,7 +1845,7 @@ pub struct BisectView<'a> {
 pub fn bisect(ui: &Ui, v: &BisectView<'_>) -> String {
     let mut out = String::new();
     out.push_str(&ui.header(
-        &format!("agentworth bisect {}", v.session_id),
+        &format!("archie session bisect {}", v.session_id),
         &format!("{} · {} events", v.adapter, thousands(v.total_events as u64)),
     ));
     out.push('\n');
@@ -1877,7 +1877,7 @@ pub fn bisect(ui: &Ui, v: &BisectView<'_>) -> String {
     }
     out.push('\n');
     out.push_str(&ui.next(
-        &format!("agentworth inspect {}", v.session_id),
+        &format!("archie session show {}", v.session_id),
         "read the full event timeline",
     ));
     out
@@ -1904,7 +1904,7 @@ pub struct CacheDoctorView<'a> {
 
 pub fn cache_doctor(ui: &Ui, v: &CacheDoctorView<'_>) -> String {
     let mut out = String::new();
-    out.push_str(&ui.header(&format!("agentworth cache-doctor {}", v.session_id), v.adapter));
+    out.push_str(&ui.header(&format!("archie session cache {}", v.session_id), v.adapter));
     out.push('\n');
 
     section(&mut out, ui, "CACHE HEALTH", "");
@@ -1947,7 +1947,7 @@ pub fn cache_doctor(ui: &Ui, v: &CacheDoctorView<'_>) -> String {
     }
     out.push('\n');
     out.push_str(&ui.next(
-        &format!("agentworth inspect {}", v.session_id),
+        &format!("archie session show {}", v.session_id),
         "read the full event timeline",
     ));
     out
@@ -1975,7 +1975,7 @@ pub struct PrBlameView<'a> {
 
 pub fn pr_blame(ui: &Ui, v: &PrBlameView<'_>) -> String {
     let mut out = String::new();
-    out.push_str(&ui.header("agentworth pr-blame", ""));
+    out.push_str(&ui.header("archie repo pr-blame", ""));
     out.push('\n');
 
     section(&mut out, ui, "OVERLAY", "");
@@ -2036,7 +2036,7 @@ pub fn pr_blame(ui: &Ui, v: &PrBlameView<'_>) -> String {
         }
     }
     out.push('\n');
-    out.push_str(&ui.next("agentworth blame <path>", "the full session ladder for one file"));
+    out.push_str(&ui.next("archie repo blame <path>", "the full session ladder for one file"));
     out
 }
 
@@ -2054,7 +2054,7 @@ pub struct BlunderBlameTrailRow<'a> {
 
 pub fn blunder_blame_trails(ui: &Ui, rows: &[BlunderBlameTrailRow<'_>]) -> String {
     let mut out = String::new();
-    out.push_str(&ui.header("agentworth blunder-blame", &format!("{} traced", rows.len())));
+    out.push_str(&ui.header("archie repo blunder-blame", &format!("{} traced", rows.len())));
     out.push('\n');
 
     for (i, row) in rows.iter().enumerate() {
@@ -2088,7 +2088,7 @@ pub fn blunder_blame_trails(ui: &Ui, rows: &[BlunderBlameTrailRow<'_>]) -> Strin
         }
         out.push('\n');
     }
-    out.push_str(&ui.next("agentworth blunder", "the full ranked exhibit list"));
+    out.push_str(&ui.next("archie session blunder", "the full ranked exhibit list"));
     out
 }
 
@@ -2100,7 +2100,7 @@ pub struct BlunderBlameFileMatchRow<'a> {
 
 pub fn blunder_blame_file_report(ui: &Ui, file_path: &str, rows: &[BlunderBlameFileMatchRow<'_>]) -> String {
     let mut out = String::new();
-    out.push_str(&ui.header(&format!("agentworth blunder-blame --file {}", file_path), ""));
+    out.push_str(&ui.header(&format!("archie repo blunder-blame --file {}", file_path), ""));
     out.push('\n');
 
     if rows.is_empty() {
@@ -2122,7 +2122,7 @@ pub fn blunder_blame_file_report(ui: &Ui, file_path: &str, rows: &[BlunderBlameF
         }
     }
     out.push('\n');
-    out.push_str(&ui.next("agentworth blunder", "the full ranked exhibit list"));
+    out.push_str(&ui.next("archie session blunder", "the full ranked exhibit list"));
     out
 }
 
@@ -2143,7 +2143,7 @@ pub struct MergeView<'a> {
 
 pub fn merge(ui: &Ui, v: &MergeView<'_>) -> String {
     let mut out = String::new();
-    out.push_str(&ui.header(&format!("agentworth merge {}", v.source_name), v.target_name));
+    out.push_str(&ui.header(&format!("archie merge {}", v.source_name), v.target_name));
     out.push('\n');
 
     section(&mut out, ui, "SESSIONS", "");
@@ -2158,7 +2158,7 @@ pub fn merge(ui: &Ui, v: &MergeView<'_>) -> String {
     push(&mut out, ui, ui.leaders("  other", &thousands(v.child_rows_merged as u64), ui.width(), Role::Value));
     out.push('\n');
 
-    out.push_str(&ui.next("agentworth stats", "see the merged index's totals"));
+    out.push_str(&ui.next("archie stats", "see the merged index's totals"));
     out
 }
 
@@ -2168,7 +2168,7 @@ pub fn merge(ui: &Ui, v: &MergeView<'_>) -> String {
 
 pub fn watch_banner(ui: &Ui) -> String {
     let mut out = String::new();
-    out.push_str(&ui.header("agentworth watch", "polling for doom loops"));
+    out.push_str(&ui.header("archie session watch", "polling for doom loops"));
     out.push('\n');
     out
 }
@@ -2230,7 +2230,7 @@ pub struct BlindSpotsView<'a> {
 
 pub fn blind_spots(ui: &Ui, v: &BlindSpotsView<'_>) -> String {
     let mut out = String::new();
-    out.push_str(&ui.header("agentworth blind-spots", ""));
+    out.push_str(&ui.header("archie session list --unproven", ""));
     out.push('\n');
 
     section(&mut out, ui, "UNVERIFIED", "");
@@ -2271,7 +2271,7 @@ pub fn blind_spots(ui: &Ui, v: &BlindSpotsView<'_>) -> String {
         }
     }
     out.push('\n');
-    out.push_str(&ui.next("agentworth inspect <session-id>", "read the full event timeline"));
+    out.push_str(&ui.next("archie session show <session-id>", "read the full event timeline"));
     out
 }
 
@@ -2303,7 +2303,7 @@ pub struct AuditView<'a> {
 pub fn audit(ui: &Ui, v: &AuditView<'_>) -> String {
     let mut out = String::new();
     out.push_str(&ui.header(
-        "agentworth audit",
+        "archie session audit",
         &format!("{} sessions", thousands(v.total_sessions_audited as u64)),
     ));
     out.push('\n');
@@ -2322,7 +2322,7 @@ pub fn audit(ui: &Ui, v: &AuditView<'_>) -> String {
             format!("  {}", ui.paint(Role::Verified, "No dangerous tool calls or leaked secrets found.")),
         );
         out.push('\n');
-        out.push_str(&ui.next("agentworth scan", "pick up anything new since the last index"));
+        out.push_str(&ui.next("archie scan", "pick up anything new since the last index"));
         return out;
     }
 
@@ -2351,7 +2351,7 @@ pub fn audit(ui: &Ui, v: &AuditView<'_>) -> String {
         out.push('\n');
     }
     out.push_str(&ui.next(
-        "agentworth export <session-id> --redact",
+        "archie session export <session-id> --redact",
         "the full session with secrets stripped",
     ));
     out
@@ -2379,7 +2379,7 @@ pub struct BlunderExhibitRow<'a> {
 
 pub fn blunder(ui: &Ui, rows: &[BlunderExhibitRow<'_>]) -> String {
     let mut out = String::new();
-    out.push_str(&ui.header("agentworth blunder", &format!("{} exhibit(s)", rows.len())));
+    out.push_str(&ui.header("archie session blunder", &format!("{} exhibit(s)", rows.len())));
     out.push('\n');
 
     let wrap_width = ui.inner().saturating_sub(2);
@@ -2414,7 +2414,7 @@ pub fn blunder(ui: &Ui, rows: &[BlunderExhibitRow<'_>]) -> String {
         push(&mut out, ui, ui.leaders("    receipt hash", ex.session_hash, ui.width(), Role::Unverified));
         out.push('\n');
     }
-    out.push_str(&ui.next("agentworth blunder --submit", "publish the top exhibit"));
+    out.push_str(&ui.next("archie session blunder --submit", "publish the top exhibit"));
     out
 }
 
@@ -2464,7 +2464,7 @@ pub struct ThreatDigestView<'a> {
 pub fn threat_digest(ui: &Ui, v: &ThreatDigestView<'_>) -> String {
     let mut out = String::new();
     out.push_str(&ui.header(
-        "agentworth threat-digest",
+        "archie session risk",
         &format!("{} sessions scanned", thousands(v.sessions_scanned as u64)),
     ));
     out.push('\n');
@@ -2533,7 +2533,7 @@ pub fn threat_digest(ui: &Ui, v: &ThreatDigestView<'_>) -> String {
     }
     out.push('\n');
     out.push_str(&ui.next(
-        "agentworth export <session-id> --redact",
+        "archie session export <session-id> --redact",
         "the full session with secrets stripped",
     ));
     out
@@ -2788,7 +2788,7 @@ pub fn self_test(
 ) -> String {
     let mut out = String::new();
 
-    out.push_str(&ui.header("agentworth doctor --self-test", &format!("v{}", version)));
+    out.push_str(&ui.header("archie doctor --self-test", &format!("v{}", version)));
     out.push('\n');
 
     section(&mut out, ui, "WORKFLOW", &format!("{} steps", steps.len()));
@@ -2837,6 +2837,430 @@ pub fn self_test(
     );
     out.push('\n');
 
-    out.push_str(&ui.next("agentworth doctor", "the environment and storage snapshot alone"));
+    out.push_str(&ui.next("archie doctor", "the environment and storage snapshot alone"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// repo list
+// -----------------------------------------------------------------------------
+
+pub struct RepoListRow<'a> {
+    pub repo: &'a str,
+    pub sessions: usize,
+}
+
+pub struct RepoListView<'a> {
+    pub total_repos: usize,
+    pub total_sessions: usize,
+    pub rows: &'a [RepoListRow<'a>],
+}
+
+pub fn repo_list(ui: &Ui, v: &RepoListView<'_>) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header(
+        "archie repo list",
+        &format!(
+            "{} repos {} {} sessions",
+            v.total_repos,
+            ui.dot(),
+            thousands(v.total_sessions as u64)
+        ),
+    ));
+    out.push('\n');
+
+    if v.rows.is_empty() {
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Unverified, "Nothing indexed yet.")),
+        );
+        out.push('\n');
+        out.push_str(&ui.next("archie scan", "index what is already on this machine"));
+        return out;
+    }
+
+    const COUNT: usize = 9;
+    const SHARE: usize = 7;
+    let name = i.saturating_sub(COUNT + SHARE + 6).max(10);
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Label,
+                &format!(
+                    "{}  {}  {}",
+                    rpad("REPOSITORY", name),
+                    lpad("SESSIONS", COUNT),
+                    lpad("SHARE", SHARE)
+                )
+            )
+        ),
+    );
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+
+    for r in v.rows {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}  {}  {}",
+                ui.paint(Role::Value, &rpad(&truncate(r.repo, name), name)),
+                lpad(&thousands(r.sessions as u64), COUNT),
+                ui.paint(Role::Label, &lpad(&percent(r.sessions, v.total_sessions), SHARE)),
+            ),
+        );
+    }
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    out.push('\n');
+    out.push_str(&ui.next(
+        "archie repo blame <file>",
+        "which session wrote a given file",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// agent show
+// -----------------------------------------------------------------------------
+
+pub struct AgentShowView<'a> {
+    pub adapter: &'a str,
+    pub source_root: &'a str,
+    pub detected: bool,
+    /// Capability name and whether this adapter extracts it, in the order the matrix uses.
+    pub capabilities: &'a [(&'a str, bool)],
+    pub indexed_sessions: usize,
+    pub indexed_tokens: u64,
+    pub models: &'a [String],
+}
+
+pub fn agent_show(ui: &Ui, v: &AgentShowView<'_>) -> String {
+    let mut out = String::new();
+    let supported = v.capabilities.iter().filter(|(_, on)| *on).count();
+
+    out.push_str(&ui.header(
+        &format!("archie agent show {}", v.adapter),
+        &format!(
+            "{}/{} extracted {} {}",
+            supported,
+            v.capabilities.len(),
+            ui.dot(),
+            if v.detected { "present here" } else { "not found here" }
+        ),
+    ));
+    out.push('\n');
+
+    section(&mut out, ui, "SOURCE", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  default root", v.source_root, ui.width(), Role::Value),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  detected now",
+            if v.detected { "yes" } else { "no" },
+            ui.width(),
+            if v.detected { Role::Verified } else { Role::Unverified },
+        ),
+    );
+    out.push('\n');
+
+    section(&mut out, ui, "EXTRACTS", "");
+    for (name, on) in v.capabilities {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {} {}",
+                ui.paint(
+                    if *on { Role::Verified } else { Role::Unverified },
+                    ui.cell(*on)
+                ),
+                ui.paint(if *on { Role::Value } else { Role::Unverified }, name)
+            ),
+        );
+    }
+    out.push('\n');
+
+    section(&mut out, ui, "IN THIS INDEX", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  sessions",
+            &thousands(v.indexed_sessions as u64),
+            ui.width(),
+            Role::Value,
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  tokens", &compact(v.indexed_tokens), ui.width(), Role::Value),
+    );
+    if v.models.is_empty() {
+        push(
+            &mut out,
+            ui,
+            ui.leaders("  models", "none recorded", ui.width(), Role::Unverified),
+        );
+    } else {
+        for model in v.models {
+            push(
+                &mut out,
+                ui,
+                format!("  {} {}", ui.dot(), ui.paint(Role::Label, &short_model(model))),
+            );
+        }
+    }
+    out.push('\n');
+    out.push_str(&ui.next(
+        &format!("archie session list --adapter {}", v.adapter),
+        "what this adapter actually recorded",
+    ));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// window list
+// -----------------------------------------------------------------------------
+
+pub struct WindowListRow {
+    pub label: String,
+    pub sessions: usize,
+    pub total_tokens: u64,
+    pub estimated_cost_usd: f64,
+    pub burn_rate_tokens_per_hour: f64,
+}
+
+pub struct WindowListView<'a> {
+    pub hours: i64,
+    pub anchor: &'a str,
+    pub rows: &'a [WindowListRow],
+}
+
+pub fn window_list(ui: &Ui, v: &WindowListView<'_>) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header(
+        "archie window list",
+        &format!("{}h windows {} to {}", v.hours, ui.dot(), v.anchor),
+    ));
+    out.push('\n');
+
+    if v.rows.is_empty() {
+        push(
+            &mut out,
+            ui,
+            format!("  {}", ui.paint(Role::Unverified, "No sessions in range.")),
+        );
+        out.push('\n');
+        out.push_str(&ui.next("archie scan", "index what is already on this machine"));
+        return out;
+    }
+
+    const N: usize = 8;
+    const TOK: usize = 9;
+    const COST: usize = 9;
+    const RATE: usize = 11;
+    let label = i.saturating_sub(N + TOK + COST + RATE + 8).max(12);
+    push(
+        &mut out,
+        ui,
+        format!(
+            "  {}",
+            ui.paint(
+                Role::Label,
+                &format!(
+                    "{}  {}  {}  {}  {}",
+                    rpad("WINDOW", label),
+                    lpad("SESSIONS", N),
+                    lpad("TOKENS", TOK),
+                    lpad("COST", COST),
+                    lpad("TOKENS/H", RATE)
+                )
+            )
+        ),
+    );
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+
+    for r in v.rows {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}  {}  {}  {}  {}",
+                ui.paint(Role::Value, &rpad(&truncate(&r.label, label), label)),
+                lpad(&thousands(r.sessions as u64), N),
+                lpad(&compact(r.total_tokens), TOK),
+                lpad(&format!("${:.2}", r.estimated_cost_usd), COST),
+                ui.paint(
+                    Role::Label,
+                    &lpad(&compact(r.burn_rate_tokens_per_hour as u64), RATE)
+                ),
+            ),
+        );
+    }
+    push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    out.push('\n');
+    out.push_str(&ui.next("archie window show", "the current window in full"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// stats outcomes
+// -----------------------------------------------------------------------------
+
+pub struct StatsOutcomesRow<'a> {
+    pub key: &'a str,
+    pub n: usize,
+    pub verified: usize,
+    pub rate: Option<f64>,
+    pub reason: Option<&'a str>,
+}
+
+pub struct StatsOutcomesView<'a> {
+    pub group_by: &'a str,
+    pub min_n: usize,
+    pub baseline_n: usize,
+    pub baseline_rate: f64,
+    pub suppressed_groups: usize,
+    pub rows: &'a [StatsOutcomesRow<'a>],
+    pub counted_at: &'a str,
+}
+
+pub fn stats_outcomes(ui: &Ui, v: &StatsOutcomesView<'_>) -> String {
+    let mut out = String::new();
+    let i = ui.inner();
+
+    out.push_str(&ui.header(
+        "archie stats outcomes",
+        &format!("by {} {} min n {}", v.group_by, ui.dot(), v.min_n),
+    ));
+    out.push('\n');
+
+    section(&mut out, ui, "YOUR RATE", "");
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  claimed sessions",
+            &thousands(v.baseline_n as u64),
+            ui.width(),
+            Role::Value,
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  left evidence",
+            &format!("{:.1}%", v.baseline_rate * 100.0),
+            ui.width(),
+            Role::Verified,
+        ),
+    );
+    out.push('\n');
+
+    if v.rows.is_empty() {
+        section(&mut out, ui, "GROUPS", "");
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Unverified,
+                    "No group clears the sample floor; nothing here is worth a number yet."
+                )
+            ),
+        );
+    } else {
+        section(&mut out, ui, "GROUPS", &format!("{} shown", v.rows.len()));
+        const N: usize = 7;
+        const VER: usize = 9;
+        const RATE: usize = 8;
+        let key = i.saturating_sub(N + VER + RATE + 6).max(12);
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Label,
+                    &format!(
+                        "{}  {}  {}  {}",
+                        rpad("GROUP", key),
+                        lpad("N", N),
+                        lpad("VERIFIED", VER),
+                        lpad("RATE", RATE)
+                    )
+                )
+            ),
+        );
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+        for r in v.rows {
+            // A group with sessions but no detected outcome is not a low rate -- it is a
+            // parsing gap, and printing 0% for it would be a measurement we never made.
+            let (rate_text, rate_role) = match r.rate {
+                Some(rate) => (
+                    format!("{:.0}%", rate * 100.0),
+                    if rate * 100.0 >= 50.0 { Role::Verified } else { Role::Warn },
+                ),
+                None => (
+                    r.reason.unwrap_or("not measured").to_string(),
+                    Role::Unverified,
+                ),
+            };
+            push(
+                &mut out,
+                ui,
+                format!(
+                    "  {}  {}  {}  {}",
+                    ui.paint(Role::Value, &rpad(&truncate(r.key, key), key)),
+                    lpad(&thousands(r.n as u64), N),
+                    lpad(&thousands(r.verified as u64), VER),
+                    ui.paint(rate_role, &lpad(&rate_text, RATE)),
+                ),
+            );
+        }
+        push(&mut out, ui, format!("  {}", ui.paint(Role::Chrome, &ui.rule_of(i))));
+    }
+
+    if v.suppressed_groups > 0 {
+        push(
+            &mut out,
+            ui,
+            format!(
+                "  {}",
+                ui.paint(
+                    Role::Unverified,
+                    &format!(
+                        "{} group(s) under n={} suppressed, not counted as zero.",
+                        v.suppressed_groups, v.min_n
+                    )
+                )
+            ),
+        );
+    }
+    push(
+        &mut out,
+        ui,
+        format!("  {}", ui.paint(Role::Label, &format!("counted at {}", v.counted_at))),
+    );
+    out.push('\n');
+    out.push_str(&ui.next(
+        "archie session list --unproven",
+        "the sessions with nothing behind the claim",
+    ));
     out
 }

@@ -108,11 +108,11 @@ pub fn run_blunder_command(
             "{}",
             crate::ui::views::error(
                 ui,
-                "agentworth blunder",
+                "archie session blunder",
                 "No blunder exhibits found in the local index.",
                 "",
                 &[],
-                &[("agentworth scan".to_string(), "index agent histories first".to_string())],
+                &[("archie scan".to_string(), "index agent histories first".to_string())],
             )
         );
         return Ok(());
@@ -142,7 +142,7 @@ pub fn run_blunder_command(
                 // them, so the prompt's own `print!` (no trailing newline, by design --
                 // `[y/N]: ` reads on the same line as what gets typed) is followed by a
                 // fresh line before this ever prints. Piped/non-interactive stdin (a test,
-                // a script, `agentworth blunder < /dev/null`) echoes nothing, so without an
+                // a script, `archie session blunder < /dev/null`) echoes nothing, so without an
                 // explicit newline here this glues straight onto the end of the prompt --
                 // caught by output_snapshots.rs's 80-column wrap check, which runs with no
                 // TTY attached.
@@ -666,7 +666,7 @@ mod tests {
     /// Regression test: `truncate_snippet` used to cut on a raw byte offset
     /// (`&trimmed[..max_len - 3]`), which panics ("not a char boundary") the moment that
     /// offset falls inside a multi-byte UTF-8 char -- observed for real against the local
-    /// index (`agentworth blunder` and `agentworth audit` both crashed on it before this fix
+    /// index (`archie session blunder` and `archie session audit` both crashed on it before this fix
     /// and `recovery.rs::truncate_str`'s matching one).
     #[test]
     fn truncate_snippet_cuts_on_a_char_boundary_not_a_byte_offset() {

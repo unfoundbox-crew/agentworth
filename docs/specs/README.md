@@ -24,7 +24,7 @@
 | `market-autofix.md` | research doc, not a build item | — |
 | `beliefs.md` | proposed, measured | — |
 | `efficiency-receipts.md` | proposed, measured | — |
-| `cli-grammar.md` | decided 2026-09-02, not built | — |
+| `cli-grammar.md` | §1, §2 and §4(1) built | #118 — the noun tree, one session resolver, the `archie` name, completions, and a regenerated reference. The cockpit (§3) and `window receipt` are not built. |
 | `archie-bench.md` | proposed, measured | — |
 | `convergence.md` | proposed, measured | — |
 

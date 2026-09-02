@@ -90,7 +90,7 @@ jobs:
 
       - name: Build binaries
         run: |
-          cargo build --release --target ${{ matrix.target }} --bin agentworth --bin agwt
+          cargo build --release --target ${{ matrix.target }} --bin agentworth --bin archie --bin agwt
 
       - name: Package artifact
         shell: bash
@@ -101,11 +101,12 @@ jobs:
           # Strip symbols to reduce bundle size
           if command -v strip >/dev/null 2>&1; then
             strip "$RELEASE_DIR/agentworth" || true
+            strip "$RELEASE_DIR/archie" || true
             strip "$RELEASE_DIR/agwt" || true
           fi
 
           ARCHIVE_NAME="agentworth-v${VERSION}-${{ matrix.target }}.tar.gz"
-          tar -czvf "$ARCHIVE_NAME" -C "$RELEASE_DIR" agentworth agwt
+          tar -czvf "$ARCHIVE_NAME" -C "$RELEASE_DIR" agentworth archie agwt
 
           # Generate SHA256 checksum
           if command -v shasum >/dev/null 2>&1; then

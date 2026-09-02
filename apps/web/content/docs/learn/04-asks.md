@@ -9,7 +9,7 @@ missing.
 
 So you re-ask it. Scrolling costs time and re-asking costs tokens.
 
-`agentworth asks` builds the index instead: every question in the session, and
+`archie session asks` builds the index instead: every question in the session, and
 a pointer to the message that answered it.
 
 ## What counts as a question
@@ -58,9 +58,9 @@ Over MCP the same index is `session_asks`.
 ## What to run
 
 ```bash
-agentworth asks --last
-agentworth asks --last --unanswered
-agentworth asks --last --since 2h
-agentworth asks --session 33122482
-agentworth asks --last --json
+archie session asks --last
+archie session asks --last --unanswered
+archie session asks --last --since 2h
+archie session asks --session 33122482
+archie session asks --last --json
 ```

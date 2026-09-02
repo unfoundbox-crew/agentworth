@@ -1,9 +1,9 @@
-//! `agentworth doctor --self-test`: runs Saurabh's real release workflow, in order,
+//! `archie doctor --self-test`: runs Saurabh's real release workflow, in order,
 //! against the real index and real sources on this machine, with no network, and times
 //! every step.
 //!
 //! Every step below invokes the *actual installed binary* (`std::env::current_exe()`)
-//! exactly the way a person types it -- `agentworth scan --json`, `agentworth stats
+//! exactly the way a person types it -- `archie scan --json`, `archie stats
 //! --json`, and so on -- rather than calling the underlying library functions directly.
 //! That's deliberate: this is a release smoke test standing in for a person clicking
 //! through the whole workflow by hand, so it should break the same way a person's
@@ -157,14 +157,14 @@ fn array_len_receipt(noun: &str) -> impl Fn(&Value) -> String + '_ {
     move |v: &Value| format!("{} {noun}", v.as_array().map(Vec::len).unwrap_or(0))
 }
 
-/// Whether `asks` is registered as a subcommand of the running binary. `--help` on a
+/// Whether `session asks` is registered on the running binary. `--help` on a
 /// real subcommand always exits 0; clap exits non-zero on an unrecognized one. `asks`
 /// landed on main in #97; this check means a binary built from a commit before that
 /// still skips the step gracefully instead of failing on a missing subcommand, and any
 /// future removal or rename degrades the same way rather than as a hard failure.
 fn asks_subcommand_exists(exe: &Path) -> bool {
     Command::new(exe)
-        .args(["asks", "--help"])
+        .args(["session", "asks", "--help"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -173,8 +173,8 @@ fn asks_subcommand_exists(exe: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Spawns `agentworth mcp` as a real child process on stdio and drives it as a genuine
-/// MCP client would: `tools/list`, then `session_get` (capped at 500 events) against
+/// Spawns `archie mcp` as a real child process on stdio and drives it as a genuine
+/// MCP client would: `tools/list`, then `session_show` (capped at 500 events) against
 /// `session_id` if one was resolved. Returns a one-line receipt; never the tool results
 /// themselves.
 async fn mcp_roundtrip(exe: &Path, db_path: Option<&Path>, session_id: Option<&str>) -> Result<String> {
@@ -187,11 +187,11 @@ async fn mcp_roundtrip(exe: &Path, db_path: Option<&Path>, session_id: Option<&s
     if let Some(p) = db_path {
         cmd.arg("--db-path").arg(p);
     }
-    let transport = TokioChildProcess::new(cmd).context("spawning `agentworth mcp`")?;
+    let transport = TokioChildProcess::new(cmd).context("spawning `archie mcp`")?;
     let client = ()
         .serve(transport)
         .await
-        .context("MCP initialize handshake with `agentworth mcp` failed")?;
+        .context("MCP initialize handshake with `archie mcp` failed")?;
 
     let tools = client
         .list_tools(Default::default())
@@ -201,28 +201,28 @@ async fn mcp_roundtrip(exe: &Path, db_path: Option<&Path>, session_id: Option<&s
 
     if let Some(sid) = session_id {
         let call_result = client
-            .call_tool(CallToolRequestParams::new("session_get").with_arguments(
+            .call_tool(CallToolRequestParams::new("session_show").with_arguments(
                 json!({ "session_id": sid, "events_limit": 500 })
                     .as_object()
                     .unwrap()
                     .clone(),
             ))
             .await
-            .context("tools/call session_get failed")?;
+            .context("tools/call session_show failed")?;
         if call_result.is_error == Some(true) {
-            anyhow::bail!("session_get returned an error result");
+            anyhow::bail!("session_show returned an error result");
         }
         let text = call_result
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.clone())
-            .context("session_get result carried no text content block")?;
+            .context("session_show result carried no text content block")?;
         let _: Value =
-            serde_json::from_str(&text).context("session_get result did not parse as JSON")?;
-        receipt.push_str(&format!(", session_get(session={sid}): parsed ok"));
+            serde_json::from_str(&text).context("session_show result did not parse as JSON")?;
+        receipt.push_str(&format!(", session_show(session={sid}): parsed ok"));
     } else {
-        receipt.push_str(", session_get: skipped (no session indexed)");
+        receipt.push_str(", session_show: skipped (no session indexed)");
     }
 
     let _ = client.cancel().await;
@@ -271,8 +271,8 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
     steps.push(run_step(
         &exe,
         db_path_ref,
-        "usage --period week",
-        &["usage", "--period", "week", "--json"],
+        "stats usage --period week",
+        &["stats", "usage", "--period", "week", "--json"],
         DEFAULT_BUDGET,
         array_len_receipt("rows"),
     ));
@@ -280,8 +280,8 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
     steps.push(run_step(
         &exe,
         db_path_ref,
-        "traces --limit 5",
-        &["traces", "--limit", "5", "--json"],
+        "session list --limit 5",
+        &["session", "list", "--limit", "5", "--json"],
         DEFAULT_BUDGET,
         array_len_receipt("rows"),
     ));
@@ -325,8 +325,8 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
             steps.push(run_step(
                 &exe,
                 db_path_ref,
-                "inspect <newest non-stub session>",
-                &["inspect", id_owned.as_str(), "--json"],
+                "session show <newest non-stub session>",
+                &["session", "show", id_owned.as_str(), "--json"],
                 DEFAULT_BUDGET,
                 |v| {
                     let events = v
@@ -339,7 +339,7 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
             ));
         }
         None => steps.push(skip(
-            "inspect <newest non-stub session>",
+            "session show <newest non-stub session>",
             "no non-stub session indexed yet",
         )),
     }
@@ -348,8 +348,8 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
         Some(_) => steps.push(run_step(
             &exe,
             db_path_ref,
-            "handoff --last",
-            &["handoff", "--last", "--json"],
+            "session handoff --last",
+            &["session", "handoff", "--last", "--json"],
             DEFAULT_BUDGET,
             |v| {
                 let id = v
@@ -361,7 +361,7 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
                 format!("session {id}, {events} events")
             },
         )),
-        None => steps.push(skip("handoff --last", "no session indexed yet")),
+        None => steps.push(skip("session handoff --last", "no session indexed yet")),
     }
 
     match &newest_compacted_session_id {
@@ -370,8 +370,8 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
             steps.push(run_step(
                 &exe,
                 db_path_ref,
-                "forgotten <newest compacted session>",
-                &["forgotten", id_owned.as_str(), "--json"],
+                "session forgotten <newest compacted session>",
+                &["session", "forgotten", id_owned.as_str(), "--json"],
                 DEFAULT_BUDGET,
                 |v| {
                     let compactions = v.get("compactions").and_then(Value::as_u64).unwrap_or(0);
@@ -381,7 +381,7 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
             ));
         }
         None => steps.push(skip(
-            "forgotten <newest compacted session>",
+            "session forgotten <newest compacted session>",
             "no session has compactions yet",
         )),
     }
@@ -390,8 +390,8 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
         steps.push(run_step(
             &exe,
             db_path_ref,
-            "asks --current",
-            &["asks", "--current", "--json"],
+            "session asks --current",
+            &["session", "asks", "--current", "--json"],
             DEFAULT_BUDGET,
             |v| {
                 let id = v
@@ -405,7 +405,7 @@ pub fn run_self_test_command(json_output: bool, db_path: Option<PathBuf>, ui: &U
             },
         ));
     } else {
-        steps.push(skip("asks --current", "not on main yet"));
+        steps.push(skip("session asks --current", "not on main yet"));
     }
 
     {

@@ -60,7 +60,7 @@ other 0.5% apart.
 
 ## The rate, and its sample size
 
-"Verified" means rung 3 or higher. The `outcome_rate` MCP tool groups that share
+"Verified" means rung 3 or higher. The `stats_outcomes` MCP tool groups that share
 by model, adapter or repo, and prints `n` beside every row. Below a floor
 (20 by default) a group is suppressed rather than shown with false confidence.
 
@@ -75,10 +75,10 @@ compares you to anyone else; the index is one machine's.
 ## What to run
 
 ```bash
-agentworth scan --force
-agentworth stats
-agentworth traces --limit 20
-agentworth matrix
+archie scan --force
+archie stats
+archie session list --limit 20
+archie agent list
 ```
 
 `scan --force` matters after an upgrade: the rung is computed at index time, so

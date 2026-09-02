@@ -50,10 +50,21 @@ impl SessionArg {
 /// The outcome of resolving an explicit id or prefix.
 pub enum Resolved {
     Id(String),
-    /// Nothing matched, or the prefix was ambiguous. The caller renders its own
-    /// command-specific not-found screen (see `not_found` below).
+    /// The prefix matched more than one session. Never guessed at: `resolve` prints the
+    /// candidates and exits 2, because picking one of several for the caller is how the
+    /// wrong session gets exported.
+    Ambiguous {
+        input: String,
+        candidates: Vec<SessionSummary>,
+    },
+    /// Nothing matched. The caller renders its own command-specific not-found screen
+    /// (see `not_found` below).
     NotFound(String),
 }
+
+/// How many matches a prefix lookup fetches: enough to show the caller what it collided
+/// with, bounded so an index of thousands never renders a wall.
+const AMBIGUOUS_CANDIDATE_LIMIT: usize = 10;
 
 /// Resolve a session for a command. This is the one entry point every session-taking
 /// command calls.
@@ -68,12 +79,17 @@ pub enum Resolved {
 /// - Nothing at all, on a TTY, without `--json`: the interactive picker.
 pub fn resolve(storage: &Storage, ui: &Ui, json: bool, arg: &SessionArg) -> Result<Resolved> {
     if let Some(input) = &arg.id_or_prefix {
-        return resolve_explicit(storage, input);
+        return match resolve_explicit(storage, input)? {
+            Resolved::Ambiguous { input, candidates } => {
+                exit_ambiguous(ui, json, &input, &candidates)
+            }
+            other => Ok(other),
+        };
     }
     if arg.wants_last() {
         return match resolve_last(storage)? {
             Some(id) => Ok(Resolved::Id(id)),
-            None => anyhow::bail!("no sessions are indexed; run `agentworth scan` first"),
+            None => anyhow::bail!("no sessions are indexed; run `archie scan` first"),
         };
     }
     if !is_tty() || json {
@@ -89,6 +105,38 @@ pub fn resolve(storage: &Storage, ui: &Ui, json: bool, arg: &SessionArg) -> Resu
     Ok(Resolved::Id(interactive_pick(storage, ui)?))
 }
 
+/// The one call every show-style verb makes: `resolve` plus the two exits that follow from
+/// it. `command_name` is the noun-verb spelling this command answers to (`session show`),
+/// which is what the not-found screen echoes back.
+pub fn resolve_or_exit(
+    storage: &Storage,
+    ui: &Ui,
+    json: bool,
+    command_name: &str,
+    arg: &SessionArg,
+) -> Result<String> {
+    match resolve(storage, ui, json, arg)? {
+        Resolved::Id(id) => Ok(id),
+        Resolved::Ambiguous { input, candidates } => exit_ambiguous(ui, json, &input, &candidates),
+        Resolved::NotFound(input) => {
+            print!(
+                "{}",
+                not_found(
+                    ui,
+                    storage,
+                    &format!("archie {command_name} {input}"),
+                    &input,
+                    &[(
+                        format!("archie {command_name} --last"),
+                        "the newest session in this repo".to_string(),
+                    )],
+                )
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Exact match wins; failing that, a *unique* prefix resolves silently. An absent or
 /// ambiguous prefix is left unresolved so the caller's own not-found screen (which already
 /// lists the nearest ids) can take over.
@@ -96,10 +144,32 @@ pub fn resolve_explicit(storage: &Storage, input: &str) -> Result<Resolved> {
     if storage.get_session_by_id(input)?.is_some() {
         return Ok(Resolved::Id(input.to_string()));
     }
-    match storage.find_sessions_by_id_prefix(input, 2)?.as_slice() {
+    let matches = storage.find_sessions_by_id_prefix(input, AMBIGUOUS_CANDIDATE_LIMIT)?;
+    match matches.as_slice() {
+        [] => Ok(Resolved::NotFound(input.to_string())),
         [only] => Ok(Resolved::Id(only.session_id.clone())),
-        _ => Ok(Resolved::NotFound(input.to_string())),
+        _ => Ok(Resolved::Ambiguous {
+            input: input.to_string(),
+            candidates: matches,
+        }),
     }
+}
+
+/// Prints what a prefix collided with and exits 2. Exit 2 is the same code the
+/// nothing-given-off-a-TTY path uses: both mean "this invocation named no single session",
+/// which a script needs to tell apart from a session that simply is not there (exit 1).
+pub fn exit_ambiguous(ui: &Ui, json: bool, input: &str, candidates: &[SessionSummary]) -> ! {
+    let rows: Vec<Candidate> = candidates.iter().cloned().map(Candidate::from).collect();
+    if json {
+        println!("{}", render_json(&rows));
+    } else {
+        print!(
+            "{}",
+            render_list(ui, &rows, &format!("{input} matches {} sessions", rows.len()))
+        );
+    }
+    eprintln!("ambiguous session prefix {input:?}; pass more characters");
+    std::process::exit(2);
 }
 
 /// The newest non-stub session for the current directory's repository, falling back to the
@@ -128,8 +198,8 @@ pub fn resolve_last(storage: &Storage) -> Result<Option<String>> {
 }
 
 /// A generic not-found screen for a command whose own `Resolved::NotFound` came back.
-/// `command_echo` is the header line (e.g. `agentworth export a1b2c3`); `hints` are the
-/// command-specific next steps shown before the standing `agentworth scan` one.
+/// `command_echo` is the header line (e.g. `archie session export a1b2c3`); `hints` are the
+/// command-specific next steps shown before the standing `archie scan` one.
 pub fn not_found(
     ui: &Ui,
     storage: &Storage,
@@ -153,7 +223,7 @@ pub fn not_found(
 
     let mut next = hints.to_vec();
     next.push((
-        "agentworth scan".to_string(),
+        "archie scan".to_string(),
         "re-index, if it should be here".to_string(),
     ));
 

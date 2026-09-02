@@ -31,7 +31,7 @@ Modern software development relies heavily on AI coding agents (Claude Code, Cur
 
 **AgentWorth** turns this messy data into actionable intelligence:
 1. **Token Expenditure & Burn Rate**: Exact input, output, reasoning, and prompt cache hit metrics mapped to real dollar expenditures, daily rollups, and rolling 5-hour pacing limits.
-2. **AI Code Lineage (`agentworth blame <file>`)**: Discovers which agent session, model, timestamp, and user prompt authored specific lines of code.
+2. **AI Code Lineage (`archie repo blame <file>`)**: Discovers which agent session, model, timestamp, and user prompt authored specific lines of code.
 3. **Outcome Evidence Hierarchy**: Empirically verifies whether tasks actually succeeded (`DoneClaimed < ArtifactChanged < TestOrBuildPassed < CommitObserved < CiOrDeploymentVerified`) rather than trusting self-reported completion.
 4. **Autonomous Recovery Loops**: Quantifies how often agents recover from compiler errors and test failures autonomously.
 5. **Safe ATIF v1.0 Export**: 13-rule offline privacy scrubber that removes API keys, `.env` secrets, absolute paths, and org URLs before exporting to standard Agent Trajectory Interchange Format.
@@ -46,7 +46,7 @@ Modern software development relies heavily on AI coding agents (Claude Code, Cur
 * **Typed Provenance (`[flown]` / `[on paper]` / `[unflown]`)**: Strict architectural guarantees distinguishing locally measured disk telemetry from external vendor pricing claims.
 * **100% Offline & Local-First**: Zero telemetry, zero uploads, read-only transcript access, and SQLite WAL storage with lazy trajectory streaming.
 * **20 Native Streaming Adapters**: Built-in support for Claude Code, Cursor, Antigravity (`agy`), DeepSeek, Kimi, MiniMax, Qwen, Zhipu, Aider, Cline/Roo, Windsurf, Manus, OpenAI Codex, Goose, Pi, Herdr, Hermes, OpenClaw, Grok, and OpenCode.
-* **Monochrome Thermal Explorer UI**: Embedded local web interface (`agentworth serve --open`) for interactive step-by-step trajectory archaeology and diff inspection.
+* **Monochrome Thermal Explorer UI**: Embedded local web interface (`archie serve --open`) for interactive step-by-step trajectory archaeology and diff inspection.
 
 ---
 
@@ -60,13 +60,13 @@ npx -y agentworth scan
 npx skills add unfoundbox-crew/agentworth -g
 
 # View machine-wide token burn and model stats
-agentworth stats
+archie stats
 
 # Trace AI code authorship
-agentworth blame src/main.rs
+archie repo blame src/main.rs
 
 # Launch interactive local dashboard
-agentworth serve --open
+archie serve --open
 ```
 
 ---

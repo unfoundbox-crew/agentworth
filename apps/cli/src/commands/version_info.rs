@@ -1,7 +1,7 @@
 //! Version reporting and update checking for AgentWorth.
 //!
-//! Subcommands: `agentworth version [--offline] [--json]` and
-//! `agentworth update [--offline] [--json]`.
+//! Subcommands: `archie version [--offline] [--json]` and
+//! `archie update [--offline] [--json]`.
 //!
 //! AgentWorth ships two ways: the native `agentworth`/`agwt` binaries (built from this
 //! source, installed via `cargo install --path apps/cli`, or downloaded as a GitHub
@@ -222,7 +222,7 @@ fn update_status_for(current_version: &str, offline: bool) -> UpdateStatus {
     }
 }
 
-/// Renders `agentworth version`'s text-mode report. Pure formatting -- no I/O, no
+/// Renders `archie version`'s text-mode report. Pure formatting -- no I/O, no
 /// printing -- so every branch (each `UpdateStatus` variant, launcher active/inactive) is
 /// directly unit-testable against the exact returned string.
 fn format_version_report(current: &str, launcher: &LauncherInfo, status: &UpdateStatus) -> String {
@@ -263,7 +263,7 @@ fn format_update_status_line(current: &str, status: &UpdateStatus) -> String {
     }
 }
 
-/// Renders `agentworth update`'s text-mode report, including the actionable "how to
+/// Renders `archie update`'s text-mode report, including the actionable "how to
 /// update" guidance when a newer version exists. Pure formatting, same testing rationale
 /// as `format_version_report`.
 fn format_update_report(current: &str, launcher: &LauncherInfo, status: &UpdateStatus) -> String {
@@ -353,7 +353,7 @@ fn launcher_json(launcher: &LauncherInfo) -> serde_json::Value {
     })
 }
 
-/// Execute `agentworth version`.
+/// Execute `archie version`.
 pub fn run_version_command(json_output: bool, offline: bool) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let launcher = detect_launcher();
@@ -375,7 +375,7 @@ pub fn run_version_command(json_output: bool, offline: bool) -> Result<()> {
     Ok(())
 }
 
-/// Execute `agentworth update`.
+/// Execute `archie update`.
 pub fn run_update_command(json_output: bool, offline: bool) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let launcher = detect_launcher();

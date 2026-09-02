@@ -1,11 +1,11 @@
-//! `agentworth mcp`: the read-only MCP tool surface over stdio, sharing the same `Storage` and
+//! `archie mcp`: the read-only MCP tool surface over stdio, sharing the same `Storage` and
 //! `Scanner` wiring `apps/cli/src/server/routes.rs` builds for the HTTP API (see `AppState`
 //! there). Nothing here writes to the index or to original session logs -- every tool is a
 //! read-only wrapper around a `Storage`/`Scanner` call the HTTP surface already exposes.
 //!
 //! Redaction policy (`docs/specs/mcp-server.md`, "What it must not expose"): redacted is the
 //! default for every tool that can carry event, file, or path content; raw is an explicit
-//! per-call opt-in (`session_get`'s `include_raw`), never a server-wide switch.
+//! per-call opt-in (`session_show`'s `include_raw`), never a server-wide switch.
 
 use std::sync::Arc;
 
@@ -38,7 +38,7 @@ use crate::handoff::{
     self, render_markdown, HandoffOptions, HandoffReport, DEFAULT_MAX_LINES, MAX_LINES_CEILING,
 };
 
-/// Hard ceiling on `sessions_find`'s `limit`, so a remote model is forced to state how much
+/// Hard ceiling on `session_list`'s `limit`, so a remote model is forced to state how much
 /// it's asking for instead of getting a silently truncated "complete-looking" answer -- the
 /// exact trap `/api/traces`'s default-50 behavior already shipped once (`AGENTS.md`, "Things
 /// you cannot learn from the code," item 3).
@@ -46,19 +46,19 @@ const SESSIONS_FIND_LIMIT_CEILING: usize = 200;
 
 /// How much further than `limit` to over-fetch when `repo` is set, since `repo` isn't a stored
 /// column and has to be post-filtered client-side after a bounded fetch (see
-/// `docs/specs/mcp-server.md`'s `sessions_find` "repo is not a stored column" note).
+/// `docs/specs/mcp-server.md`'s `session_list` "repo is not a stored column" note).
 const REPO_OVERFETCH_MULTIPLIER: usize = 4;
 
-/// Default `min_n` floor for `outcome_rate` -- `docs/specs/verified-outcome-rate.md` picks 20
+/// Default `min_n` floor for `stats_outcomes` -- `docs/specs/verified-outcome-rate.md` picks 20
 /// to hide noise, explicitly not a measured value (see the spec's "Open questions").
 const OUTCOME_RATE_DEFAULT_MIN_N: usize = 20;
 
-/// Hard ceiling on `carry_forward`'s `n`, matching `docs/specs/handoff.md`. Ten handoffs is
+/// Hard ceiling on `session_carry_forward`'s `n`, matching `docs/specs/handoff.md`. Ten handoffs is
 /// already more history than a session opening turn can use; past that the caller wants
-/// `sessions_find`.
+/// `session_list`.
 const CARRY_FORWARD_CEILING: usize = 10;
 
-/// The `agentworth mcp` tool server. Cheap to construct -- `Scanner::new` only builds the
+/// The `archie mcp` tool server. Cheap to construct -- `Scanner::new` only builds the
 /// adapter list, it does no I/O -- so a fresh instance per `run_mcp_server` call is fine.
 #[derive(Clone)]
 pub struct AgentWorthMcpServer {
@@ -85,7 +85,7 @@ impl AgentWorthMcpServer {
     /// Redacts a bare path string using the same repository-identity-augmented rule set
     /// `Redactor::redact_trace` applies to `trace.provenance.source_path` -- built directly via
     /// `repository_identity_rule` (rather than `Redactor::for_trace`, which needs a whole
-    /// `AgentWorthTrace`) since `sessions_find`/`blame_find` only ever see bare path strings
+    /// `AgentWorthTrace`) since `session_list`/`repo_blame` only ever see bare path strings
     /// spanning many different sessions, not a single trace.
     fn redact_path(path: &str) -> String {
         let mut redactor = Redactor::new();
@@ -109,7 +109,7 @@ impl AgentWorthMcpServer {
 
     /// Loads and renders one session's handoff, applying the redaction default.
     ///
-    /// Shared by `session_handoff` and `carry_forward` so the two can't drift on the thing
+    /// Shared by `session_handoff` and `session_carry_forward` so the two can't drift on the thing
     /// that matters most here: `include_raw: false` builds one `Redactor::for_trace` instance
     /// from the session's own trace and runs every field of the report through that same
     /// instance, which is what makes the session's repository identity get masked across
@@ -138,7 +138,7 @@ impl AgentWorthMcpServer {
 
     /// Validates a caller-supplied line budget rather than clamping it.
     ///
-    /// Out of range is an error, not a silent clamp -- the same choice `sessions_find`'s
+    /// Out of range is an error, not a silent clamp -- the same choice `session_list`'s
     /// `limit` already makes, and for the same reason: a clamped answer looks complete.
     fn validated_max_lines(max_lines: Option<usize>) -> Result<usize, McpError> {
         match max_lines {
@@ -160,7 +160,7 @@ impl AgentWorthMcpServer {
     }
 
     /// The session a tool means when the caller names none: the newest one indexed for the repo
-    /// this server runs in. Shared by `session_handoff` and `forgotten_context` so both fail
+    /// this server runs in. Shared by `session_handoff` and `session_forgotten` so both fail
     /// with the same sentence when there is nothing to fall back to.
     fn newest_session_for_cwd(storage: &Storage) -> anyhow::Result<String> {
         let repo = Self::cwd_repo().ok_or_else(|| {
@@ -178,13 +178,13 @@ impl AgentWorthMcpServer {
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "no indexed session for repo '{repo}' (this server's working directory); \
-                     pass session_id explicitly, or run `agentworth scan`"
+                     pass session_id explicitly, or run `archie scan`"
                 )
             })
     }
 }
 
-// `vis = "pub(crate)"`: `agentworth docs` (apps/cli/src/commands/docs.rs) calls
+// `vis = "pub(crate)"`: `archie docs` (apps/cli/src/commands/docs.rs) calls
 // `Self::tool_router().list_all()` from another module to read every tool's name,
 // description, and JSON schema without constructing a live server instance -- building a
 // `ToolRouter` doesn't touch `Storage`/`Scanner` at all, it only type-erases the handlers.
@@ -197,7 +197,7 @@ impl AgentWorthMcpServer {
                         you want. Returns summaries only (no event content); `source_path` is \
                         redacted."
     )]
-    pub(crate) async fn sessions_find(
+    pub(crate) async fn session_list(
         &self,
         Parameters(params): Parameters<SessionsFindParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -244,7 +244,7 @@ impl AgentWorthMcpServer {
         let sessions = tokio::task::spawn_blocking(move || storage.list_sessions_filtered(&filter))
             .await
             .map_err(Self::join_error)?
-            .map_err(|e| McpError::internal_error(format!("sessions_find query failed: {e}"), None))?;
+            .map_err(|e| McpError::internal_error(format!("session_list query failed: {e}"), None))?;
 
         let fetched_len = sessions.len();
         let mut truncated = repo.is_some() && fetched_len >= fetch_limit;
@@ -283,7 +283,7 @@ impl AgentWorthMcpServer {
                         response's events_total says how many events the session actually has, \
                         so a large session is never returned in full by accident."
     )]
-    pub(crate) async fn session_get(
+    pub(crate) async fn session_show(
         &self,
         Parameters(params): Parameters<SessionGetParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -330,7 +330,7 @@ impl AgentWorthMcpServer {
             // Same (for_trace-augmented) redactor instance for all three, so the trace's own
             // repository/workspace identity gets masked consistently across trace, outcomes,
             // and recoveries rather than only on the trace object. See
-            // docs/specs/mcp-server.md's session_get redaction note and
+            // docs/specs/mcp-server.md's session_show redaction note and
             // Redactor::for_trace's own doc comment.
             let redactor = Redactor::new().for_trace(&trace);
             (
@@ -355,7 +355,7 @@ impl AgentWorthMcpServer {
                         file_path -- AI Code Blame, the same query /api/blame makes. Returned \
                         paths are redacted."
     )]
-    pub(crate) async fn blame_find(
+    pub(crate) async fn repo_blame(
         &self,
         Parameters(params): Parameters<BlameFindParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -364,7 +364,7 @@ impl AgentWorthMcpServer {
         let mut matches = tokio::task::spawn_blocking(move || storage.find_sessions_for_blame(&pattern))
             .await
             .map_err(Self::join_error)?
-            .map_err(|e| McpError::internal_error(format!("blame_find query failed: {e}"), None))?;
+            .map_err(|e| McpError::internal_error(format!("repo_blame query failed: {e}"), None))?;
 
         for m in &mut matches {
             m.source_path = Self::redact_path(&m.source_path);
@@ -381,7 +381,7 @@ impl AgentWorthMcpServer {
                         estimated_cost_usd is an API list-price equivalent, not what the \
                         account actually paid -- see cost_basis/subscription_tier."
     )]
-    pub(crate) async fn usage_summary(
+    pub(crate) async fn stats_usage(
         &self,
         Parameters(params): Parameters<UsageSummaryParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -395,7 +395,7 @@ impl AgentWorthMcpServer {
         })
         .await
         .map_err(Self::join_error)?
-        .map_err(|e| McpError::internal_error(format!("usage_summary query failed: {e}"), None))?;
+        .map_err(|e| McpError::internal_error(format!("stats_usage query failed: {e}"), None))?;
 
         let cost_basis = crate::cost_basis::CostBasis::detect();
         Self::json_result(&serde_json::json!({
@@ -410,7 +410,7 @@ impl AgentWorthMcpServer {
                         adapters and models, estimated cost, and cache hit ratio -- the same \
                         window /api/pacing computes. Answers \"what am I burning right now\"."
     )]
-    pub(crate) async fn pacing_window(
+    pub(crate) async fn window_show(
         &self,
         Parameters(params): Parameters<PacingWindowParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -419,7 +419,7 @@ impl AgentWorthMcpServer {
         let pacing = tokio::task::spawn_blocking(move || storage.get_pacing_window(hours))
             .await
             .map_err(Self::join_error)?
-            .map_err(|e| McpError::internal_error(format!("pacing_window query failed: {e}"), None))?;
+            .map_err(|e| McpError::internal_error(format!("window_show query failed: {e}"), None))?;
 
         Self::json_result(&pacing)
     }
@@ -432,7 +432,7 @@ impl AgentWorthMcpServer {
                         matrix (/api/matrix's equivalent), answering \"what does this machine \
                         even have\" without opening the dashboard."
     )]
-    pub(crate) async fn coverage_stats(
+    pub(crate) async fn agent_list(
         &self,
         Parameters(params): Parameters<CoverageStatsParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -451,10 +451,10 @@ impl AgentWorthMcpServer {
         .map_err(Self::join_error)?;
 
         let stats = stats_res
-            .map_err(|e| McpError::internal_error(format!("coverage_stats query failed: {e}"), None))?;
+            .map_err(|e| McpError::internal_error(format!("agent_list query failed: {e}"), None))?;
 
         let mut value = serde_json::to_value(&stats).map_err(|e| {
-            McpError::internal_error(format!("failed to serialize coverage_stats: {e}"), None)
+            McpError::internal_error(format!("failed to serialize agent_list: {e}"), None)
         })?;
         if let Some(matrix) = matrix {
             if let serde_json::Value::Object(ref mut map) = value {
@@ -466,7 +466,7 @@ impl AgentWorthMcpServer {
         }
 
         let text = serde_json::to_string_pretty(&value).map_err(|e| {
-            McpError::internal_error(format!("failed to serialize coverage_stats: {e}"), None)
+            McpError::internal_error(format!("failed to serialize agent_list: {e}"), None)
         })?;
         Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
     }
@@ -482,7 +482,7 @@ impl AgentWorthMcpServer {
                         (db_path, counted_at, index_last_session_at, the non-stub predicate, and \
                         the session IDs behind each row) so the answer is checkable."
     )]
-    pub(crate) async fn outcome_rate(
+    pub(crate) async fn stats_outcomes(
         &self,
         Parameters(params): Parameters<OutcomeRateParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -500,7 +500,7 @@ impl AgentWorthMcpServer {
         })
         .await
         .map_err(Self::join_error)?
-        .map_err(|e| McpError::internal_error(format!("outcome_rate query failed: {e}"), None))?;
+        .map_err(|e| McpError::internal_error(format!("stats_outcomes query failed: {e}"), None))?;
 
         Self::json_result(&result)
     }
@@ -557,7 +557,7 @@ impl AgentWorthMcpServer {
                         merging two contradictory facts needs judgment about which is current, \
                         and that is not in the index. Redacted by default."
     )]
-    pub(crate) async fn carry_forward(
+    pub(crate) async fn session_carry_forward(
         &self,
         Parameters(params): Parameters<CarryForwardParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -614,7 +614,7 @@ impl AgentWorthMcpServer {
         })
         .await
         .map_err(Self::join_error)?
-        .map_err(|e| McpError::internal_error(format!("carry_forward failed: {e:#}"), None))?;
+        .map_err(|e| McpError::internal_error(format!("session_carry_forward failed: {e:#}"), None))?;
 
         Self::json_result(&value)
     }
@@ -640,7 +640,7 @@ impl AgentWorthMcpServer {
                         Refuses if the raw session file is gone. Redacted by default; \
                         include_raw=true opts out, per call."
     )]
-    pub(crate) async fn forgotten_context(
+    pub(crate) async fn session_forgotten(
         &self,
         Parameters(params): Parameters<ForgottenContextParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -702,7 +702,7 @@ impl AgentWorthMcpServer {
                         Filter with since (RFC 3339) and unanswered_only; limit defaults to 50, \
                         ceiling 500, and the totals describe the whole session regardless of \
                         it. No model is involved -- three deterministic patterns, same \
-                        `regex_v1` method `forgotten_context` uses. Defaults to the newest \
+                        `regex_v1` method `session_forgotten` uses. Defaults to the newest \
                         session for the repo this server runs in. Redacted by default; \
                         include_raw=true opts out, per call."
     )]
@@ -768,7 +768,7 @@ impl AgentWorthMcpServer {
                         is evidence that could not be placed in any repository. Paths and \
                         session source paths are redacted."
     )]
-    pub(crate) async fn suspect_commits(
+    pub(crate) async fn repo_suspect(
         &self,
         Parameters(params): Parameters<SuspectCommitsParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -803,7 +803,7 @@ impl AgentWorthMcpServer {
         .map_err(Self::join_error)?
         // A bad repo path or an unresolvable ref is the caller's mistake, not a server fault,
         // and the message names the failing noun -- so it comes back as invalid_params.
-        .map_err(|e| McpError::invalid_params(format!("suspect_commits failed: {e}"), None))?;
+        .map_err(|e| McpError::invalid_params(format!("repo_suspect failed: {e}"), None))?;
 
         report.repo = Self::redact_path(&report.repo);
         for commit in &mut report.suspect {
@@ -814,6 +814,138 @@ impl AgentWorthMcpServer {
 
         Self::json_result(&report)
     }
+    // -------------------------------------------------------------------------
+    // Pre-0.1.16 tool names, kept registered so a client that was configured against
+    // them keeps working. Each one is a two-line forward to the renamed handler, so the
+    // two names can never answer differently. Removed in v0.1.18, along with the CLI
+    // aliases (`crate::app::HIDDEN_ALIASES_REMOVED_IN`).
+    //
+    // They are listed rather than hidden: MCP has no unlisted-but-callable tool, and
+    // rmcp's own `ToolRouter::disable_route` takes a tool out of `call` as well as out of
+    // `list_all`. Naming the replacement in the first sentence of the description is what
+    // is available; `archie docs` leaves them out of the generated reference.
+    // -------------------------------------------------------------------------
+
+    #[tool(
+        name = "sessions_find",
+        description = "Deprecated alias of `session_list`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `session_list`."
+    )]
+    pub(crate) async fn sessions_find_alias(
+        &self,
+        params: Parameters<SessionsFindParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.session_list(params).await
+    }
+
+    #[tool(
+        name = "session_get",
+        description = "Deprecated alias of `session_show`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `session_show`."
+    )]
+    pub(crate) async fn session_get_alias(
+        &self,
+        params: Parameters<SessionGetParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.session_show(params).await
+    }
+
+    #[tool(
+        name = "blame_find",
+        description = "Deprecated alias of `repo_blame`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `repo_blame`."
+    )]
+    pub(crate) async fn blame_find_alias(
+        &self,
+        params: Parameters<BlameFindParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.repo_blame(params).await
+    }
+
+    #[tool(
+        name = "usage_summary",
+        description = "Deprecated alias of `stats_usage`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `stats_usage`."
+    )]
+    pub(crate) async fn usage_summary_alias(
+        &self,
+        params: Parameters<UsageSummaryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.stats_usage(params).await
+    }
+
+    #[tool(
+        name = "pacing_window",
+        description = "Deprecated alias of `window_show`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `window_show`."
+    )]
+    pub(crate) async fn pacing_window_alias(
+        &self,
+        params: Parameters<PacingWindowParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.window_show(params).await
+    }
+
+    #[tool(
+        name = "coverage_stats",
+        description = "Deprecated alias of `agent_list`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `agent_list`."
+    )]
+    pub(crate) async fn coverage_stats_alias(
+        &self,
+        params: Parameters<CoverageStatsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.agent_list(params).await
+    }
+
+    #[tool(
+        name = "outcome_rate",
+        description = "Deprecated alias of `stats_outcomes`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `stats_outcomes`."
+    )]
+    pub(crate) async fn outcome_rate_alias(
+        &self,
+        params: Parameters<OutcomeRateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.stats_outcomes(params).await
+    }
+
+    #[tool(
+        name = "carry_forward",
+        description = "Deprecated alias of `session_carry_forward`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `session_carry_forward`."
+    )]
+    pub(crate) async fn carry_forward_alias(
+        &self,
+        params: Parameters<CarryForwardParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.session_carry_forward(params).await
+    }
+
+    #[tool(
+        name = "forgotten_context",
+        description = "Deprecated alias of `session_forgotten`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `session_forgotten`."
+    )]
+    pub(crate) async fn forgotten_context_alias(
+        &self,
+        params: Parameters<ForgottenContextParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.session_forgotten(params).await
+    }
+
+    #[tool(
+        name = "suspect_commits",
+        description = "Deprecated alias of `repo_suspect`, removed in v0.1.18. Same parameters, \
+                       same handler, same result -- use `repo_suspect`."
+    )]
+    pub(crate) async fn suspect_commits_alias(
+        &self,
+        params: Parameters<SuspectCommitsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.repo_suspect(params).await
+    }
+
 }
 
 #[tool_handler]
@@ -824,26 +956,26 @@ impl ServerHandler for AgentWorthMcpServer {
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
-                 sessions_find, session_get, blame_find, usage_summary, pacing_window, \
-                 coverage_stats, outcome_rate, session_handoff, carry_forward, \
-                 forgotten_context, session_asks, suspect_commits. Start a \
-                 session in a repo with carry_forward to read what recent sessions there \
+                 session_list, session_show, repo_blame, stats_usage, window_show, \
+                 agent_list, stats_outcomes, session_handoff, session_carry_forward, \
+                 session_forgotten, session_asks, repo_suspect. Start a \
+                 session in a repo with session_carry_forward to read what recent sessions there \
                  actually did; end one with session_handoff. If a session has compacted, \
-                 forgotten_context returns the decisions its own summaries dropped. \
+                 session_forgotten returns the decisions its own summaries dropped. \
                  session_asks finds where a question's answer already landed, so it never \
                  needs re-asking. Before \
-                 pushing, suspect_commits names the commits whose authoring session never \
+                 pushing, repo_suspect names the commits whose authoring session never \
                  proved anything -- a list and a prompt, never a patch. Redacted \
                  output is the default \
                  everywhere event or file content is returned; include_raw is the only opt-in \
-                 to raw content, and it is per-call, never global. Run `agentworth scan` first \
+                 to raw content, and it is per-call, never global. Run `archie scan` first \
                  if the index looks stale -- this server never scans on its own."
                     .to_string(),
             )
     }
 }
 
-/// Runs the `agentworth mcp` stdio server until the parent process closes the pipe -- the same
+/// Runs the `archie mcp` stdio server until the parent process closes the pipe -- the same
 /// lifecycle every other stdio MCP server has. Logging must go to stderr, never stdout: stdout
 /// is the JSON-RPC wire, and even one stray line on it would corrupt the protocol stream for
 /// whatever client spawned this process. `main()` is responsible for pointing the global

@@ -154,7 +154,7 @@ pub struct HandoffReport {
     /// Decisions this session's own compaction rounds dropped -- empty for the ~96% of sessions
     /// that never compacted. `docs/specs/compaction-diff.md` is why this is in a handoff at
     /// all: a compacted session hands over a summary of a summary, and these are the sentences
-    /// that summary no longer contains. `agentworth forgotten` and the `forgotten_context` MCP
+    /// that summary no longer contains. `archie session forgotten` and the `forgotten_context` MCP
     /// tool are the full view; this is the same extraction, capped.
     pub forgotten: Vec<ForgottenStatement>,
     pub forgotten_total: usize,

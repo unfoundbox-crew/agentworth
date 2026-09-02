@@ -1,7 +1,7 @@
-//! `agentworth handoff` and `agentworth loose-ends`.
+//! `archie session handoff` and `archie session loose-ends`.
 //!
 //! The same facts the `session_handoff` MCP tool returns, rendered for a person instead of an
-//! agent. `README.md` and `SKILL.md` have claimed `agentworth loose-ends` existed since #44;
+//! agent. `README.md` and `SKILL.md` have claimed `archie session loose-ends` existed since #44;
 //! it did not — the detector shipped in the dashboard's TypeScript and nothing on the CLI
 //! could reach it. It exists now, as a view onto the one section of the handoff it names.
 
@@ -26,9 +26,8 @@ use crate::ui::{compact, thousands, Ui};
 /// scrolls, so these are about what stays readable rather than what fits.
 const TERMINAL_ROWS: usize = 12;
 
-/// Resolves which session `command_name` should act on, via the shared picker
-/// (`crate::ui::picker`). An unresolved explicit id or prefix prints that command's own
-/// not-found screen and exits 1; on a TTY with nothing typed, the picker takes over.
+/// Resolves which session `command_name` should act on, via the one shared helper every
+/// show-style verb calls (`crate::ui::picker::resolve_or_exit`).
 fn resolve_session(
     storage: &Storage,
     ui: &Ui,
@@ -36,25 +35,7 @@ fn resolve_session(
     command_name: &str,
     arg: &SessionArg,
 ) -> Result<String> {
-    match picker::resolve(storage, ui, json, arg)? {
-        picker::Resolved::Id(id) => Ok(id),
-        picker::Resolved::NotFound(input) => {
-            print!(
-                "{}",
-                picker::not_found(
-                    ui,
-                    storage,
-                    &format!("agentworth {command_name} {input}"),
-                    &input,
-                    &[(
-                        format!("agentworth {command_name} --last"),
-                        "the newest session in this repo".to_string(),
-                    )],
-                )
-            );
-            std::process::exit(1);
-        }
-    }
+    picker::resolve_or_exit(storage, ui, json, command_name, arg)
 }
 
 fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
@@ -107,7 +88,7 @@ pub fn run_handoff_command(
         db_path,
         ui,
         json,
-        "handoff",
+        "session handoff",
         &arg,
         redact,
         HandoffOptions::default(),
@@ -129,23 +110,23 @@ pub fn run_handoff_command(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_loose_ends_command(
     session_id: Option<String>,
+    last: bool,
+    current: bool,
     redact: bool,
     prompt: bool,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &Ui,
 ) -> Result<()> {
-    // `loose-ends` isn't in the shared-picker rollout (no `--last`/`--current` of its own
-    // yet) -- `last: true` keeps its pre-picker behaviour: nothing typed means the newest
-    // session for this repository, on any stdout, not the interactive/JSON picker.
-    let arg = SessionArg::new(session_id, true, false);
+    let arg = SessionArg::new(session_id, last, current);
     let report = report_for(
         db_path,
         ui,
         json,
-        "loose-ends",
+        "session loose-ends",
         &arg,
         redact,
         HandoffOptions::default(),
@@ -185,7 +166,7 @@ pub fn run_loose_ends_command(
 
     let cost = cost_line(&report);
     let receipt = receipt_lines(&report);
-    let command = format!("agentworth loose-ends {}", short(&report.receipt.session_id));
+    let command = format!("archie session loose-ends {}", short(&report.receipt.session_id));
     print!(
         "{}",
         crate::ui::views::handoff(
@@ -200,7 +181,7 @@ pub fn run_loose_ends_command(
                 skipped: &[],
                 receipt,
                 next: Some((
-                    format!("agentworth handoff {}", short(&report.receipt.session_id)),
+                    format!("archie session handoff {}", short(&report.receipt.session_id)),
                     "the whole handoff, not just this section".to_string(),
                 )),
             }
@@ -275,7 +256,7 @@ fn render_terminal(report: &HandoffReport, ui: &Ui) -> String {
 
     let cost = cost_line(report);
     let receipt = receipt_lines(report);
-    let command = format!("agentworth handoff {}", short(&report.receipt.session_id));
+    let command = format!("archie session handoff {}", short(&report.receipt.session_id));
     crate::ui::views::handoff(
         ui,
         &HandoffView {
@@ -291,7 +272,7 @@ fn render_terminal(report: &HandoffReport, ui: &Ui) -> String {
             skipped: &[],
             receipt,
             next: Some((
-                format!("agentworth inspect {}", short(&report.receipt.session_id)),
+                format!("archie session show {}", short(&report.receipt.session_id)),
                 "read the turns these lines came from".to_string(),
             )),
         },

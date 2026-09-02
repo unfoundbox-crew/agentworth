@@ -7,7 +7,7 @@ You write a handoff file at the end of most working days, because the next
 session starts blank and will otherwise redo what the last one finished.
 
 The parts you re-type are mechanical: what changed, what ran, what passed, what
-was promised and not done. `agentworth handoff` writes those from the
+was promised and not done. `archie session handoff` writes those from the
 transcript. The judgment stays yours.
 
 ## What it prints
@@ -44,7 +44,7 @@ One of the 55, verbatim:
 That was never done. It surfaced hours later in a hand-written handoff, and only
 because a human remembered.
 
-`agentworth loose-ends` prints that section alone. `--prompt` gives you the
+`archie session loose-ends` prints that section alone. `--prompt` gives you the
 copyable text to hand to an agent that has the repository open.
 
 ## Picking a session
@@ -57,7 +57,7 @@ prefix of a session id works anywhere the full id does.
 ## Over MCP
 
 `session_handoff` returns the same markdown to a coding agent mid-session.
-`carry_forward(repo, n)` returns the last few handoffs for a repo, newest
+`session_carry_forward(repo, n)` returns the last few handoffs for a repo, newest
 first, so a session's *first* tool call can be the catch-up. Neither writes a
 file — where the handoff lands is your business. See
 [MCP setup](/docs/learn/mcp-setup/).
@@ -65,9 +65,9 @@ file — where the handoff lands is your business. See
 ## What to run
 
 ```bash
-agentworth handoff --last
-agentworth handoff --last --markdown --max-lines 60
-agentworth handoff --last --redact
-agentworth handoff --json
-agentworth loose-ends --last --prompt
+archie session handoff --last
+archie session handoff --last --markdown --max-lines 60
+archie session handoff --last --redact
+archie session handoff --json
+archie session loose-ends --last --prompt
 ```

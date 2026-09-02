@@ -249,8 +249,8 @@ fn the_error_screen_names_the_noun_and_the_way_out() {
     let out = String::from_utf8(out).unwrap();
 
     assert!(out.contains("No indexed session starts with 9f21aa."));
-    assert!(out.contains("agentworth traces --limit 20"));
-    assert!(out.contains("agentworth scan"));
+    assert!(out.contains("archie session list --limit 20"));
+    assert!(out.contains("archie scan"));
     assert!(!out.contains("panicked"), "an error screen is not a stack trace");
     for line in out.lines() {
         assert!(console::measure_text_width(line) <= 78, "{}", line);
@@ -273,27 +273,24 @@ fn inspect_resolves_a_unique_prefix() {
     assert_eq!(trace["session_id"].as_str().unwrap(), full_id);
 }
 
-/// `session_` matches both fixture sessions, so it must fall through to the same
-/// not-found/nearest-matches screen an unknown id gets -- not resolve to either one.
+/// `session_` matches both fixture sessions, so it resolves to neither: exit 2, with the
+/// candidates on stdout so a script gets data and a non-zero code.
 #[test]
-fn inspect_lists_candidates_for_an_ambiguous_prefix() {
+fn show_lists_candidates_for_an_ambiguous_prefix() {
     let (_t, db) = fixture();
     let mut cmd = Command::cargo_bin("agentworth").unwrap();
-    let out = cmd
+    let assertion = cmd
         .arg("--db-path")
         .arg(&db)
-        .arg("inspect")
+        .arg("session")
+        .arg("show")
         .arg("session_")
         .env("COLUMNS", "80")
         .env("NO_COLOR", "1")
         .assert()
-        .failure()
-        .get_output()
-        .stdout
-        .clone();
-    let out = String::from_utf8(out).unwrap();
+        .code(2);
+    let out = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
 
-    assert!(out.contains("No indexed session starts with session_."));
     assert!(out.contains("session_tested"));
     assert!(out.contains("session_claimed"));
 }
@@ -318,7 +315,7 @@ fn stats_draws_the_evidence_line_between_rung_3_and_rung_2() {
     assert!(out.contains("VERIFIED"), "stats names the verified total");
     assert!(out.contains("EVIDENCE LADDER"));
     assert!(out.contains("TOKENS"));
-    assert!(out.starts_with("agentworth stats"), "the command echoes at column 0");
+    assert!(out.starts_with("archie stats"), "the command echoes at column 0");
 }
 
 #[test]
@@ -337,7 +334,7 @@ fn traces_leads_with_a_five_cell_meter_and_ends_on_the_finding() {
     assert_eq!(meters.len(), 2, "one meter per row, five cells each");
     assert!(meters.contains(&"###.."), "the tested session sits on rung 3");
     assert!(meters.contains(&"....."), "the claim-only session sits on rung 0");
-    assert!(out.contains("agentworth inspect "), "the screen ends with the next command");
+    assert!(out.contains("archie session show "), "the screen ends with the next command");
 }
 
 #[test]

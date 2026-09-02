@@ -1,6 +1,6 @@
 //! Cache Hit-Rate Doctor command for AgentWorth.
 //!
-//! Subcommand: `agentworth cache-doctor <session-id> [--json]`
+//! Subcommand: `archie session cache <session-id> [--json]`
 //! Analyzes turn-by-turn prompt caching dynamics in a session, pinpointing the exact turn
 //! where cache efficiency deteriorated and identifying the root cause (model switch, new tool, payload blowout).
 
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use agentworth_core::Scanner;
 use agentworth_schema::{AgentWorthTrace, EventPayload};
 use agentworth_storage::{calculate_cache_hit_ratio, Storage};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,9 +143,11 @@ pub fn diagnose_cache_efficiency(trace: &AgentWorthTrace) -> CacheDoctorDiagnosi
     }
 }
 
-/// Execute the `agentworth cache-doctor` subcommand.
+/// Execute the `archie session cache` subcommand.
 pub fn run_cache_doctor_command(
-    session_id: &str,
+    session_id: Option<String>,
+    last: bool,
+    current: bool,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &crate::ui::Ui,
@@ -155,9 +157,11 @@ pub fn run_cache_doctor_command(
         None => Storage::open_default()?,
     });
 
-    storage
-        .get_session_by_id(session_id)?
-        .with_context(|| format!("Session '{}' not found in local index.", session_id))?;
+    // Same resolution as every other show-style verb: unique prefix, `--last`/`--current`,
+    // the picker on a TTY, exit 2 off one (`crate::ui::picker::resolve_or_exit`).
+    let arg = crate::ui::picker::SessionArg::new(session_id, last, current);
+    let session_id = crate::ui::picker::resolve_or_exit(&storage, ui, json, "session cache", &arg)?;
+    let session_id = session_id.as_str();
 
     let scanner = Scanner::new(storage.clone());
     let trace = crate::ui::with_status(ui, "loading session", || scanner.load_trace(session_id))?;

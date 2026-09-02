@@ -136,11 +136,11 @@ fn test_version_subcommand_coexists_with_builtin_version_flag() {
 }
 
 #[test]
-fn test_both_binaries_expose_version_and_update() {
-    // agentworth and agwt are the same compiled binary under two names (see
-    // apps/cli/Cargo.toml's [[bin]] entries, both pointing at src/main.rs) -- prove both
-    // really do carry the same new commands rather than assuming it from the shared path.
-    for bin in ["agentworth", "agwt"] {
+fn test_every_binary_exposes_version_and_update() {
+    // agentworth, archie and agwt are one compiled binary under three names (see
+    // apps/cli/Cargo.toml's [[bin]] entries, all calling the same run()) -- prove each one
+    // really does carry the commands rather than assuming it from the shared path.
+    for bin in ["agentworth", "archie", "agwt"] {
         Command::cargo_bin(bin).unwrap().arg("version").arg("--offline").assert().success();
         Command::cargo_bin(bin).unwrap().arg("update").arg("--offline").assert().success();
     }

@@ -62,7 +62,7 @@ npx -y agentworth scan
 | **Agent Skill** | `npx skills add unfoundbox-crew/agentworth -g` | Installs global Agent Skill for AI coding agents. |
 | **NPX (Zero Install)** | `npx -y agentworth scan` | Instant runner that executes the native binary on demand. |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs pre-built native binary to `~/.local/bin`. |
-| **Cargo (Native)** | `cargo install agentworth-cli` | Compiles native binaries (`agentworth` & `agwt`) into `~/.cargo/bin`. |
+| **Cargo (Native)** | `cargo install agentworth-cli` | Compiles native binaries (`agentworth` and its short alias `archie`) into `~/.cargo/bin`. |
 
 ---
 
@@ -70,24 +70,24 @@ npx -y agentworth scan
 
 ```bash
 # 1. Scan and index all local agent histories across 20 adapters
-agentworth scan
+archie scan
 
 # 2. View machine-wide token burn, top models, and expenditures
-agentworth stats
+archie stats
 
 # 3. Inspect daily token burn, per-model spend, and 5-hour rolling pacing windows
-agentworth usage --period day
-agentworth usage --period month --by model
-agentworth usage --pacing
+archie stats usage --period day
+archie stats usage --period month --by model
+archie window show
 
 # 4. Blame file edits back to the agent session and prompt that authored them
-agentworth blame src/main.rs
+archie repo blame src/main.rs
 
 # 5. Launch the local interactive receipt explorer dashboard
-agentworth serve --open
+archie serve --open
 ```
 
-> **Tip:** You can also use the shorthand alias `agwt` for all commands (e.g. `agwt usage`, `agwt blame`, `agwt stats`).
+> **Tip:** `archie` is the short name for every command (e.g. `archie stats usage`, `archie repo blame`, `archie stats`). The older `agwt` still works and is no longer documented.
 
 ---
 
@@ -217,7 +217,7 @@ crates/
   export-atif/   Standard Agent Trajectory Interchange Format (ATIF v1.0) serializer
 
 apps/
-  cli/           Rust CLI binary (agentworth, agwt) and embedded Axum API server
+  cli/           Rust CLI binary (agentworth, archie, agwt) and embedded Axum API server
   dashboard/     The local app. Keyboard-first three-pane explorer, compiled
                  INTO the binary via rust-embed — build it before cargo or the
                  binary ships a stub instead of a UI.
@@ -243,7 +243,7 @@ Before exporting, every trace passes through a deterministic **16-rule offline r
 
 ```bash
 # Export a redacted session in standard ATIF v1.0 format
-agentworth export <SESSION_ID> --format atif --redact > trajectory_atif.json
+archie session export <SESSION_ID> --format atif --redact > trajectory_atif.json
 ```
 
 ---
@@ -252,25 +252,25 @@ agentworth export <SESSION_ID> --format atif --redact > trajectory_atif.json
 
 | Command | Description |
 | :--- | :--- |
-| `agentworth scan [PATHS...]` | Discovers and incrementally indexes agent sessions into local SQLite. |
-| `agentworth stats [--json]` | Displays machine-wide token totals, top models, top tools, and session counts. |
-| `agentworth usage [--period ...]` | Usage rollups by `day`, `week`, `month`, `year`, or `all` (no period column); group with `--by adapter\|model\|repo` (`model` is usually the useful one -- most sessions share one adapter); filter with `--since <date\|1d\|2w\|3m>`; or rolling 5-hour pacing (`--pacing`). Cost is always an API list-price equivalent, labelled as such, not what a subscription plan actually billed. |
-| `agentworth blame <FILE>` | AI code lineage: finds all agent sessions and prompts that modified a given file. |
-| `agentworth traces [OPTIONS]` | Tabular directory of indexed sessions (`--limit`, `--adapter`, `--model`, `--json`). |
-| `agentworth matrix [--json]` | Extraction capability and coverage matrix across all 20 agent adapters. |
-| `agentworth inspect [ID]` | Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs. `ID` accepts any unique session-ID prefix, not just the full ID. |
-| `agentworth serve [OPTIONS]` | Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`). |
-| `agentworth export [ID]` | Exports a session as JSON, ATIF v1.0, or a Flight Receipt (`--format json\|atif\|receipt\|svg`), with optional privacy scrubbing (`--redact`). |
-| `agentworth receipt [ID]` | Renders a Flight Receipt for a session: an ANSI box for the terminal or a shareable 1200x630 SVG card (`--format terminal\|svg\|json`, `--output <PATH>`). |
-| `agentworth handoff [ID]` | What a session promised, decided, changed, ran, and proved — the same report the `session_handoff` MCP tool returns (`--markdown`, `--redact`, `--json`). |
-| `agentworth loose-ends [ID \| --last]` | The handoff's loose-ends section alone: what a session said it would do and didn't (`--prompt` prints a copyable brief). |
-| `agentworth asks [--session ID \| --last] [--since 2h] [--unanswered]` | The questions you asked and where their answers already are, so you never re-scroll or re-ask (`--session` also accepts a raw JSONL path; `--current` is an alias of `--last`; `--json` for the structured list). |
-| `agentworth forgotten [ID]` | What compaction dropped: decisions a session made that its own summaries didn't keep (`--round N`, `--class CLASS`, `--json`). |
-| `agentworth blunder-blame [--session ID \| --file PATH]` | Bridges a recorded blunder forward to the files it touched, or a file's blame history back to any blunder in the sessions blamed for it (`--top N`, `--json`). |
-| `agentworth suspect [OPTIONS]` | Lists commits on this branch whose authoring session never proved anything, so you know where to look twice before pushing (`--repo`, `--since`, `--json`). `--hook` prints a pre-push script that prints and never blocks. |
-| `agentworth doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
-| `agentworth doctor --self-test` | Runs the real workflow end to end — scan, stats, usage, traces, inspect, handoff, forgotten, an MCP round trip — against the real index on this machine, with no network. Prints pass/fail/slow and timing per step; exits non-zero if any step fails. |
-| `agentworth mcp` | Starts the read-only MCP server over stdio, so a coding agent can query this machine's session index mid-session (see below). |
+| `archie scan [PATHS...]` | Discovers and incrementally indexes agent sessions into local SQLite. |
+| `archie stats [--json]` | Displays machine-wide token totals, top models, top tools, and session counts. |
+| `archie stats usage [--period ...]` | Usage rollups by `day`, `week`, `month`, `year`, or `all` (no period column); group with `--by adapter\|model\|repo` (`model` is usually the useful one -- most sessions share one adapter); filter with `--since <date\|1d\|2w\|3m>`; or rolling 5-hour pacing (`--pacing`). Cost is always an API list-price equivalent, labelled as such, not what a subscription plan actually billed. |
+| `archie repo blame <FILE>` | AI code lineage: finds all agent sessions and prompts that modified a given file. |
+| `archie session list [OPTIONS]` | Tabular directory of indexed sessions (`--limit`, `--adapter`, `--model`, `--json`). |
+| `archie agent list [--json]` | Extraction capability and coverage matrix across all 20 agent adapters. |
+| `archie session show [ID]` | Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs. `ID` accepts any unique session-ID prefix, not just the full ID. |
+| `archie serve [OPTIONS]` | Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`). |
+| `archie session export [ID]` | Exports a session as JSON, ATIF v1.0, or a Flight Receipt (`--format json\|atif\|receipt\|svg`), with optional privacy scrubbing (`--redact`). |
+| `archie session receipt [ID]` | Renders a Flight Receipt for a session: an ANSI box for the terminal or a shareable 1200x630 SVG card (`--format terminal\|svg\|json`, `--output <PATH>`). |
+| `archie session handoff [ID]` | What a session promised, decided, changed, ran, and proved — the same report the `session_handoff` MCP tool returns (`--markdown`, `--redact`, `--json`). |
+| `archie session loose-ends [ID \| --last]` | The handoff's loose-ends section alone: what a session said it would do and didn't (`--prompt` prints a copyable brief). |
+| `archie session asks [--session ID \| --last] [--since 2h] [--unanswered]` | The questions you asked and where their answers already are, so you never re-scroll or re-ask (`--session` also accepts a raw JSONL path; `--current` is an alias of `--last`; `--json` for the structured list). |
+| `archie session forgotten [ID]` | What compaction dropped: decisions a session made that its own summaries didn't keep (`--round N`, `--class CLASS`, `--json`). |
+| `archie repo blunder-blame [--session ID \| --file PATH]` | Bridges a recorded blunder forward to the files it touched, or a file's blame history back to any blunder in the sessions blamed for it (`--top N`, `--json`). |
+| `archie repo suspect [OPTIONS]` | Lists commits on this branch whose authoring session never proved anything, so you know where to look twice before pushing (`--repo`, `--since`, `--json`). `--hook` prints a pre-push script that prints and never blocks. |
+| `archie doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
+| `archie doctor --self-test` | Runs the real workflow end to end — scan, stats, usage, traces, inspect, handoff, forgotten, an MCP round trip — against the real index on this machine, with no network. Prints pass/fail/slow and timing per step; exits non-zero if any step fails. |
+| `archie mcp` | Starts the read-only MCP server over stdio, so a coding agent can query this machine's session index mid-session (see below). |
 
 Every command accepts `--plain` (no colour, ASCII-only glyphs, same column positions as the colour output) and `--no-color`; setting `NO_COLOR` in the environment has the same effect as `--no-color`.
 
@@ -280,22 +280,22 @@ Every command accepts `--plain` (no colour, ASCII-only glyphs, same column posit
 
 ## MCP Server
 
-`agentworth mcp` exposes the local session index to any MCP client (Claude Code, Codex, Cursor) as a stdio server, so a session can ask "what was I doing in this repo yesterday" or "which sessions touched `api.ts`" directly, without a human opening the dashboard first. Register it once:
+`archie mcp` exposes the local session index to any MCP client (Claude Code, Codex, Cursor) as a stdio server, so a session can ask "what was I doing in this repo yesterday" or "which sessions touched `api.ts`" directly, without a human opening the dashboard first. Register it once:
 
 ```bash
-claude mcp add agentworth --scope user -- agentworth mcp
+claude mcp add agentworth --scope user -- archie mcp
 ```
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-Twelve read-only tools: `sessions_find`, `session_get`, `blame_find`, `usage_summary`, `pacing_window`, `coverage_stats`, `outcome_rate`, plus the two handoff tools, `forgotten_context`, `session_asks`, and `suspect_commits` below. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `agentworth scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+12 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, plus the two handoff tools, `session_forgotten`, `session_asks`, and `repo_suspect` below. A client's `tools/list` shows 22: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.18. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
 
 ### The handoff, over MCP
 
 | Tool | What it answers |
 | :--- | :--- |
 | `session_handoff(session_id?, max_lines?, include_loose_ends?, include_raw?)` | "What did this session actually do?" — what it said it would do and never did, what it said it decided, which files changed, which commands ran and how they ended, the outcome rung reached, and how often the context was compacted. Returns markdown under a line budget (default 60, ceiling 120), the receipt every claim traces back to, and `gaps`. Defaults to the newest session for the repo the server runs in. |
-| `carry_forward(repo, n?, since?, max_lines?, include_raw?)` | "What happened in this repo recently?" — the last `n` handoffs (default 3, ceiling 10), newest first, so a session's *first* tool call can be the catch-up. A repo's worktrees all answer to one `repo` key. |
+| `session_carry_forward(repo, n?, since?, max_lines?, include_raw?)` | "What happened in this repo recently?" — the last `n` handoffs (default 3, ceiling 10), newest first, so a session's *first* tool call can be the catch-up. A repo's worktrees all answer to one `repo` key. |
 
 Two things these deliberately do not do. They never write a file — where a handoff lands is the caller's business. And they never summarise: every line is a fact from a row, quoted verbatim with a sequence number or a timestamp, because the moment a model writes the prose the receipt stops meaning anything.
 
@@ -309,13 +309,13 @@ Measured on one real eight-round session: **402 decision-shaped sentences went i
 
 | Tool | What it answers |
 | :--- | :--- |
-| `forgotten_context(session_id?, round?, classes?, limit?, include_raw?)` | "What did I decide and forget?" — decision-shaped sentences dropped by this session's own compaction rounds, quoted verbatim, newest first. Each carries its round, source sequence, and what the session did in the next few events, so a decision that was acted on reads differently from one that was only stated. `classes` is any of `decision`, `rejected`, `reason`; `limit` defaults to 20, ceiling 200. |
+| `session_forgotten(session_id?, round?, classes?, limit?, include_raw?)` | "What did I decide and forget?" — decision-shaped sentences dropped by this session's own compaction rounds, quoted verbatim, newest first. Each carries its round, source sequence, and what the session did in the next few events, so a decision that was acted on reads differently from one that was only stated. `classes` is any of `decision`, `rejected`, `reason`; `limit` defaults to 20, ceiling 200. |
 
 Three answers stay distinct and none is padded: never compacted, compacted with nothing decision-shaped dropped, and a real list. A session whose transcript has since been deleted gets a refusal, not a diff assembled from index rows.
 
 **No model, on purpose.** Three regexes return the sentence verbatim with a sequence number. A model paraphrasing the dropped span would make this a second summariser — the exact lossy step the feature exists to undo — and the receipt would stop pointing at words anyone said. Full design: `docs/specs/compaction-diff.md`.
 
-On the CLI, the same diff is `agentworth forgotten [SESSION_ID | prefix] [--round N] [--class CLASS] [--json]`, and a compacted session's handoff carries it as its first section.
+On the CLI, the same diff is `archie session forgotten [SESSION_ID | prefix] [--round N] [--class CLASS] [--json]`, and a compacted session's handoff carries it as its first section.
 
 ### Where the answer already is
 
@@ -329,17 +329,17 @@ first substantive assistant text that follows it.
 | :--- | :--- |
 | `session_asks(session_id?, since?, unanswered_only?, limit?, include_raw?)` | "Where's the answer to that?" — every question in the session with a status (`answered`, `flagged_back_to_user`, `no_reply_yet`), an excerpt of the answer when one was found, and a pointer (event sequence and timestamp) to jump to. `limit` defaults to 50, ceiling 500. |
 
-No model reads the transcript -- three deterministic patterns, the same `regex_v1` posture `forgotten_context` uses. Full design: `docs/specs/asks.md`.
+No model reads the transcript -- three deterministic patterns, the same `regex_v1` posture `session_forgotten` uses. Full design: `docs/specs/asks.md`.
 
-On the CLI this is `agentworth asks [--session ID | --current] [--since 2h] [--unanswered] [--json]`; `--session` also accepts a raw JSONL path for a session that isn't indexed.
+On the CLI this is `archie session asks [--session ID | --current] [--since 2h] [--unanswered] [--json]`; `--session` also accepts a raw JSONL path for a session that isn't indexed.
 
 ### Which commits to look at twice
 
-`suspect_commits(repo, branch?, base?, since?, window_hours?)` walks `git log` over a range, joins each commit's changed paths to the sessions that touched them, and reports which of those sessions never proved anything -- no test run, a claim verification contradicted, a loop the sentinel caught. It returns a list, session ids, and a copyable prompt. **Never a patch**: a trajectory can say the session was going badly, but only the diff says what the code does wrong.
+`repo_suspect(repo, branch?, base?, since?, window_hours?)` walks `git log` over a range, joins each commit's changed paths to the sessions that touched them, and reports which of those sessions never proved anything -- no test run, a claim verification contradicted, a loop the sentinel caught. It returns a list, session ids, and a copyable prompt. **Never a patch**: a trajectory can say the session was going badly, but only the diff says what the code does wrong.
 
 Two counts in its answer are load-bearing and worth reading every time: `unattributed` (commits with no indexed session at all -- unknown, never clean) and `unanchored_blame_rows` (evidence that could not be placed in any repository). Measured on this repo's own main, anchoring the join to the repo root takes the flag rate from 28.8% to 2.3%, and every one of the first ten flags it removes is false. Full design and measurement: `docs/specs/suspect-commits.md`.
 
-On the CLI this is `agentworth suspect [--repo PATH] [--since REF|DATE] [--json]`, and `agentworth suspect --hook` prints a pre-push script that prints and exits 0, always.
+On the CLI this is `archie repo suspect [--repo PATH] [--since REF|DATE] [--json]`, and `archie repo suspect --hook` prints a pre-push script that prints and exits 0, always.
 
 ---
 
@@ -388,7 +388,7 @@ AgentWorth is part of the Unfoundbox autonomous agent tooling collective:
 
 ```bash
 cd apps/dashboard && npm run build
-agentworth serve --port 3250 --dist apps/dashboard/dist --open
+archie serve --port 3250 --dist apps/dashboard/dist --open
 ```
 
 `--dist` points the installed binary at any local build, so UI work needs no

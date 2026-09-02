@@ -182,6 +182,9 @@ pub fn run_blunder_blame_command(
     let session = match session {
         Some(input) => match crate::ui::picker::resolve_explicit(&storage, &input)? {
             crate::ui::picker::Resolved::Id(id) => Some(id),
+            crate::ui::picker::Resolved::Ambiguous { input, candidates } => {
+                crate::ui::picker::exit_ambiguous(ui, json_output, &input, &candidates)
+            }
             crate::ui::picker::Resolved::NotFound(input) => Some(input),
         },
         None if last || current => crate::ui::picker::resolve_last(&storage)?,
@@ -200,11 +203,11 @@ pub fn run_blunder_blame_command(
                         "{}",
                         crate::ui::views::error(
                             ui,
-                            "agentworth blunder-blame",
+                            "archie repo blunder-blame",
                             &format!("No indexed session found matching '{}'.", session_id),
                             "",
                             &[],
-                            &[("agentworth scan".to_string(), "index agent histories first".to_string())],
+                            &[("archie scan".to_string(), "index agent histories first".to_string())],
                         )
                     );
                 }
@@ -236,11 +239,11 @@ pub fn run_blunder_blame_command(
             "{}",
             crate::ui::views::error(
                 ui,
-                "agentworth blunder-blame",
+                "archie repo blunder-blame",
                 "No blunder exhibits found in the local index.",
                 "",
                 &[],
-                &[("agentworth scan".to_string(), "index agent histories first".to_string())],
+                &[("archie scan".to_string(), "index agent histories first".to_string())],
             )
         );
         return Ok(());

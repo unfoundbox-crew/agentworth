@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **A grammar instead of a list.** Five nouns — `session`, `agent`, `repo`, `window`, `stats` — carry everything that acts on indexed data; `scan`, `serve`, `mcp`, `doctor`, `docs`, `config`, `version`, `update`, `completions` and `merge` stay top-level. Every pre-0.1.16 spelling still runs, hidden from `--help`, until v0.1.18 (#118).
+- New verbs: `archie agent show <adapter>`, `archie repo list`, `archie window list`, and `archie stats outcomes` — the verified-outcome rate, on the CLI at last (#118).
+- **`archie`**, the short name, shipped everywhere `agwt` shipped: a third binary, the npm bin map, `install.sh`, and the release tarball. `agwt` keeps working and is out of the docs (#118).
+- **Shell completions.** `archie completions <shell>` for bash, zsh, fish, powershell and elvish, plus live completion of session ids, repositories and models through `COMPLETE=<shell> archie`. One bounded read on a read-only connection: a missing or locked index offers nothing rather than blocking a Tab (#118).
+
+### Changed
+
+- `blind-spots` is now `archie session list --unproven` — a filter, not a command of its own (#118).
+- Every show-style verb resolves a session identically: unique prefix, `--last`/`--current`, the picker on a TTY. An ambiguous prefix exits 2 with the candidates instead of guessing; `session cache` and `session bisect` gained all of this (#118).
+- MCP tools renamed to match the CLI (`sessions_find` → `session_list`, `session_get` → `session_show`, and eight more). Every old name stays registered and reaches the same handler until v0.1.18 (#118).
+
+---
+
 ## [0.1.15] - 2026-09-02
 
 ### Fixed

@@ -121,7 +121,7 @@ fn build_safety_audit_report(storage: Arc<Storage>, safety_only: bool) -> Result
         findings: Vec::new(),
     };
 
-    // Shared with `agentworth threat-digest` and `agentworth export --redact` -- using the
+    // Shared with `archie session risk` and `archie session export --redact` -- using the
     // same `Redactor` here means `agwt audit --safety` can no longer disagree with either of
     // them about what counts as a leaked secret. See `detect_credential_leak` below.
     let redactor = Redactor::new();
@@ -552,7 +552,7 @@ fn snippet_from_payload(payload: &EventPayload) -> String {
 }
 
 /// Scans one event for a leaked credential/secret via the shared `Redactor` -- the same rule
-/// set `agentworth threat-digest` and `agentworth export --redact` use, so `agwt audit --safety`
+/// set `archie session risk` and `archie session export --redact` use, so `agwt audit --safety`
 /// can no longer disagree with either of them about what counts as a leak. Runs over the
 /// *whole* event via `Redactor::redact_event_with_counts`, which already knows the full field
 /// list for every event kind (command/cwd/output for a shell command, name/arguments for a tool

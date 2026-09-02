@@ -12,7 +12,7 @@ use super::server::AgentWorthMcpServer;
 
 /// Builds `n` minimal single-line Claude Code "user message" events, one per line, so a real
 /// `Scanner::load_trace` parse produces a trace with exactly `n` events (unlike
-/// `seed_non_stub_session`, which only ever populates the SQLite summary row -- `session_get`
+/// `seed_non_stub_session`, which only ever populates the SQLite summary row -- `session_show`
 /// goes through `Scanner::load_trace`, which re-parses the on-disk history file rather than
 /// reading events back out of storage).
 fn build_n_event_claude_jsonl(n: usize) -> String {
@@ -126,7 +126,7 @@ async fn test_sessions_find_rejects_zero_limit() {
     let server = AgentWorthMcpServer::new(storage);
 
     let err = server
-        .sessions_find(Parameters(empty_sessions_find_params(0)))
+        .session_list(Parameters(empty_sessions_find_params(0)))
         .await
         .expect_err("limit=0 must be rejected");
     assert!(err.message.contains("between 1 and 200"));
@@ -138,7 +138,7 @@ async fn test_sessions_find_rejects_limit_over_ceiling() {
     let server = AgentWorthMcpServer::new(storage);
 
     let err = server
-        .sessions_find(Parameters(empty_sessions_find_params(201)))
+        .session_list(Parameters(empty_sessions_find_params(201)))
         .await
         .expect_err("limit=201 must be rejected -- the hard ceiling is 200");
     assert!(err.message.contains("between 1 and 200"));
@@ -150,7 +150,7 @@ async fn test_sessions_find_accepts_limit_at_ceiling() {
     let server = AgentWorthMcpServer::new(storage);
 
     let result = server
-        .sessions_find(Parameters(empty_sessions_find_params(200)))
+        .session_list(Parameters(empty_sessions_find_params(200)))
         .await
         .expect("limit=200 is exactly the ceiling and must be accepted");
     let value = call_result_json(result);
@@ -169,7 +169,7 @@ async fn test_sessions_find_redacts_source_path_by_default() {
     let server = AgentWorthMcpServer::new(Arc::new(storage));
 
     let result = server
-        .sessions_find(Parameters(empty_sessions_find_params(10)))
+        .session_list(Parameters(empty_sessions_find_params(10)))
         .await
         .unwrap();
     let value = call_result_json(result);
@@ -191,7 +191,7 @@ async fn test_sessions_find_repo_filter_sets_truncated_flag() {
     let storage = Storage::open_in_memory().unwrap();
     // Three sessions in the same repo, one in a different repo -- `repo` isn't a stored
     // column, so this exercises the over-fetch-then-post-filter path documented in
-    // docs/specs/mcp-server.md's sessions_find section.
+    // docs/specs/mcp-server.md's session_list section.
     seed_non_stub_session(
         &storage,
         "sess-a1",
@@ -217,7 +217,7 @@ async fn test_sessions_find_repo_filter_sets_truncated_flag() {
     let mut params = empty_sessions_find_params(2);
     params.repo = Some("unfoundbox/agentworth".to_string());
 
-    let result = server.sessions_find(Parameters(params)).await.unwrap();
+    let result = server.session_list(Parameters(params)).await.unwrap();
     let value = call_result_json(result);
     let sessions = value["sessions"].as_array().unwrap();
 
@@ -250,7 +250,7 @@ async fn test_sessions_find_repo_filter_no_truncation_when_limit_covers_all_matc
     let mut params = empty_sessions_find_params(10);
     params.repo = Some("unfoundbox/agentworth".to_string());
 
-    let result = server.sessions_find(Parameters(params)).await.unwrap();
+    let result = server.session_list(Parameters(params)).await.unwrap();
     let value = call_result_json(result);
     let sessions = value["sessions"].as_array().unwrap();
 
@@ -264,7 +264,7 @@ async fn test_session_get_not_found_returns_resource_not_found_error() {
     let server = AgentWorthMcpServer::new(storage);
 
     let err = server
-        .session_get(Parameters(SessionGetParams {
+        .session_show(Parameters(SessionGetParams {
             session_id: "does-not-exist".to_string(),
             include_raw: false,
             events_offset: None,
@@ -286,14 +286,14 @@ async fn test_session_get_default_events_limit_caps_large_trace() {
     let server = AgentWorthMcpServer::new(Arc::new(storage));
 
     let result = server
-        .session_get(Parameters(SessionGetParams {
+        .session_show(Parameters(SessionGetParams {
             session_id,
             include_raw: true,
             events_offset: None,
             events_limit: None,
         }))
         .await
-        .expect("session_get should succeed");
+        .expect("session_show should succeed");
     let value = call_result_json(result);
 
     assert_eq!(
@@ -312,14 +312,14 @@ async fn test_session_get_events_offset_and_limit_page_through_trace() {
     let server = AgentWorthMcpServer::new(Arc::new(storage));
 
     let result = server
-        .session_get(Parameters(SessionGetParams {
+        .session_show(Parameters(SessionGetParams {
             session_id,
             include_raw: true,
             events_offset: Some(7),
             events_limit: Some(5),
         }))
         .await
-        .expect("session_get should succeed");
+        .expect("session_show should succeed");
     let value = call_result_json(result);
 
     // 10 events total, offset 7, limit 5 -- only 3 remain (indices 7, 8, 9).
@@ -336,7 +336,7 @@ async fn test_session_get_events_offset_past_end_returns_empty_page() {
     let server = AgentWorthMcpServer::new(Arc::new(storage));
 
     let result = server
-        .session_get(Parameters(SessionGetParams {
+        .session_show(Parameters(SessionGetParams {
             session_id,
             include_raw: true,
             events_offset: Some(100),
@@ -358,7 +358,7 @@ async fn test_session_get_events_limit_zero_is_rejected() {
     let server = AgentWorthMcpServer::new(Arc::new(storage));
 
     let err = server
-        .session_get(Parameters(SessionGetParams {
+        .session_show(Parameters(SessionGetParams {
             session_id,
             include_raw: true,
             events_offset: None,
@@ -375,7 +375,7 @@ async fn test_coverage_stats_include_matrix_toggle() {
     let server = AgentWorthMcpServer::new(storage);
 
     let without_matrix = server
-        .coverage_stats(Parameters(super::params::CoverageStatsParams {
+        .agent_list(Parameters(super::params::CoverageStatsParams {
             include_matrix: false,
         }))
         .await
@@ -384,7 +384,7 @@ async fn test_coverage_stats_include_matrix_toggle() {
     assert!(value.get("matrix").is_none());
 
     let with_matrix = server
-        .coverage_stats(Parameters(super::params::CoverageStatsParams {
+        .agent_list(Parameters(super::params::CoverageStatsParams {
             include_matrix: true,
         }))
         .await
@@ -445,7 +445,7 @@ async fn test_outcome_rate_min_n_defaults_to_20() {
     let server = AgentWorthMcpServer::new(storage);
 
     let result = server
-        .outcome_rate(Parameters(
+        .stats_outcomes(Parameters(
             serde_json::from_value(outcome_rate_params("repo", None)).unwrap(),
         ))
         .await
@@ -463,7 +463,7 @@ async fn test_outcome_rate_min_n_explicit_override() {
     let server = AgentWorthMcpServer::new(storage);
 
     let result = server
-        .outcome_rate(Parameters(
+        .stats_outcomes(Parameters(
             serde_json::from_value(outcome_rate_params("repo", Some(3))).unwrap(),
         ))
         .await
@@ -533,7 +533,7 @@ async fn test_outcome_rate_end_to_end_suppression_and_reason() {
 
     let server = AgentWorthMcpServer::new(Arc::new(storage));
     let result = server
-        .outcome_rate(Parameters(
+        .stats_outcomes(Parameters(
             serde_json::from_value(outcome_rate_params("repo", Some(3))).unwrap(),
         ))
         .await
@@ -566,7 +566,7 @@ async fn test_outcome_rate_end_to_end_suppression_and_reason() {
 }
 
 // -----------------------------------------------------------------------------
-// session_handoff / carry_forward (docs/specs/handoff.md)
+// session_handoff / session_carry_forward (docs/specs/handoff.md)
 // -----------------------------------------------------------------------------
 
 use super::params::{CarryForwardParams, SessionHandoffParams};
@@ -576,7 +576,7 @@ use super::params::{CarryForwardParams, SessionHandoffParams};
 /// records them), and a commitment that was stated and then handed straight back to the user.
 ///
 /// Written to a real `projects/-Users-...` directory so `extract_repository_or_workspace`
-/// derives a stable repo key from it, which is what `carry_forward` queries on.
+/// derives a stable repo key from it, which is what `session_carry_forward` queries on.
 fn write_fixture_session(dir: &std::path::Path, session_id: &str, day: &str) -> std::path::PathBuf {
     let project = dir.join("projects").join("-Users-x-code-unfoundbox-agentworth");
     std::fs::create_dir_all(&project).expect("create project dir");
@@ -758,7 +758,7 @@ async fn test_carry_forward_returns_the_last_n_newest_first() {
 
     let value = call_result_json(
         server
-            .carry_forward(Parameters(CarryForwardParams {
+            .session_carry_forward(Parameters(CarryForwardParams {
                 repo: "unfoundbox/agentworth".to_string(),
                 n: Some(2),
                 since: None,
@@ -766,7 +766,7 @@ async fn test_carry_forward_returns_the_last_n_newest_first() {
                 include_raw: true,
             }))
             .await
-            .expect("carry_forward for a seeded repo"),
+            .expect("session_carry_forward for a seeded repo"),
     );
 
     let handoffs = value["handoffs"].as_array().unwrap();
@@ -787,7 +787,7 @@ async fn test_carry_forward_unknown_repo_is_empty_not_an_error() {
 
     let value = call_result_json(
         server
-            .carry_forward(Parameters(CarryForwardParams {
+            .session_carry_forward(Parameters(CarryForwardParams {
                 repo: "nobody/nothing".to_string(),
                 ..Default::default()
             }))
@@ -804,7 +804,7 @@ async fn test_carry_forward_rejects_n_over_the_ceiling() {
     let server = AgentWorthMcpServer::new(storage);
 
     let err = server
-        .carry_forward(Parameters(CarryForwardParams {
+        .session_carry_forward(Parameters(CarryForwardParams {
             repo: "unfoundbox/agentworth".to_string(),
             n: Some(11),
             ..Default::default()
@@ -833,7 +833,7 @@ async fn test_carry_forward_names_a_session_it_could_not_read() {
 
     let value = call_result_json(
         server
-            .carry_forward(Parameters(CarryForwardParams {
+            .session_carry_forward(Parameters(CarryForwardParams {
                 repo: "unfoundbox/agentworth".to_string(),
                 ..Default::default()
             }))
@@ -919,7 +919,7 @@ async fn test_forgotten_context_diffs_a_two_round_session_end_to_end() {
     let server = AgentWorthMcpServer::new(Arc::new(storage));
     let value = call_result_json(
         server
-            .forgotten_context(Parameters(forgotten_params(id)))
+            .session_forgotten(Parameters(forgotten_params(id)))
             .await
             .expect("diff for a seeded compacted session"),
     );
@@ -974,7 +974,7 @@ async fn test_forgotten_context_round_and_class_filters() {
 
     let round_one = call_result_json(
         server
-            .forgotten_context(Parameters(ForgottenContextParams {
+            .session_forgotten(Parameters(ForgottenContextParams {
                 round: Some(1),
                 ..forgotten_params(id)
             }))
@@ -987,7 +987,7 @@ async fn test_forgotten_context_round_and_class_filters() {
 
     let reasons = call_result_json(
         server
-            .forgotten_context(Parameters(ForgottenContextParams {
+            .session_forgotten(Parameters(ForgottenContextParams {
                 classes: Some(vec!["reason".to_string()]),
                 ..forgotten_params(id)
             }))
@@ -1001,7 +1001,7 @@ async fn test_forgotten_context_round_and_class_filters() {
     );
 
     let bad = server
-        .forgotten_context(Parameters(ForgottenContextParams {
+        .session_forgotten(Parameters(ForgottenContextParams {
             classes: Some(vec!["everything".to_string()]),
             ..forgotten_params(id)
         }))
@@ -1020,7 +1020,7 @@ async fn test_forgotten_context_is_redacted_by_default() {
 
     let value = call_result_json(
         server
-            .forgotten_context(Parameters(ForgottenContextParams {
+            .session_forgotten(Parameters(ForgottenContextParams {
                 session_id: Some(id.to_string()),
                 ..Default::default()
             }))
@@ -1050,7 +1050,7 @@ async fn test_forgotten_context_never_compacted_says_so() {
 
     let value = call_result_json(
         server
-            .forgotten_context(Parameters(forgotten_params(id)))
+            .session_forgotten(Parameters(forgotten_params(id)))
             .await
             .expect("a never-compacted session is not an error"),
     );
@@ -1071,7 +1071,7 @@ async fn test_forgotten_context_rejects_a_limit_over_the_ceiling() {
     let server = AgentWorthMcpServer::new(storage);
 
     let err = server
-        .forgotten_context(Parameters(ForgottenContextParams {
+        .session_forgotten(Parameters(ForgottenContextParams {
             limit: Some(500),
             ..forgotten_params("anything")
         }))
@@ -1098,7 +1098,7 @@ async fn test_forgotten_context_refuses_when_the_transcript_is_gone() {
     let server = AgentWorthMcpServer::new(Arc::new(storage));
 
     let err = server
-        .forgotten_context(Parameters(forgotten_params(id)))
+        .session_forgotten(Parameters(forgotten_params(id)))
         .await
         .expect_err("a missing transcript must refuse rather than answer from the index");
     assert!(err.message.contains(id), "{}", err.message);
@@ -1175,9 +1175,9 @@ async fn test_suspect_commits_flags_the_unproven_commit() {
     let server = AgentWorthMcpServer::new(storage);
     let params = serde_json::json!({ "repo": root.to_string_lossy() });
     let result = server
-        .suspect_commits(Parameters(serde_json::from_value(params).unwrap()))
+        .repo_suspect(Parameters(serde_json::from_value(params).unwrap()))
         .await
-        .expect("suspect_commits");
+        .expect("repo_suspect");
     let value = call_result_json(result);
 
     assert_eq!(value["commits_scanned"], 2);
@@ -1212,7 +1212,7 @@ async fn test_suspect_commits_rejects_a_non_repo_path() {
     let server = AgentWorthMcpServer::new(storage);
     let params = serde_json::json!({ "repo": dir.path().to_string_lossy() });
     let err = server
-        .suspect_commits(Parameters(serde_json::from_value(params).unwrap()))
+        .repo_suspect(Parameters(serde_json::from_value(params).unwrap()))
         .await
         .expect_err("a non-repo path must be rejected");
     assert!(err.message.contains("git repository"), "got: {}", err.message);

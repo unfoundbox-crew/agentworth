@@ -35,13 +35,13 @@ cargo install agentworth
 
 ```bash
 # 1. Scan and index all local agent histories
-agentworth scan
+archie scan
 
 # 2. View machine-wide token and model stats
-agentworth stats
+archie stats
 
 # 3. Launch the local interactive receipt explorer UI
-agentworth serve --open
+archie serve --open
 ```
 
 ---
@@ -71,13 +71,13 @@ AgentWorth runs entirely offline on your computer. It discovers logs from tools 
 
 | Command | Description |
 | :--- | :--- |
-| `agentworth scan [PATHS...]` | Discovers and incrementally indexes agent sessions into local SQLite. |
-| `agentworth stats [--json]` | Displays machine-wide token totals, top models, top tools, and session counts. |
-| `agentworth doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
-| `agentworth traces [OPTIONS]` | Tabular directory of indexed sessions (`--limit`, `--adapter`, `--model`, `--json`). |
-| `agentworth inspect <ID>` | Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs. |
-| `agentworth serve [OPTIONS]` | Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`). |
-| `agentworth export <ID>` | Exports a session in JSON or ATIF v1.0 format with optional privacy scrubbing (`--redact`). |
+| `archie scan [PATHS...]` | Discovers and incrementally indexes agent sessions into local SQLite. |
+| `archie stats [--json]` | Displays machine-wide token totals, top models, top tools, and session counts. |
+| `archie doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
+| `archie session list [OPTIONS]` | Tabular directory of indexed sessions (`--limit`, `--adapter`, `--model`, `--json`). |
+| `archie session show <ID>` | Interactive ASCII trajectory timeline of prompts, thoughts, tool calls, and diffs. |
+| `archie serve [OPTIONS]` | Boots the local API server and monochrome receipt explorer UI (`--port 3000`, `--open`). |
+| `archie session export <ID>` | Exports a session in JSON or ATIF v1.0 format with optional privacy scrubbing (`--redact`). |
 
 ---
 

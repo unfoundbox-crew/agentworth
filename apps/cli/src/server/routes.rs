@@ -221,7 +221,7 @@ pub struct ExportResponse {
     pub content: String,
 }
 
-/// One documented query parameter, read by `agentworth docs` (see `apps/cli/src/commands/docs.rs`).
+/// One documented query parameter, read by `archie docs` (see `apps/cli/src/commands/docs.rs`).
 #[derive(Debug, Clone, Copy)]
 pub struct QueryParamDoc {
     pub name: &'static str,
@@ -229,7 +229,7 @@ pub struct QueryParamDoc {
 }
 
 /// One registered API route, carrying both the live `MethodRouter` and the documentation
-/// `agentworth docs` reads. `create_router` below builds the whole `/api` surface from exactly
+/// `archie docs` reads. `create_router` below builds the whole `/api` surface from exactly
 /// this table -- there is no second, hand-copied list of paths for the two to drift apart on.
 pub struct RouteEntry {
     pub method: &'static str,
@@ -241,7 +241,7 @@ pub struct RouteEntry {
 
 /// The complete `/api/*` route table. Building a `MethodRouter` from a handler function is
 /// just type erasure -- it doesn't touch `AppState` -- so this can be (and is) called from
-/// `agentworth docs` for introspection without ever constructing a real server.
+/// `archie docs` for introspection without ever constructing a real server.
 pub fn route_entries() -> Vec<RouteEntry> {
     const TRACES_PARAMS: &[QueryParamDoc] = &[
         QueryParamDoc { name: "adapter", description: "Filter by adapter name" },
@@ -1099,7 +1099,7 @@ fn adapter_display_meta(adapter: &dyn AgentAdapter) -> AdapterDisplayMeta {
 /// of its rows silently excluded from its own matrix entry, because they're keyed in
 /// storage by the identity `parse()` assigned, not by the adapter struct's `name()`. This
 /// was measured against the real index: 785 sessions tagged "antigravity" were previously
-/// invisible to both `agentworth matrix` and `/api/matrix`.
+/// invisible to both `archie agent list` and `/api/matrix`.
 pub(crate) fn compute_adapter_matrix(storage: &Storage) -> AdapterMatrixResponse {
     // false: per-adapter `sessions_count` below should agree with what `/api/traces?adapter=X`
     // reports for the same adapter, which is stub-excluded by default.
@@ -1255,7 +1255,7 @@ async fn get_config_handler(
 }
 
 /// POST /api/config -> writes a partial set of keys into the same config.toml
-/// `agentworth config set` writes, through the same validation. Unknown keys are a 400
+/// `archie config set` writes, through the same validation. Unknown keys are a 400
 /// rather than a silent no-op: this is the only write route that persists a preference,
 /// and a typo that appears to succeed is worse than one that fails.
 async fn post_config_handler(

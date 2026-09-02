@@ -1,4 +1,4 @@
-//! `agentworth forgotten` — the decisions a session's compaction rounds dropped.
+//! `archie session forgotten` — the decisions a session's compaction rounds dropped.
 //!
 //! The same facts the `forgotten_context` MCP tool returns, rendered for a person. Redaction
 //! follows the CLI's own convention rather than the tool's: `--redact` is opt-in here, because
@@ -24,29 +24,11 @@ use crate::ui::{compact, Ui};
 const TERMINAL_ROWS: usize = 10;
 
 /// Resolves what the caller typed to one session, via the shared picker
-/// (`crate::ui::picker`). An exact id wins, then a unique prefix -- `agentworth inspect`
+/// (`crate::ui::picker`). An exact id wins, then a unique prefix -- `archie session show`
 /// (#76) made the prefix the normal way to name a session and this follows it. With
 /// nothing typed on a TTY, the picker takes over.
 fn resolve_session(storage: &Storage, ui: &Ui, json: bool, arg: &SessionArg) -> Result<String> {
-    match picker::resolve(storage, ui, json, arg)? {
-        picker::Resolved::Id(id) => Ok(id),
-        picker::Resolved::NotFound(input) => {
-            print!(
-                "{}",
-                picker::not_found(
-                    ui,
-                    storage,
-                    &format!("agentworth forgotten {input}"),
-                    &input,
-                    &[(
-                        "agentworth forgotten --last".to_string(),
-                        "the newest session in this repo".to_string(),
-                    )],
-                )
-            );
-            std::process::exit(1);
-        }
-    }
+    picker::resolve_or_exit(storage, ui, json, "session forgotten", arg)
 }
 
 // One parameter per CLI flag, same as every other command entry point here.
@@ -154,7 +136,7 @@ fn render_terminal(report: &ForgottenReport, ui: &Ui) -> String {
 
     let cost = cost_line(report);
     let receipt = receipt_lines(report);
-    let command = format!("agentworth forgotten {}", short(&report.receipt.session_id));
+    let command = format!("archie session forgotten {}", short(&report.receipt.session_id));
 
     crate::ui::views::handoff(
         ui,
@@ -168,7 +150,7 @@ fn render_terminal(report: &ForgottenReport, ui: &Ui) -> String {
             skipped: &[],
             receipt,
             next: Some((
-                format!("agentworth inspect {}", short(&report.receipt.session_id)),
+                format!("archie session show {}", short(&report.receipt.session_id)),
                 "read the turns these sentences came from".to_string(),
             )),
         },

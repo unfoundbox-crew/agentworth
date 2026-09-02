@@ -51,7 +51,7 @@ pub mod note {
 }
 
 /// Where the round boundaries came from. Reported rather than hidden: a derived answer is
-/// correct but says the index is stale, and the caller may want to run `agentworth scan`.
+/// correct but says the index is stale, and the caller may want to run `archie scan`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RoundsSource {
