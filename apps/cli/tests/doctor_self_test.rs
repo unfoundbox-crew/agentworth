@@ -79,12 +79,12 @@ fn self_test_runs_clean_against_a_small_fixture_index() {
     for expected in [
         "scan",
         "stats",
-        "usage --period week",
-        "traces --limit 5",
-        "inspect <newest non-stub session>",
-        "handoff --last",
-        "forgotten <newest compacted session>",
-        "asks --current",
+        "stats usage --period week",
+        "session list --limit 5",
+        "session show <newest non-stub session>",
+        "session handoff --last",
+        "session forgotten <newest compacted session>",
+        "session asks --current",
         "mcp round trip",
     ] {
         assert!(names.contains(&expected), "missing step '{expected}': {names:?}");
@@ -99,7 +99,7 @@ fn self_test_runs_clean_against_a_small_fixture_index() {
     // silently disappear or come back as a hard failure.
     let forgotten = steps
         .iter()
-        .find(|s| s["name"] == "forgotten <newest compacted session>")
+        .find(|s| s["name"] == "session forgotten <newest compacted session>")
         .unwrap();
     assert_eq!(forgotten["status"], "skip", "forgotten step: {forgotten:#}");
 

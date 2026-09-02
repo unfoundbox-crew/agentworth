@@ -22,7 +22,7 @@
       "name": "--no-json",
       "positional": false,
       "required": false,
-      "help": "Force text output even if persisted config defaults to JSON (see `agentworth config`)",
+      "help": "Force text output even if persisted config defaults to JSON (see `archie config`)",
       "default": "false",
       "possibleValues": []
     },
@@ -45,7 +45,7 @@
   ],
   "cli": [
     {
-      "path": "agentworth scan",
+      "path": "archie scan",
       "about": "Scan and index agent histories from the local system",
       "args": [
         {
@@ -83,8 +83,8 @@
       ]
     },
     {
-      "path": "agentworth stats",
-      "about": "Show machine-wide summary statistics of indexed traces",
+      "path": "archie stats",
+      "about": "Machine-wide summary statistics. `stats usage` rolls spend up by period; `stats outcomes` reports the verified-outcome rate",
       "args": [
         {
           "name": "--json",
@@ -97,352 +97,8 @@
       ]
     },
     {
-      "path": "agentworth traces",
-      "about": "List indexed traces with optional filtering",
-      "args": [
-        {
-          "name": "--limit, -l",
-          "positional": false,
-          "required": false,
-          "help": "Maximum number of traces to display (default 20, or persisted `config limit`)",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--adapter, -a",
-          "positional": false,
-          "required": false,
-          "help": "Filter by adapter name (e.g. claude_code, codex, gemini, opencode)",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--model, -m",
-          "positional": false,
-          "required": false,
-          "help": "Filter by model substring (e.g. sonnet, gpt-4o, gemini-2.5)",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--all-stubs",
-          "positional": false,
-          "required": false,
-          "help": "Include 1-event session stubs in the listing",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output traces as formatted JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth matrix",
-      "about": "Display extraction capabilities and coverage matrix across all 20 agent adapters",
-      "args": [
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output matrix as formatted JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth inspect",
-      "about": "Inspect a specific trace session in detail with timeline visualization",
-      "args": [
-        {
-          "name": "SESSION_ID",
-          "positional": true,
-          "required": false,
-          "help": "The session ID to inspect, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--last",
-          "positional": false,
-          "required": false,
-          "help": "Inspect the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--current",
-          "positional": false,
-          "required": false,
-          "help": "Alias of `--last`",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output raw trace structure as formatted JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth export",
-      "about": "Export a trace session safely in JSON or ATIF format",
-      "args": [
-        {
-          "name": "SESSION_ID",
-          "positional": true,
-          "required": false,
-          "help": "The session ID to export, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--last",
-          "positional": false,
-          "required": false,
-          "help": "Export the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--current",
-          "positional": false,
-          "required": false,
-          "help": "Alias of `--last`",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--redact, -r",
-          "positional": false,
-          "required": false,
-          "help": "Apply redaction to mask secrets, API keys, tokens, emails, and home paths",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--format, -f",
-          "positional": false,
-          "required": false,
-          "help": "Export format: json (default), atif, receipt, or svg",
-          "default": "json",
-          "possibleValues": [
-            "json",
-            "atif",
-            "receipt",
-            "terminal",
-            "ansi",
-            "svg"
-          ]
-        },
-        {
-          "name": "--output, -o",
-          "positional": false,
-          "required": false,
-          "help": "Optional file path to write export output to (defaults to stdout)",
-          "default": null,
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth receipt",
-      "about": "Generate and render an authentic ANSI or SVG Flight Receipt for a trace session",
-      "args": [
-        {
-          "name": "SESSION_ID",
-          "positional": true,
-          "required": false,
-          "help": "The session ID to generate flight receipt for, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--last",
-          "positional": false,
-          "required": false,
-          "help": "Generate the receipt for the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--current",
-          "positional": false,
-          "required": false,
-          "help": "Alias of `--last`",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--format, -f",
-          "positional": false,
-          "required": false,
-          "help": "Output format: terminal (default), ansi, svg, receipt, or json",
-          "default": "terminal",
-          "possibleValues": [
-            "terminal",
-            "ansi",
-            "svg",
-            "receipt",
-            "json"
-          ]
-        },
-        {
-          "name": "--output, -o",
-          "positional": false,
-          "required": false,
-          "help": "Optional file path to write receipt or SVG output to (defaults to stdout)",
-          "default": null,
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth search",
-      "about": "Semantic vector search across indexed trajectory turns with ASCII thermal receipts",
-      "args": [
-        {
-          "name": "QUERY",
-          "positional": true,
-          "required": true,
-          "help": "Search query (natural language or code snippet)",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--limit, -l",
-          "positional": false,
-          "required": false,
-          "help": "Maximum number of results to return (default 10, or persisted `config limit`)",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--min-score",
-          "positional": false,
-          "required": false,
-          "help": "Minimum similarity score threshold (0.0 to 1.0)",
-          "default": "0",
-          "possibleValues": []
-        },
-        {
-          "name": "--kind, -k",
-          "positional": false,
-          "required": false,
-          "help": "Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output results as JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth audit",
-      "about": "Safety and threat audit detecting forbidden commands, leaked variables, sweeps, and fake claims",
-      "args": [
-        {
-          "name": "--safety",
-          "positional": false,
-          "required": false,
-          "help": "Restrict audit to safety and threat vectors only",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output audit results as formatted JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth blunder",
-      "about": "Discover top agent blunders, render thermal receipts, and export to the Hall of Blunders",
-      "args": [
-        {
-          "name": "--top, -t",
-          "positional": false,
-          "required": false,
-          "help": "Number of top blunder exhibits to retrieve and display (default: 5)",
-          "default": "5",
-          "possibleValues": []
-        },
-        {
-          "name": "--submit, -s",
-          "positional": false,
-          "required": false,
-          "help": "Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output blunder exhibits as formatted JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth serve",
-      "about": "Start the local API server and interactive explorer UI",
-      "args": [
-        {
-          "name": "--port, -p",
-          "positional": false,
-          "required": false,
-          "help": "Port to bind the server to",
-          "default": "3000",
-          "possibleValues": []
-        },
-        {
-          "name": "--open",
-          "positional": false,
-          "required": false,
-          "help": "Automatically open the Web UI in the default browser",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--dist",
-          "positional": false,
-          "required": false,
-          "help": "Optional path to custom web frontend dist directory",
-          "default": null,
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth mcp",
-      "about": "Start the read-only MCP server over stdio, for a coding agent to query this machine's session index mid-session (see docs/specs/mcp-server.md). Register it once with `claude mcp add agentworth --scope user -- agentworth mcp`",
-      "args": []
-    },
-    {
-      "path": "agentworth usage",
-      "about": "View deep usage, pacing, and token expenditure rollups",
+      "path": "archie stats usage",
+      "about": "Deep usage, pacing, and token expenditure rollups",
       "args": [
         {
           "name": "--period, -p",
@@ -456,7 +112,7 @@
           "name": "--pacing",
           "positional": false,
           "required": false,
-          "help": "Show 5-hour rolling pacing window (burn rate, active models, quota headroom)",
+          "help": "Show the rolling pacing window instead of the rollup. `archie window show` is the spelling that survives; this flag is kept for scripts written against `usage`",
           "default": "false",
           "possibleValues": []
         },
@@ -515,29 +171,275 @@
       ]
     },
     {
-      "path": "agentworth blame",
-      "about": "Trace file modifications back to the AI agent session, model, and prompt that authored them",
+      "path": "archie stats outcomes",
+      "about": "Verified-outcome rate by model, adapter, or repo: of the sessions that claimed done, what share left evidence a test, build, commit or CI run can be pointed at",
       "args": [
         {
-          "name": "FILE_PATH",
-          "positional": true,
-          "required": true,
-          "help": "Target file path or pattern to search",
+          "name": "--by",
+          "positional": false,
+          "required": false,
+          "help": "Group the rate by model (default), adapter, or repo",
+          "default": "model",
+          "possibleValues": [
+            "model",
+            "adapter",
+            "repo"
+          ]
+        },
+        {
+          "name": "--min-n",
+          "positional": false,
+          "required": false,
+          "help": "Suppress groups with fewer than this many sessions (default 20)",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--since",
+          "positional": false,
+          "required": false,
+          "help": "Only sessions started at or after this time: an absolute date (`2026-08-01` or RFC 3339), or a relative shorthand (`1d`, `7d`, `2w`, `3m`)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--until",
+          "positional": false,
+          "required": false,
+          "help": "Only sessions started before this time, same formats as `--since`",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--include-stubs",
+          "positional": false,
+          "required": false,
+          "help": "Include 1-event session stubs in the population",
+          "default": "false",
           "possibleValues": []
         },
         {
           "name": "--json",
           "positional": false,
           "required": false,
-          "help": "Output results as JSON",
+          "help": "Output as formatted JSON",
           "default": "false",
           "possibleValues": []
         }
       ]
     },
     {
-      "path": "agentworth handoff",
+      "path": "archie session",
+      "about": "Everything that acts on sessions: list them, read one, hand one over",
+      "args": []
+    },
+    {
+      "path": "archie session list",
+      "about": "List indexed sessions with optional filtering",
+      "args": [
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "Maximum number of sessions to display (default 20, or persisted `config limit`)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--adapter, -a",
+          "positional": false,
+          "required": false,
+          "help": "Filter by adapter name (e.g. claude_code, codex, gemini, opencode)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--model, -m",
+          "positional": false,
+          "required": false,
+          "help": "Filter by model substring (e.g. sonnet, gpt-4o, gemini-2.5)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--all-stubs",
+          "positional": false,
+          "required": false,
+          "help": "Include 1-event session stubs in the listing",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--unproven",
+          "positional": false,
+          "required": false,
+          "help": "Only sessions whose completion claims were never independently corroborated by tests or CI -- the blind spots",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session show",
+      "about": "Read one session in detail, with its timeline",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "The session to read, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "The newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output raw trace structure as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session export",
+      "about": "Export one session safely, in JSON or ATIF format",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "The session to export, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Export the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--redact, -r",
+          "positional": false,
+          "required": false,
+          "help": "Apply redaction to mask secrets, API keys, tokens, emails, and home paths",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--format, -f",
+          "positional": false,
+          "required": false,
+          "help": "Export format: json (default), atif, receipt, or svg",
+          "default": "json",
+          "possibleValues": [
+            "json",
+            "atif",
+            "receipt",
+            "terminal",
+            "ansi",
+            "svg"
+          ]
+        },
+        {
+          "name": "--output, -o",
+          "positional": false,
+          "required": false,
+          "help": "Optional file path to write export output to (defaults to stdout)",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session receipt",
+      "about": "Render one session's Flight Receipt, as ANSI or SVG",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "The session to render a flight receipt for, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Render the newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--format, -f",
+          "positional": false,
+          "required": false,
+          "help": "Output format: terminal (default), ansi, svg, receipt, or json",
+          "default": "terminal",
+          "possibleValues": [
+            "terminal",
+            "ansi",
+            "svg",
+            "receipt",
+            "json"
+          ]
+        },
+        {
+          "name": "--output, -o",
+          "positional": false,
+          "required": false,
+          "help": "Optional file path to write receipt or SVG output to (defaults to stdout)",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session handoff",
       "about": "Hand a session over: what it promised and dropped, decided, changed, ran, and proved",
       "args": [
         {
@@ -599,7 +501,7 @@
       ]
     },
     {
-      "path": "agentworth forgotten",
+      "path": "archie session forgotten",
       "about": "What compaction dropped: decisions this session made and its own summaries did not keep",
       "args": [
         {
@@ -669,14 +571,76 @@
       ]
     },
     {
-      "path": "agentworth asks",
+      "path": "archie session loose-ends",
+      "about": "The handoff's loose-ends section alone: what a session said it would do and did not",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "Session to check, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Check the newest session for this repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--redact, -r",
+          "positional": false,
+          "required": false,
+          "help": "Mask secrets, paths, and this session's own repository name before printing",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--prompt",
+          "positional": false,
+          "required": false,
+          "help": "Print the copyable prompt to hand to an agent that has the repository open",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the loose ends as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session asks",
       "about": "The questions you asked and where their answers are -- built so you never have to re-scroll or re-ask because the answer landed several messages later",
       "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed directly if it isn't an indexed session). With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
+          "default": null,
+          "possibleValues": []
+        },
         {
           "name": "--session",
           "positional": false,
           "required": false,
-          "help": "Session to index, by full ID, a unique prefix, or a raw JSONL file path (parsed directly if it isn't an indexed session). With neither this nor `--last` given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
+          "help": "The same session, named with a flag. Kept because `archie session asks --session <id>` is the spelling that shipped in #97",
           "default": null,
           "possibleValues": []
         },
@@ -723,14 +687,14 @@
       ]
     },
     {
-      "path": "agentworth loose-ends",
-      "about": "The handoff's loose-ends section alone: what a session said it would do and did not",
+      "path": "archie session cache",
+      "about": "Diagnose turn-by-turn prompt caching dynamics and identify cache drop root causes",
       "args": [
         {
           "name": "SESSION_ID",
           "positional": true,
           "required": false,
-          "help": "Session to check. Defaults to the newest session for this directory's repository",
+          "help": "The session to act on, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
           "possibleValues": []
         },
@@ -738,141 +702,15 @@
           "name": "--last",
           "positional": false,
           "required": false,
-          "help": "Check the newest session for this repository. The default when no ID is given",
+          "help": "The newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
           "default": "false",
           "possibleValues": []
         },
         {
-          "name": "--redact, -r",
+          "name": "--current",
           "positional": false,
           "required": false,
-          "help": "Mask secrets, paths, and this session's own repository name before printing",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--prompt",
-          "positional": false,
-          "required": false,
-          "help": "Print the copyable prompt to hand to an agent that has the repository open",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output the loose ends as JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth doctor",
-      "about": "Check local environment, adapter discoveries, and SQLite database health",
-      "args": [
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output diagnostic report as formatted JSON",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--self-test",
-          "positional": false,
-          "required": false,
-          "help": "Run the real release workflow end to end -- scan, stats, usage, traces, inspect, handoff, forgotten, and an MCP round trip -- against the real index on this machine, with no network, and report pass/fail/slow and timing for each step. Exits non-zero if any step fails",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth version",
-      "about": "Print version details: binary version, npm install detection, and a live check for a newer release",
-      "args": [
-        {
-          "name": "--offline",
-          "positional": false,
-          "required": false,
-          "help": "Skip the live GitHub-releases update check (fully local, no network call)",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output as formatted JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth update",
-      "about": "Check for a newer AgentWorth release and show exactly how to get it",
-      "args": [
-        {
-          "name": "--offline",
-          "positional": false,
-          "required": false,
-          "help": "Skip the live GitHub-releases check and just show install-method guidance",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output as formatted JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth merge",
-      "about": "Merge another local SQLite index database into this index",
-      "args": [
-        {
-          "name": "SOURCE_DB",
-          "positional": true,
-          "required": true,
-          "help": "Path to the source SQLite database file to merge from",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output results as JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth watch",
-      "about": "Watch active session transcripts and detect doom loops or file edit thrashing",
-      "args": [
-        {
-          "name": "--interval-secs, -i",
-          "positional": false,
-          "required": false,
-          "help": "Polling interval in seconds (default: 3)",
-          "default": "3",
-          "possibleValues": []
-        },
-        {
-          "name": "--poll-once",
-          "positional": false,
-          "required": false,
-          "help": "Run a single poll check and exit immediately",
+          "help": "Alias of `--last`",
           "default": "false",
           "possibleValues": []
         },
@@ -883,27 +721,35 @@
           "help": "Output findings as formatted JSON",
           "default": "false",
           "possibleValues": []
-        },
-        {
-          "name": "--paths, -p",
-          "positional": false,
-          "required": false,
-          "help": "Custom path directories to monitor",
-          "default": null,
-          "possibleValues": []
         }
       ]
     },
     {
-      "path": "agentworth cache-doctor",
-      "about": "Diagnose turn-by-turn prompt caching dynamics and identify cache drop root causes",
+      "path": "archie session bisect",
+      "about": "Pinpoint the exact turning point where a session's trajectory turned negative",
       "args": [
         {
           "name": "SESSION_ID",
           "positional": true,
-          "required": true,
-          "help": "Target session ID to inspect",
+          "required": false,
+          "help": "The session to act on, by full ID or a unique prefix. With nothing given on a TTY, a picker lists the newest sessions; elsewhere, pass an ID or `--last`",
           "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "The newest session for this directory's repository. The default when no ID is given and stdout is not a TTY",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
           "possibleValues": []
         },
         {
@@ -917,14 +763,38 @@
       ]
     },
     {
-      "path": "agentworth blind-spots",
-      "about": "List sessions whose completion claims were never independently corroborated by tests or CI",
+      "path": "archie session search",
+      "about": "Semantic vector search across indexed trajectory turns with ASCII thermal receipts",
       "args": [
+        {
+          "name": "QUERY",
+          "positional": true,
+          "required": true,
+          "help": "Search query (natural language or code snippet)",
+          "default": null,
+          "possibleValues": []
+        },
         {
           "name": "--limit, -l",
           "positional": false,
           "required": false,
-          "help": "Maximum number of sessions to list (default 20, or persisted `config limit`)",
+          "help": "Maximum number of results to return (default 10, or persisted `config limit`)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--min-score",
+          "positional": false,
+          "required": false,
+          "help": "Minimum similarity score threshold (0.0 to 1.0)",
+          "default": "0",
+          "possibleValues": []
+        },
+        {
+          "name": "--kind, -k",
+          "positional": false,
+          "required": false,
+          "help": "Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)",
           "default": null,
           "possibleValues": []
         },
@@ -939,64 +809,7 @@
       ]
     },
     {
-      "path": "agentworth threat-digest",
-      "about": "Rank indexed sessions by real secret/credential exposure risk, by category and severity",
-      "args": [
-        {
-          "name": "--limit, -l",
-          "positional": false,
-          "required": false,
-          "help": "Maximum number of sessions to show in the report (default 20, or persisted `config limit`) -- every indexed session is still scanned; this only trims the displayed list",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--min-severity",
-          "positional": false,
-          "required": false,
-          "help": "Only include sessions whose worst finding is at least this severity",
-          "default": "low",
-          "possibleValues": [
-            "low",
-            "medium",
-            "high",
-            "critical"
-          ]
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output results as JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth autopsy",
-      "about": "Surface recurring human correction and steering phrases across all sessions",
-      "args": [
-        {
-          "name": "--min-occurrences, -m",
-          "positional": false,
-          "required": false,
-          "help": "Minimum number of occurrences across sessions to report (default: 2)",
-          "default": "2",
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output results as JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth recall",
+      "path": "archie session recall",
       "about": "Semantically recall past solutions joined with outcome validation and cost",
       "args": [
         {
@@ -1034,14 +847,229 @@
       ]
     },
     {
-      "path": "agentworth bisect",
-      "about": "Pinpoint the exact turning point where an agent session trajectory turned negative",
+      "path": "archie session audit",
+      "about": "Safety and threat audit detecting forbidden commands, leaked variables, sweeps, and fake claims, machine-wide over every session",
       "args": [
         {
-          "name": "SESSION_ID",
+          "name": "--safety",
+          "positional": false,
+          "required": false,
+          "help": "Restrict audit to safety and threat vectors only",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output audit results as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session blunder",
+      "about": "Discover top agent blunders, render thermal receipts, and export to the Hall of Blunders",
+      "args": [
+        {
+          "name": "--top, -t",
+          "positional": false,
+          "required": false,
+          "help": "Number of top blunder exhibits to retrieve and display (default: 5)",
+          "default": "5",
+          "possibleValues": []
+        },
+        {
+          "name": "--submit, -s",
+          "positional": false,
+          "required": false,
+          "help": "Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output blunder exhibits as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session autopsy",
+      "about": "Surface recurring human correction and steering phrases across all sessions",
+      "args": [
+        {
+          "name": "--min-occurrences, -m",
+          "positional": false,
+          "required": false,
+          "help": "Minimum number of occurrences across sessions to report (default: 2)",
+          "default": "2",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session watch",
+      "about": "Watch active session transcripts and detect doom loops or file edit thrashing",
+      "args": [
+        {
+          "name": "--interval-secs, -i",
+          "positional": false,
+          "required": false,
+          "help": "Polling interval in seconds (default: 3)",
+          "default": "3",
+          "possibleValues": []
+        },
+        {
+          "name": "--poll-once",
+          "positional": false,
+          "required": false,
+          "help": "Run a single poll check and exit immediately",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output findings as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--paths, -p",
+          "positional": false,
+          "required": false,
+          "help": "Custom path directories to monitor",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session risk",
+      "about": "Rank indexed sessions by real secret/credential exposure risk, by category and severity",
+      "args": [
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "Maximum number of sessions to show in the report (default 20, or persisted `config limit`) -- every indexed session is still scanned; this only trims the displayed list",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--min-severity",
+          "positional": false,
+          "required": false,
+          "help": "Only include sessions whose worst finding is at least this severity",
+          "default": "low",
+          "possibleValues": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie agent",
+      "about": "The agent adapters: what each one extracts, and how one is doing on this machine",
+      "args": []
+    },
+    {
+      "path": "archie agent list",
+      "about": "Extraction capabilities and coverage across every registered adapter",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the coverage matrix as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie agent show",
+      "about": "One adapter in detail: what it extracts, whether it is present here, and what it has actually put in the index",
+      "args": [
+        {
+          "name": "ADAPTER",
           "positional": true,
           "required": true,
-          "help": "Session ID to bisect",
+          "help": "Adapter name (e.g. claude_code, codex, gemini, opencode)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie repo",
+      "about": "Repositories: what an agent wrote where, and which commits nothing proved",
+      "args": []
+    },
+    {
+      "path": "archie repo list",
+      "about": "The repositories and workspaces this index holds, by session count",
+      "args": [
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "Maximum number of repositories to display (default 20, or persisted `config limit`)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie repo blame",
+      "about": "Trace file modifications back to the session, model, and prompt that authored them",
+      "args": [
+        {
+          "name": "FILE_PATH",
+          "positional": true,
+          "required": true,
+          "help": "Target file path or pattern to search",
           "default": null,
           "possibleValues": []
         },
@@ -1056,7 +1084,7 @@
       ]
     },
     {
-      "path": "agentworth pr-blame",
+      "path": "archie repo pr-blame",
       "about": "Annotate changed PR files with AI agent authoring provenance and outcome validation",
       "args": [
         {
@@ -1078,61 +1106,7 @@
       ]
     },
     {
-      "path": "agentworth blunder-blame",
-      "about": "Bridge AI Code Blame with the Hall of Blunders: trace a recorded blunder forward to the exact files it blame-attributes to, or a file's blame history backward to any recorded blunders in the sessions blamed for it",
-      "args": [
-        {
-          "name": "--file",
-          "positional": false,
-          "required": false,
-          "help": "Blame -> blunder direction: file path or pattern. Checks every session AI Code Blame attributes this file to for a recorded blunder",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--session",
-          "positional": false,
-          "required": false,
-          "help": "Blunder -> blame direction: one specific session ID, by full ID or a unique prefix. Resolves it to the files AI Code Blame attributes to that session",
-          "default": null,
-          "possibleValues": []
-        },
-        {
-          "name": "--last",
-          "positional": false,
-          "required": false,
-          "help": "Blunder -> blame direction for the newest session in this repository, same as `--session` with that session's ID",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--current",
-          "positional": false,
-          "required": false,
-          "help": "Alias of `--last`",
-          "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--top, -t",
-          "positional": false,
-          "required": false,
-          "help": "In default mode (no --file or --session), number of top blunders to bridge",
-          "default": "5",
-          "possibleValues": []
-        },
-        {
-          "name": "--json",
-          "positional": false,
-          "required": false,
-          "help": "Output results as JSON",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
-      "path": "agentworth suspect",
+      "path": "archie repo suspect",
       "about": "List commits on this branch whose authoring session never proved anything, so you know where to look twice before pushing. Prints a list and a prompt, never a patch",
       "args": [
         {
@@ -1202,12 +1176,213 @@
       ]
     },
     {
-      "path": "agentworth config",
+      "path": "archie repo blunder-blame",
+      "about": "Bridge AI Code Blame with the Hall of Blunders: trace a recorded blunder forward to the exact files it blame-attributes to, or a file's blame history backward to any recorded blunders in the sessions blamed for it",
+      "args": [
+        {
+          "name": "--file",
+          "positional": false,
+          "required": false,
+          "help": "Blame -> blunder direction: file path or pattern. Checks every session AI Code Blame attributes this file to for a recorded blunder",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--session",
+          "positional": false,
+          "required": false,
+          "help": "Blunder -> blame direction: one specific session ID, by full ID or a unique prefix. Resolves it to the files AI Code Blame attributes to that session",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "Blunder -> blame direction for the newest session in this repository, same as `--session` with that session's ID",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--current",
+          "positional": false,
+          "required": false,
+          "help": "Alias of `--last`",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--top, -t",
+          "positional": false,
+          "required": false,
+          "help": "In default mode (no --file or --session), number of top blunders to bridge",
+          "default": "5",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie window",
+      "about": "The rolling burn-rate window: what is being spent right now",
+      "args": []
+    },
+    {
+      "path": "archie window show",
+      "about": "The current rolling window: burn rate, active models, quota headroom",
+      "args": [
+        {
+          "name": "--hours",
+          "positional": false,
+          "required": false,
+          "help": "Window duration in hours",
+          "default": "5",
+          "possibleValues": []
+        },
+        {
+          "name": "--alert-above",
+          "positional": false,
+          "required": false,
+          "help": "Alert and highlight if window spend exceeds this threshold in USD",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie window list",
+      "about": "The recent rolling windows, newest first",
+      "args": [
+        {
+          "name": "--hours",
+          "positional": false,
+          "required": false,
+          "help": "Window duration in hours",
+          "default": "5",
+          "possibleValues": []
+        },
+        {
+          "name": "--limit, -l",
+          "positional": false,
+          "required": false,
+          "help": "How many consecutive windows to show, newest first (default 6)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie serve",
+      "about": "Start the local API server and interactive explorer UI",
+      "args": [
+        {
+          "name": "--port, -p",
+          "positional": false,
+          "required": false,
+          "help": "Port to bind the server to",
+          "default": "3000",
+          "possibleValues": []
+        },
+        {
+          "name": "--open",
+          "positional": false,
+          "required": false,
+          "help": "Automatically open the Web UI in the default browser",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--dist",
+          "positional": false,
+          "required": false,
+          "help": "Optional path to custom web frontend dist directory",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie mcp",
+      "about": "Start the read-only MCP server over stdio, for a coding agent to query this machine's session index mid-session (see docs/specs/mcp-server.md). Register it once with `claude mcp add agentworth --scope user -- archie mcp`",
+      "args": []
+    },
+    {
+      "path": "archie doctor",
+      "about": "Check local environment, adapter discoveries, and SQLite database health",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output diagnostic report as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--self-test",
+          "positional": false,
+          "required": false,
+          "help": "Run the real release workflow end to end -- scan, stats, usage, sessions, show, handoff, forgotten, and an MCP round trip -- against the real index on this machine, with no network, and report pass/fail/slow and timing for each step. Exits non-zero if any step fails",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie docs",
+      "about": "Generate CLI, HTTP API, and MCP tool reference documentation from the code itself (see docs/REFERENCE.md). Nothing here is hand-written prose: the CLI section walks the clap command tree, the API section walks the axum route table, and the MCP section walks the rmcp tool router -- so the reference cannot drift from the code",
+      "args": [
+        {
+          "name": "--format",
+          "positional": false,
+          "required": false,
+          "help": "Output format when printing to stdout (ignored with --write, which always writes both forms)",
+          "default": "markdown",
+          "possibleValues": [
+            "markdown",
+            "json"
+          ]
+        },
+        {
+          "name": "--write",
+          "positional": false,
+          "required": false,
+          "help": "Write docs/REFERENCE.md and docs/reference.json (relative to the current directory, which must be the repository root) instead of printing to stdout",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie config",
       "about": "Get, set, or list persisted CLI defaults (~/.agentworth/config.toml)",
       "args": []
     },
     {
-      "path": "agentworth config list",
+      "path": "archie config list",
       "about": "List every persisted config key and its current value",
       "args": [
         {
@@ -1221,7 +1396,7 @@
       ]
     },
     {
-      "path": "agentworth config get",
+      "path": "archie config get",
       "about": "Print the persisted value for one config key",
       "args": [
         {
@@ -1243,7 +1418,7 @@
       ]
     },
     {
-      "path": "agentworth config set",
+      "path": "archie config set",
       "about": "Persist a default value for one config key",
       "args": [
         {
@@ -1273,25 +1448,86 @@
       ]
     },
     {
-      "path": "agentworth docs",
-      "about": "Generate CLI, HTTP API, and MCP tool reference documentation from the code itself (see docs/REFERENCE.md). Nothing here is hand-written prose: the CLI section walks the clap command tree, the API section walks the axum route table, and the MCP section walks the rmcp tool router -- so the reference cannot drift from the code",
+      "path": "archie version",
+      "about": "Print version details: binary version, npm install detection, and a live check for a newer release",
       "args": [
         {
-          "name": "--format",
+          "name": "--offline",
           "positional": false,
           "required": false,
-          "help": "Output format when printing to stdout (ignored with --write, which always writes both forms)",
-          "default": "markdown",
-          "possibleValues": [
-            "markdown",
-            "json"
-          ]
+          "help": "Skip the live GitHub-releases update check (fully local, no network call)",
+          "default": "false",
+          "possibleValues": []
         },
         {
-          "name": "--write",
+          "name": "--json",
           "positional": false,
           "required": false,
-          "help": "Write docs/REFERENCE.md and docs/reference.json (relative to the current directory, which must be the repository root) instead of printing to stdout",
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie update",
+      "about": "Check for a newer AgentWorth release and show exactly how to get it",
+      "args": [
+        {
+          "name": "--offline",
+          "positional": false,
+          "required": false,
+          "help": "Skip the live GitHub-releases check and just show install-method guidance",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie completions",
+      "about": "Write a shell completion script to stdout",
+      "args": [
+        {
+          "name": "SHELL",
+          "positional": true,
+          "required": true,
+          "help": "Shell to generate a completion script for",
+          "default": null,
+          "possibleValues": [
+            "bash",
+            "elvish",
+            "fish",
+            "powershell",
+            "zsh"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "archie merge",
+      "about": "Merge another local SQLite index database into this index",
+      "args": [
+        {
+          "name": "SOURCE_DB",
+          "positional": true,
+          "required": true,
+          "help": "Path to the source SQLite database file to merge from",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output results as JSON",
           "default": "false",
           "possibleValues": []
         }
@@ -1464,7 +1700,22 @@
   ],
   "mcp": [
     {
-      "name": "blame_find",
+      "name": "agent_list",
+      "description": "Machine-wide aggregate stats: total sessions/events, token usage, sessions by adapter, model/tool usage counts, and verified-outcome count -- the same population /api/stats reports. Pass include_matrix=true to also get the per-adapter detection/capability matrix (/api/matrix's equivalent), answering \"what does this machine even have\" without opening the dashboard.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "include_matrix": {
+            "default": false,
+            "description": "Also compute and include the per-adapter detection/capability matrix\n(`/api/matrix`'s equivalent). Defaults to false.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "repo_blame",
       "description": "Find sessions whose recorded file modifications match a substring of file_path -- AI Code Blame, the same query /api/blame makes. Returned paths are redacted.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1481,7 +1732,105 @@
       }
     },
     {
-      "name": "carry_forward",
+      "name": "repo_suspect",
+      "description": "Which commits on this branch came out of a session that never proved anything. Walks `git log` over the range, joins each commit's changed paths to indexed sessions that touched them within window_hours before it, and reports each session's risk signals: no_test_run (the session never got past artifact_changed), no_outcome_detected (the adapter extracted no outcome at all -- weaker), demoted_claim (verification contradicted a claim, with the event sequence), and loop (the sentinel caught repetition). Returns a list and a copyable prompt -- never a patch, a diff, or a PR: a trajectory says the session was going badly, not what the code does wrong. Two counts are load-bearing and must be reported to the user, not dropped: `unattributed` commits had no indexed session at all (unknown, not clean), and `unanchored_blame_rows` is evidence that could not be placed in any repository. Paths and session source paths are redacted.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "base": {
+            "description": "Ref to diff against. Defaults to the branch's own upstream, then `origin/main`, then\n`origin/master`, then the most recent `max_commits` commits.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branch": {
+            "description": "Branch to walk. Defaults to `HEAD`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_commits": {
+            "description": "Ceiling on commits walked. Defaults to 200, hard-capped at 1000.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Absolute path to a git checkout on this machine. Anything inside it works — the\nrepository root is resolved with `git rev-parse --show-toplevel`.",
+            "type": "string"
+          },
+          "since": {
+            "description": "RFC 3339 timestamp. Only consulted when `base` is absent.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window_hours": {
+            "description": "How long before a commit a session's file touch still counts as having authored it.\nDefaults to 24.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "repo"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "session_asks",
+      "description": "The questions-to-answers index for one session: every question asked (a `?` sentence in a user turn, or a flag-prefixed `⚑`/`🚩` line in an assistant turn asking the user something) matched to the first substantive assistant text that follows it, before the next user turn. Exists so an agent can be told where an answer already landed instead of the user re-scrolling or re-asking. Each result carries the question (trimmed to 120 chars), a status (answered, flagged_back_to_user -- either a flag line or a reply that was itself a question, or no_reply_yet), an answer excerpt when one was found (trimmed to 200 chars), and a pointer (event sequence and timestamp) to jump to: the answer's location when there is one, otherwise the question's own. Filter with since (RFC 3339) and unanswered_only; limit defaults to 50, ceiling 500, and the totals describe the whole session regardless of it. No model is involved -- three deterministic patterns, same `regex_v1` method `session_forgotten` uses. Defaults to the newest session for the repo this server runs in. Redacted by default; include_raw=true opts out, per call.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "include_raw": {
+            "default": false,
+            "description": "Return unredacted questions and answer excerpts. Defaults to false -- everything this\ntool returns is transcript text (docs/specs/mcp-server.md, \"What it must not expose\").",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "How many questions to return, newest first. Defaults to 50, hard ceiling 500. The\ntotals in the response describe the whole session regardless of this.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "session_id": {
+            "description": "Session to index. Defaults to the most recent indexed session for the repository this\nserver process is running in, same default `session_handoff` uses.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since": {
+            "description": "RFC 3339 timestamp; only questions asked at or after this instant.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unanswered_only": {
+            "default": false,
+            "description": "Only questions that are not `answered` -- still open, or handed back to the user.\nDefaults to false.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "session_carry_forward",
       "description": "The last N handoffs for one repository, newest first, so a session's first tool call can be \"what happened here recently\" and the answer is structured rather than a file it has to find and parse. `repo` is the same key session_handoff's receipt reports (e.g. `unfoundbox/agentworth`); a repo's worktrees all answer to one value. n defaults to 3, ceiling 10. Handoffs are listed, never merged -- merging two contradictory facts needs judgment about which is current, and that is not in the index. Redacted by default.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1510,7 +1859,7 @@
             ]
           },
           "repo": {
-            "description": "Repository/workspace key, as `sessions_find`'s `repo` and the handoff receipt report\nit (e.g. `unfoundbox/agentworth`). A repo's worktrees all answer to one value.",
+            "description": "Repository/workspace key, as `session_list`'s `repo` and the handoff receipt report\nit (e.g. `unfoundbox/agentworth`). A repo's worktrees all answer to one value.",
             "type": "string"
           },
           "since": {
@@ -1528,22 +1877,7 @@
       }
     },
     {
-      "name": "coverage_stats",
-      "description": "Machine-wide aggregate stats: total sessions/events, token usage, sessions by adapter, model/tool usage counts, and verified-outcome count -- the same population /api/stats reports. Pass include_matrix=true to also get the per-adapter detection/capability matrix (/api/matrix's equivalent), answering \"what does this machine even have\" without opening the dashboard.",
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "include_matrix": {
-            "default": false,
-            "description": "Also compute and include the per-adapter detection/capability matrix\n(`/api/matrix`'s equivalent). Defaults to false.",
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      }
-    },
-    {
-      "name": "forgotten_context",
+      "name": "session_forgotten",
       "description": "The decisions this session's compaction rounds threw away, quoted verbatim with a receipt on each. Compaction replaces the conversation with a summary in the model's view while the full transcript stays on disk, so the dropped span and the summary that replaced it both exist and can be diffed. Measured on one real 8-round session (docs/specs/compaction-diff.md): 402 decision-shaped sentences went in and 28 came out -- conclusions survive at 15%, reasons at 1.7%, which is the shape that makes a session re-propose something it already rejected. Filter with round (1-based) and classes (decision, rejected, reason); limit defaults to 20, ceiling 200, and the totals describe the whole session regardless of it. Every statement carries its round, source sequence, and what the session did in the next few events, so a stated decision that was acted on can be told from one that was only claimed. Three answers are kept distinct and none is padded: never compacted, compacted with nothing decision-shaped dropped, and a real list. No model is involved -- three regexes return the sentence verbatim, because a paraphrase would make this a second summariser. Refuses if the raw session file is gone. Redacted by default; include_raw=true opts out, per call.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1593,166 +1927,6 @@
       }
     },
     {
-      "name": "outcome_rate",
-      "description": "Verified-outcome rate by model, adapter, or repo: of the sessions that claimed done, what share left evidence (a passed test/build or stronger), with the sample size next to every row. Groups under min_n (default 20) are suppressed and counted in suppressed_groups rather than shown; a group with sessions but zero detected outcomes comes back as rate: null with reason: \"no_outcome_detection\" instead of being suppressed -- those are different claims. Includes a receipt (db_path, counted_at, index_last_session_at, the non-stub predicate, and the session IDs behind each row) so the answer is checkable.",
-      "inputSchema": {
-        "$defs": {
-          "OutcomeRateGroupByParam": {
-            "description": "Mirrors `agentworth_storage::OutcomeRateGroupBy` with the same snake_case wire values -- a\nlocal copy for the same reason `SessionsOrderBy` is one (see its doc comment above).",
-            "enum": [
-              "model",
-              "adapter",
-              "repo"
-            ],
-            "type": "string"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "group_by": {
-            "$ref": "#/$defs/OutcomeRateGroupByParam"
-          },
-          "include_stubs": {
-            "default": null,
-            "description": "Include near-empty session stubs in the population. Defaults to false.",
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "min_n": {
-            "description": "Groups with fewer than this many claimed sessions are suppressed (counted in\n`suppressed_groups`) rather than returned as a row. Defaults to 20.",
-            "format": "uint",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "since": {
-            "description": "RFC 3339 timestamp; only sessions started at or after this instant.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "until": {
-            "description": "RFC 3339 timestamp; only sessions started at or before this instant.",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "group_by"
-        ],
-        "type": "object"
-      }
-    },
-    {
-      "name": "pacing_window",
-      "description": "Rolling burn-rate window (default 5 hours): tokens/hour, active adapters and models, estimated cost, and cache hit ratio -- the same window /api/pacing computes. Answers \"what am I burning right now\".",
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "hours": {
-            "description": "Rolling window size in hours; defaults to 5.",
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      }
-    },
-    {
-      "name": "session_asks",
-      "description": "The questions-to-answers index for one session: every question asked (a `?` sentence in a user turn, or a flag-prefixed `⚑`/`🚩` line in an assistant turn asking the user something) matched to the first substantive assistant text that follows it, before the next user turn. Exists so an agent can be told where an answer already landed instead of the user re-scrolling or re-asking. Each result carries the question (trimmed to 120 chars), a status (answered, flagged_back_to_user -- either a flag line or a reply that was itself a question, or no_reply_yet), an answer excerpt when one was found (trimmed to 200 chars), and a pointer (event sequence and timestamp) to jump to: the answer's location when there is one, otherwise the question's own. Filter with since (RFC 3339) and unanswered_only; limit defaults to 50, ceiling 500, and the totals describe the whole session regardless of it. No model is involved -- three deterministic patterns, same `regex_v1` method `forgotten_context` uses. Defaults to the newest session for the repo this server runs in. Redacted by default; include_raw=true opts out, per call.",
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "include_raw": {
-            "default": false,
-            "description": "Return unredacted questions and answer excerpts. Defaults to false -- everything this\ntool returns is transcript text (docs/specs/mcp-server.md, \"What it must not expose\").",
-            "type": "boolean"
-          },
-          "limit": {
-            "description": "How many questions to return, newest first. Defaults to 50, hard ceiling 500. The\ntotals in the response describe the whole session regardless of this.",
-            "format": "uint",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "session_id": {
-            "description": "Session to index. Defaults to the most recent indexed session for the repository this\nserver process is running in, same default `session_handoff` uses.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "since": {
-            "description": "RFC 3339 timestamp; only questions asked at or after this instant.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "unanswered_only": {
-            "default": false,
-            "description": "Only questions that are not `answered` -- still open, or handed back to the user.\nDefaults to false.",
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      }
-    },
-    {
-      "name": "session_get",
-      "description": "Get full detail for one session by ID: the trace, its 5-component TraceScore, outcome evidence, and recovery signals -- the same shape /api/traces/:id returns. Redacted by default (trace events, outcome summaries, and recovery summaries all pass through the redaction engine); pass include_raw=true for the unredacted trace. `trace.events` is paginated: events_offset (default 0) and events_limit (default 500, must be > 0) page through it, and the response's events_total says how many events the session actually has, so a large session is never returned in full by accident.",
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "events_limit": {
-            "default": null,
-            "description": "Max number of events to return. Defaults to `SESSION_GET_DEFAULT_EVENTS_LIMIT` (500) so\na call can never receive a session's full event list by accident; pass an explicit,\nlarger value to see more. Must be greater than 0.",
-            "format": "uint",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "events_offset": {
-            "default": null,
-            "description": "Zero-based offset into the trace's events. Defaults to 0.",
-            "format": "uint",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "include_raw": {
-            "default": false,
-            "description": "Return the unredacted trace, outcomes, and recoveries. Defaults to false -- redacted\noutput is the default for every tool that can carry event or file content (see\ndocs/specs/mcp-server.md, \"What it must not expose\").",
-            "type": "boolean"
-          },
-          "session_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "session_id"
-        ],
-        "type": "object"
-      }
-    },
-    {
       "name": "session_handoff",
       "description": "The handoff for one session, written from rows rather than by a model: what it said it would do and never did, what it said it decided, which files changed, which commands ran and with what exit code, the outcome rung reached, and how often the context was compacted. Returns markdown under a line budget (max_lines, default 60, ceiling 120), the receipt every claim traces back to, and `gaps` -- the machine-readable list of what this session could not answer, which is never padded over. Open decisions, PR/CI state and environment traps are NOT in the index and the output says so. Defaults to the newest session for the repo this server runs in. Redacted by default; include_raw=true opts out, per call.",
       "inputSchema": {
@@ -1791,7 +1965,7 @@
       }
     },
     {
-      "name": "sessions_find",
+      "name": "session_list",
       "description": "Find sessions by adapter, model, outcome, search text, date range, token floor, or derived repo/workspace name. `limit` is required with a hard ceiling of 200 -- there is no silent default, so state how many results you want. Returns summaries only (no event content); `source_path` is redacted.",
       "inputSchema": {
         "$defs": {
@@ -1912,27 +2086,14 @@
       }
     },
     {
-      "name": "suspect_commits",
-      "description": "Which commits on this branch came out of a session that never proved anything. Walks `git log` over the range, joins each commit's changed paths to indexed sessions that touched them within window_hours before it, and reports each session's risk signals: no_test_run (the session never got past artifact_changed), no_outcome_detected (the adapter extracted no outcome at all -- weaker), demoted_claim (verification contradicted a claim, with the event sequence), and loop (the sentinel caught repetition). Returns a list and a copyable prompt -- never a patch, a diff, or a PR: a trajectory says the session was going badly, not what the code does wrong. Two counts are load-bearing and must be reported to the user, not dropped: `unattributed` commits had no indexed session at all (unknown, not clean), and `unanchored_blame_rows` is evidence that could not be placed in any repository. Paths and session source paths are redacted.",
+      "name": "session_show",
+      "description": "Get full detail for one session by ID: the trace, its 5-component TraceScore, outcome evidence, and recovery signals -- the same shape /api/traces/:id returns. Redacted by default (trace events, outcome summaries, and recovery summaries all pass through the redaction engine); pass include_raw=true for the unredacted trace. `trace.events` is paginated: events_offset (default 0) and events_limit (default 500, must be > 0) page through it, and the response's events_total says how many events the session actually has, so a large session is never returned in full by accident.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
-          "base": {
-            "description": "Ref to diff against. Defaults to the branch's own upstream, then `origin/main`, then\n`origin/master`, then the most recent `max_commits` commits.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "branch": {
-            "description": "Branch to walk. Defaults to `HEAD`.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "max_commits": {
-            "description": "Ceiling on commits walked. Defaults to 200, hard-capped at 1000.",
+          "events_limit": {
+            "default": null,
+            "description": "Max number of events to return. Defaults to `SESSION_GET_DEFAULT_EVENTS_LIMIT` (500) so\na call can never receive a session's full event list by accident; pass an explicit,\nlarger value to see more. Must be greater than 0.",
             "format": "uint",
             "minimum": 0,
             "type": [
@@ -1940,39 +2101,96 @@
               "null"
             ]
           },
-          "repo": {
-            "description": "Absolute path to a git checkout on this machine. Anything inside it works — the\nrepository root is resolved with `git rev-parse --show-toplevel`.",
-            "type": "string"
-          },
-          "since": {
-            "description": "RFC 3339 timestamp. Only consulted when `base` is absent.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "window_hours": {
-            "description": "How long before a commit a session's file touch still counts as having authored it.\nDefaults to 24.",
-            "format": "int64",
+          "events_offset": {
+            "default": null,
+            "description": "Zero-based offset into the trace's events. Defaults to 0.",
+            "format": "uint",
+            "minimum": 0,
             "type": [
               "integer",
               "null"
             ]
+          },
+          "include_raw": {
+            "default": false,
+            "description": "Return the unredacted trace, outcomes, and recoveries. Defaults to false -- redacted\noutput is the default for every tool that can carry event or file content (see\ndocs/specs/mcp-server.md, \"What it must not expose\").",
+            "type": "boolean"
+          },
+          "session_id": {
+            "type": "string"
           }
         },
         "required": [
-          "repo"
+          "session_id"
         ],
         "type": "object"
       }
     },
     {
-      "name": "usage_summary",
+      "name": "stats_outcomes",
+      "description": "Verified-outcome rate by model, adapter, or repo: of the sessions that claimed done, what share left evidence (a passed test/build or stronger), with the sample size next to every row. Groups under min_n (default 20) are suppressed and counted in suppressed_groups rather than shown; a group with sessions but zero detected outcomes comes back as rate: null with reason: \"no_outcome_detection\" instead of being suppressed -- those are different claims. Includes a receipt (db_path, counted_at, index_last_session_at, the non-stub predicate, and the session IDs behind each row) so the answer is checkable.",
+      "inputSchema": {
+        "$defs": {
+          "OutcomeRateGroupByParam": {
+            "description": "Mirrors `agentworth_storage::OutcomeRateGroupBy` with the same snake_case wire values -- a\nlocal copy for the same reason `SessionsOrderBy` is one (see its doc comment above).",
+            "enum": [
+              "model",
+              "adapter",
+              "repo"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "group_by": {
+            "$ref": "#/$defs/OutcomeRateGroupByParam"
+          },
+          "include_stubs": {
+            "default": null,
+            "description": "Include near-empty session stubs in the population. Defaults to false.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "min_n": {
+            "description": "Groups with fewer than this many claimed sessions are suppressed (counted in\n`suppressed_groups`) rather than returned as a row. Defaults to 20.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "since": {
+            "description": "RFC 3339 timestamp; only sessions started at or after this instant.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "description": "RFC 3339 timestamp; only sessions started at or before this instant.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "group_by"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "stats_usage",
       "description": "Daily, weekly, or monthly usage rollups: session counts, token breakdown, estimated cost, and cache hit ratio, grouped by adapter -- the same rollups /api/usage returns for one period at a time. Every estimated_cost_usd is an API list-price equivalent, not what the account actually paid -- see cost_basis/subscription_tier.",
       "inputSchema": {
         "$defs": {
           "UsagePeriodParam": {
-            "description": "Rollup period for the `usage_summary` tool, mirroring `Storage::get_daily_usage` /\n`get_weekly_usage` / `get_monthly_usage`.",
+            "description": "Rollup period for the `stats_usage` tool, mirroring `Storage::get_daily_usage` /\n`get_weekly_usage` / `get_monthly_usage`.",
             "enum": [
               "day",
               "week",
@@ -2001,6 +2219,230 @@
         ],
         "type": "object"
       }
+    },
+    {
+      "name": "window_show",
+      "description": "Rolling burn-rate window (default 5 hours): tokens/hour, active adapters and models, estimated cost, and cache hit ratio -- the same window /api/pacing computes. Answers \"what am I burning right now\".",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "hours": {
+            "description": "Rolling window size in hours; defaults to 5.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      }
+    }
+  ],
+  "oldSpellings": [
+    {
+      "surface": "cli",
+      "old": "traces",
+      "new": "session list",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "inspect",
+      "new": "session show",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "export",
+      "new": "session export",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "receipt",
+      "new": "session receipt",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "handoff",
+      "new": "session handoff",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "forgotten",
+      "new": "session forgotten",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "loose-ends",
+      "new": "session loose-ends",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "asks",
+      "new": "session asks",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "cache-doctor",
+      "new": "session cache",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "bisect",
+      "new": "session bisect",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "search",
+      "new": "session search",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "recall",
+      "new": "session recall",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "audit",
+      "new": "session audit",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "blunder",
+      "new": "session blunder",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "autopsy",
+      "new": "session autopsy",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "watch",
+      "new": "session watch",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "blind-spots",
+      "new": "session list --unproven",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "threat-digest",
+      "new": "session risk",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "matrix",
+      "new": "agent list",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "blame",
+      "new": "repo blame",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "pr-blame",
+      "new": "repo pr-blame",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "suspect",
+      "new": "repo suspect",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "blunder-blame",
+      "new": "repo blunder-blame",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "cli",
+      "old": "usage",
+      "new": "stats usage",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "sessions_find",
+      "new": "session_list",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "session_get",
+      "new": "session_show",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "blame_find",
+      "new": "repo_blame",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "usage_summary",
+      "new": "stats_usage",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "pacing_window",
+      "new": "window_show",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "coverage_stats",
+      "new": "agent_list",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "outcome_rate",
+      "new": "stats_outcomes",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "carry_forward",
+      "new": "session_carry_forward",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "forgotten_context",
+      "new": "session_forgotten",
+      "removedIn": "v0.1.18"
+    },
+    {
+      "surface": "mcp",
+      "old": "suspect_commits",
+      "new": "repo_suspect",
+      "removedIn": "v0.1.18"
     }
   ]
 }

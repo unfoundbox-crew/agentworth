@@ -73,7 +73,7 @@ fn test_cli_scan_and_stats_commands() {
     stats_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("agentworth stats"))
+        .stdout(predicate::str::contains("archie stats"))
         .stdout(predicate::str::contains("EVIDENCE LADDER"))
         .stdout(predicate::str::contains("the evidence line"))
         .stdout(predicate::str::contains("tests passed"))
@@ -111,7 +111,7 @@ fn test_cli_matrix_command_table_and_json() {
     matrix_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("agentworth matrix"))
+        .stdout(predicate::str::contains("archie agent list"))
         .stdout(predicate::str::contains("DETECT"))
         .stdout(predicate::str::contains("COMPACT"))
         .stdout(predicate::str::contains("claude_code"))
@@ -481,7 +481,7 @@ fn test_cli_audit_command_safety_detection() {
     audit_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("agentworth audit"))
+        .stdout(predicate::str::contains("archie session audit"))
         .stdout(predicate::str::contains("THREAT SUMMARY"))
         .stdout(predicate::str::contains("CRITICAL"))
         .stdout(predicate::str::contains("LEAKED_SHELL_VARIABLE"))
@@ -642,7 +642,7 @@ fn test_cli_blunder_command() {
     blunder_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("agentworth blunder"))
+        .stdout(predicate::str::contains("archie session blunder"))
         .stdout(predicate::str::contains("EXHIBIT #01"))
         .stdout(predicate::str::contains("The Missing `local` Weapon (The Katana Incident)"))
         .stdout(predicate::str::contains("LEAKED_SHELL_VARIABLE"))
@@ -755,7 +755,7 @@ fn test_cli_blunder_blame_bridge_command() {
     session_text_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("agentworth blunder-blame"))
+        .stdout(predicate::str::contains("archie repo blunder-blame"))
         .stdout(predicate::str::contains("BLUNDER #01"))
         .stdout(predicate::str::contains("CRITICAL"))
         .stdout(predicate::str::contains("blamed files"))
