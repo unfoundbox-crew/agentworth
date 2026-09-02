@@ -285,5 +285,3 @@ grep '^version' Cargo.toml
 ```
 
 None of the above require a build. `cargo metadata --no-deps` reads `Cargo.toml`/`Cargo.lock` without compiling anything.
-
-<!-- ci docs-only path check: to be reverted -->
