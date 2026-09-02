@@ -107,7 +107,7 @@ dropped:
 | video/frontend | 58 | 60.3% | 39.7% |
 | upscaler/frontend | 207 | 53.6% | 46.4% |
 | mvec/engine | 144 | 47.2% | 52.8% |
-| katana/upscaler | 222 | 43.7% | 56.3% |
+| a client repo, not ours | 222 | 43.7% | 56.3% |
 | code/motionvector | 450 | 41.8% | 58.2% |
 | apps/vibelaunch | 441 | 35.4% | 64.6% |
 | motionvector/motionvector | 51 | 35.3% | 64.7% |
@@ -116,7 +116,7 @@ dropped:
 | katana/video | 43 | 30.2% | 69.8% |
 | motionvector/studio | 179 | 30.2% | 69.8% |
 | unfoundbox/memes | 46 | 28.3% | 71.7% |
-| katana/agent | 11 | 27.3% | 72.7% |
+| a second client repo | 11 | 27.3% | 72.7% |
 | motionvector/spacepilot | 144 | 25.0% | 75.0% |
 | motionvector/pluto | 178 | 20.2% | 79.8% |
 | upscaler/backend | 421 | 18.3% | 81.7% |
@@ -170,7 +170,7 @@ floor of 10:
 | :--- | ---: | ---: | ---: | ---: | ---: |
 | motionvector/spacepilot | 38 | 22.5% | 50.0% | 17.6% | 7.8% |
 | unfoundbox/memes | 13 | 17.9% | 72.0% | 14.8% | 5.8% |
-| katana/upscaler | 95 | 16.7% | 55.3% | 14.3% | 10.6% |
+| a client repo, not ours | 95 | 16.7% | 55.3% | 14.3% | 10.6% |
 | code/motionvector | 185 | 16.6% | 66.8% | 11.6% | 19.5% |
 | mvec/engine | 69 | 13.8% | 51.4% | 10.5% | 11.5% |
 | motionvector/pluto | 36 | 13.1% | 35.5% | 10.2% | 2.7% |
