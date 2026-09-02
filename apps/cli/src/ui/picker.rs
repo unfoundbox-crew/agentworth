@@ -345,7 +345,13 @@ pub fn render_list(ui: &Ui, rows: &[Candidate], subtitle: &str) -> String {
     } else {
         0
     };
-    let prompt_w = i.saturating_sub(fixed + gaps + full_id_w).max(6);
+    // No floor here on purpose: the appended full id (below) must never be the part that
+    // gets cut when `push`'s width fit kicks in, so a long id is allowed to shrink the
+    // prompt column all the way to nothing rather than reclaim space from it. If even a
+    // zero-width prompt can't make the longest id fit (a very narrow terminal, or a very
+    // long id), the id is dropped instead of appended and then clipped by `push`.
+    let show_full_id = ui.ascii() && fixed + gaps + full_id_w <= i;
+    let prompt_w = i.saturating_sub(fixed + gaps + full_id_w);
 
     let head = format!(
         "{}  {}  {}  {}  {}  {}  {}  {}",
@@ -387,7 +393,7 @@ pub fn render_list(ui: &Ui, rows: &[Candidate], subtitle: &str) -> String {
             rung_glyph(ui, c.rung),
             ui.paint(Role::Value, &truncate(preview, prompt_w)),
         );
-        if ui.ascii() {
+        if show_full_id {
             // The plain/non-TTY path has no interactive selection, so the full id has to
             // be copyable straight off the line -- appended after the short one rather
             // than replacing it, so column positions stay identical to the coloured form.
