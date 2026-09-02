@@ -1924,9 +1924,6 @@ pub fn self_test(
     );
     out.push('\n');
 
-    out.push_str(&ui.next(
-        "agentworth doctor",
-        "the environment, storage, and adapter snapshot alone",
-    ));
+    out.push_str(&ui.next("agentworth doctor", "the environment and storage snapshot alone"));
     out
 }
