@@ -330,10 +330,23 @@ mod tests {
         let file_path = temp_dir.path().join("session.jsonl");
         std::fs::write(&file_path, b"{\"type\":\"user\"}\n").expect("write session file");
 
-        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-            .await
-            .expect("timed out waiting for a filesystem event")
-            .expect("broadcast channel closed unexpectedly");
+        // macOS FSEvents can report activity for unrelated temp files that other tests
+        // create concurrently in the same OS temp root (e.g. NamedTempFile in adapter
+        // tests) before it reports the one this test cares about -- so scan the stream
+        // for our file rather than assuming the first broadcast event is it.
+        let event = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let event = rx
+                    .recv()
+                    .await
+                    .expect("broadcast channel closed unexpectedly");
+                if event.path.file_name() == file_path.file_name() {
+                    return event;
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for a filesystem event for session.jsonl");
 
         assert_eq!(event.path.file_name(), file_path.file_name());
         assert_eq!(event.adapter, Some("test_adapter".to_string()));
