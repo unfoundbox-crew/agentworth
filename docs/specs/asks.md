@@ -1,6 +1,6 @@
 # Asks: a questions-to-answers index
 
-Status: built, PR #TBD (2026-09-02). Implemented as `agentworth_outcomes::asks`,
+Status: built, PR #97 (2026-09-02). Implemented as `agentworth_outcomes::asks`,
 `agentworth asks`, and the `session_asks` MCP tool. Tier 1 only — see "What's
 deliberately not in this build" for tier 2 (`--summarize`) and tier 3
 (rejected).
