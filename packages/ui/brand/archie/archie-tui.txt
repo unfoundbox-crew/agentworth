@@ -9,19 +9,19 @@ same reason: half the terminals people run agents in render one at the wrong
 width and shear the box open.
 
 Archie survives the reduction to three things: the drop ears (the parentheses),
-the low muzzle (the third line), and the lamp (the glyph between the ears).
-Only the lamp glyph changes between states. Everything else is fixed, because a
-figure that redraws every frame reads as noise in a scrolling log.
+the merged jaw (the third line), and the torch (the glyph at the paw). Only the
+torch glyph changes between states. Everything else is fixed, because a figure
+that redraws every frame reads as noise in a scrolling log.
 
 
-THE FIGURE                                                   7 columns × 3 lines
+THE FIGURE                                                   9 columns × 3 lines
 
-     ,-*-.        the strap, with the lamp on it
-    ( o o )       the ears, hanging past the eyes
-     '\_/'        the low muzzle
+       ,---.        the crown of the head — no strap, no head gear
+      ( o o )       the ears, hanging past the eyes
+     -*  '._.'      the torch in his front paw, and the merged jaw
 
 
-THE LAMP GLYPH IS THE STATE
+THE TORCH GLYPH IS THE STATE
 
      *    on         idle, and the moment he finds something
      o    sweeping   digging — the light is moving
@@ -31,23 +31,32 @@ THE LAMP GLYPH IS THE STATE
      No colour is required for any of this. It reads over ssh, in a pipe, and
      in a CI log with the colour stripped.
 
+     One cost, named because it is real: the beam dash sits in front of the
+     glyph, so "nothing" prints -- and "off" prints -. rather than a single
+     distinct character in a fixed column. That is the price of attaching the
+     torch to a paw instead of floating it beside him, and it was paid on
+     purpose.
+
 
 THE COCKPIT PANEL                                                    100 columns
 
 ┌─ archie ────────────────────────────────────────────────────────────────────────────── digging ──┐
-│  ,-*-.   ~/.claude/projects            ──────────────────────·······  68%                        │
+│  ,---.   ~/.claude/projects            ──────────────────────·······  68%                        │
 │ ( o o )  1,204 sessions · 38 repos     last dig 2m ago                                           │
-│  '\_/'   ● 902 verified  ○ 14 off      3 asks still unanswered                                   │
+│-*  '._.' ● 902 verified  ○ 14 off      3 asks still unanswered                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 
-THE SCAN LINE                                            one line, any width ≥ 46
+THE SCAN LINE                                            one line, any width ≥ 48
 
  (*) archie  scanning  ──────────────────·······  68%  1,204 sessions
 
-     The one-line form is the ears and the lamp: ( * ). It is the whole
-     character at three characters wide, and it is the only form that fits a
-     status bar, a spinner slot, or the right edge of a prompt.
+     The one-line form is the ears and the light: ( * ). At three characters
+     the parentheses have stopped being ears — they are a frame around a state,
+     the same way [ok] is — and nobody reads a headlamp into it. It is the only
+     form that fits a status bar, a spinner slot, or the right edge of a
+     prompt, so it keeps its shape and the columns get spent on the 3-line
+     figure instead.
 
  (*) on      ( o ) sweeping      (-) nothing      ( ) error
 
@@ -56,10 +65,10 @@ THE DIG LOOP                                     4 text frames · 1400ms · 350m
 
    frame 1        frame 2        frame 3        frame 4
 
-    ,-*-.          ,-o-.          ,-*-.          ,-o-.
-   ( o o )        ( o o )        ( o o )        ( o o )
-    '\_/'  .       '\_/' ·        '\_/'  ·       '\_/' .
-   ──────         ─────· ·       ────·  ·       ─────  ·
+     ,---.          ,---.          ,---.          ,---.
+    ( o o )        ( o o )        ( o o )        ( o o )
+   -*  '._.'      -o  '._.'      -*  '._.'      -o  '._.'
+    ──────  .      ─────· ·       ────·  ·       ─────  ·
 
      The ground line frays and the chips walk right, then reset. In a terminal
      that cannot repaint in place — a piped log, a CI transcript — print frame
@@ -70,11 +79,11 @@ THE FOUND BEAT                                        plays once, 220ms, then ho
 
    digging                found                  handed over
 
-    ,-o-.                  ,-*-.                  ,-*-.       ,--.
-   ( o o )                ( O O )                ( o o )      |==|
-    '\_/' ·                '\_/'                  '\_/'--     |= |
-   ────·  ·                 ────                              |##|
-                                                              '~~'
+     ,---.                  ,---.                  ,---.        ,--.
+    ( o o )                ( O O )                ( o o )       |==|
+   -o  '._.'              -*  '._.'              -*  '._.'--    |= |
+    ────·  ·                 ────                               |##|
+                                                                '~~'
 
      Three steps: the light stops sweeping and holds, the eyes widen, the
      receipt comes up. The receipt is the brand mark — the two neutral line
@@ -84,9 +93,9 @@ THE FOUND BEAT                                        plays once, 220ms, then ho
 
 THE ERROR BEAT                                    120ms, no travel, then it stops
 
-    ,-.-.          the lamp goes out first
-   ( - - )         then the ears drop and the eyes flatten
-    '\_/'
+     ,---.          the torch goes out first
+    ( - - )         then the ears drop and the eyes flatten
+   -.  '._.'
 
      Nothing slides, nothing bounces, nothing spins afterwards. The failure
      line prints under it and the figure holds still:
@@ -100,3 +109,5 @@ WHAT NEVER APPEARS IN THE TERMINAL
        makes it look like marketing.
      · Archie on `--json`, `--quiet`, or any machine-readable output.
      · A spinner made out of Archie. He is a state, not a progress indicator.
+     · The headlamp. It is an optional costume on the SVG and has no terminal
+       form at all — in the terminal the light is always in his paw.

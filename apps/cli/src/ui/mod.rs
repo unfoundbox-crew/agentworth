@@ -448,18 +448,21 @@ pub fn lpad(s: &str, w: usize) -> String {
     format!("{}{}", s, " ".repeat(pad))
 }
 
-/// Archie's terminal short form: the drop ears, the low muzzle, and the lamp on the
-/// strap. Seven columns, three lines, pure ASCII — identical in both glyph sets,
-/// because a figure drawn out of box characters shears the moment a face is missing one.
+/// Archie's terminal short form: the crown of the head, the drop ears, the merged jaw,
+/// and the torch hanging off the left in his front paw. Nine columns, three lines, pure
+/// ASCII — identical in both glyph sets, because a figure drawn out of box characters
+/// shears the moment a face is missing one.
 /// See `packages/ui/brand/archie/archie-tui.txt`.
 ///
 /// `lamp` is the only thing that changes between states. Everything else is fixed: a
-/// figure that redraws every frame reads as noise in a scrolling log.
+/// figure that redraws every frame reads as noise in a scrolling log. The cost of
+/// attaching the torch to a paw is that the beam dash sits in front of it, so "nothing"
+/// prints `--` and "off" prints `-.` rather than one distinct glyph in a fixed column.
 pub fn archie(lamp: Lamp) -> [String; 3] {
     [
-        format!(" ,-{}-. ", lamp.glyph()),
-        "( o o )".to_string(),
-        " '\\_/' ".to_string(),
+        "  ,---.  ".to_string(),
+        " ( o o ) ".to_string(),
+        format!("-{}  '._.'", lamp.glyph()),
     ]
 }
 
@@ -471,7 +474,7 @@ pub fn archie_inline(lamp: Lamp) -> String {
 
 /// Narrower than this and the three-line block does not leave room for the label, the
 /// track and the count beside it, so the one-line form takes over.
-pub const ARCHIE_BLOCK_MIN_COLUMNS: usize = 46;
+pub const ARCHIE_BLOCK_MIN_COLUMNS: usize = 48;
 
 /// The lamp is the state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -487,7 +490,7 @@ pub enum Lamp {
 }
 
 impl Lamp {
-    /// In the three-line block, where the strap has to keep its shape: `,-.-.`.
+    /// In the three-line block, at the paw: `-*`, with the dash as the beam.
     pub fn glyph(self) -> char {
         match self {
             Lamp::On => '*',
@@ -570,16 +573,16 @@ mod tests {
     }
 
     #[test]
-    fn archie_holds_seven_columns_in_every_state_and_both_glyph_sets() {
+    fn archie_holds_nine_columns_in_every_state_and_both_glyph_sets() {
         for lamp in [Lamp::On, Lamp::Sweeping, Lamp::Dim, Lamp::Off] {
             for line in archie(lamp) {
-                assert_eq!(display_width(&line), 7, "{:?}: {:?}", lamp, line);
+                assert_eq!(display_width(&line), 9, "{:?}: {:?}", lamp, line);
             }
             assert_eq!(display_width(&archie_inline(lamp)), 3);
         }
-        // Only the lamp moves. The ears and the muzzle are fixed.
+        // Only the torch glyph moves. The crown, the ears and the jaw are fixed.
+        assert_eq!(archie(Lamp::On)[0], archie(Lamp::Off)[0]);
         assert_eq!(archie(Lamp::On)[1], archie(Lamp::Off)[1]);
-        assert_eq!(archie(Lamp::On)[2], archie(Lamp::Off)[2]);
     }
 
     #[test]

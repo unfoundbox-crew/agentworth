@@ -1,0 +1,798 @@
+<!-- @dsCard group="Brand" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentWorth DS — Archie</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+
+:root {
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --mv-ground: #ffffff;
+  --mv-surface: #f4f4f5;
+  --mv-surface-2: #efeff1;
+  --mv-surface-3: #e4e4e7;
+  --mv-border: #e4e4e7;
+  --mv-border-soft: #ececee;
+  --mv-ink: #111113;
+  --mv-text: #3f3f46;
+  --mv-muted: #52525b;
+  --mv-faint: #a1a1aa;
+  --mv-accent: #7c6bb3;
+
+  --mv-cat-1: #6b7fc7;
+  --mv-cat-2: #c78a4a;
+  --mv-cat-3: #4f9d76;
+  --mv-cat-4: #b06a94;
+  --mv-cat-5: #5b9bb5;
+  --mv-cat-6: #a3843f;
+  --mv-cat-7: #8b74c4;
+  --mv-cat-8: #9a9aa4;
+  --mv-accent-soft: rgba(124, 107, 179, 0.08);
+  --mv-accent-border: rgba(124, 107, 179, 0.28);
+  --mv-accent-contrast: #ffffff;
+
+  --mv-success: #15803d;
+  --mv-success-soft: rgba(21, 128, 61, 0.08);
+  --mv-success-border: rgba(21, 128, 61, 0.28);
+  --mv-warn: #b45309;
+  --mv-warn-soft: rgba(180, 83, 9, 0.08);
+  --mv-warn-border: rgba(180, 83, 9, 0.28);
+  --mv-danger: #b91c1c;
+  --mv-danger-soft: rgba(185, 28, 28, 0.08);
+  --mv-danger-border: rgba(185, 28, 28, 0.28);
+
+  --mv-rise: 10px;
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 220ms;
+  --motion-slower: 300ms;
+  --motion-exit: 120ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-enter-scale: 0.98;
+  --stagger-step: 40ms;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --mv-ground: #000000;
+    --mv-surface: #18181b;
+    --mv-surface-2: #1d1d20;
+    --mv-surface-3: #27272a;
+    --mv-border: #2a2a2d;
+    --mv-border-soft: #1c1c1f;
+    --mv-ink: #ffffff;
+    --mv-text: #d4d4d8;
+    --mv-muted: #a1a1aa;
+    --mv-faint: #52525b;
+    --mv-accent: #a396d6;
+    --mv-accent-soft: rgba(163, 150, 214, 0.1);
+    --mv-accent-border: rgba(163, 150, 214, 0.3);
+    --mv-accent-contrast: #0d0d0f;
+
+    --mv-success: #34d399;
+    --mv-success-soft: rgba(52, 211, 153, 0.1);
+    --mv-success-border: rgba(52, 211, 153, 0.3);
+    --mv-warn: #fbbf24;
+    --mv-warn-soft: rgba(251, 191, 36, 0.1);
+    --mv-warn-border: rgba(251, 191, 36, 0.3);
+    --mv-danger: #f87171;
+    --mv-danger-soft: rgba(248, 113, 113, 0.1);
+    --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+    --mv-cat-1: #8b9ee0;
+    --mv-cat-2: #dda86a;
+    --mv-cat-3: #6fbf95;
+    --mv-cat-4: #cd8ab2;
+    --mv-cat-5: #7bb9d2;
+    --mv-cat-6: #c3a45c;
+    --mv-cat-7: #a996dd;
+    --mv-cat-8: #b4b4bd;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --mv-ground: #000000;
+  --mv-surface: #18181b;
+  --mv-surface-2: #1d1d20;
+  --mv-surface-3: #27272a;
+  --mv-border: #2a2a2d;
+  --mv-border-soft: #1c1c1f;
+  --mv-ink: #ffffff;
+  --mv-text: #d4d4d8;
+  --mv-muted: #a1a1aa;
+  --mv-faint: #52525b;
+  --mv-accent: #a396d6;
+  --mv-accent-soft: rgba(163, 150, 214, 0.1);
+  --mv-accent-border: rgba(163, 150, 214, 0.3);
+  --mv-accent-contrast: #0d0d0f;
+
+  --mv-success: #34d399;
+  --mv-success-soft: rgba(52, 211, 153, 0.1);
+  --mv-success-border: rgba(52, 211, 153, 0.3);
+  --mv-warn: #fbbf24;
+  --mv-warn-soft: rgba(251, 191, 36, 0.1);
+  --mv-warn-border: rgba(251, 191, 36, 0.3);
+  --mv-danger: #f87171;
+  --mv-danger-soft: rgba(248, 113, 113, 0.1);
+  --mv-danger-border: rgba(248, 113, 113, 0.3);
+
+  --mv-cat-1: #8b9ee0;
+  --mv-cat-2: #dda86a;
+  --mv-cat-3: #6fbf95;
+  --mv-cat-4: #cd8ab2;
+  --mv-cat-5: #7bb9d2;
+  --mv-cat-6: #c3a45c;
+  --mv-cat-7: #a996dd;
+  --mv-cat-8: #b4b4bd;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --mv-rise: 0px;
+    --motion-enter-scale: 1;
+    --stagger-step: 0ms;
+  }
+}
+
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--mv-ground);
+  color: var(--mv-text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--mv-accent-soft); }
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
+  border-radius: 4px;
+}
+
+a { color: var(--mv-accent); }
+
+.card-shell {
+  max-width: 1080px;
+  margin-inline: auto;
+  padding: 0 clamp(18px, 4vw, 40px) 72px;
+}
+
+.card-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px clamp(18px, 4vw, 40px);
+  border-bottom: 0.5px solid var(--mv-border);
+  background: var(--mv-ground);
+}
+
+.card-eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mv-faint);
+}
+
+.card-eyebrow .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mv-accent);
+  display: inline-block;
+  flex: none;
+}
+
+.card-eyebrow .group { color: var(--mv-muted); }
+.card-eyebrow a { color: var(--mv-faint); text-decoration: none; }
+.card-eyebrow a:hover { color: var(--mv-text); }
+
+.card-title {
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  color: var(--mv-ink);
+  margin: 28px 0 10px;
+  text-wrap: balance;
+}
+
+.card-dek {
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 66ch;
+  margin: 0 0 8px;
+}
+
+.card-rule-note {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--mv-muted);
+  max-width: 66ch;
+  margin: 4px 0 0;
+  border-left: 2px solid var(--mv-accent-border);
+  padding-left: 12px;
+}
+
+.sec {
+  padding: 36px 0;
+  border-top: 0.5px solid var(--mv-border);
+}
+.sec:first-of-type { border-top: none; padding-top: 28px; }
+
+.sec-eyebrow {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mv-muted);
+  margin-bottom: 14px;
+}
+
+.sec-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mv-ink);
+  margin: 0 0 12px;
+}
+
+.sec-lede {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--mv-text);
+  max-width: 62ch;
+  margin: 0 0 20px;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--mv-border);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.swatch {
+  background: var(--mv-surface);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
+.swatch .chip {
+  width: 100%;
+  height: 44px;
+  border-radius: 8px;
+  border: 0.5px solid var(--mv-border);
+}
+
+.swatch .name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--mv-ink);
+}
+
+.swatch .hex {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-faint);
+  margin-top: 2px;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.mini-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--mv-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  padding: 0 12px 8px 0;
+  border-bottom: 0.5px solid var(--mv-border);
+}
+.mini-table td {
+  padding: 9px 12px 9px 0;
+  color: var(--mv-text);
+  border-bottom: 0.5px solid var(--mv-border-soft);
+  vertical-align: top;
+}
+.mini-table tr:last-child td { border-bottom: none; }
+.mini-table td.dim { color: var(--mv-muted); }
+
+.code-block {
+  background: var(--mv-surface);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--mv-text);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mv-muted);
+  border: 0.5px solid var(--mv-border);
+  border-radius: 5px;
+  padding: 2px 7px;
+}
+
+@media (max-width: 640px) {
+  .swatch-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+}
+
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 0.5px solid var(--mv-border);
+  border-radius: 8px;
+  background: var(--mv-surface);
+  flex: none;
+}
+.theme-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.theme-toggle button:hover { color: var(--mv-ink); }
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--mv-surface-3);
+  color: var(--mv-ink);
+}
+
+
+.term {
+  background: #0d0d0f;
+  color: #d4d4d8;
+  border-radius: 10px;
+  padding: 18px 20px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
+}
+.term .chrome { color: #3f3f46; }
+.term .label { color: #a1a1aa; }
+.term .value { color: #d4d4d8; }
+.term .emphasis { color: #ffffff; font-weight: 700; }
+.term .verified { color: #a396d6; }
+.term .unverified { color: #71717a; }
+.term .warn { color: #fbbf24; }
+.term .error { color: #f87171; }
+
+
+/* ── Archie card ─────────────────────────────────────────────────────────── */
+/* ===========================================================================
+   Archie — colourways and motion.
+   Pairs with the pose SVGs in this folder. Every fill in those files reads a
+   custom property with a hard-coded fallback, so a colourway is a class on any
+   ancestor and never a redraw.
+
+   Motion follows motionvector/studio/docs/design/motion-language.md:
+   exits are faster than entrances and do not travel; reduced motion keeps the
+   time and zeroes the distance.
+   =========================================================================== */
+
+/* ── colourways ───────────────────────────────────────────────────────────
+   C3 is the default and the only one that ships on agentworth.dev. The other
+   three exist for surfaces the default cannot serve: one colour printing, a
+   true-black ground, and chrome where Archie must not out-shout the data. */
+
+.archie-c1 {                      /* Mono — one-colour print, stickers, favicons */
+  --archie-ink: #111113;
+  --archie-body: #ffffff;
+  --archie-mass: #e4e4e7;
+  --archie-accent: #111113;
+  --archie-accent-2: #f4f4f5;
+}
+
+.archie-c2 {                      /* Dark — the true-black ground */
+  --archie-ink: #ffffff;
+  --archie-body: #18181b;
+  --archie-mass: #a396d6;
+  --archie-accent: #a396d6;
+  --archie-accent-2: #3b3455;
+}
+
+.archie-c3,                       /* AgentWorth — the default */
+.archie {
+  --archie-ink: #111113;
+  --archie-body: #ffffff;
+  --archie-mass: #a396d6;
+  --archie-accent: #7c6bb3;
+  --archie-accent-2: #e2ddf0;
+}
+
+.archie-c4 {                      /* Quiet — scan progress, dense chrome */
+  --archie-ink: #52525b;
+  --archie-body: #ffffff;
+  --archie-mass: #e4e4e7;
+  --archie-accent: #a1a1aa;
+  --archie-accent-2: #f4f4f5;
+}
+
+/* C3 and C4 follow the app's theme; C1 and C2 are deliberate, fixed choices. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .archie-c3,
+  :root:not([data-theme="light"]) .archie {
+    --archie-ink: #ffffff;
+    --archie-body: #18181b;
+    --archie-accent: #a396d6;
+    --archie-accent-2: #3b3455;
+  }
+  :root:not([data-theme="light"]) .archie-c4 {
+    --archie-ink: #a1a1aa;
+    --archie-body: #18181b;
+    --archie-mass: #3f3f46;
+    --archie-accent: #52525b;
+    --archie-accent-2: #27272a;
+  }
+}
+:root[data-theme="dark"] .archie-c3,
+:root[data-theme="dark"] .archie {
+  --archie-ink: #ffffff;
+  --archie-body: #18181b;
+  --archie-accent: #a396d6;
+  --archie-accent-2: #3b3455;
+}
+:root[data-theme="dark"] .archie-c4 {
+  --archie-ink: #a1a1aa;
+  --archie-body: #18181b;
+  --archie-mass: #3f3f46;
+  --archie-accent: #52525b;
+  --archie-accent-2: #27272a;
+}
+
+/* ── motion tokens ────────────────────────────────────────────────────────
+   The first three are the studio's existing loop tokens, unchanged. The
+   fourth is new: a gait is not a spinner, a pulse or a shimmer, and forcing
+   it onto one of those clocks makes the run look wrong. Declared here rather
+   than smuggled in as a magic number. */
+
+.archie {
+  --motion-loop-dig: 1400ms;      /* = --motion-loop-pulse. He is working.   */
+  --motion-loop-run: 640ms;       /* NEW. Four-beat gait, 160ms a frame.     */
+  --motion-slow: 220ms;
+  --motion-exit: 120ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* ── the dig loop ─────────────────────────────────────────────────────────
+   Six frames on one 1400ms clock. Nothing here is a sprite swap: the same
+   drawing shears, the beam sweeps, the chips fly and reset. Frames 5 and 6
+   are the recovery, which is why they are quieter than 1 through 4. */
+
+@keyframes archie-dig-body {
+  0%,   100% { transform: rotate(0deg)     translateY(0); }
+  16.6%      { transform: rotate(-3deg)    translateY(1.5%); }
+  33.3%      { transform: rotate(-5deg)    translateY(3%); }
+  50%        { transform: rotate(-2deg)    translateY(1%); }
+  66.6%      { transform: rotate(1deg)     translateY(-1%); }
+  83.3%      { transform: rotate(0.5deg)   translateY(0); }
+}
+
+@keyframes archie-dig-beam {          /* the sweep — this is what he sees with */
+  0%,   100% { transform: rotate(0deg);    opacity: 1; }
+  33.3%      { transform: rotate(-4.5deg); opacity: 1; }
+  66.6%      { transform: rotate(3deg);    opacity: 0.75; }
+}
+
+@keyframes archie-dig-chips {         /* fly out, fade, reset — never travel back */
+  0%         { transform: translate(0, 0)      scale(0.6); opacity: 0; }
+  20%        { transform: translate(8%, -6%)   scale(1);   opacity: 1; }
+  60%        { transform: translate(22%, -2%)  scale(1);   opacity: 1; }
+  100%       { transform: translate(34%, 10%)  scale(0.8); opacity: 0; }
+}
+
+.archie-dig .archie-base      { animation: archie-dig-body var(--motion-loop-dig) var(--ease-out) infinite;
+                         transform-origin: 30% 70%; }
+/* The origin is the paw, not the head: the torch is hand-held now, and a sweep
+   pivoted where the headlamp used to sit swings the beam through his own legs.
+   The angles are halved with it — a wrist has less travel than a neck. */
+.archie-dig .archie-beam { animation: archie-dig-beam var(--motion-loop-dig) var(--ease-out) infinite;
+                         transform-origin: 24% 85%; }
+.archie-dig .archie-chip { animation: archie-dig-chips var(--motion-loop-dig) linear infinite; }
+.archie-dig .archie-chip:nth-of-type(2) { animation-delay: -340ms; }
+.archie-dig .archie-chip:nth-of-type(3) { animation-delay: -700ms; }
+.archie-dig .archie-chip:nth-of-type(4) { animation-delay: -1040ms; }
+
+/* ── the fetch run cycle ──────────────────────────────────────────────────
+   Four frames, 160ms each: reach, gather, drive, extend. The body bobs on
+   half the cycle because a gait has two contacts per stride. */
+
+@keyframes archie-run-fore {
+  0%, 100% { transform: rotate(30deg); }
+  25%      { transform: rotate(-6deg); }
+  50%      { transform: rotate(-20deg); }
+  75%      { transform: rotate(8deg); }
+}
+@keyframes archie-run-hind {
+  0%, 100% { transform: rotate(-24deg); }
+  25%      { transform: rotate(6deg); }
+  50%      { transform: rotate(26deg); }
+  75%      { transform: rotate(-4deg); }
+}
+@keyframes archie-run-bob {
+  0%, 50%, 100% { transform: translateY(0); }
+  25%, 75%      { transform: translateY(-2.5%); }
+}
+
+.archie-run .archie-base        { animation: archie-run-bob var(--motion-loop-run) ease-in-out infinite; }
+.archie-run .archie-fore { animation: archie-run-fore var(--motion-loop-run) ease-in-out infinite;
+                           transform-origin: 50% 8%; }
+.archie-run .archie-hind { animation: archie-run-hind var(--motion-loop-run) ease-in-out infinite;
+                           transform-origin: 50% 8%; }
+.archie-run .archie-fore:nth-of-type(2),
+.archie-run .archie-hind:nth-of-type(2) { animation-delay: calc(var(--motion-loop-run) / -2); }
+
+/* ── the found-it beat ────────────────────────────────────────────────────
+   Rare, and it is Archie handing over evidence, so it gets the spring — one
+   of the two surfaces licensed to bounce. Runs once, never loops. */
+
+@keyframes archie-found-lamp {
+  from { opacity: 0.55; transform: scale(1); }
+  40%  { opacity: 1;    transform: scale(1.35); }
+  to   { opacity: 1;    transform: scale(1); }
+}
+@keyframes archie-found-receipt {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+/* `fill-box` so each lens scales about itself. The default reference box for an
+   SVG element is the whole 48-unit viewBox, which would swing the lens across
+   the drawing instead of swelling it in place. */
+.archie-found .archie-beam,
+.archie-found .archie-lens { animation: archie-found-lamp var(--motion-slow) var(--ease-out) both;
+                           transform-box: fill-box; transform-origin: center; }
+.archie-found .archie-receipt { animation: archie-found-receipt var(--motion-slow) var(--ease-spring) 120ms both; }
+
+/* ── the error beat ───────────────────────────────────────────────────────
+   Exits are faster than entrances and they do not travel. The lamp does not
+   fade out slowly and the ears do not slide — the light stops, then the ears
+   settle. Nothing about failure should feel like a performance. */
+
+@keyframes archie-error-lamp { to { opacity: 0; } }
+@keyframes archie-error-ears { to { transform: rotate(var(--drop, 17deg)); } }
+
+.archie-error .archie-beam { animation: archie-error-lamp var(--motion-exit) var(--ease-out) both; }
+.archie-error .archie-base .archie-ear { animation: archie-error-ears 160ms var(--ease-out) 60ms both;
+                                  transform-origin: 50% 12%; }
+
+/* ── reduced motion ───────────────────────────────────────────────────────
+   Keep the time, zero the distance. The loops stop on their first frame —
+   they are ambience, not information — while the found and error beats keep
+   their duration and cross-fade in place, so the state change still lands. */
+
+@media (prefers-reduced-motion: reduce) {
+  .archie-dig .archie-base,
+  .archie-dig .archie-beam,
+  .archie-dig .archie-chip,
+  .archie-run .archie-base,
+  .archie-run .archie-fore,
+  .archie-run .archie-hind { animation-play-state: paused; animation-delay: 0s; }
+
+  @keyframes archie-found-receipt { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes archie-found-lamp    { from { opacity: 0.55; } to { opacity: 1; } }
+  @keyframes archie-error-ears    { to { transform: none; } }
+}
+
+
+.pose-row { display: flex; flex-wrap: wrap; gap: 14px; }
+.pose {
+  margin: 0;
+  flex: 1 1 168px;
+  max-width: 220px;
+  border: 0.5px solid var(--mv-border);
+  border-radius: 10px;
+  background: var(--mv-surface);
+  overflow: hidden;
+}
+.pose-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 116px;
+  padding: 12px;
+  background: var(--mv-ground);
+}
+.pose figcaption { padding: 9px 11px 11px; border-top: 0.5px solid var(--mv-border); }
+.pose figcaption code { display: block; font-size: 11.5px; color: var(--mv-ink); }
+.pose figcaption span { display: block; margin-top: 3px; font-size: 11px; color: var(--mv-muted); line-height: 1.45; }
+.pose .fig { display: block; }
+
+/* C1 and C2 are fixed choices, not theme-followers: C2 is drawn for a
+   true-black ground, so its stage carries one rather than lying about it. */
+.pose-stage.archie-c2 { background: #0b0b0d; }
+.pose-stage.archie-c1 { background: #ffffff; }
+
+</style>
+</head>
+<body>
+<div class="card-topbar">
+  <div class="card-eyebrow"><a href="../index.html">&larr; Index</a><span class="dot"></span><span class="group">Brand</span></div>
+  <div class="theme-toggle" role="group" aria-label="Theme">
+  <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+  <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+  <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+</div>
+</div>
+<div class="card-shell">
+  <h1 class="card-title">Archie</h1>
+  <p class="card-dek">The eight poses, the kit that switches on them, and the size below which the torch becomes a dot.</p>
+  
+<section class="sec">
+  <span class="sec-eyebrow">01 &mdash; The eight poses</span>
+  <h2 class="sec-title">One drawing, eight jobs</h2>
+  <p class="sec-lede">M3 head: the jaw is merged into the head outline, so the head is one closed curve with a nose dot near the bottom. The light is a torch in a front paw, part of <code>#base</code> in every pose &mdash; not head gear. Source: <code>packages/ui/brand/archie/</code>.</p>
+  <div class="pose-row">
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>front-sit</code><span>idle, the kit picker, the ⌘K empty state</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Three-quarter, standing"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="17.2" cy="41" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="17.2" cy="41" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M38 23.4 L44 14 L46.4 16.4 L41 25.8 Z" fill="var(--archie-body, #ffffff)"/><path d="M21 22.6 Q29.4 19.2 37.6 22.6 L39.6 31.6 Q39.6 36.2 34.8 36.2 L25 36.2 Q20.6 36.2 20.6 31.6 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(17.2 41) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="23" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="28.6" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="34.2" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><g transform="translate(16.6 14.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(16.6 14.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(-12 0 -6.5)"><path d="M-8.6 -9.4 L-22 -12.2 L-22 -0.8 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(16.6 14.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>three-quarter</code><span>the standing portrait</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Side, on the scent"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="16.8" cy="41" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="16.8" cy="41" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M37 22 L43.2 13.4 L45.6 15.8 L39.8 24.6 Z" fill="var(--archie-body, #ffffff)"/><path d="M21 22.6 Q29.6 19.2 38 22.6 L39.8 31.4 Q39.8 35.6 35 35.6 L25 35.6 Q21 35.6 21 31.4 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(16.8 41) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="22.6" y="33.6" width="4.2" height="11.8" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="28.4" y="33.6" width="4.2" height="11.8" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="34.2" y="33.6" width="4.2" height="11.8" rx="2.1" fill="var(--archie-body, #ffffff)"/><g transform="translate(15 18.2) rotate(-22)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g><path d="M26 42.4 h6" fill="none" stroke-width="1.4" opacity="0.4"/><path d="M35 42.4 h4" fill="none" stroke-width="1.4" opacity="0.4"/></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(15 18.2) rotate(-22)"><g id="lamp-beam" class="archie-beam" transform="rotate(-18 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(15 18.2) rotate(-22)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>side-scent</code><span>on the trail</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Digging"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.4" cy="40.8" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.4" cy="40.8" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M36.4 20.4 L42.4 11.6 L44.8 14 L39 22.8 Z" fill="var(--archie-body, #ffffff)"/><path d="M21.6 26.4 Q30 21 38 22.8 L39.6 31.4 Q40 35.6 35 36 L26 38 Q21.6 38.4 21.2 34 Z" fill="var(--archie-body, #ffffff)"/><rect x="33.4" y="34" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.4 40.8) rotate(-11)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="15.4" y="38.6" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="22.6" y="40" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(16.4 23.4) rotate(-24)"><path class="archie-ear" d="M6.6 -6 C14 -9.6 20 -3.4 18.6 4.6 C17.8 9.6 11 9.2 11 3.2 C11 -1 9 -3.6 6.6 -6 Z" fill="var(--archie-mass, #a396d6)" transform="rotate(8)"/><path class="archie-ear" d="M6.6 -6 C14 -9.6 20 -3.4 18.6 4.6 C17.8 9.6 11 9.2 11 3.2 C11 -1 9 -3.6 6.6 -6 Z" fill="var(--archie-mass, #a396d6)" transform="rotate(-16)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g><path d="M28.6 29.6 l2.8 -1.1 l1.1 2.8 l-2.8 1.1 Z" class="archie-chip" stroke="none" fill="var(--archie-ink, #111113)"/><path d="M35 25 l2.2 -0.9 l0.9 2.2 l-2.2 0.9 Z" class="archie-chip" stroke="none" fill="var(--archie-ink, #111113)"/><path d="M41.6 29.4 l2.4 -1 l1 2.4 l-2.4 1 Z" class="archie-chip" stroke="none" fill="var(--archie-ink, #111113)"/><path d="M42.4 19.6 l1.8 -0.7 l0.7 1.8 l-1.8 0.7 Z" class="archie-chip" stroke="none" fill="var(--archie-ink, #111113)"/></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(16.4 23.4) rotate(-24)"><g id="lamp-beam" class="archie-beam" transform="rotate(-18 0 -6.5)"><path d="M-8.6 -9.4 L-22 -12.2 L-22 -0.8 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(16.4 23.4) rotate(-24)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>digging</code><span>the scan line, the one that loops</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Fetching"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="15.6" cy="41" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="15.6" cy="41" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M38.6 22.6 L46 19.6 L47.2 23.2 L39.8 26.2 Z" fill="var(--archie-body, #ffffff)"/><path d="M22 23 Q31 19.6 39.6 23 L41 30.6 Q41 34.6 36.4 34.6 L25.6 34.6 Q22 34.6 22 30.6 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(15.6 41) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect class="archie-fore" x="23.4" y="31.4" width="4.2" height="11.8" rx="2.1" fill="var(--archie-body, #ffffff)" transform="rotate(30 25.5 37.3)"/><rect class="archie-fore" x="29" y="31.4" width="4.2" height="11.8" rx="2.1" fill="var(--archie-body, #ffffff)" transform="rotate(-14 31.1 37.3)"/><rect class="archie-hind" x="33.6" y="31.4" width="4.2" height="11.8" rx="2.1" fill="var(--archie-body, #ffffff)" transform="rotate(24 35.7 37.3)"/><rect class="archie-hind" x="38.2" y="31.4" width="4.2" height="11.8" rx="2.1" fill="var(--archie-body, #ffffff)" transform="rotate(-22 40.300000000000004 37.3)"/><g transform="translate(16.4 15.4) rotate(-8)"><path class="archie-ear" d="M6.6 -6 C14 -9.6 20 -3.4 18.6 4.6 C17.8 9.6 11 9.2 11 3.2 C11 -1 9 -3.6 6.6 -6 Z" fill="var(--archie-mass, #a396d6)" transform="rotate(8)"/><path class="archie-ear" d="M6.6 -6 C14 -9.6 20 -3.4 18.6 4.6 C17.8 9.6 11 9.2 11 3.2 C11 -1 9 -3.6 6.6 -6 Z" fill="var(--archie-mass, #a396d6)" transform="rotate(-16)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g><g class="archie-receipt" transform="translate(8 28.6) rotate(-14) scale(0.6)"><path d="M0 1.8A1.8 1.8 0 0 1 1.8 0H11.2A1.8 1.8 0 0 1 13 1.8V14.6L11.375 12.8 9.75 14.6 8.125 12.8 6.5 14.6 4.875 12.8 3.25 14.6 1.625 12.8 0 14.6Z" fill="var(--archie-body, #ffffff)"/><rect x="2.6" y="3.2" width="7.8" height="1.9" rx="0.95" stroke="none" fill="var(--archie-ink, #111113)"/><rect x="2.6" y="6.3" width="4.4" height="1.9" rx="0.95" stroke="none" fill="var(--archie-ink, #111113)"/><rect x="2.6" y="9.4" width="7.8" height="2.3" rx="1.15" stroke="none" fill="var(--archie-accent, #7c6bb3)"/></g><path d="M43.6 11.6 h4" fill="none" stroke-width="1.4" opacity="0.4"/><path d="M43 39.8 h5" fill="none" stroke-width="1.4" opacity="0.4"/></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(16.4 15.4) rotate(-8)"><g id="lamp-beam" class="archie-beam" transform="rotate(-10 0 -6.5)"><path d="M-8.6 -9.4 L-21 -12.0 L-21 -1.0 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(16.4 15.4) rotate(-8)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>fetching</code><span>carrying the handoff back</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Dropping it at your feet"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11" cy="37.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11" cy="37.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M32 30.6 Q38 27 39.4 20 L42.4 21.6 Q41.6 31 34.2 34.6 Z" fill="var(--archie-body, #ffffff)"/><path d="M18.6 24.6 Q24 22.2 29.4 24.6 L31.4 35.6 Q31.4 39.6 27 39.6 L21 39.6 Q16.6 39.6 16.6 35.6 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11 37.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="15.4" y="34.8" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="26" y="34.8" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 11.8)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.9" stroke="none" fill="var(--archie-ink, #111113)"/></g><g class="archie-receipt" transform="translate(17.6 38.4) rotate(-7) scale(0.56)"><path d="M0 1.8A1.8 1.8 0 0 1 1.8 0H11.2A1.8 1.8 0 0 1 13 1.8V14.6L11.375 12.8 9.75 14.6 8.125 12.8 6.5 14.6 4.875 12.8 3.25 14.6 1.625 12.8 0 14.6Z" fill="var(--archie-body, #ffffff)"/><rect x="2.6" y="3.2" width="7.8" height="1.9" rx="0.95" stroke="none" fill="var(--archie-ink, #111113)"/><rect x="2.6" y="6.3" width="4.4" height="1.9" rx="0.95" stroke="none" fill="var(--archie-ink, #111113)"/><rect x="2.6" y="9.4" width="7.8" height="2.3" rx="1.15" stroke="none" fill="var(--archie-accent, #7c6bb3)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 11.8)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 11.8)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>dropping</code><span>the receipt, at your feet</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96" data-accessory="none" data-lamp="off" data-size="full" role="img" aria-label="Archie — Sleeping"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="3.8" cy="43.8" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="3.8" cy="43.8" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><g id="torch" class="archie-torch" transform="translate(3.8 43.8) rotate(0)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><path d="M39 30.6 Q45.6 30 46 35.6 Q46.4 41.2 41.2 41.2 L41.2 38.2 Q43.2 38.2 43 35.6 Q42.8 33.2 39.4 33.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse cx="27.6" cy="34.4" rx="14.6" ry="10.4" fill="var(--archie-body, #ffffff)"/><g transform="translate(14.4 25.6) rotate(26)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><path d="M-5.3 -1.8 Q-3.5 0.3 -1.7 -1.8" fill="none"/><path d="M1.7 -1.8 Q3.5 0.3 5.3 -1.8" fill="none"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(14.4 25.6) rotate(26)"><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(14.4 25.6) rotate(26)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>sleeping</code><span>nothing to do — torch on the ground, off</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96" data-accessory="none" data-lamp="off" data-size="full" role="img" aria-label="Archie — Error"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="9.4" cy="43.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="9.4" cy="43.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><g id="torch" class="archie-torch" transform="translate(9.4 43.4) rotate(14)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><path d="M37.6 29.6 L40.4 39.6 L37.2 40.6 L34.4 30.6 Z" fill="var(--archie-body, #ffffff)"/><path d="M23.6 27 Q31.6 24 39.6 27 L41 34.6 Q41 38.4 36.4 38.4 L27 38.4 Q23 38.4 23 34.6 Z" fill="var(--archie-body, #ffffff)"/><rect x="24.6" y="36" width="4.2" height="9.4" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="30" y="36" width="4.2" height="9.4" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="35.4" y="36" width="4.2" height="9.4" rx="2.1" fill="var(--archie-body, #ffffff)"/><g transform="translate(17.6 17.8)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)" transform="rotate(-20)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)" transform="rotate(20)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.4" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.4" stroke="none" fill="var(--archie-ink, #111113)"/><path d="M-5.6 -5 L-2.4 -3.6" fill="none" stroke-width="1.6"/><path d="M5.6 -5 L2.4 -3.6" fill="none" stroke-width="1.6"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(17.6 17.8)"><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(17.6 17.8)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>error</code><span>the 404 — torch dropped, beam gone</span></figcaption></figure>
+  </div>
+  <p class="card-rule-note">Once per screen. Two Archies are two states and one of them is lying &mdash; the only exception is <code>agentworth.dev/archie</code>, where he is the subject. Never on the landing hero, never in the receipt, never on <code>--json</code>.</p>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">02 &mdash; The kit</span>
+  <h2 class="sec-title">He arrives bare</h2>
+  <p class="sec-lede">The accessory is <code>data-accessory</code> on the SVG root; the colourway is an <code>.archie-cN</code> class on any ancestor. Neither is a second drawing and neither is a second file to keep in sync.</p>
+  <div class="pose-row">
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="88" height="88" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>data-accessory="none"</code><span>the default — he arrives bare</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="88" height="88" data-accessory="lamp" data-lamp="on" data-size="full" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>data-accessory="lamp"</code><span>an optional costume</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="88" height="88" data-accessory="goggles" data-lamp="on" data-size="full" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>data-accessory="goggles"</code><span>an optional costume</span></figcaption></figure>
+  </div>
+  <div class="pose-row" style="margin-top:14px">
+    <figure class="pose"><div class="pose-stage archie-c1"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="88" height="88" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Three-quarter, standing"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="17.2" cy="41" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="17.2" cy="41" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M38 23.4 L44 14 L46.4 16.4 L41 25.8 Z" fill="var(--archie-body, #ffffff)"/><path d="M21 22.6 Q29.4 19.2 37.6 22.6 L39.6 31.6 Q39.6 36.2 34.8 36.2 L25 36.2 Q20.6 36.2 20.6 31.6 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(17.2 41) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="23" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="28.6" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="34.2" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><g transform="translate(16.6 14.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(16.6 14.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(-12 0 -6.5)"><path d="M-8.6 -9.4 L-22 -12.2 L-22 -0.8 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(16.6 14.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>.archie-c1</code><span>C1 Mono — one-colour print, stickers</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c2"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="88" height="88" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Three-quarter, standing"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="17.2" cy="41" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="17.2" cy="41" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M38 23.4 L44 14 L46.4 16.4 L41 25.8 Z" fill="var(--archie-body, #ffffff)"/><path d="M21 22.6 Q29.4 19.2 37.6 22.6 L39.6 31.6 Q39.6 36.2 34.8 36.2 L25 36.2 Q20.6 36.2 20.6 31.6 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(17.2 41) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="23" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="28.6" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="34.2" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><g transform="translate(16.6 14.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(16.6 14.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(-12 0 -6.5)"><path d="M-8.6 -9.4 L-22 -12.2 L-22 -0.8 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(16.6 14.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>.archie-c2</code><span>C2 Dark — a true-black ground</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="88" height="88" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Three-quarter, standing"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="17.2" cy="41" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="17.2" cy="41" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M38 23.4 L44 14 L46.4 16.4 L41 25.8 Z" fill="var(--archie-body, #ffffff)"/><path d="M21 22.6 Q29.4 19.2 37.6 22.6 L39.6 31.6 Q39.6 36.2 34.8 36.2 L25 36.2 Q20.6 36.2 20.6 31.6 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(17.2 41) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="23" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="28.6" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="34.2" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><g transform="translate(16.6 14.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(16.6 14.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(-12 0 -6.5)"><path d="M-8.6 -9.4 L-22 -12.2 L-22 -0.8 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(16.6 14.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>.archie-c3</code><span>C3 AgentWorth — the default, and the only one on the site</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c4"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="88" height="88" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Three-quarter, standing"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="17.2" cy="41" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="17.2" cy="41" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M38 23.4 L44 14 L46.4 16.4 L41 25.8 Z" fill="var(--archie-body, #ffffff)"/><path d="M21 22.6 Q29.4 19.2 37.6 22.6 L39.6 31.6 Q39.6 36.2 34.8 36.2 L25 36.2 Q20.6 36.2 20.6 31.6 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(17.2 41) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="23" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="28.6" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><rect x="34.2" y="34.4" width="4.2" height="11" rx="2.1" fill="var(--archie-body, #ffffff)"/><g transform="translate(16.6 14.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(16.6 14.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(-12 0 -6.5)"><path d="M-8.6 -9.4 L-22 -12.2 L-22 -0.8 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(16.6 14.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>.archie-c4</code><span>C4 Quiet — dense chrome, where he must not out-shout the data</span></figcaption></figure>
+  </div>
+  <p class="card-rule-note">C3 and C4 follow the app's theme. C1 and C2 are deliberate, fixed choices &mdash; they do not flip with the toggle above, and that is on purpose.</p>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">03 &mdash; The size rule</span>
+  <h2 class="sec-title">Under 40px the torch becomes the lit dot</h2>
+  <p class="sec-lede">At 24px one SVG unit is half a pixel: the torch body is 2.2px tall with 0.8px of ink on each side, and what survives is a smear where the beam was. So the root takes <code>data-size="small"</code> &mdash; the torch hides, a lit disc with a soft halo shows at the paw, and the nose grows so it cannot read as an open mouth.</p>
+  <div class="pose-row">
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="24" height="24" data-accessory="none" data-lamp="on" data-size="small" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>24px</code><span>data-size="small"</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="32" height="32" data-accessory="none" data-lamp="on" data-size="small" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>32px</code><span>data-size="small"</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>48px</code><span>data-size="full"</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>96px</code><span>data-size="full"</span></figcaption></figure>
+  </div>
+  <div class="pose-row" style="margin-top:14px">
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="24" height="24" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>24px</code><span>the full torch, for comparison</span></figcaption></figure>
+    <figure class="pose"><div class="pose-stage archie-c3"><svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="32" height="32" data-accessory="none" data-lamp="on" data-size="full" role="img" aria-label="Archie — Front, sitting"><style>.archie-lamp,.archie-goggles,.archie-torch-dot,.archie-nose-sm{display:none}svg[data-accessory="lamp"] .archie-lamp,svg[data-accessory="goggles"] .archie-goggles{display:inline}svg[data-lamp="off"] .archie-beam{display:none}svg[data-lamp="off"] .archie-lens{fill:var(--archie-body, #ffffff)}svg[data-lamp="off"] .archie-halo{display:none}svg[data-size="small"] #torch{display:none}svg[data-size="small"] .archie-nose{display:none}svg[data-size="small"] .archie-torch-dot,svg[data-size="small"] .archie-nose-sm{display:inline}</style><g fill="none" stroke="var(--archie-ink, #111113)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><g id="base" class="archie-base"><g class="archie-torch-dot"><circle class="archie-halo" cx="11.6" cy="41.4" r="7.2" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><circle class="archie-lens" cx="11.6" cy="41.4" r="3.4" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.8"/></g><path d="M31.4 32 Q37.6 28.6 39 21.4 L42.2 23 Q41.4 32.6 33.6 36 Z" fill="var(--archie-body, #ffffff)"/><path d="M18 24.6 Q24 22 30 24.6 L32.6 39.8 Q32.6 44.2 27.6 44.2 L20.4 44.2 Q15.4 44.2 15.4 39.8 Z" fill="var(--archie-body, #ffffff)"/><g id="torch" class="archie-torch" transform="translate(11.6 41.4) rotate(-10)"><path id="torch-beam" class="archie-beam" d="M-1.8 -3 L-10 -5.2 L-10 4.6 L-1.8 3 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/><rect id="torch-body" x="0.2" y="-2.2" width="7.2" height="4.4" rx="1.8" fill="var(--archie-body, #ffffff)" stroke-width="1.6"/><rect id="torch-lens" class="archie-lens" x="-1.8" y="-2.7" width="2.5" height="5.4" rx="1" fill="var(--archie-accent, #7c6bb3)" stroke-width="1.5"/></g><rect x="16.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><rect x="25.2" y="39.4" width="6.6" height="5.6" rx="2.8" fill="var(--archie-body, #ffffff)"/><g transform="translate(24 13.2)"><path class="archie-ear" d="M-7 -6 C-14 -5 -16 6 -13 15 C-11 20 -5 19 -5.5 13 C-6 7 -7 0 -6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path class="archie-ear" d="M7 -6 C14 -5 16 7 13 16 C11 21 5 20 5.5 14 C6 8 7 0 6 -6 Z" fill="var(--archie-mass, #a396d6)"/><path d="M0 -8.6 C4.8 -8.6 8 -5.2 8 -1 C8 2 9.2 4.4 9.2 6.2 C9.2 8.6 5.4 10.2 0 10.2 C-5.4 10.2 -9.2 8.6 -9.2 6.2 C-9.2 4.4 -8 2 -8 -1 C-8 -5.2 -4.8 -8.6 0 -8.6 Z" fill="var(--archie-body, #ffffff)"/><ellipse class="archie-nose" cx="0" cy="5.6" rx="2.4" ry="1.9" stroke="none" fill="var(--archie-ink, #111113)"/><ellipse class="archie-nose-sm" cx="0" cy="5.6" rx="3.2" ry="2.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="-3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/><circle cx="3.5" cy="-1.6" r="1.5" stroke="none" fill="var(--archie-ink, #111113)"/></g></g><g id="accessory" class="archie-accessory"><g id="lamp" class="archie-lamp" transform="translate(24 13.2)"><g id="lamp-beam" class="archie-beam" transform="rotate(0 0 -6.5)"><path d="M-8.6 -9.4 L-23 -12.5 L-23 -0.5 L-8.6 -3.6 Z" stroke="none" fill="var(--archie-accent-2, #e2ddf0)"/></g><path d="M-7.7 -1.8 Q0 -9.8 7.7 -1.8" fill="none"/><rect x="-2.4" y="-8.5" width="4.8" height="4" rx="1.3" fill="var(--archie-body, #ffffff)"/><circle id="lamp-lens" class="archie-lens" cx="0" cy="-6.5" r="1.25" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="0" cy="-6.5" r="1.25" fill="none" stroke-width="1.1"/></g><g id="goggles" class="archie-goggles" transform="translate(24 13.2)"><rect x="-7.8" y="-10.8" width="15.6" height="5.8" rx="2.9" fill="var(--archie-body, #ffffff)"/><circle cx="-3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="-3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/><circle cx="3.9" cy="-7.9" r="2.6" stroke="none" fill="var(--archie-accent, #7c6bb3)"/><circle cx="3.9" cy="-7.9" r="2.6" fill="none" stroke-width="1.4"/></g></g></g></svg>
+</div><figcaption><code>32px</code><span>the full torch, for comparison</span></figcaption></figure>
+  </div>
+  <p class="card-rule-note"><code>packages/ui/Archie.tsx</code> sets the attribute from its <code>size</code> prop (<code>ARCHIE_SMALL_BELOW = 40</code>). Anything rendering the files directly &mdash; a favicon build, a static rasteriser &mdash; sets it itself.</p>
+</section>
+
+<section class="sec">
+  <span class="sec-eyebrow">04 &mdash; The terminal form</span>
+  <h2 class="sec-title">Nine columns, three lines</h2>
+  <div class="term"><span class="chrome">  ,---.  </span>
+<span class="value"> ( o o ) </span>
+<span class="chrome">-</span><span class="verified">*</span><span class="chrome">  '._.'</span>  <span class="label">archie</span>  <span class="verified">&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;</span><span class="unverified">&#183;&#183;&#183;&#183;&#183;</span>  <span class="emphasis">68%</span></div>
+  <p class="card-rule-note">The torch glyph at the paw is the state: <code>*</code> on, <code>o</code> sweeping, <code>-</code> nothing, <code>.</code> off. The beam dash sits in front of it, so "nothing" prints <code>--</code> and "off" prints <code>-.</code> &mdash; accepted, in exchange for the torch being attached to a paw rather than floating. The one-line form stays <code>(*) archie</code>. Full figure: <code>packages/ui/brand/archie/archie-tui.txt</code>.</p>
+</section>
+
+</div>
+<script>
+
+(function () {
+  var root = document.documentElement;
+  var STORAGE_KEY = "agentworth-ds-card-theme";
+  var buttons = document.querySelectorAll("[data-theme-choice]");
+
+  function apply(choice) {
+    if (choice === "light" || choice === "dark") {
+      root.setAttribute("data-theme", choice);
+    } else {
+      root.removeAttribute("data-theme");
+    }
+    buttons.forEach(function (btn) {
+      btn.setAttribute("aria-pressed", String(btn.getAttribute("data-theme-choice") === choice));
+    });
+  }
+
+  var stored = "system";
+  try { stored = localStorage.getItem(STORAGE_KEY) || "system"; } catch (e) {}
+  apply(stored);
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var choice = btn.getAttribute("data-theme-choice");
+      apply(choice);
+      try { localStorage.setItem(STORAGE_KEY, choice); } catch (e) {}
+    });
+  });
+})();
+
+
+</script>
+</body>
+</html>

@@ -30,6 +30,14 @@ export const ARCHIE_COLOURWAYS: ArchieColourway[] = ["C1", "C2", "C3", "C4"];
 export const ARCHIE_DEFAULT_ACCESSORY: ArchieAccessory = "none";
 export const ARCHIE_DEFAULT_COLOURWAY: ArchieColourway = "C3";
 
+/**
+ * Below this, the torch stops being a drawing and starts being a smudge: one SVG unit
+ * is half a pixel, so its body is 2.2px tall with 0.8px of ink on each side. Under it
+ * the pose swaps to the lit dot at the paw and a larger nose. Measured at 24, 32 and
+ * 48 against both grounds; 48 is already clean.
+ */
+export const ARCHIE_SMALL_BELOW = 40;
+
 const SOURCES: Record<ArchiePose, string> = {
   "front-sit": frontSit,
   "three-quarter": threeQuarter,
@@ -81,7 +89,11 @@ export const Archie: React.FC<ArchieProps> = ({
     let svg = SOURCES[pose]
       .replace(/\swidth="[^"]*"/, ` width="${size}"`)
       .replace(/\sheight="[^"]*"/, ` height="${size}"`)
-      .replace(/\sdata-accessory="[^"]*"/, ` data-accessory="${accessory}"`);
+      .replace(/\sdata-accessory="[^"]*"/, ` data-accessory="${accessory}"`)
+      .replace(
+        /\sdata-size="[^"]*"/,
+        ` data-size="${size < ARCHIE_SMALL_BELOW ? "small" : "full"}"`,
+      );
     if (label !== undefined) {
       svg = label
         ? svg.replace(/\saria-label="[^"]*"/, ` aria-label="${label}"`)
