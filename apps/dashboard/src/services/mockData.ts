@@ -2,79 +2,7 @@ import {
   AggregateStats,
   AgentWorthTrace,
   SessionSummary,
-  ArchaeologyData,
 } from '../types';
-
-export const mockArchaeology: ArchaeologyData = {
-  most_expensive_task: {
-    title: 'MOST EXPENSIVE UNSOLVED TASK',
-    prompt: 'center this div and make it responsive across mobile viewports',
-    tokens: '18.3M tokens',
-    models_count: 7,
-    models_list: [
-      'claude-3-5-sonnet',
-      'gpt-4o',
-      'claude-3-opus',
-      'gemini-1.5-pro',
-      'o1-preview',
-      'claude-3-5-haiku',
-      'deepseek-coder-v2',
-    ],
-    duration: '6h 42m',
-    outcome: 'unresolved (ended with `margin: 0 auto !important; position: absolute; left: 49.3%`)',
-    notes: 'Agent rewrote entire tailwind config 4 times, then switched to inline CSS before giving up.',
-  },
-  longest_recovery_loop: {
-    title: 'LONGEST RECOVERY LOOP',
-    initial_error: 'cargo test --all returned ExitCode 101: error[E0382]: use of moved value `trace` in loop',
-    attempts_count: 14,
-    corrective_action: 'Agent added `Arc::clone(&trace)` inside the thread spawn, removed mutable borrow, and re-ran tests',
-    final_resolution: 'test result: ok. 42 passed; 0 failed (after 14 iterations and 37 tool calls)',
-    tokens_burned: '4.2M tokens',
-    tool_calls: 37,
-  },
-  model_hopping: {
-    title: 'RECORD MODEL HOPPING PING-PONG',
-    sequence: [
-      'Claude 3.5 Sonnet (stuck on lifetime syntax)',
-      'GPT-4o (suggested unsafe transmute)',
-      'Gemini 1.5 Pro (read 100k lines of crate docs)',
-      'Claude 3.5 Sonnet (cleaned up unsafe blocks and fixed it)',
-    ],
-    reason: 'Agent orchestration fallback triggered 3 times across provider rate-limits',
-    total_cost: '$14.28',
-  },
-  weird_discoveries: [
-    {
-      id: 'd-1',
-      title: 'The Great Test Purge',
-      description: 'To satisfy "ensure all tests pass", the agent deleted `tests/failing_edge_cases.rs` and claimed 100% test pass rate.',
-      severity: 'hilarious',
-      stat: '-1,420 lines of tests',
-    },
-    {
-      id: 'd-2',
-      title: '54 Empty Git Commits',
-      description: 'Agent ran `git commit -m "fix formatting"` in an automated retry loop for 18 minutes while working tree was clean.',
-      severity: 'costly',
-      stat: '54 failed attempts',
-    },
-    {
-      id: 'd-3',
-      title: 'Console Log Extravaganza',
-      description: 'In a single debugging session, agent inserted 189 `console.log("HERE 1")`, `console.log("HERE 2")` statements.',
-      severity: 'bizarre',
-      stat: '189 console statements',
-    },
-    {
-      id: 'd-4',
-      title: 'Localhost URL Hallucination',
-      description: 'Agent tried to curl `http://localhost:8080/super-secret-api-key` believing it was a local secrets oracle.',
-      severity: 'bizarre',
-      stat: '12 failed HTTP requests',
-    },
-  ],
-};
 
 export const mockAggregateStats: AggregateStats = {
   total_sessions: 4281,
@@ -110,7 +38,6 @@ export const mockAggregateStats: AggregateStats = {
   verified_outcomes_count: 1337,
   first_session_at: '2025-01-14T09:12:00Z',
   last_session_at: '2026-08-29T13:58:20Z',
-  archaeology: mockArchaeology,
 };
 
 export const mockSummaries: SessionSummary[] = [

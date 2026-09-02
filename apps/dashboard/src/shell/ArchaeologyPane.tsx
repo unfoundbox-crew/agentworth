@@ -1,13 +1,23 @@
 import { useEffect, useState } from 'react';
 import { ArchaeologyData } from '../types';
-import { fetchAggregateStats } from '../services/api';
+import { fetchArchaeology } from '../services/api';
 import { ArchaeologyPanel } from '../components/ArchaeologyPanel';
 
+/** True once at least one highlight has something to show — an all-absent, all-zero
+ * result (see EMPTY_ARCHAEOLOGY_DATA) means the index has no sessions to dig through yet. */
+function hasAnyFinding(data: ArchaeologyData): boolean {
+  return (
+    data.most_expensive_unsolved != null ||
+    data.longest_recovery_loop != null ||
+    data.most_frequent_model_switches != null ||
+    data.token_carbon_dating.timeline.length > 0
+  );
+}
+
 /**
- * Rail "Archaeology" view. ArchaeologyPanel needs a populated
- * ArchaeologyData — the aggregate-stats index either has one (a scan ran
- * and found notable sessions) or it doesn't, so this pane owns the
- * loading/empty states ArchaeologyPanel itself has no opinion about.
+ * Rail "Archaeology" view. Fetches its own data straight from /api/archaeology rather than
+ * riding along on /api/stats: computing archaeology walks full traces for its candidate
+ * sessions, so it only runs when this pane actually mounts, not on every stats poll.
  */
 export function ArchaeologyPane() {
   const [data, setData] = useState<ArchaeologyData | null>(null);
@@ -15,9 +25,9 @@ export function ArchaeologyPane() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchAggregateStats()
-      .then((stats) => {
-        if (!cancelled) setData(stats.archaeology ?? null);
+    fetchArchaeology()
+      .then((result) => {
+        if (!cancelled) setData(result);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -35,7 +45,7 @@ export function ArchaeologyPane() {
     );
   }
 
-  if (!data) {
+  if (!data || !hasAnyFinding(data)) {
     return (
       <div className="view-region">
         <div className="shell-inspector-empty">
