@@ -229,10 +229,15 @@ fn no_view_exists_that_only_the_cockpit_calls() {
         .join("\n");
 
     for name in &names {
-        let referenced = mentions(&elsewhere, &format!("views::{name}"))
-            || mentions(&elsewhere, &format!("{name} as "))
-            || elsewhere.contains(&format!("views::{{{name}"))
-            || mentions(&inside, &format!("{name}("));
+        let referenced = ends_identifier(&elsewhere, &format!("views::{name}"))
+            // `use crate::ui::views::{self_test as render_self_test, ..}`. A bare
+            // `{name} as ` was tried here and is too loose: it matched the English in a
+            // help string ("Print the overview as JSON") and satisfied the rule for a
+            // view nothing called.
+            || ends_identifier(&elsewhere, &format!("views::{{{name}"))
+            // A view used by another view is still reachable: `overview` renders `stats`,
+            // and `stats` is what `archie stats` prints.
+            || calls(&inside, name);
         assert!(
             referenced,
             "`views::{name}` is called from nowhere but the cockpit (or from nowhere at \
@@ -241,22 +246,38 @@ fn no_view_exists_that_only_the_cockpit_calls() {
     }
 }
 
-/// `haystack` contains `needle` as a whole identifier.
+/// `haystack` contains `needle`, which ends in an identifier, with that identifier ending
+/// there rather than continuing.
 ///
 /// A plain `contains` let `views::stats_outcomes` satisfy the rule for `views::stats`, so
-/// dropping `stats`'s only caller would not have failed anything. The character after the
-/// match has to be one that cannot continue a Rust identifier.
-fn mentions(haystack: &str, needle: &str) -> bool {
-    // Byte lookups rather than `haystack[end..]`: `clippy::string_slice` is denied
-    // workspace-wide, and every view name is ASCII, so the byte after the match is
-    // exactly the character after it.
+/// dropping `stats`'s only caller would not have failed anything.
+///
+/// Byte lookups rather than `haystack[at..]`: `clippy::string_slice` is denied
+/// workspace-wide, and every view name is ASCII, so the byte after the match is exactly
+/// the character after it.
+fn ends_identifier(haystack: &str, needle: &str) -> bool {
     let bytes = haystack.as_bytes();
-    haystack.match_indices(needle).any(|(at, _)| {
-        match bytes.get(at + needle.len()) {
-            None => true,
-            Some(b) => !(b.is_ascii_alphanumeric() || *b == b'_'),
-        }
-    })
+    haystack
+        .match_indices(needle)
+        .any(|(at, _)| !is_identifier_byte(bytes.get(at + needle.len()).copied()))
+}
+
+/// `haystack` calls `name`, as a call and not as the tail of a longer name.
+///
+/// Separate from `ends_identifier` because the needle here ends in `(`, which already
+/// closes the identifier -- running the after-the-match check on it asked whether the
+/// first character of the *argument* could continue an identifier, and for
+/// `severity_role(row.severity)` it can, so every internal call read as no call at all.
+fn calls(haystack: &str, name: &str) -> bool {
+    let needle = format!("{name}(");
+    let bytes = haystack.as_bytes();
+    haystack
+        .match_indices(&needle)
+        .any(|(at, _)| at == 0 || !is_identifier_byte(bytes.get(at - 1).copied()))
+}
+
+fn is_identifier_byte(b: Option<u8>) -> bool {
+    matches!(b, Some(b) if b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
