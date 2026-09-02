@@ -8,6 +8,19 @@ between two repos, not a spec for either one's own build.
 AgentWorth feeds SpacePilot's registry dream, and SpacePilot feeds
 AgentWorth's missing intelligence layer.
 
+## Where each product stops
+
+One platform, two products. Each runs alone. Together, they're the point.
+
+| AgentWorth | SpacePilot |
+| :--- | :--- |
+| Grades trajectories — any agent, any harness, any machine. | Owns the fleet: nodes, open-weight models (Kimi, GLM, DeepSeek, and others), placement, endpoints, the registry. |
+| Never grows a fleet mode. On a SpacePilot cluster its scanner just reads wherever the fleet's agents write transcripts — OpenCode or SpacePilot's own harness — the same way it reads any other adapter today. | Runs the agents that produce those transcripts, and reads AgentWorth's grades back into the registry. |
+| Feeds `outcome_rate` and cost-per-verified-outcome (`verified-outcome-rate.md`) into the registry. | At fleet scale, a group's `n` stops being something the `min_n` floor suppresses and becomes the registry's confidence level instead — more sessions, more trust in the number, never fewer numbers shown. |
+
+Mutual dependency is expected here. The platform is the contract between the
+two products, not a merge into one codebase.
+
 ## What flows from AgentWorth to SpacePilot
 
 | What | Source |
@@ -37,6 +50,13 @@ Local inference, for exactly three named uses, each behind its own flag:
 Nothing else calls out to SpacePilot. If a fourth use shows up later, it
 gets named here first.
 
+The real surface on the other end is `spacepilot daemon`'s local FastAPI
+app (`spacepilot/daemon/api.py`) — each flagged call is an HTTP request to
+that daemon's `/v1/run`, the same endpoint `spacepilot run` itself uses.
+"Is SpacePilot here" is a reachability check against the daemon's
+`/healthz`, falling back to `spacepilot doctor` when no daemon is running —
+never a guess based on whether the binary is on `PATH`.
+
 ## The invariant
 
 AgentWorth never sends a prompt to a model on its own (AGENTS.md's core
@@ -56,9 +76,10 @@ already applies to any model call, extended to a second binary.
 - No sync. Every exchange is one command, run by a person, once.
 - No telemetry. Neither product learns the other is installed except by
   a command finding it on the machine.
-- **AgentWorth ships without SpacePilot installed.** Every feature in the
-  table above degrades to "not available, install SpacePilot" — never to
-  a crash, a hang, or a silent no-op.
+- **AgentWorth ships without SpacePilot installed.** When the daemon's
+  `/healthz` doesn't answer and `spacepilot doctor` isn't found either,
+  every feature in the table above degrades to "not available, install
+  SpacePilot" — never to a crash, a hang, or a silent no-op.
 
 ## Sequencing
 
