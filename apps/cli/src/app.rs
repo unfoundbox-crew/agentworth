@@ -2572,17 +2572,8 @@ fn run_export_command(
     Ok(())
 }
 
-fn format_number(n: u64) -> String {
-    if n >= 1_000_000_000 {
-        format!("{:.1}B", n as f64 / 1_000_000_000.0)
-    } else if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
-}
+// `format_number` lived here as a second copy of `ui::compact`; `session show` was its
+// last caller and now renders through the ui module like every other screen.
 
 fn print_scan_summary(summary: &ScanSummary, ui: &crate::ui::Ui) {
     let view = crate::ui::views::ScanView {
