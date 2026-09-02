@@ -430,9 +430,16 @@ mod tests {
     use chrono::Utc;
     use std::io::Write;
 
-    /// A trace with one signal of each kind: a `cargo test` that was only ever *requested*
+    /// A trace with one signal of each kind: a `git commit` that was only ever *requested*
     /// (verification demotes it), an identical tool call repeated past the loop threshold, and
     /// a failing command followed by a passing one (a recovery).
+    ///
+    /// The demotable claim is a commit, not a test run, for two reasons that both bite. Since
+    /// #81 a bare `cargo test` tool call classifies as `done_claimed` outright — there is no
+    /// exit code, so it never reaches a rung there is anything to demote *from*. And the
+    /// recovery below needs a real `cargo build` that exits 0, which would corroborate a test
+    /// claim and *raise* its confidence rather than demote it. A commit claim and a build
+    /// success are different rungs, so the two signals stay independent.
     fn trace_with_every_risk_signal() -> AgentWorthTrace {
         use agentworth_schema::{EventPayload, NormalizedEvent, ShellCommand, ToolCall};
 
@@ -440,7 +447,8 @@ mod tests {
         let prov = Provenance::new("/tmp/risk.jsonl", "claude_code", 100, 1000, "fp_risk");
         let mut trace = AgentWorthTrace::new("sess_risk", "claude_code", prov, now);
 
-        // Three identical bash tool calls: one demotable claim per call, and a loop.
+        // Three identical bash tool calls: one demotable claim per call, and a loop. Nothing
+        // in this trace ever really commits, so each claim is only ever a request.
         for i in 1..=3 {
             trace.events.push(NormalizedEvent::new(
                 i,
@@ -448,19 +456,21 @@ mod tests {
                 EventPayload::ToolCall(ToolCall {
                     id: Some(format!("call_{i}")),
                     name: "bash".to_string(),
-                    arguments: serde_json::json!({ "command": "cargo test --workspace" }),
+                    arguments: serde_json::json!({ "command": "git commit -m \"wip\"" }),
                 }),
             ));
         }
 
         // A real failure followed by a real success on the same command: a recovery.
+        // `RecoveryDetector` reads the *output*, not just the exit code, so the success needs
+        // a line it recognises ("test result: ok.") -- `Finished dev profile` is not one.
         trace.events.push(NormalizedEvent::new(
             4,
             now + chrono::Duration::seconds(10),
             EventPayload::ShellCommand(ShellCommand {
-                command: "cargo build".to_string(),
+                command: "cargo test --workspace".to_string(),
                 exit_code: Some(1),
-                output: Some("error[E0308]: mismatched types".to_string()),
+                output: Some("test result: FAILED. 3 passed; 1 failed".to_string()),
                 cwd: None,
             }),
         ));
@@ -468,9 +478,9 @@ mod tests {
             5,
             now + chrono::Duration::seconds(20),
             EventPayload::ShellCommand(ShellCommand {
-                command: "cargo build".to_string(),
+                command: "cargo test --workspace".to_string(),
                 exit_code: Some(0),
-                output: Some("Finished dev profile".to_string()),
+                output: Some("test result: ok. 4 passed; 0 failed".to_string()),
                 cwd: None,
             }),
         ));
@@ -489,10 +499,10 @@ mod tests {
 
         assert!(
             risk.demoted_claims > 0,
-            "a `cargo test` that was only requested must be demoted, got {notes:?}"
+            "a `git commit` that was only requested must be demoted, got {notes:?}"
         );
         let demoted = &risk.demoted_evidence[0];
-        assert_eq!(demoted.original_kind, "test_or_build_passed");
+        assert_eq!(demoted.original_kind, "commit_observed");
         assert_eq!(demoted.final_kind, "done_claimed");
         assert!(demoted.event_sequence > 0, "the demotion must name its event");
 
@@ -537,10 +547,15 @@ mod tests {
     #[test]
     fn test_scan_persists_session_risk() {
         let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let trace = trace_with_every_risk_signal();
+        // The session row first: `session_risk` is a child table and the constraint is
+        // enforced, which is the ordering the scanner already uses.
+        storage.upsert_trace(&trace).expect("seed session");
+
         let risk = compute_session_risk(
-            &trace_with_every_risk_signal(),
+            &trace,
             &OutcomeHierarchyDetector::new()
-                .detect_outcomes_with_verification(&trace_with_every_risk_signal())
+                .detect_outcomes_with_verification(&trace)
                 .1,
         );
         storage.upsert_session_risk(&risk).expect("write risk");

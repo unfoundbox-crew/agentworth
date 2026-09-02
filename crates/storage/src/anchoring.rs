@@ -145,6 +145,9 @@ mod tests {
         "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/s1.jsonl";
     const OTHER_REPO_SESSION: &str =
         "/Users/dev/.local/share/opencode/project/-Users-dev-code-motionvector-studio/s2.json";
+    /// A session whose transcript sits inside the checkout, so its identity resolves to the
+    /// repository. This is the shape the relative-path branch can actually place.
+    const IN_REPO_LOCAL_SESSION: &str = "/Users/dev/code/unfoundbox/agentworth/.sessions/s3.json";
 
     fn anchor(path: &str, session: &str) -> (Anchor, Option<String>) {
         anchor_path(path, &sorted_roots(ROOT, &[]), &repo_identity(ROOT), session)
@@ -209,27 +212,45 @@ mod tests {
 
     #[test]
     fn a_relative_path_from_this_repos_own_session_is_anchored() {
-        let opencode_here =
-            "/Users/dev/.local/share/opencode/project/-Users-dev-code-unfoundbox-agentworth/s3.json";
-        let (a, rel) = anchor("Cargo.lock", opencode_here);
+        let (a, rel) = anchor("Cargo.lock", IN_REPO_LOCAL_SESSION);
         assert_eq!(a, Anchor::RelativeToSessionRepo);
         assert_eq!(rel.as_deref(), Some("Cargo.lock"));
     }
 
     #[test]
     fn a_relative_path_that_climbs_out_is_unanchored() {
-        let opencode_here =
-            "/Users/dev/.local/share/opencode/project/-Users-dev-code-unfoundbox-agentworth/s3.json";
-        let (a, _) = anchor("../other/Cargo.lock", opencode_here);
+        let (a, _) = anchor("../other/Cargo.lock", IN_REPO_LOCAL_SESSION);
         assert_eq!(a, Anchor::Unanchored);
     }
 
     #[test]
     fn a_dot_slash_prefix_is_stripped() {
+        let (_, rel) = anchor("./apps/cli/src/main.rs", IN_REPO_LOCAL_SESSION);
+        assert_eq!(rel.as_deref(), Some("apps/cli/src/main.rs"));
+    }
+
+    /// Measured, and the reason the relative branch places almost nothing in practice.
+    ///
+    /// `opencode` is the only adapter that records relative paths, and it stores its
+    /// transcripts under `~/.local/share/opencode/project/<mangled>/`. That path contains no
+    /// `/code/` and no `/projects/-`, so `extract_repository_or_workspace` falls through to its
+    /// hidden-directory rule and returns `Users/dev` -- the home directory, not the repository
+    /// the session worked in. Every one of those rows is therefore unanchored, which is what
+    /// the measurement in docs/specs/suspect-commits.md shows.
+    ///
+    /// The branch is still right for any adapter whose transcript path does resolve. Repairing
+    /// opencode's is the spec's own open question, and belongs in the adapter, not here.
+    #[test]
+    fn an_opencode_transcript_path_does_not_resolve_to_its_repo() {
         let opencode_here =
             "/Users/dev/.local/share/opencode/project/-Users-dev-code-unfoundbox-agentworth/s3.json";
-        let (_, rel) = anchor("./apps/cli/src/main.rs", opencode_here);
-        assert_eq!(rel.as_deref(), Some("apps/cli/src/main.rs"));
+        assert_eq!(extract_repository_or_workspace(opencode_here), "Users/dev");
+        let (a, _) = anchor("Cargo.lock", opencode_here);
+        assert_eq!(
+            a,
+            Anchor::Unanchored,
+            "unanchored, and counted -- never quietly attributed to this repo"
+        );
     }
 
     #[test]

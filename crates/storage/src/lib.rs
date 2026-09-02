@@ -886,8 +886,10 @@ impl Storage {
         tx.execute("DELETE FROM file_modifications WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM session_model_usage WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM session_compaction WHERE session_id = ?1", params![session_id])?;
-        // `session_risk` declares ON DELETE CASCADE, but `PRAGMA foreign_keys` is off on this
-        // connection, so every child table is cleared by hand -- same as the three above.
+        // Cleared by hand like the three above, so this delete does not depend on whether
+        // foreign-key enforcement happens to be on. It is: the bundled SQLite this crate
+        // builds has it enabled, which `test_session_risk_requires_its_session` pins -- a risk
+        // row for an unknown session is rejected, not silently orphaned.
         tx.execute("DELETE FROM session_risk WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM sessions WHERE session_id = ?1", params![session_id])?;
         tx.execute("DELETE FROM sources WHERE source_path = ?1", params![source_path])?;
@@ -3265,10 +3267,13 @@ mod tests {
         let storage = Storage::open_in_memory().expect("open storage");
         let root = "/Users/dev/code/unfoundbox/agentworth";
 
+        // A transcript that lives inside the checkout, so the session's own identity resolves
+        // to this repository. `opencode`'s real transcript path does not — see
+        // `anchoring::tests::an_opencode_transcript_path_does_not_resolve_to_its_repo`.
         seed_file_touch(
             &storage,
             "sess_here_rel",
-            "/Users/dev/.local/share/opencode/project/-Users-dev-code-unfoundbox-agentworth/d.json",
+            "/Users/dev/code/unfoundbox/agentworth/.sessions/d.json",
             "Cargo.lock",
             Utc::now() - Duration::minutes(3),
         );
@@ -3277,6 +3282,26 @@ mod tests {
         assert_eq!(found.rows.len(), 1);
         assert_eq!(found.rows[0].repo_relative_path, "Cargo.lock");
         assert_eq!(found.unanchored_rows, 0);
+    }
+
+    /// A risk row for a session that does not exist is rejected, not silently orphaned.
+    ///
+    /// Worth pinning because it is easy to assume otherwise: SQLite's own default is to *not*
+    /// enforce foreign keys, and nothing here runs `PRAGMA foreign_keys = ON`. The bundled
+    /// build this crate compiles turns it on, and a comment in `delete_session` now depends on
+    /// that being true.
+    #[test]
+    fn test_session_risk_requires_its_session() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let orphan = SessionRisk {
+            session_id: "sess_that_never_existed".to_string(),
+            demoted_claims: 1,
+            ..Default::default()
+        };
+        assert!(
+            storage.upsert_session_risk(&orphan).is_err(),
+            "a risk row must not outlive or precede its session"
+        );
     }
 
     /// An edit made in a linked worktree has to come back as a path a commit can name. Without
