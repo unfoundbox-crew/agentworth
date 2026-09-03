@@ -128,12 +128,17 @@ POLL="0.2"
 sleep "$POLL" 2>/dev/null || POLL="1"
 
 content_length() {
-  # The asset URL redirects to GitHub's object CDN, so the HEAD has to follow. The last
-  # Content-Length wins: the 302 hops carry their own.
-  curl -sIL -A "$UA" "$1" 2>/dev/null |
-    tr -d '\r' |
-    tr '[:upper:]' '[:lower:]' |
-    awk '/^content-length:/ { n = $2 } END { if (n ~ /^[0-9]+$/) print n; else print 0 }'
+  # Read from the header dump curl writes while the download streams (-D). The asset URL
+  # redirects to GitHub's object CDN, so several responses land in the file; the last
+  # Content-Length wins. A separate HEAD request used to do this and could hang for
+  # tens of seconds before anything was drawn, so nothing is asked up front any more.
+  if [ -f "$1" ]; then
+    tr -d '\r' <"$1" |
+      tr '[:upper:]' '[:lower:]' |
+      awk '/^content-length:/ { n = $2 } END { if (n ~ /^[0-9]+$/) print n; else print 0 }'
+  else
+    printf '0'
+  fi
 }
 
 file_bytes() {
@@ -176,7 +181,7 @@ triple="${cpu}-${platform}"
 # Resolve
 # -----------------------------------------------------------------------------
 
-release_json="$(curl -fsSL -A "$UA" "$API_URL")" || err "failed to reach $API_URL"
+release_json="$(curl -fsSL --connect-timeout 15 -A "$UA" "$API_URL")" || err "failed to reach $API_URL"
 
 tag="$(echo "$release_json" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
 [ -n "$tag" ] || err "could not determine latest release tag"
@@ -204,28 +209,29 @@ trap cleanup EXIT INT TERM
 # from the file instead. `wait` is what decides whether the download worked; the poll
 # loop only draws.
 
-total="$(content_length "$url")"
+hdr="$tmpdir/headers"
 
 if [ "$TTY" -eq 0 ]; then
   # No cursor to move, so nothing is redrawn: one line saying what is coming, then
   # silence until it lands. A loop that scrolls is a loop that lies.
-  if [ "$total" -gt 0 ]; then
-    say '*' downloading "$asset  $(mb "$total") MB"
-  else
-    say '*' downloading "$asset"
-  fi
-  curl -fsSL -A "$UA" -o "$tmpdir/$asset" "$url" || err "failed to download $url"
+  say '*' downloading "$asset"
+  curl -fsSL --connect-timeout 15 -A "$UA" -D "$hdr" -o "$tmpdir/$asset" "$url" || err "failed to download $url"
+  total="$(content_length "$hdr")"
+  if [ "$total" -gt 0 ]; then say '*' downloaded "$(mb "$total") MB"; fi
 else
   # `</dev/null` is belt and braces: `curl ... | sh` feeds this script in on stdin, and a
   # background job that inherited it could eat the lines the shell has not read yet. POSIX
   # already redirects a background job's stdin from /dev/null; this makes it not depend on
   # the shell getting that right.
-  curl -fsSL -A "$UA" -o "$tmpdir/$asset" "$url" </dev/null &
+  curl -fsSL --connect-timeout 15 -A "$UA" -D "$hdr" -o "$tmpdir/$asset" "$url" </dev/null &
   dl_pid=$!
   frame=0
+  total=0
   draw_download 0 "$total" o
   while kill -0 "$dl_pid" 2>/dev/null; do
     sleep "$POLL"
+    # The total is unknown until the CDN answers; re-read the header dump until it is.
+    [ "$total" -gt 0 ] || total="$(content_length "$hdr")"
     # The dig loop's rhythm: the lamp holds, then sweeps, ~350ms a frame.
     if [ $((frame % 2)) -eq 0 ]; then lamp='*'; else lamp='o'; fi
     draw_download "$(file_bytes "$tmpdir/$asset")" "$total" "$lamp"
@@ -239,6 +245,7 @@ else
     err "failed to download $url"
   fi
   got="$(file_bytes "$tmpdir/$asset")"
+  [ "$total" -gt 0 ] || total="$(content_length "$hdr")"
   [ "$total" -gt 0 ] || total="$got"
   draw_download "$got" "$total" '*'
   printf '\n'
@@ -249,7 +256,7 @@ fi
 # -----------------------------------------------------------------------------
 
 checksum_url="${url}.sha256"
-if curl -fsSL -A "$UA" -o "$tmpdir/${asset}.sha256" "$checksum_url" 2>/dev/null; then
+if curl -fsSL --connect-timeout 15 -A "$UA" -o "$tmpdir/${asset}.sha256" "$checksum_url" 2>/dev/null; then
   (
     cd "$tmpdir" &&
       if command -v sha256sum >/dev/null 2>&1; then
