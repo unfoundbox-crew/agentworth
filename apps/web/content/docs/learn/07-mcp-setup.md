@@ -54,7 +54,7 @@ session logs.
 A client's `tools/list` shows 22, not 12. The extra 10 are the pre-0.1.16 tool
 names, still registered as deprecated aliases forwarding to the same handlers,
 so a client configured before the rename keeps working. They are removed in
-v0.1.18. Use the 12 below.
+v0.1.20. Use the 12 below.
 
 | Tool | What it answers |
 | :--- | :--- |

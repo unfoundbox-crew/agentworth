@@ -13,8 +13,10 @@ that is the same grammar with a cursor.
 
 ## 1. The grammar
 
-Every old spelling stays as a hidden alias for two releases. Hidden means
-it runs and is left out of `--help`.
+Every old spelling stays as a hidden alias until v0.1.20. Hidden means
+it runs and is left out of `--help`. (Originally "two releases" — v0.1.16,
+v0.1.17 and v0.1.18 shipped inside two days, which gave nobody real time to
+move, so the removal date moved out to v0.1.20 instead.)
 
 ### Nouns
 
@@ -94,7 +96,7 @@ moves, because the CLI name is what a person types and remembers.
 | `suspect_commits` | `repo_suspect` | `repo suspect` |
 
 `session_handoff` and `session_asks` already match and do not move. Old
-tool names stay registered and hidden for two releases, same as the CLI
+tool names stay registered and hidden until v0.1.20, same as the CLI
 aliases — a registered client should not break on a rename.
 
 ## 2. Completions
@@ -196,7 +198,7 @@ was decided, and what is still open:
 | :--- | :--- |
 | Where does `blunder-blame` live? | `repo blunder-blame`, as mapped above. File-first is its trusted direction. |
 | Should an `index` noun exist? | Still open. `merge` stayed top-level and `--db-path` stayed global. |
-| Two releases of hidden MCP aliases, or one? | Two, the same as the CLI aliases — one removal date (`v0.1.18`) is easier to keep than two. But they are **not hidden**: MCP has no unlisted-but-callable tool, and rmcp's `disable_route` takes a tool out of `call` as well as out of `list_all`. The old names stay listed, each described as a deprecated alias, and are left out of the generated reference. |
+| Two releases of hidden MCP aliases, or one? | Same removal date as the CLI aliases — one date (`v0.1.20`) is easier to keep than two. But they are **not hidden**: MCP has no unlisted-but-callable tool, and rmcp's `disable_route` takes a tool out of `call` as well as out of `list_all`. The old names stay listed, each described as a deprecated alias, and are left out of the generated reference. |
 | Should a bare `archie` open the cockpit? | Yes, and `archie tui` is the explicit spelling of the same thing. Both ship. Off a terminal, under `--plain`, under `TERM=dumb`, or with JSON output, both print the overview and exit 0, so nothing that pipes `archie` is surprised. |
 | Is 100 ms per Tab real? | Now measured, but only against a fixture index of a dozen sessions (`apps/cli/tests/completion_budget.rs`). Nothing has been timed against a few thousand. |
 

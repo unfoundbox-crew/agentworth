@@ -366,7 +366,7 @@ claude mcp add agentworth --scope user -- archie mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-13 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, plus the two handoff tools, `session_forgotten`, `session_asks`, and `repo_suspect` below. A client's `tools/list` shows 23: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.18. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+13 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, plus the two handoff tools, `session_forgotten`, `session_asks`, and `repo_suspect` below. A client's `tools/list` shows 23: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.20. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
 
 ### The handoff, over MCP
 
