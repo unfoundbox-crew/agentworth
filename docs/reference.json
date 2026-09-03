@@ -2412,205 +2412,205 @@
       "surface": "cli",
       "old": "traces",
       "new": "session list",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "inspect",
       "new": "session show",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "export",
       "new": "session export",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "receipt",
       "new": "session receipt",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "handoff",
       "new": "session handoff",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "forgotten",
       "new": "session forgotten",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "loose-ends",
       "new": "session loose-ends",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "asks",
       "new": "session asks",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "cache-doctor",
       "new": "session cache",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "bisect",
       "new": "session bisect",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "search",
       "new": "session search",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "recall",
       "new": "session recall",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "audit",
       "new": "session audit",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "blunder",
       "new": "session blunder",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "autopsy",
       "new": "session autopsy",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "watch",
       "new": "session watch",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "blind-spots",
       "new": "session list --unproven",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "threat-digest",
       "new": "session risk",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "matrix",
       "new": "agent list",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "blame",
       "new": "repo blame",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "pr-blame",
       "new": "repo pr-blame",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "suspect",
       "new": "repo suspect",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "blunder-blame",
       "new": "repo blunder-blame",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "cli",
       "old": "usage",
       "new": "stats usage",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "sessions_find",
       "new": "session_list",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "session_get",
       "new": "session_show",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "blame_find",
       "new": "repo_blame",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "usage_summary",
       "new": "stats_usage",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "pacing_window",
       "new": "window_show",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "coverage_stats",
       "new": "agent_list",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "outcome_rate",
       "new": "stats_outcomes",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "carry_forward",
       "new": "session_carry_forward",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "forgotten_context",
       "new": "session_forgotten",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     },
     {
       "surface": "mcp",
       "old": "suspect_commits",
       "new": "repo_suspect",
-      "removedIn": "v0.1.18"
+      "removedIn": "v0.1.20"
     }
   ]
 }
