@@ -360,13 +360,14 @@ describe('npm-wrapper / launcher', () => {
 
     it('formats missing binary error message with helpful installation hints', () => {
       // Brew was never a real fallback here (npm launcher, not the README's install
-      // matrix) and #55 dropped it from the READMEs too -- this message's actual
-      // fallbacks are the standalone install script, Cargo, npx, the GitHub release
-      // download, and AGENTWORTH_BIN.
+      // matrix) and #55 dropped it from the READMEs too. `cargo install agentworth-cli`
+      // was dropped for the same reason: no such crate exists on crates.io. This
+      // message's actual fallbacks are the standalone install script, npx, the GitHub
+      // release download, and AGENTWORTH_BIN.
       const msg = formatMissingBinaryMessage('darwin-arm64');
       assert.ok(msg.includes('darwin-arm64'));
       assert.ok(msg.includes('curl -fsSL https://agentworth.dev/install.sh | sh'));
-      assert.ok(msg.includes('cargo install agentworth-cli'));
+      assert.ok(!msg.includes('cargo install agentworth-cli'));
       assert.ok(msg.includes('npx -y agentworth@latest'));
       assert.ok(msg.includes('AGENTWORTH_BIN'));
     });

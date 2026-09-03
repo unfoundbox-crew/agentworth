@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`cargo install agentworth-cli` is gone from every doc and hint.** No such crate was ever published to crates.io (confirmed: the registry returns 404). Removed from both READMEs, the translated READMEs, the npm package README, SKILL.md, and the launcher's missing-binary message. Building from source still works: `cargo install --path apps/cli` from a checkout.
+
 ## [0.1.18] - 2026-09-03
 
 ### Changed

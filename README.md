@@ -62,7 +62,6 @@ npx -y agentworth@latest scan
 | **Agent Skill** | `npx skills add unfoundbox-crew/agentworth -g` | Installs global Agent Skill for AI coding agents. |
 | **NPX (Zero Install)** | `npx -y agentworth@latest scan` | Instant runner that executes the native binary on demand. |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs pre-built native binary to `~/.local/bin`. |
-| **Cargo (Native)** | `cargo install agentworth-cli` | Compiles native binaries (`agentworth` and its short alias `archie`) into `~/.cargo/bin`. |
 
 The standalone script draws its own progress, so a 22 MB download over a slow link no
 longer looks like a hang:
@@ -109,7 +108,7 @@ archie serve --open
 
 ## What It Does
 
-AgentWorth runs **100% offline** on your machine. It discovers histories from Claude Code, Cursor, Antigravity (`agy`), Codex, Goose, Aider, Windsurf, DeepSeek, and 12 other agents, providing:
+AgentWorth is **local-first**: your data never leaves your machine. It discovers histories from Claude Code, Cursor, Antigravity (`agy`), Codex, Goose, Aider, Windsurf, DeepSeek, and 12 other agents, providing:
 
 * **Token Expenditure & Burn Rate**: Input, output, reasoning, and prompt cache hit ratios translated into USD costs, daily/weekly/monthly rollups, and rolling 5-hour pacing windows.
 * **AI Code Lineage (`blame`)**: Trace file modifications back to the exact agent session, model, timestamp, and user prompt that produced them.
