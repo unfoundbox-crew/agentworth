@@ -27,7 +27,7 @@ Run AgentWorth directly via `npx` or install it natively with Cargo:
 
 ```bash
 # Run immediately with npx
-npx agentworth
+npx -y agentworth@latest
 
 # Or install natively via Cargo
 cargo install agentworth

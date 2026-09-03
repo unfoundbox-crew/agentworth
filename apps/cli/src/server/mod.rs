@@ -13,7 +13,9 @@ use std::time::Duration;
 use agentworth_core::Scanner;
 use agentworth_storage::Storage;
 use anyhow::{Context, Result};
-use console::style;
+
+use crate::ui::views::{self, ServeView};
+use crate::ui::Ui;
 
 pub use archaeology::*;
 pub use live_tail::*;
@@ -70,12 +72,13 @@ pub fn resolve_dist_dir(explicit: Option<PathBuf>) -> Result<Option<PathBuf>> {
     }
 }
 
-/// Starts the AgentWorth local API and Web UI server.
+/// Starts the AgentWorth local API and dashboard server.
 pub async fn start_server(
     storage: Arc<Storage>,
     port: u16,
     open_browser: bool,
     dist_dir: Option<PathBuf>,
+    ui: &Ui,
 ) -> Result<()> {
     let scanner = Arc::new(Scanner::new(storage.clone()));
 
@@ -105,57 +108,19 @@ pub async fn start_server(
         .with_context(|| format!("Failed to bind server on address {}", addr))?;
 
     let url = format!("http://localhost:{}", port);
+    let index = storage.db_path().map(|p| p.to_string_lossy().to_string());
 
-    println!();
-    println!(
+    print!(
         "{}",
-        style("┌──────────────────────────────────────────────────────────┐").bold()
+        views::serve(
+            ui,
+            &ServeView {
+                version: env!("CARGO_PKG_VERSION"),
+                url: &url,
+                index_path: index.as_deref(),
+            }
+        )
     );
-    println!(
-        "{}",
-        style("│ 🚀 AgentWorth Local API & Explorer Server                │")
-            .bold()
-            .cyan()
-    );
-    println!(
-        "{}",
-        style("├──────────────────────────────────────────────────────────┤").bold()
-    );
-    println!(
-        "│ Local URL:       {:<40}│",
-        style(&url).bold().green().underlined()
-    );
-    println!(
-        "│ API Stats:       {:<40}│",
-        style(format!("{}/api/stats", url)).dim()
-    );
-    println!(
-        "│ API Traces:      {:<40}│",
-        style(format!("{}/api/traces", url)).dim()
-    );
-    println!(
-        "│ API Archaeology: {:<40}│",
-        style(format!("{}/api/archaeology", url)).dim()
-    );
-    println!(
-        "│ Live Tail (SSE): {:<40}│",
-        style(format!("{}/api/live-tail", url)).dim()
-    );
-    if let Some(path) = storage.db_path() {
-        let path_str = path.to_string_lossy();
-        let display_path = if path_str.chars().count() > 38 {
-            format!("...{}", agentworth_schema::text::tail_chars(&path_str, 35))
-        } else {
-            path_str.to_string()
-        };
-        println!("│ Database Index:  {:<40}│", style(display_path).dim());
-    }
-    println!(
-        "{}",
-        style("└──────────────────────────────────────────────────────────┘").bold()
-    );
-    println!("Press {} to stop server.", style("Ctrl+C").bold().yellow());
-    println!();
 
     if open_browser {
         let open_url = url.clone();

@@ -12,7 +12,7 @@ export const repoRoot = path.resolve(webRoot, '../..');
 
 export const SITE = 'https://agentworth.dev';
 export const REPO = 'https://github.com/unfoundbox-crew/agentworth';
-export const INSTALL_CMD = 'npx -y agentworth scan';
+export const INSTALL_CMD = 'npx -y agentworth@latest scan';
 
 const marked = new Marked({ gfm: true, breaks: false });
 

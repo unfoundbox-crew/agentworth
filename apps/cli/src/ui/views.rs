@@ -4005,12 +4005,41 @@ pub fn version(ui: &Ui, v: &VersionView<'_>) -> String {
     out
 }
 
+/// One install channel on the `update` screen: its name, an optional right-aligned tag,
+/// the exact lines to run or open, and one sentence of caveat where a command needs one.
+pub struct UpdateChannelView {
+    pub name: &'static str,
+    /// `this install` on the channel this binary came from, `other ways` on the first of
+    /// the rest. Empty when the channel could not be detected, since nothing is "other"
+    /// then.
+    pub tag: &'static str,
+    pub lines: Vec<String>,
+    pub note: Option<&'static str>,
+}
+
 pub struct UpdateView<'a> {
     pub version: &'a str,
     pub headline: &'a str,
     pub headline_role: Role,
-    /// `(channel, the exact line to run or open)`. Empty when nothing is available.
-    pub advice: Vec<(&'a str, String)>,
+    /// Every real channel, the detected one first. Empty when nothing is available.
+    pub advice: Vec<UpdateChannelView>,
+}
+
+/// The channel's own row: its name at the body indent, its tag right-aligned against the
+/// inner width so the two never collide.
+fn channel_row(ui: &Ui, name: &str, tag: &str) -> String {
+    if tag.is_empty() {
+        return format!("  {}", ui.paint(Role::Label, name));
+    }
+    let gap = ui
+        .inner()
+        .saturating_sub(display_width(name) + display_width(tag));
+    format!(
+        "  {}{}{}",
+        ui.paint(Role::Label, name),
+        " ".repeat(gap.max(1)),
+        ui.paint(Role::Unverified, tag)
+    )
 }
 
 /// `update` prints and exits. It never runs npm, cargo, or a package manager on the user's
@@ -4038,14 +4067,59 @@ pub fn update(ui: &Ui, v: &UpdateView<'_>) -> String {
     // release onward, the one actionable line on this screen would print as a dead link.
     // The payload gets its own full-width line, hard-wrapped, so every character survives.
     let payload_width = ui.inner().saturating_sub(2);
-    for (channel, line) in &v.advice {
-        push(&mut out, ui, format!("  {}", ui.paint(Role::Label, channel)));
-        for wrapped in wrap(line, payload_width) {
-            push(&mut out, ui, format!("    {}", ui.paint(Role::Emphasis, &wrapped)));
+    for channel in &v.advice {
+        push(&mut out, ui, channel_row(ui, channel.name, channel.tag));
+        for line in &channel.lines {
+            for wrapped in wrap(line, payload_width) {
+                push(&mut out, ui, format!("    {}", ui.paint(Role::Emphasis, &wrapped)));
+            }
+        }
+        if let Some(note) = channel.note {
+            for wrapped in wrap(note, payload_width) {
+                push(&mut out, ui, format!("    {}", ui.paint(Role::Label, &wrapped)));
+            }
         }
     }
     out.push('\n');
     out.push_str(&ui.next("archie version", "what this build is and where its index lives"));
+    out
+}
+
+// -----------------------------------------------------------------------------
+// serve
+// -----------------------------------------------------------------------------
+
+pub struct ServeView<'a> {
+    pub version: &'a str,
+    /// The origin the dashboard answers on, with no trailing slash.
+    pub url: &'a str,
+    /// `None` for an index with no file behind it.
+    pub index_path: Option<&'a str>,
+}
+
+/// The banner `archie serve` prints once, before it blocks on the listener.
+pub fn serve(ui: &Ui, v: &ServeView<'_>) -> String {
+    let mut out = String::new();
+    out.push_str(&ui.header("archie serve", v.version));
+    out.push('\n');
+    let w = ui.width();
+    section(&mut out, ui, "DASHBOARD", "");
+    push(&mut out, ui, ui.leaders("  local URL", v.url, w, Role::Emphasis));
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  API stats", &format!("{}/api/stats", v.url), w, Role::Value),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders("  API traces", &format!("{}/api/traces", v.url), w, Role::Value),
+    );
+    if let Some(path) = v.index_path {
+        push(&mut out, ui, ui.leaders("  index", &shorten_home(path), w, Role::Value));
+    }
+    out.push('\n');
+    out.push_str(&ui.next("Ctrl+C", "stop the dashboard and the local API"));
     out
 }
 

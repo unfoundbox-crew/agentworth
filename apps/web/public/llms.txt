@@ -12,7 +12,7 @@ AgentWorth turns gigabytes of unreadable JSONL agent histories into clean metric
 ## Quickstart
 ```bash
 # Instant run (native binary launcher)
-npx agentworth
+npx -y agentworth@latest
 
 # Or install natively via Cargo
 cargo install agentworth

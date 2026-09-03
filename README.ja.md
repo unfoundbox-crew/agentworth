@@ -35,7 +35,7 @@ AgentWorthは、ローカルのドットファイルに蓄積されたAIエー�
 | :--- | :--- | :--- |
 | **単体インストールスクリプト** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | ネイティブバイナリを直接 `~/.local/bin` にインストールします。 |
 | **Cargo (Rustネイティブ)** | `cargo install agentworth-cli` | `agentworth` と短縮名 `archie` を `~/.cargo/bin` にビルドしてインストールします。 |
-| **NPX (インストール不要)** | `npx agentworth stats` | インストールなしで即座に実行できます。 |
+| **NPX (インストール不要)** | `npx -y agentworth@latest stats` | インストールなしで即座に実行できます。 |
 
 ```bash
 # 1. ローカルのエージェント履歴をスキャンしてインデックスを作成

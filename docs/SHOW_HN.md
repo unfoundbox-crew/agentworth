@@ -27,7 +27,7 @@ We built **AgentWorth** (`archie`) to solve this. It is an open-source, 100% off
 You can scan and index your local histories with zero install:
 
 ```bash
-npx -y agentworth scan
+npx -y agentworth@latest scan
 ```
 
 Or equip your agent with the AgentWorth skill:
