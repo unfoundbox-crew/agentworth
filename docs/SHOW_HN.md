@@ -1,8 +1,8 @@
-# Show HN: AgentWorth – Your AI coding agents left receipts (100% offline Rust tool)
+# Show HN: AgentWorth – Your AI coding agents left receipts (local-first Rust tool)
 
 ## Submission Details
 
-* **Title**: `Show HN: AgentWorth – Your AI coding agents left receipts (100% offline Rust tool)`
+* **Title**: `Show HN: AgentWorth – Your AI coding agents left receipts (local-first Rust tool)`
 * **URL / Link**: `https://github.com/unfoundbox-crew/agentworth` (or `https://agentworth.dev`)
 * **Author**: `unfoundbox-crew`
 
@@ -20,7 +20,7 @@ Every one of these tools writes extensive, non-standard JSONL transcripts into d
 - *Which agent session and prompt authored lines 45–90 of `src/main.rs`?*
 - *Did the agent actually pass the test suite, or did it just claim "Done!" before quitting?*
 
-We built **AgentWorth** (`archie`) to solve this. It is an open-source, 100% offline native Rust engine that discovers, normalizes, and indexes your machine's AI coding history into a local SQLite database.
+We built **AgentWorth** (`archie`) to solve this. It is an open-source, local-first native Rust engine — your data never leaves your machine — that discovers, normalizes, and indexes your machine's AI coding history into a local SQLite database.
 
 ### ⚡ 1-Line Quickstart
 
@@ -36,14 +36,8 @@ Or equip your agent with the AgentWorth skill:
 npx skills add unfoundbox-crew/agentworth -g
 ```
 
-You can also install via Homebrew, Cargo, or direct binary:
+You can also install via direct binary:
 ```bash
-# Homebrew
-brew install unfoundbox-crew/tap/agentworth
-
-# Cargo
-cargo install agentworth-cli
-
 # Standalone binary
 curl -fsSL https://agentworth.dev/install.sh | sh
 ```
@@ -78,7 +72,7 @@ When you run `archie stats` or inspect your sessions, AgentWorth generates an in
 
 ### Core Engineering Invariants
 
-1. **Zero Telemetry & 100% Offline**: AgentWorth never phones home, uploads transcripts, or requires an internet connection.
+1. **Zero Telemetry & Local-First**: AgentWorth never phones home or uploads transcripts. Your data never leaves your machine.
 2. **Never Duplicate Raw Logs**: Raw logs remain the source of truth on disk. SQLite only stores lightweight metadata, SHA-256 content fingerprints, derived features, and outcome indexes. Full trajectories are streamed lazily on demand.
 3. **Typed Provenance**: Every metric is strictly typed:
    - `[flown]`: Measured directly from disk logs with cryptographic SHA-256 verification.
