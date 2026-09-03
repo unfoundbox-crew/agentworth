@@ -3,10 +3,10 @@
 Official npm launcher for **AgentWorth** — discover, normalize, and understand AI-agent histories locally.
 
 ```bash
-npx agentworth
+npx -y agentworth@latest
 ```
 
-When run with no arguments, `npx agentworth` defaults to launching the local web UI (`serve --open`). All native subcommands and flags are forwarded transparently to the native binary.
+When run with no arguments, `npx -y agentworth@latest` defaults to launching the local web UI (`serve --open`). All native subcommands and flags are forwarded transparently to the native binary.
 
 ---
 
@@ -17,7 +17,7 @@ When run with no arguments, `npx agentworth` defaults to launching the local web
 Launch the local interactive UI:
 
 ```bash
-npx agentworth
+npx -y agentworth@latest
 ```
 
 ### CLI Subcommands
@@ -25,45 +25,45 @@ npx agentworth
 Scan and index local agent histories across 11 agent adapters:
 
 ```bash
-npx agentworth scan
+npx -y agentworth@latest scan
 ```
 
 View summary statistics across all indexed traces:
 
 ```bash
-npx agentworth stats
+npx -y agentworth@latest stats
 ```
 
 Inspect token rollups, costs, and rolling pacing:
 
 ```bash
-npx agentworth usage --period day
-npx agentworth usage --pacing
+npx -y agentworth@latest usage --period day
+npx -y agentworth@latest usage --pacing
 ```
 
 Trace file modifications back to the AI agent session and prompt:
 
 ```bash
-npx agentworth blame src/main.rs
+npx -y agentworth@latest blame src/main.rs
 ```
 
 List indexed sessions with filtering by adapter or model:
 
 ```bash
-npx agentworth traces --limit 20
-npx agentworth traces --adapter claude_code --json
+npx -y agentworth@latest traces --limit 20
+npx -y agentworth@latest traces --adapter claude_code --json
 ```
 
 Inspect a specific session with timeline and outcome analysis:
 
 ```bash
-npx agentworth inspect <session-id>
+npx -y agentworth@latest inspect <session-id>
 ```
 
 Export traces safely with automatic secret and path redaction:
 
 ```bash
-npx agentworth export <session-id> --redact --format atif --output session.atif.json
+npx -y agentworth@latest export <session-id> --redact --format atif --output session.atif.json
 ```
 
 ---
@@ -94,7 +94,7 @@ You can also install the native AgentWorth binary directly:
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh | sh` | Installs the pre-built native binary directly to `~/.local/bin`. |
 | **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | Installs via official Homebrew tap. |
 | **Cargo (Native)** | `cargo install agentworth-cli` | Compiles and installs `agentworth` and its short alias `archie` to `~/.cargo/bin`. |
-| **NPX (Instant)** | `npx agentworth` | Zero-install runner that detects or downloads the native binary. |
+| **NPX (Instant)** | `npx -y agentworth@latest` | Zero-install runner that detects or downloads the native binary. |
 
 ---
 

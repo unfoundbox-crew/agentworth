@@ -309,6 +309,67 @@ function pathBinaryMatchesVersion(binPath, expected) {
 }
 
 /**
+ * The version a binary reports, or null if it cannot be asked. Any failure — missing
+ * binary, wrong arch, timeout, unparseable output — is a null, never a guess.
+ *
+ * @param {string} binPath
+ * @returns {string|null}
+ */
+export function readBinaryVersion(binPath) {
+  try {
+    const out = execFileSync(binPath, ['--version'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const match = out.match(/\d+\.\d+\.\d+/);
+    return match ? match[0] : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** `0.1.17` -> `[0, 1, 17]`, or null when the string is not version-shaped. */
+function versionTriplet(v) {
+  const match = String(v || '').match(/(\d+)\.(\d+)\.(\d+)/);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+}
+
+/**
+ * The one line printed when the binary about to run is older than the package that is
+ * running it. Null on anything else — an equal or newer binary is fine, and a version
+ * either side could not be parsed is not evidence of staleness.
+ *
+ * This cannot see the case that hurts most, a bare `npx agentworth` reusing a months-old
+ * *package* from npx's own cache: the package version is then stale too, and both agree.
+ * `archie update` says that part; this covers a stale binary under a current package.
+ *
+ * @param {string|null} resolved - the version the resolved binary reports
+ * @param {string} expected - this package's own version
+ * @returns {string|null}
+ */
+export function staleBinaryNotice(resolved, expected) {
+  const a = versionTriplet(resolved);
+  const b = versionTriplet(expected);
+  if (!a || !b) return null;
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) {
+      return a[i] < b[i]
+        ? brandLine('-', 'stale', `binary v${resolved} is older than agentworth v${expected}`)
+        : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * The two resolution sources that hand back whatever binary is there without asking its
+ * version. Sources 3-7 already refuse a mismatch, and the download cache (8) is versioned
+ * by its own path, so only these two can serve something older than this package.
+ */
+const UNVERSIONED_SOURCES = new Set(['env:AGENTWORTH_BIN', 'vendor']);
+
+/**
  * Drives the download line: redraws in place on a TTY, prints one line to anything else.
  *
  * A pipe or a CI log cannot move the cursor, so it gets the size once and silence after --
@@ -660,7 +721,7 @@ export function formatMissingBinaryMessage(platformKey = getPlatformKey()) {
     '',
     '    install script   curl -fsSL https://agentworth.dev/install.sh | sh',
     '    cargo            cargo install agentworth-cli',
-    '    npx              npx -y agentworth',
+    '    npx              npx -y agentworth@latest',
     '    release          https://github.com/unfoundbox-crew/agentworth/releases/latest',
     '    a build you own  export AGENTWORTH_BIN=/path/to/archie',
     '',
@@ -732,7 +793,16 @@ export function run(argv = process.argv.slice(2), options = {}) {
   // recursion guard in findPathBinary checks AGENTWORTH_LAUNCHER_ACTIVE). The npm version
   // is threaded through too, purely so `agentworth version`/`agentworth update` can report
   // it -- this launcher never reads it back itself.
-  const childEnv = buildChildEnv(options.env || process.env, getPackageVersion(options.baseDir || __dirname));
+  const packageVersion = getPackageVersion(options.baseDir || __dirname);
+
+  // Say so rather than run something old in silence. Only the sources that were never
+  // version-checked are asked, so the usual path costs no extra process.
+  if (UNVERSIONED_SOURCES.has(binaryResult.source)) {
+    const notice = staleBinaryNotice(readBinaryVersion(binaryResult.path), packageVersion);
+    if (notice) console.error(notice);
+  }
+
+  const childEnv = buildChildEnv(options.env || process.env, packageVersion);
   const result = spawnSync(binaryResult.path, resolvedArgs, {
     stdio: 'inherit',
     env: childEnv,

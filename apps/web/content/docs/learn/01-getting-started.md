@@ -16,7 +16,7 @@ uploaded. There is no account and no server.
 Pick one. The first needs nothing installed.
 
 ```bash
-npx -y agentworth scan
+npx -y agentworth@latest scan
 curl -fsSL https://agentworth.dev/install.sh | sh
 cargo install agentworth-cli
 ```
@@ -78,7 +78,7 @@ step.
 ## What to run
 
 ```bash
-npx -y agentworth scan
+npx -y agentworth@latest scan
 archie stats
 archie session list --limit 20
 archie serve --open

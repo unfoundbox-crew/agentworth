@@ -36,13 +36,13 @@ npx skills add unfoundbox-crew/agentworth -g
 Execute the native binary immediately via npx:
 ```bash
 # Scan local machine for existing agent histories
-npx -y agentworth scan
+npx -y agentworth@latest scan
 
 # Print machine-wide experience and cost receipt
-npx -y agentworth stats
+npx -y agentworth@latest stats
 
 # Launch local interactive forensic dashboard
-npx -y agentworth serve --open
+npx -y agentworth@latest serve --open
 ```
 
 ### Cargo / Binary Install

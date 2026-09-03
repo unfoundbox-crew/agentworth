@@ -241,6 +241,74 @@ fn no_screen_ships_a_glyph_outside_the_allowed_set() {
     }
 }
 
+/// `serve` binds a listener and then blocks forever, so it cannot ride `screens()` the way
+/// every other command does. The banner it prints is one string built by one function, and
+/// that string gets the same four rules here: nothing wraps, colour moves no column, no
+/// glyph outside the allowed set, and no emoji.
+#[test]
+fn the_serve_banner_holds_the_grid_without_binding_a_port() {
+    use agentworth_cli::ui::{views, ColorMode, Ui};
+
+    let view = views::ServeView {
+        version: "0.1.17",
+        url: "http://localhost:3000",
+        index_path: Some("/var/folders/9k/3w2h8n1s0qz7m4b6c8d0f2g40000gn/T/agentworth.db"),
+    };
+
+    for columns in [80usize, 120] {
+        let plain = views::serve(&Ui::new(columns, ColorMode::None, true), &view);
+        let unicode = views::serve(&Ui::new(columns, ColorMode::None, false), &view);
+        let colour = views::serve(&Ui::new(columns, ColorMode::True, false), &view);
+
+        assert!(!plain.trim().is_empty(), "serve rendered nothing");
+        for line in plain.lines().chain(unicode.lines()) {
+            let w = console::measure_text_width(line);
+            assert!(w <= columns.min(78), "serve at {columns}: line is {w} wide\n{line}");
+        }
+        assert!(colour.contains('\x1b'), "serve emitted no colour in truecolor mode");
+        assert_eq!(
+            console::strip_ansi_codes(&colour),
+            unicode,
+            "serve at {columns}: colour and plain disagree on column positions"
+        );
+        for c in plain.chars().chain(unicode.chars()) {
+            assert!(is_allowed(c), "serve ships U+{:04X} ({})", c as u32, c);
+        }
+    }
+
+    let out = views::serve(&Ui::new(80, ColorMode::None, true), &view);
+    assert!(out.starts_with("archie serve"), "the command echoes at column 0:\n{out}");
+    assert!(out.contains("http://localhost:3000/api/stats"), "{out}");
+    assert!(out.contains("http://localhost:3000/api/traces"), "{out}");
+    assert!(out.contains("Ctrl+C"), "the screen never says how to stop it:\n{out}");
+    // The product calls it the dashboard. The old banner called it an Explorer Server.
+    assert!(out.contains("DASHBOARD"), "{out}");
+    assert!(!out.contains("Explorer"), "{out}");
+}
+
+/// The index path is shortened the way every other screen shortens one: the home directory
+/// becomes `~`, so a banner does not print the user's account name at full width.
+#[test]
+fn the_serve_banner_replaces_the_home_directory() {
+    use agentworth_cli::ui::{views, ColorMode, Ui};
+
+    let Ok(home) = std::env::var("HOME") else { return };
+    if home.len() < 2 {
+        return;
+    }
+    let index = format!("{home}/.agentworth/agentworth.db");
+    let out = views::serve(
+        &Ui::new(80, ColorMode::None, true),
+        &views::ServeView {
+            version: "0.1.17",
+            url: "http://localhost:3000",
+            index_path: Some(&index),
+        },
+    );
+    assert!(out.contains("~/.agentworth/agentworth.db"), "{out}");
+    assert!(!out.contains(&home), "the raw home path reached the screen:\n{out}");
+}
+
 #[test]
 fn the_receipt_holds_its_frame() {
     let (_t, db) = fixture();

@@ -18,6 +18,8 @@ import {
   buildChildEnv,
   brandLine,
   downloadLine,
+  readBinaryVersion,
+  staleBinaryNotice,
   run,
 } from '../lib/resolver.js';
 
@@ -365,7 +367,7 @@ describe('npm-wrapper / launcher', () => {
       assert.ok(msg.includes('darwin-arm64'));
       assert.ok(msg.includes('curl -fsSL https://agentworth.dev/install.sh | sh'));
       assert.ok(msg.includes('cargo install agentworth-cli'));
-      assert.ok(msg.includes('npx -y agentworth'));
+      assert.ok(msg.includes('npx -y agentworth@latest'));
       assert.ok(msg.includes('AGENTWORTH_BIN'));
     });
 
@@ -387,6 +389,47 @@ describe('npm-wrapper / launcher', () => {
           (cp >= 0x2500 && cp <= 0x259f) ||
           ['●', '○', '·', '—', '→'].includes(ch);
         assert.ok(ok, `glyph U+${cp.toString(16).padStart(4, '0')} (${ch}) is outside the allowed set`);
+      }
+    });
+  });
+
+  describe('stale binary notice', () => {
+    it('says so when the resolved binary is older than the package running it', () => {
+      const line = staleBinaryNotice('0.1.11', '0.1.17');
+      assert.ok(line, 'an older binary must produce a line');
+      assert.ok(line.includes('0.1.11'), line);
+      assert.ok(line.includes('0.1.17'), line);
+      assert.ok(line.startsWith(' (-) archie  stale'), line);
+    });
+
+    it('stays quiet for an equal or newer binary', () => {
+      assert.equal(staleBinaryNotice('0.1.17', '0.1.17'), null);
+      // A local build ahead of the published package is not stale.
+      assert.equal(staleBinaryNotice('0.2.0', '0.1.17'), null);
+      assert.equal(staleBinaryNotice('1.0.0', '0.9.9'), null);
+    });
+
+    it('compares each segment numerically, not as text', () => {
+      // '0.1.9' sorts after '0.1.17' as a string; it is older as a version.
+      assert.ok(staleBinaryNotice('0.1.9', '0.1.17'));
+      assert.equal(staleBinaryNotice('0.1.17', '0.1.9'), null);
+    });
+
+    it('never claims staleness on a version it could not parse', () => {
+      assert.equal(staleBinaryNotice(null, '0.1.17'), null);
+      assert.equal(staleBinaryNotice('not-a-version', '0.1.17'), null);
+      assert.equal(staleBinaryNotice('0.1.11', 'nonsense'), null);
+    });
+
+    it('reads a real binary version and returns null when it cannot ask', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-stale-'));
+      try {
+        const bin = path.join(dir, 'archie');
+        writeMockBinary(bin, '0.1.11');
+        assert.equal(readBinaryVersion(bin), '0.1.11');
+        assert.equal(readBinaryVersion(path.join(dir, 'not-here')), null);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
   });

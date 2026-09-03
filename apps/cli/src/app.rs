@@ -1712,7 +1712,7 @@ pub fn run() -> Result<()> {
             let storage = open_storage(cli.db_path)?;
             let dist_path = crate::server::resolve_dist_dir(a.dist)?;
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(crate::start_server(storage, a.port, a.open, dist_path))?;
+            runtime.block_on(crate::start_server(storage, a.port, a.open, dist_path, &ui))?;
         }
         Action::Mcp => {
             let storage = open_storage(cli.db_path)?;

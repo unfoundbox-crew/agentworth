@@ -188,7 +188,7 @@ const FAQ = {
     ],
     [
       'How do I run AgentWorth?',
-      "Run 'npx -y agentworth scan' to index the agent logs already on your machine, or install the native binary with 'curl -fsSL https://agentworth.dev/install.sh | sh'.",
+      "Run 'npx -y agentworth@latest scan' to index the agent logs already on your machine, or install the native binary with 'curl -fsSL https://agentworth.dev/install.sh | sh'.",
     ],
   ].map(([name, text]) => ({
     '@type': 'Question',
@@ -720,9 +720,9 @@ It never phones home. There is no account, no server and no upload; it reads fil
 ## Install
 
 \`\`\`
-npx -y agentworth scan                        # index what is already on this machine
+npx -y agentworth@latest scan        # index what is already on this machine
 curl -fsSL ${SITE}/install.sh | sh   # or install the native binary
-agentworth serve                              # open the local explorer
+archie serve                         # open the local dashboard
 \`\`\`
 
 ## MCP server
@@ -781,7 +781,7 @@ write(
 
 ## Install
 
-    npx -y agentworth scan
+    npx -y agentworth@latest scan
     curl -fsSL ${SITE}/install.sh | sh
     agentworth serve
 

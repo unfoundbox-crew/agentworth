@@ -5,7 +5,7 @@ import { Wordmark } from "@ui/Wordmark";
 import { IconGithub } from "@ui/icons";
 
 export const REPO = "https://github.com/unfoundbox-crew/agentworth";
-export const SCAN_CMD = "npx -y agentworth scan";
+export const SCAN_CMD = "npx -y agentworth@latest scan";
 export const CURL_CMD = "curl -fsSL https://agentworth.dev/install.sh | sh";
 
 /** `current` dims the link for the page you are already on. */

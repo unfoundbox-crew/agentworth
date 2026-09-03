@@ -21,25 +21,25 @@
 //! since resolver.js never queries that for "latest" either (it only reads its own local
 //! package.json), and GitHub Releases is the one place both distribution paths agree on.
 //!
-//! Verified live against the real repo (2026-09-01) before choosing which install
-//! commands to print: `npm install -g agentworth@latest` and the GitHub Releases page
-//! both work (confirmed via the registry and the releases API directly). Three other
-//! install methods README.md advertises do NOT actually work and must never be suggested
-//! here: `curl -fsSL https://agentworth.dev/install.sh` serves the marketing site's own
-//! `index.html` (a plain SPA fallback route, not a shell script -- piping it to `sh` would
-//! fail immediately), `brew install unfoundbox-crew/tap/agentworth` 404s (no such tap repo
-//! exists), and `cargo install agentworth-cli` has no matching crate on crates.io. None of
-//! the three are wired into `.github/workflows/release.yml` either, which only ever
-//! publishes to GitHub Releases and npm.
+//! Which install commands this screen may print is a checked question, not a guessed one.
+//! `npm install -g agentworth@latest` and the GitHub Releases page were confirmed live
+//! 2026-09-01 against the registry and the releases API. `curl -fsSL
+//! https://agentworth.dev/install.sh | sh` was re-checked 2026-09-03 and now works: the
+//! URL returns the real POSIX script committed at `apps/web/public/install.sh` (HTTP 200,
+//! `text/plain`, ~11 KB). It did not work on 2026-09-01, when the site served its SPA
+//! `index.html` for that route, and this module's comment said so; the script shipping is
+//! what changed. Two install methods README.md has advertised still do NOT work and must
+//! never be suggested here: `brew install unfoundbox-crew/tap/agentworth` 404s (no such
+//! tap repo), and `cargo install agentworth-cli` has no matching crate on crates.io.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::ui::views::{self, UpdateView, VersionView};
+use crate::ui::views::{self, UpdateChannelView, UpdateView, VersionView};
 use crate::ui::{Role, Ui};
 
 /// GitHub `owner/repo` slug this binary's releases are published under. Matches the
@@ -81,6 +81,72 @@ pub fn detect_launcher() -> LauncherInfo {
     let active = std::env::var("AGENTWORTH_LAUNCHER_ACTIVE").ok();
     let npm_version = std::env::var("AGENTWORTH_NPM_VERSION").ok();
     detect_launcher_from(active.as_deref(), npm_version.as_deref())
+}
+
+/// Which install channel this binary came from -- the one `update` puts first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Channel {
+    Npm,
+    InstallSh,
+    Unknown,
+}
+
+impl Channel {
+    /// The name this channel is listed under on the `update` screen. `None` for a channel
+    /// with nothing to point at.
+    fn name(self) -> Option<&'static str> {
+        match self {
+            Channel::Npm => Some("npm"),
+            Channel::InstallSh => Some("install.sh"),
+            Channel::Unknown => None,
+        }
+    }
+}
+
+/// Branching kept out of the environment so both signals are injectable.
+///
+/// The npm marker wins: the wrapper set it on this very process, which is a stronger claim
+/// than any path prefix. Otherwise the install script's own destination is the signal --
+/// `apps/web/public/install.sh` writes to `${AGENTWORTH_INSTALL_DIR:-$HOME/.local/bin}`.
+/// Both roots are checked rather than just the env var, because the var is read at install
+/// time and need not still be set in the shell that later runs `update`.
+fn detect_channel_from(
+    launcher: &LauncherInfo,
+    exe: Option<&Path>,
+    install_dir: Option<&str>,
+    home: Option<&str>,
+) -> Channel {
+    if launcher.npm_launcher_active {
+        return Channel::Npm;
+    }
+    let Some(exe) = exe else {
+        return Channel::Unknown;
+    };
+    let roots = [
+        install_dir.filter(|d| !d.is_empty()).map(PathBuf::from),
+        home.filter(|h| !h.is_empty())
+            .map(|h| Path::new(h).join(".local").join("bin")),
+    ];
+    if roots.iter().flatten().any(|root| exe.starts_with(root)) {
+        Channel::InstallSh
+    } else {
+        Channel::Unknown
+    }
+}
+
+/// Reads the real environment. A `current_exe()` this process cannot resolve is not an
+/// error -- it just leaves the channel unknown, the same as any unrecognised location.
+pub fn detect_channel(launcher: &LauncherInfo) -> Channel {
+    let exe = std::env::current_exe().ok();
+    let install_dir = std::env::var("AGENTWORTH_INSTALL_DIR").ok();
+    let home = std::env::var("HOME").ok();
+    detect_channel_from(
+        launcher,
+        exe.as_deref(),
+        install_dir.as_deref(),
+        home.as_deref(),
+    )
 }
 
 /// Strips a single leading 'v'/'V' (GitHub tag names look like "v0.1.5";
@@ -227,13 +293,15 @@ fn update_status_for(current_version: &str, offline: bool) -> UpdateStatus {
 
 /// How this binary was installed, in one phrase. Pure formatting, so both the version and
 /// the update screens read the same sentence off the same branch.
-fn installed_via(launcher: &LauncherInfo) -> String {
-    match (launcher.npm_launcher_active, &launcher.npm_package_version) {
-        (true, Some(v)) => format!("npm (agentworth@{v})"),
-        (true, None) => "npm".to_string(),
-        (false, _) => {
-            "unknown (no npm launcher -- a direct binary, cargo install, or a source build)"
-                .to_string()
+fn installed_via(launcher: &LauncherInfo, channel: Channel) -> String {
+    match channel {
+        Channel::Npm => match &launcher.npm_package_version {
+            Some(v) => format!("npm (agentworth@{v})"),
+            None => "npm".to_string(),
+        },
+        Channel::InstallSh => "install.sh (agentworth.dev/install.sh)".to_string(),
+        Channel::Unknown => {
+            "unknown (a direct binary, cargo install, or a source build)".to_string()
         }
     }
 }
@@ -297,35 +365,75 @@ fn update_headline(current: &str, status: &UpdateStatus) -> (String, Role) {
     }
 }
 
-/// The install lines for the channel this binary came from. `update` prints them and stops;
-/// it never runs any of them. An npm-managed binary is npm's to replace, and a binary
-/// installed any other way has no single correct self-replace strategy this process could
-/// safely pick from inside itself.
-fn update_advice(launcher: &LauncherInfo, status: &UpdateStatus) -> Vec<(&'static str, String)> {
+/// Why `npx -y agentworth@latest` is printed next to the global install, rather than the
+/// bare `npx agentworth` every doc used to show.
+const NPX_NOTE: &str = "A bare `npx agentworth` reuses whatever npx already cached, which \
+    can be several releases behind; the `@latest` form asks the registry every run.";
+
+/// Every real install channel, the one this binary came from first. `update` prints them
+/// and stops; it never runs any of them. An npm-managed binary is npm's to replace, and a
+/// binary installed any other way has no single correct self-replace strategy this process
+/// could safely pick from inside itself.
+///
+/// The other channels are listed rather than hidden: a person on one channel routinely
+/// wants off it, and a screen that shows only the channel it detected cannot say how.
+fn update_advice(channel: Channel, status: &UpdateStatus) -> Vec<UpdateChannelView> {
     let UpdateStatus::UpdateAvailable { release_url, .. } = status else {
         return Vec::new();
     };
-    if launcher.npm_launcher_active {
-        vec![("npm", "npm install -g agentworth@latest".to_string())]
-    } else {
-        vec![
-            ("npm", "npm install -g agentworth@latest".to_string()),
-            ("download", release_url.clone()),
-            ("from source", "cargo install --path apps/cli".to_string()),
-        ]
+
+    let mut all = vec![
+        UpdateChannelView {
+            name: "install.sh",
+            tag: "",
+            lines: vec!["curl -fsSL https://agentworth.dev/install.sh | sh".to_string()],
+            note: None,
+        },
+        UpdateChannelView {
+            name: "npm",
+            tag: "",
+            lines: vec![
+                "npm install -g agentworth@latest".to_string(),
+                "npx -y agentworth@latest".to_string(),
+            ],
+            note: Some(NPX_NOTE),
+        },
+        UpdateChannelView {
+            name: "download",
+            tag: "",
+            lines: vec![release_url.clone()],
+            note: None,
+        },
+        UpdateChannelView {
+            name: "from source",
+            tag: "",
+            lines: vec!["cargo install --path apps/cli".to_string()],
+            note: None,
+        },
+    ];
+
+    let Some(detected) = channel.name() else {
+        // Nothing was detected, so nothing is "other" -- the list stays untagged.
+        return all;
+    };
+    if let Some(i) = all.iter().position(|c| c.name == detected) {
+        let mine = all.remove(i);
+        all.insert(0, mine);
+        all[0].tag = "this install";
+        if let Some(next) = all.get_mut(1) {
+            next.tag = "other ways";
+        }
     }
+    all
 }
 
-fn update_advice_json(launcher: &LauncherInfo, release_url: &str) -> serde_json::Value {
-    if launcher.npm_launcher_active {
-        json!({ "npm": "npm install -g agentworth@latest" })
-    } else {
-        json!({
-            "npm": "npm install -g agentworth@latest",
-            "download": release_url,
-            "from_source": "cargo install --path apps/cli",
-        })
+/// The same channels as the printed screen, off the same list, so the two cannot drift.
+fn update_advice_json(advice: &[UpdateChannelView]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for channel in advice {
+        map.insert(channel.name.replace([' ', '.'], "_"), json!(channel.lines));
     }
+    serde_json::Value::Object(map)
 }
 
 fn launcher_json(launcher: &LauncherInfo) -> serde_json::Value {
@@ -347,6 +455,7 @@ pub fn run_version_command(
 ) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let launcher = detect_launcher();
+    let channel = detect_channel(&launcher);
     let status = update_status_for(current, offline);
 
     if json_output {
@@ -354,6 +463,7 @@ pub fn run_version_command(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "version": current,
+                "channel": channel,
                 "launcher": launcher_json(&launcher),
                 "update_check": status,
             }))?
@@ -363,7 +473,7 @@ pub fn run_version_command(
 
     let (update_line, update_role) = update_status_line(current, &status);
     let index = index_path(db_path);
-    let via = installed_via(&launcher);
+    let via = installed_via(&launcher, channel);
     print!(
         "{}",
         views::version(
@@ -387,16 +497,19 @@ pub fn run_version_command(
 pub fn run_update_command(json_output: bool, offline: bool, ui: &Ui) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let launcher = detect_launcher();
+    let channel = detect_channel(&launcher);
     let status = update_status_for(current, offline);
+    let advice = update_advice(channel, &status);
 
     if json_output {
         let mut payload = json!({
             "version": current,
+            "channel": channel,
             "launcher": launcher_json(&launcher),
             "update_check": status,
         });
-        if let UpdateStatus::UpdateAvailable { release_url, .. } = &status {
-            payload["advice"] = update_advice_json(&launcher, release_url);
+        if !advice.is_empty() {
+            payload["advice"] = update_advice_json(&advice);
         }
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
@@ -411,7 +524,7 @@ pub fn run_update_command(json_output: bool, offline: bool, ui: &Ui) -> Result<(
                 version: current,
                 headline: &headline,
                 headline_role,
-                advice: update_advice(&launcher, &status),
+                advice,
             }
         )
     );
@@ -558,6 +671,81 @@ mod tests {
         assert!(!detect_launcher_from(Some("0"), None).npm_launcher_active);
     }
 
+    // ---- channel detection ----
+
+    fn direct() -> LauncherInfo {
+        LauncherInfo { npm_launcher_active: false, npm_package_version: None }
+    }
+
+    #[test]
+    fn test_channel_is_install_sh_under_the_install_dir_env() {
+        let channel = detect_channel_from(
+            &direct(),
+            Some(Path::new("/opt/aw/bin/archie")),
+            Some("/opt/aw/bin"),
+            Some("/home/dev"),
+        );
+        assert_eq!(channel, Channel::InstallSh);
+    }
+
+    /// `AGENTWORTH_INSTALL_DIR` is read by install.sh at install time and is usually gone
+    /// from the shell that later runs `update`, so the default destination has to be
+    /// recognised on its own.
+    #[test]
+    fn test_channel_is_install_sh_under_the_default_local_bin() {
+        let channel = detect_channel_from(
+            &direct(),
+            Some(Path::new("/home/dev/.local/bin/archie")),
+            None,
+            Some("/home/dev"),
+        );
+        assert_eq!(channel, Channel::InstallSh);
+    }
+
+    #[test]
+    fn test_channel_is_unknown_for_a_binary_somewhere_else() {
+        let channel = detect_channel_from(
+            &direct(),
+            Some(Path::new("/home/dev/code/agentworth/target/debug/archie")),
+            None,
+            Some("/home/dev"),
+        );
+        assert_eq!(channel, Channel::Unknown);
+        // A path that merely starts with the same characters is not under the directory.
+        assert_eq!(
+            detect_channel_from(
+                &direct(),
+                Some(Path::new("/home/dev/.local/binaries/archie")),
+                None,
+                Some("/home/dev"),
+            ),
+            Channel::Unknown
+        );
+    }
+
+    #[test]
+    fn test_channel_is_unknown_when_the_exe_path_cannot_be_resolved() {
+        assert_eq!(
+            detect_channel_from(&direct(), None, Some("/opt/aw/bin"), Some("/home/dev")),
+            Channel::Unknown
+        );
+    }
+
+    /// The wrapper set its marker on this very process; a path prefix is circumstantial
+    /// next to that, so npm wins even for a binary sitting under the install dir.
+    #[test]
+    fn test_npm_marker_beats_the_install_dir_path() {
+        let launcher =
+            LauncherInfo { npm_launcher_active: true, npm_package_version: Some("0.1.17".into()) };
+        let channel = detect_channel_from(
+            &launcher,
+            Some(Path::new("/home/dev/.local/bin/archie")),
+            None,
+            Some("/home/dev"),
+        );
+        assert_eq!(channel, Channel::Npm);
+    }
+
     // ---- text rendering (every branch, no I/O) ----
 
     fn test_ui() -> Ui {
@@ -566,7 +754,8 @@ mod tests {
 
     fn version_screen(current: &str, launcher: &LauncherInfo, status: &UpdateStatus) -> String {
         let (update_line, update_role) = update_status_line(current, status);
-        let via = installed_via(launcher);
+        let channel = if launcher.npm_launcher_active { Channel::Npm } else { Channel::Unknown };
+        let via = installed_via(launcher, channel);
         views::version(
             &test_ui(),
             &VersionView {
@@ -581,7 +770,7 @@ mod tests {
         )
     }
 
-    fn update_screen(current: &str, launcher: &LauncherInfo, status: &UpdateStatus) -> String {
+    fn update_screen(current: &str, channel: Channel, status: &UpdateStatus) -> String {
         let (headline, headline_role) = update_headline(current, status);
         views::update(
             &test_ui(),
@@ -589,9 +778,17 @@ mod tests {
                 version: current,
                 headline: &headline,
                 headline_role,
-                advice: update_advice(launcher, status),
+                advice: update_advice(channel, status),
             },
         )
+    }
+
+    fn available() -> UpdateStatus {
+        UpdateStatus::UpdateAvailable {
+            latest_version: "0.1.9".to_string(),
+            release_url: "https://github.com/unfoundbox-crew/agentworth/releases/tag/v0.1.9"
+                .to_string(),
+        }
     }
 
     #[test]
@@ -600,7 +797,7 @@ mod tests {
         let report = version_screen("0.1.5", &launcher, &UpdateStatus::UpToDate);
         assert!(report.contains("0.1.5"));
         assert!(report.contains("up to date"));
-        assert!(report.contains("no npm launcher"));
+        assert!(report.contains("a direct binary, cargo install, or a source build"));
     }
 
     /// The one block `archie version` exists to print: what this build is, the name it was
@@ -647,44 +844,73 @@ mod tests {
 
     #[test]
     fn test_update_report_up_to_date_has_no_advice() {
-        let launcher = LauncherInfo { npm_launcher_active: false, npm_package_version: None };
-        let report = update_screen("0.1.9", &launcher, &UpdateStatus::UpToDate);
+        let report = update_screen("0.1.9", Channel::Unknown, &UpdateStatus::UpToDate);
         assert!(report.contains("You're on the latest version"));
         assert!(!report.contains("npm install -g"));
     }
 
+    /// The detected channel leads and says so; the rest follow under one "other ways" tag.
     #[test]
-    fn test_update_report_npm_launcher_gets_npm_command() {
-        let launcher =
-            LauncherInfo { npm_launcher_active: true, npm_package_version: Some("0.1.5".to_string()) };
-        let status = UpdateStatus::UpdateAvailable {
-            latest_version: "0.1.9".to_string(),
-            release_url: "https://github.com/unfoundbox-crew/agentworth/releases/tag/v0.1.9".to_string(),
-        };
-        let report = update_screen("0.1.5", &launcher, &status);
-        assert!(report.contains("npm install -g agentworth@latest"));
-        // Must never suggest the fabricated install methods (verified live 2026-09-01:
-        // curl serves HTML not a script, the brew tap 404s, and no `agentworth-cli` crate
-        // exists on crates.io -- see the module doc comment).
-        assert!(!report.contains("brew"));
-        assert!(!report.contains("install.sh"));
-        // An npm-launched binary is told about npm and nothing else.
-        assert!(!report.contains("cargo install"));
+    fn test_update_report_puts_the_detected_channel_first() {
+        let report = update_screen("0.1.5", Channel::InstallSh, &available());
+        let install_at = report.find("install.sh").expect("install.sh is listed");
+        let npm_at = report.find("npm install -g").expect("npm is listed");
+        assert!(install_at < npm_at, "the detected channel must lead:\n{report}");
+        assert!(report.contains("this install"), "{report}");
+        assert!(report.contains("other ways"), "{report}");
+
+        let npm_first = update_screen("0.1.5", Channel::Npm, &available());
+        assert!(
+            npm_first.find("npm install -g").unwrap()
+                < npm_first.find("curl -fsSL").unwrap(),
+            "an npm-launched binary must be told about npm first:\n{npm_first}"
+        );
     }
 
+    /// Nothing detected means nothing is "other", so the list ships untagged rather than
+    /// claiming a channel it did not observe.
     #[test]
-    fn test_update_report_non_npm_lists_all_real_channels() {
-        let launcher = LauncherInfo { npm_launcher_active: false, npm_package_version: None };
-        let status = UpdateStatus::UpdateAvailable {
-            latest_version: "0.1.9".to_string(),
-            release_url: "https://github.com/unfoundbox-crew/agentworth/releases/tag/v0.1.9".to_string(),
-        };
-        let report = update_screen("0.1.5", &launcher, &status);
-        assert!(report.contains("npm install -g agentworth@latest"));
-        assert!(report.contains("cargo install --path apps/cli"));
-        assert!(!report.contains("brew"));
-        assert!(!report.contains("install.sh"));
-        assert!(!report.contains("cargo install agentworth-cli"));
+    fn test_update_report_tags_nothing_when_the_channel_is_unknown() {
+        let report = update_screen("0.1.5", Channel::Unknown, &available());
+        assert!(!report.contains("this install"), "{report}");
+        assert!(!report.contains("other ways"), "{report}");
+        assert!(report.contains("curl -fsSL https://agentworth.dev/install.sh | sh"));
+    }
+
+    /// The npx line and the sentence that explains why it carries `@latest`: a bare
+    /// `npx agentworth` runs whatever npx already cached, which is how a months-old
+    /// binary answers for a fresh install.
+    #[test]
+    fn test_update_report_prints_both_npm_lines_and_the_npx_caveat() {
+        let report = update_screen("0.1.5", Channel::Npm, &available());
+        assert!(report.contains("npm install -g agentworth@latest"), "{report}");
+        assert!(report.contains("npx -y agentworth@latest"), "{report}");
+        assert!(report.contains("reuses whatever npx already cached"), "{report}");
+    }
+
+    /// Every listed channel has been checked to work. The two that never did must not
+    /// come back -- see the module doc comment.
+    #[test]
+    fn test_update_report_never_suggests_a_channel_that_does_not_exist() {
+        for channel in [Channel::Npm, Channel::InstallSh, Channel::Unknown] {
+            let report = update_screen("0.1.5", channel, &available());
+            assert!(!report.contains("brew"), "{report}");
+            assert!(!report.contains("cargo install agentworth-cli"), "{report}");
+        }
+    }
+
+    /// The JSON is built off the same channel list the screen prints, so a channel can
+    /// never appear on one and not the other.
+    #[test]
+    fn test_update_advice_json_carries_the_same_channels_as_the_screen() {
+        let advice = update_advice(Channel::InstallSh, &available());
+        let json = update_advice_json(&advice);
+        let map = json.as_object().expect("an object");
+        assert_eq!(map.len(), advice.len());
+        assert_eq!(map["install_sh"][0], "curl -fsSL https://agentworth.dev/install.sh | sh");
+        assert_eq!(map["npm"][1], "npx -y agentworth@latest");
+        assert_eq!(map["from_source"][0], "cargo install --path apps/cli");
+        assert!(map.contains_key("download"));
     }
 
     /// The release URL must reach the terminal whole. It used to render through
@@ -698,7 +924,6 @@ mod tests {
         const URL: &str = "https://github.com/unfoundbox-crew/agentworth/releases/tag/v0.1.17";
         assert_eq!(URL.len(), 66, "the boundary this test exists for has moved");
 
-        let launcher = LauncherInfo { npm_launcher_active: false, npm_package_version: None };
         let status = UpdateStatus::UpdateAvailable {
             latest_version: "0.1.17".to_string(),
             release_url: URL.to_string(),
@@ -708,7 +933,7 @@ mod tests {
             version: "0.1.16",
             headline: &headline,
             headline_role,
-            advice: update_advice(&launcher, &status),
+            advice: update_advice(Channel::InstallSh, &status),
         };
 
         // Wide enough for one line: the URL appears verbatim, on a line of its own.
@@ -735,11 +960,10 @@ mod tests {
     /// `update` advises; it never executes. Nothing on this path spawns a process.
     #[test]
     fn test_update_advice_is_text_only_and_empty_when_there_is_nothing_to_do() {
-        let launcher = LauncherInfo { npm_launcher_active: false, npm_package_version: None };
-        assert!(update_advice(&launcher, &UpdateStatus::UpToDate).is_empty());
-        assert!(update_advice(&launcher, &UpdateStatus::Skipped).is_empty());
+        assert!(update_advice(Channel::Unknown, &UpdateStatus::UpToDate).is_empty());
+        assert!(update_advice(Channel::Npm, &UpdateStatus::Skipped).is_empty());
         assert!(update_advice(
-            &launcher,
+            Channel::InstallSh,
             &UpdateStatus::CheckFailed { reason: "offline".to_string() }
         )
         .is_empty());

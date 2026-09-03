@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`archie serve` prints a screen, not a box.** The banner was the last command still drawing its own frame, with a rocket emoji in it and "Explorer Server" for a thing the product calls the dashboard — it was never in the two audit passes. It now renders through the ui module like every other screen: the command and version at column 0, a leaders block for the local URL, the two API routes and the index path with the home directory folded to `~`, and a `Next` line saying how to stop it. Same glyph set, same width clamp, same `--plain`/`--no-color` columns. The banner is a function returning a string, so the snapshot sweep holds it to the same four rules without binding a port.
+- **`archie update` names the channel you actually installed from.** It could only recognise the npm launcher, and called everything else "unknown" — including a binary from `curl -fsSL https://agentworth.dev/install.sh | sh`, which is now detected by its install location (`$AGENTWORTH_INSTALL_DIR`, or `~/.local/bin`). The channel this binary came from is listed first and tagged `this install`; the rest follow under `other ways`, where before an npm-launched binary was shown npm and nothing else. `--json` gains a `channel` field, and `advice` now carries a list of lines per channel rather than one string.
+- **Every doc says `npx -y agentworth@latest`.** A bare `npx agentworth` reuses whatever npx already cached, which is how a months-old binary answers for what reads like a fresh install. The npm channel on the `update` screen prints both `npm install -g agentworth@latest` and `npx -y agentworth@latest`, and says why. The release workflow's smoke test still pins an exact version, on purpose.
+- **The npm launcher says when it is about to run an older binary than itself.** `AGENTWORTH_BIN` and a vendored binary were the two resolution paths that never checked the version they handed back; they now print one line when the binary is older than the package. It cannot see a stale *package* from npx's own cache — that is what the `@latest` change above is for.
+
 ## [0.1.17] - 2026-09-03
 
 ### Added

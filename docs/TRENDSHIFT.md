@@ -41,7 +41,7 @@ Modern software development relies heavily on AI coding agents (Claude Code, Cur
 ## Key Highlights & Why It's Trending
 
 * **Instant 1-Line Agent Skill**: Agents can install and query AgentWorth directly via `npx skills add unfoundbox-crew/agentworth -g`.
-* **Zero-Install CLI**: Run instantly anywhere via `npx -y agentworth scan` or pre-built native binary via `curl -fsSL https://agentworth.dev/install.sh | sh`.
+* **Zero-Install CLI**: Run instantly anywhere via `npx -y agentworth@latest scan` or pre-built native binary via `curl -fsSL https://agentworth.dev/install.sh | sh`.
 * **Visual ASCII Flight Receipts**: Clean, beautiful monospace receipts summarizing token burn, top models, expenditure, and empirical success rates.
 * **Typed Provenance (`[flown]` / `[on paper]` / `[unflown]`)**: Strict architectural guarantees distinguishing locally measured disk telemetry from external vendor pricing claims.
 * **100% Offline & Local-First**: Zero telemetry, zero uploads, read-only transcript access, and SQLite WAL storage with lazy trajectory streaming.
@@ -54,7 +54,7 @@ Modern software development relies heavily on AI coding agents (Claude Code, Cur
 
 ```bash
 # 1-line instant scan
-npx -y agentworth scan
+npx -y agentworth@latest scan
 
 # Add as Agent Skill
 npx skills add unfoundbox-crew/agentworth -g

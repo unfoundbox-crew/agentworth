@@ -692,6 +692,16 @@ mod tests {
         for line in cockpit::chrome_samples(&ui) {
             sample.push_str(&line);
         }
+        // `serve` blocks on a listener, so its banner never reaches the snapshot sweep's
+        // subprocess run. It draws on the same grid and is held to the same set here.
+        sample.push_str(&views::serve(
+            &ui,
+            &views::ServeView {
+                version: "0.0.0",
+                url: "http://localhost:3000",
+                index_path: Some("/tmp/agentworth.db"),
+            },
+        ));
         for lamp in [Lamp::On, Lamp::Sweeping, Lamp::Dim, Lamp::Off] {
             for part in archie(lamp) {
                 sample.push_str(&part);
