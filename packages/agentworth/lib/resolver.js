@@ -720,7 +720,6 @@ export function formatMissingBinaryMessage(platformKey = getPlatformKey()) {
     '  with whichever of these matches how you got here:',
     '',
     '    install script   curl -fsSL https://agentworth.dev/install.sh | sh',
-    '    cargo            cargo install agentworth-cli',
     '    npx              npx -y agentworth@latest',
     '    release          https://github.com/unfoundbox-crew/agentworth/releases/latest',
     '    a build you own  export AGENTWORTH_BIN=/path/to/archie',

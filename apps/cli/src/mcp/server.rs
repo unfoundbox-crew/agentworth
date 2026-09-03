@@ -860,7 +860,7 @@ impl AgentWorthMcpServer {
     // -------------------------------------------------------------------------
     // Pre-0.1.16 tool names, kept registered so a client that was configured against
     // them keeps working. Each one is a two-line forward to the renamed handler, so the
-    // two names can never answer differently. Removed in v0.1.18, along with the CLI
+    // two names can never answer differently. Removed in v0.1.20, along with the CLI
     // aliases (`crate::app::HIDDEN_ALIASES_REMOVED_IN`).
     //
     // They are listed rather than hidden: MCP has no unlisted-but-callable tool, and
@@ -871,7 +871,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "sessions_find",
-        description = "Deprecated alias of `session_list`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `session_list`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `session_list`."
     )]
     pub(crate) async fn sessions_find_alias(
@@ -883,7 +883,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "session_get",
-        description = "Deprecated alias of `session_show`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `session_show`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `session_show`."
     )]
     pub(crate) async fn session_get_alias(
@@ -895,7 +895,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "blame_find",
-        description = "Deprecated alias of `repo_blame`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `repo_blame`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `repo_blame`."
     )]
     pub(crate) async fn blame_find_alias(
@@ -907,7 +907,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "usage_summary",
-        description = "Deprecated alias of `stats_usage`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `stats_usage`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `stats_usage`."
     )]
     pub(crate) async fn usage_summary_alias(
@@ -919,7 +919,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "pacing_window",
-        description = "Deprecated alias of `window_show`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `window_show`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `window_show`."
     )]
     pub(crate) async fn pacing_window_alias(
@@ -931,7 +931,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "coverage_stats",
-        description = "Deprecated alias of `agent_list`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `agent_list`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `agent_list`."
     )]
     pub(crate) async fn coverage_stats_alias(
@@ -943,7 +943,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "outcome_rate",
-        description = "Deprecated alias of `stats_outcomes`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `stats_outcomes`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `stats_outcomes`."
     )]
     pub(crate) async fn outcome_rate_alias(
@@ -955,7 +955,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "carry_forward",
-        description = "Deprecated alias of `session_carry_forward`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `session_carry_forward`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `session_carry_forward`."
     )]
     pub(crate) async fn carry_forward_alias(
@@ -967,7 +967,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "forgotten_context",
-        description = "Deprecated alias of `session_forgotten`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `session_forgotten`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `session_forgotten`."
     )]
     pub(crate) async fn forgotten_context_alias(
@@ -979,7 +979,7 @@ impl AgentWorthMcpServer {
 
     #[tool(
         name = "suspect_commits",
-        description = "Deprecated alias of `repo_suspect`, removed in v0.1.18. Same parameters, \
+        description = "Deprecated alias of `repo_suspect`, removed in v0.1.20. Same parameters, \
                        same handler, same result -- use `repo_suspect`."
     )]
     pub(crate) async fn suspect_commits_alias(

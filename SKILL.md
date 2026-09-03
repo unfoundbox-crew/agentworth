@@ -45,10 +45,10 @@ npx -y agentworth@latest stats
 npx -y agentworth@latest serve --open
 ```
 
-### Cargo / Binary Install
+### Build From Source
 ```bash
-cargo install agentworth
-# or build from source in the workspace
+cargo install --path apps/cli
+# or, from within the workspace checkout
 cargo build --release -p agentworth-cli
 ```
 

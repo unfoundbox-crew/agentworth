@@ -46,15 +46,15 @@ Where that server definition goes differs per harness, and this repo does not
 document the registration step for Codex, OpenCode or Gemini CLI. Use each
 harness's own MCP configuration docs, with the command and args above.
 
-## The 12 tools
+## The 13 tools
 
 All read-only. Nothing scans, nothing writes, nothing touches the original
 session logs.
 
-A client's `tools/list` shows 22, not 12. The extra 10 are the pre-0.1.16 tool
+A client's `tools/list` shows 23, not 13. The extra 10 are the pre-0.1.16 tool
 names, still registered as deprecated aliases forwarding to the same handlers,
 so a client configured before the rename keeps working. They are removed in
-v0.1.18. Use the 12 below.
+v0.1.20. Use the 13 below.
 
 | Tool | What it answers |
 | :--- | :--- |
@@ -65,6 +65,7 @@ v0.1.18. Use the 12 below.
 | `window_show` | Throughput over a moving window. |
 | `agent_list` | Which adapters are detected and what they yield. |
 | `stats_outcomes` | Verified-outcome rate by model, adapter or repo, with an `n` floor. |
+| `stats_ladder` | Of everything spent in a window, how much bought a verified outcome, and what it cost per model, repo or adapter. |
 | `session_handoff` | What a session promised, decided and did not finish. |
 | `session_carry_forward` | What the previous sessions in this repo left for this one. |
 | `session_forgotten` | Decisions compaction dropped, returned verbatim with receipts. |

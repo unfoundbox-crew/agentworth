@@ -18,7 +18,6 @@ Pick one. The first needs nothing installed.
 ```bash
 npx -y agentworth@latest scan
 curl -fsSL https://agentworth.dev/install.sh | sh
-cargo install agentworth-cli
 ```
 
 `archie` is a shorter alias for `agentworth`. Every command below accepts either

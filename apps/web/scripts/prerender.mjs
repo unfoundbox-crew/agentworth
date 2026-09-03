@@ -2,6 +2,10 @@
 // own title, description, canonical, Open Graph, Twitter card and JSON-LD,
 // plus the feeds, sitemap, robots.txt and llms.txt the site advertises.
 //
+// llms.txt and llms-full.txt are generated here on every build (see `write('llms.txt', ...)`
+// and `write('llms-full.txt', ...)` below) and written straight to dist/, not committed to
+// public/ — do not add them back there, they would just be stale copies.
+//
 // Runs after `vite build` and `vite build --ssr`. React 18 has no
 // react-dom/static, so this uses renderToString from react-dom/server —
 // prerenderToNodeStream, which React now recommends for exactly this job,

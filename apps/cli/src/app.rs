@@ -96,7 +96,7 @@ struct Cli {
 /// the generated reference. Grep this constant to find everything that goes when the grace
 /// period ends: the `#[command(hide = true)]` variants below, their arms in `normalize`, and
 /// the hidden MCP tool aliases in `apps/cli/src/mcp/server.rs`.
-pub const HIDDEN_ALIASES_REMOVED_IN: &str = "v0.1.18";
+pub const HIDDEN_ALIASES_REMOVED_IN: &str = "v0.1.20";
 
 /// Old top-level command -> the noun-verb spelling that replaced it.
 ///

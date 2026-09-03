@@ -92,8 +92,6 @@ You can also install the native AgentWorth binary directly:
 | Method | Command | Description |
 | :--- | :--- | :--- |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh | sh` | Installs the pre-built native binary directly to `~/.local/bin`. |
-| **Homebrew** | `brew install unfoundbox-crew/tap/agentworth` | Installs via official Homebrew tap. |
-| **Cargo (Native)** | `cargo install agentworth-cli` | Compiles and installs `agentworth` and its short alias `archie` to `~/.cargo/bin`. |
 | **NPX (Instant)** | `npx -y agentworth@latest` | Zero-install runner that detects or downloads the native binary. |
 
 ---

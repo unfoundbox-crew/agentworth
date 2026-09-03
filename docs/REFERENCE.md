@@ -495,7 +495,7 @@ Open the cockpit: the same grammar, full screen, with a cursor. A bare `archie` 
 
 ### Old spellings
 
-The commands and MCP tools below were renamed in 0.1.16. Every old name still runs and reaches the same handler; none of them appears in `--help` any more, and all of them stop working in v0.1.18.
+The commands and MCP tools below were renamed in 0.1.16. Every old name still runs and reaches the same handler; none of them appears in `--help` any more, and all of them stop working in v0.1.20.
 
 | Surface | Old | New |
 |---|---|---|
