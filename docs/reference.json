@@ -1,6 +1,6 @@
 {
-  "version": "0.1.17",
-  "generatedDate": "2026-09-02",
+  "version": "0.1.18",
+  "generatedDate": "2026-09-03",
   "globalFlags": [
     {
       "name": "--verbose, -v",
