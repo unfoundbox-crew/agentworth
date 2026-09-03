@@ -401,7 +401,10 @@ pub fn stats(ui: &Ui, v: &StatsView<'_>) -> String {
             ),
         );
 
-        let rows = v.adapters.len().max(v.models.len()).max(v.tools.len()).min(3);
+        // Five rows, not three: on a machine with four frontier models in daily use the
+        // fourth is a real one (Fable 5 sat just under the cut on the owner's index), and the
+        // adapter column rarely has more than three anyway, so the block stays short.
+        let rows = v.adapters.len().max(v.models.len()).max(v.tools.len()).min(5);
         for r in 0..rows {
             let a = v.adapters.get(r).map(|(n, c)| {
                 format!(
