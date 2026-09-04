@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { IconCheck, IconCopy } from "@ui/icons";
 import { trackEvent } from "../analytics";
 import { SiteHeader, SiteFooter, SCAN_CMD, CURL_CMD } from "./SiteChrome";
+import { Terminal } from "./Terminal";
 
 /**
  * One machine's receipt, copied from `archie stats --json` and
@@ -25,6 +26,80 @@ const RECEIPT = {
   verified: "1,938 (48.7%)",
   topModel: "claude-sonnet-5",
 };
+
+/**
+ * Real output of `archie stats --no-json` and
+ * `archie session list --limit 20 --no-json` on the author's laptop on
+ * 2026-09-04, ANSI stripped. Numbers match RECEIPT above. Colour classes
+ * carry the CLI's real semantics: t-accent is rungs 3-5 and VERIFIED
+ * (the dashboard's own evidence ladder uses --mv-success for the same
+ * state), t-dim is rungs 0-2 and asides, t-bold is headers and the
+ * command echoed back.
+ */
+export const STATS_LINES: React.ReactNode[] = [
+  <span className="term-line"><span className="t-bold">{"archie stats"}</span>{"                                       ~/.agentworth/agentworth.db"}</span>,
+  <span className="term-line"><span className="t-dim">{"------------------------------------------------------------------------------"}</span></span>,
+  <span className="term-line">{"\u00A0"}</span>,
+  <span className="term-line">{"  "}<span className="t-bold">{"3,981 sessions"}</span>{"           2026-02-15 -> 2026-09-03           "}<span className="t-bold">{"1,772,808 events"}</span></span>,
+  <span className="term-line">{"\u00A0"}</span>,
+  <span className="term-line"><span className="t-bold">{"  EVIDENCE LADDER                                           SESSIONS     SHARE"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
+  <span className="term-line"><span className="t-accent">{"  5  CI or deployment verified ...........................       157      3.9%"}</span></span>,
+  <span className="term-line"><span className="t-accent">{"  4  commit observed .....................................     1,526     38.3%"}</span></span>,
+  <span className="term-line"><span className="t-accent">{"  3  test or build passed ................................       255      6.4%"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  ---------------------------- the evidence line -----------------------------"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  2  artifact changed ....................................       278      7.0%"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  1  done claimed ........................................         4      0.1%"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  0  unflown .............................................     1,761     44.2%"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
+  <span className="term-line"><span className="t-accent">{"     VERIFIED    rung 3 and up                                 1,938     48.7%"}</span></span>,
+  <span className="term-line">{"\u00A0"}</span>,
+  <span className="term-line"><span className="t-bold">{"  TOKENS                                                          114.6B TOTAL"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
+  <span className="term-line">{"  cache read  "}<span className="t-dim">{"#############################################."}</span>{"    111.4B   97.2%"}</span>,
+  <span className="term-line">{"  cache write "}<span className="t-dim">{"#............................................."}</span>{"      2.5B    2.2%"}</span>,
+  <span className="term-line">{"  input       "}<span className="t-dim">{".............................................."}</span>{"    331.0M    0.3%"}</span>,
+  <span className="term-line">{"  output      "}<span className="t-dim">{".............................................."}</span>{"    303.4M    0.3%"}</span>,
+  <span className="term-line">{"\u00A0"}</span>,
+  <span className="term-line"><span className="t-bold">{"  ADAPTERS                   MODELS                     TOOLS"}</span></span>,
+  <span className="term-line">{"  -------------------------  -------------------------  ----------------------"}</span>,
+  <span className="term-line">{"  claude_code    3,251  82%  sonnet-5            1,589  Bash           138,248"}</span>,
+  <span className="term-line">{"  codex            659  17%  opus-5                949  Edit            23,715"}</span>,
+  <span className="term-line">{"  opencode          71   2%  opus-4-8              338  Read            22,943"}</span>,
+  <span className="term-line">{"\u00A0"}</span>,
+  <span className="term-line"><span className="t-dim">{"  Next  "}</span><span className="t-bold">{"archie session list --limit 20"}</span>{"   the newest sessions, ladder first"}</span>,
+];
+
+export const SESSIONS_LINES: React.ReactNode[] = [
+  <span className="term-line"><span className="t-bold">{"archie session list --limit 20"}</span>{"                        3,981 indexed - 20 shown"}</span>,
+  <span className="term-line"><span className="t-dim">{"------------------------------------------------------------------------------"}</span></span>,
+  <span className="term-line">{"\u00A0"}</span>,
+  <span className="term-line"><span className="t-bold">{"  EVIDENCE  SESSION         ADAPTER      MODEL        SCORE      DUR    TOKENS"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"###.."}</span>{"     agent-afe5fa..  claude_code  sonnet-5        78   9m 06s      4.4M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-aafd76..  claude_code  sonnet-5        89  39m 00s     80.7M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a1e9cb..  claude_code  sonnet-5        89  30m 44s     54.8M"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     agent-aa39b8..  claude_code  sonnet-5        33   2m 05s      2.3M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-abceb3..  claude_code  sonnet-5        89  33m 35s     71.3M"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     rollout-2026..  codex        5.6-terra       26      11s     27.1K"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-afdf29..  claude_code  sonnet-5        89  30m 12s     56.7M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-acd400..  claude_code  sonnet-5        89  32m 47s     69.4M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-ae5351..  claude_code  sonnet-5        89  28m 11s     62.1M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a73ec5..  claude_code  opus-5          90   1h 10m     57.4M"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     agent-a8dadf..  claude_code  opus-5          26  13m 45s     11.9M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a8ad37..  claude_code  opus-5          89  32m 09s     30.8M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a7ece9..  claude_code  opus-5          78   4m 30s      4.8M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a47545..  claude_code  opus-5          78   5m 20s      6.7M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a41eeb..  claude_code  sonnet-5        90  54m 38s    122.3M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"#####"}</span>{"     agent-a91551..  claude_code  sonnet-5        99  21m 56s     37.6M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a623e1..  claude_code  opus-5          76   3m 07s      2.6M"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"##..."}</span>{"     agent-a26c3c..  claude_code  sonnet-5        50   5m 52s      6.9M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a1df66..  claude_code  sonnet-5        89  14m 52s     13.9M"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"##..."}</span>{"     agent-a1935b..  claude_code  opus-5          50  25m 19s     29.0M"}</span>,
+  <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  15 of these 20 left evidence; the rest are still claims."}</span></span>,
+  <span className="term-line"><span className="t-bold">{"  archie session show agent-a91551d9762035f6c"}</span></span>,
+];
 
 const HARNESSES =
   "Claude Code · Codex · Cursor · Antigravity · Gemini · Goose · Aider · " +
@@ -212,30 +287,11 @@ export const LandingPage: React.FC = () => {
           </div>
 
           <figure className="reveal" style={{ margin: 0 }}>
-            <div className="plate">
-              <video
-                className="term-demo"
-                width={1440}
-                height={900}
-                poster="/stats-1440.webp"
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="none"
-              >
-                <source src="/stats-demo-1440.webm" type="video/webm" />
-                <source src="/stats-demo-1440.mp4" type="video/mp4" />
-                <img
-                  src="/stats-demo-1440.gif"
-                  width={1440}
-                  height={900}
-                  alt="A terminal running archie stats: 3,981 sessions, 114.6 B tokens, an evidence ladder from unflown to CI verified, and the adapters and models behind the totals."
-                  loading="lazy"
-                  decoding="async"
-                />
-              </video>
-            </div>
+            <Terminal
+              command="archie stats"
+              lines={STATS_LINES}
+              ariaLabel="A terminal running archie stats: 3,981 sessions, 114.6 B tokens, an evidence ladder from unflown to CI verified, and the adapters and models behind the totals."
+            />
             <figcaption>
               The same laptop as the receipt above, on 2026-09-04. Three
               harnesses, seven months, one command.
@@ -243,30 +299,11 @@ export const LandingPage: React.FC = () => {
           </figure>
 
           <figure className="reveal" style={{ margin: 0, marginTop: "clamp(28px, 4vw, 44px)" }}>
-            <div className="plate">
-              <video
-                className="term-demo"
-                width={1440}
-                height={900}
-                poster="/sessions-demo-1440-poster.webp"
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="none"
-              >
-                <source src="/sessions-demo-1440.webm" type="video/webm" />
-                <source src="/sessions-demo-1440.mp4" type="video/mp4" />
-                <img
-                  src="/sessions-demo-1440.gif"
-                  width={1440}
-                  height={900}
-                  alt="A terminal running archie session list --limit 20: twenty recent sessions, each with its evidence ladder, adapter, model, score, duration, and tokens."
-                  loading="lazy"
-                  decoding="async"
-                />
-              </video>
-            </div>
+            <Terminal
+              command="archie session list --limit 20"
+              lines={SESSIONS_LINES}
+              ariaLabel="A terminal running archie session list --limit 20: twenty recent sessions, each with its evidence ladder, adapter, model, score, duration, and tokens."
+            />
             <figcaption>
               Twenty of those sessions, one line each. The dots are the
               same ladder, one row per run.
@@ -286,6 +323,7 @@ export const LandingPage: React.FC = () => {
             <div className="plate">
               <img
                 src="/explorer-1440.webp"
+                srcSet="/explorer-1440.webp 1x, /explorer-2880.webp 2x"
                 width={1440}
                 height={1040}
                 alt="The AgentWorth explorer showing one session, its evidence ladder, and the commands behind each rung quoted from the transcript."

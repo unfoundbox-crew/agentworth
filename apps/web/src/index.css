@@ -386,18 +386,13 @@ h1 .setup {
   box-shadow: 0 1px 2px rgba(17, 17, 19, 0.04),
     0 24px 60px -30px rgba(17, 17, 19, 0.28);
 }
-.plate img,
-.plate video {
+.plate img {
   display: block;
   width: 100%;
   height: auto;
   border-radius: 8px 8px 0 0;
   border: 1px solid var(--mv-border-soft);
   border-bottom: 0;
-}
-.plate video {
-  background: #15191f;
-  object-fit: cover;
 }
 /* A 1440-wide UI shrunk to phone width is unreadable, so below 760px the
    plate pans instead of scaling. The page body still never scrolls
@@ -407,8 +402,102 @@ h1 .setup {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
-  .plate img,
-  .plate video {
+  .plate img {
+    min-width: 680px;
+  }
+}
+
+/* =========================================================================
+   Terminal — real CLI output rendered as text, not a recording. The frame
+   is dark regardless of page theme (it replaces what used to be a captured
+   video), so its colours are literal, not the light/dark token pair —
+   same reasoning as .plate's literal white, just the other direction.
+   t-accent mirrors the dashboard's own evidence-ladder colour
+   (--mv-success for rung 3 and up); --mv-accent stays out of it, see the
+   file banner above.
+   ========================================================================= */
+.term-plate {
+  --term-bg: #14171d;
+  --term-bar: #1b1f27;
+  --term-fg: #d7dae1;
+  --term-dim: #6b7280;
+  border: 1px solid var(--mv-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--term-bg);
+  box-shadow: 0 1px 2px rgba(17, 17, 19, 0.04),
+    0 24px 60px -30px rgba(17, 17, 19, 0.28);
+}
+.term-bar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--term-bar);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.term-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+}
+.term-body {
+  margin: 0;
+  padding: 16px 18px 20px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--term-fg);
+  -webkit-font-smoothing: antialiased;
+}
+.term-body code {
+  display: block;
+  white-space: pre;
+}
+.term-line {
+  display: block;
+}
+.term-cmd {
+  display: block;
+  margin-bottom: 6px;
+}
+.term-prompt {
+  color: var(--term-dim);
+}
+.t-accent {
+  color: var(--mv-success);
+}
+.t-dim {
+  color: var(--term-dim);
+}
+.t-bold {
+  font-weight: 600;
+  color: #f4f5f7;
+}
+/* Hidden pre-reveal only once JS opts a plate into the staggered reveal
+   (see Terminal.tsx); with no JS or reduced motion, lines just render
+   visible — the base state above. */
+.term-anim .term-line:not(.term-cmd) {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--motion-slow) var(--ease-out),
+    transform var(--motion-slow) var(--ease-out);
+  transition-delay: var(--term-d, 0ms);
+}
+.term-anim.term-in .term-line:not(.term-cmd) {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .term-anim .term-line:not(.term-cmd) {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+@media (max-width: 760px) {
+  .term-body code {
     min-width: 680px;
   }
 }
