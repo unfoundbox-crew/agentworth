@@ -1,0 +1,55 @@
+{
+  "name": "dsh-plugin-agentworth",
+  "version": "0.1.18",
+  "description": "AgentWorth for DeepSeek Harness: the 13 read-only MCP tools over your local agent-history index, plus the agentworth skill. Your agents left receipts.",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "SKILL.md",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-mcp-client": "^0.1.1-rc.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-skill": "^0.1.1-rc.2"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "agentworth",
+    "mcp",
+    "tokens",
+    "cost",
+    "receipts",
+    "session-history",
+    "code-blame"
+  ],
+  "author": "Unfoundbox Crew",
+  "license": "Apache-2.0",
+  "homepage": "https://agentworth.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unfoundbox-crew/agentworth.git",
+    "directory": "packages/dsh-plugin-agentworth"
+  },
+  "bugs": {
+    "url": "https://github.com/unfoundbox-crew/agentworth/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

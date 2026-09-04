@@ -380,12 +380,12 @@ identifier and a budget counter, call `session_gate`, return either "allow" or
 
 | | Claude Code | dsh | Codex |
 | :--- | :--- | :--- | :--- |
-| Ships as | a hook script + a settings block | `dsh-plugin-archie`, its own MIT repo | dsh's `@deepseek-ai/dsh-hooks-codex` reading a Codex `hooks.json` |
+| Ships as | a hook script + a settings block, inside the `.claude-plugin/` plugin | a third row in `packages/dsh-plugin-agentworth` (the bundle that already mounts the MCP server and the skill; the separate `dsh-plugin-archie` repo this table first named is not needed) | dsh's `@deepseek-ai/dsh-hooks-codex` reading a Codex `hooks.json` |
 | Event | `Stop`, and `SubagentStop` | `agent/turn-stopping` | Codex `Stop`, mapped onto `agent/turn-stopping` |
 | Re-enters by | `hookSpecificOutput.additionalContext`, or `decision: "block"` with `reason` | pushing into the `next-step` inbox during the awaited dispatch | the same, through the compatibility layer |
 | Loop guard | `stop_hook_active`, plus an 8-block cap the harness enforces | the plugin's own, there is nothing under it | the plugin's own |
 | Session id from | `transcript_path` on stdin | persistence `root` + `cwd`, `transcript_path` is null | as dsh |
-| Needs a new repo | no | yes | no |
+| Needs a new repo | no | no | no |
 
 ### Claude Code
 

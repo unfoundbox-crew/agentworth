@@ -20,7 +20,7 @@ jobs:
       # v0.1.3 was tagged from a tree where Cargo.toml still said 0.1.2, so the
       # released binary reported the wrong version and the npm launcher (which
       # builds its download URL from package.json) could 404. Fail before building.
-      - name: Tag, Cargo.toml, package.json and plugin.json must agree
+      - name: Tag, Cargo.toml, package.json, plugin.json and the dsh bundle must agree
         shell: bash
         run: |
           TAG=${GITHUB_REF_NAME#v}
@@ -28,12 +28,16 @@ jobs:
           NPM=$(node -p "require('./packages/agentworth/package.json').version")
           PLUGIN=$(node -p "require('./.claude-plugin/plugin.json').version")
           PLUGIN_NPX=$(node -p "require('./.claude-plugin/plugin.json').mcpServers.agentworth.args.find(a => a.startsWith('agentworth@')).slice('agentworth@'.length)")
-          echo "tag=$TAG cargo=$CARGO npm=$NPM plugin=$PLUGIN plugin-npx=$PLUGIN_NPX"
+          DSH=$(node -p "require('./packages/dsh-plugin-agentworth/package.json').version")
+          DSH_NPX=$(grep -oE "agentworth@[0-9][^' ]*" packages/dsh-plugin-agentworth/cordis.patch.yml | head -1 | cut -d@ -f2)
+          echo "tag=$TAG cargo=$CARGO npm=$NPM plugin=$PLUGIN plugin-npx=$PLUGIN_NPX dsh=$DSH dsh-npx=$DSH_NPX"
           FAIL=0
           [ "$TAG" = "$CARGO" ] || { echo "::error::tag $TAG != Cargo.toml $CARGO"; FAIL=1; }
           [ "$TAG" = "$NPM" ]   || { echo "::error::tag $TAG != package.json $NPM"; FAIL=1; }
           [ "$TAG" = "$PLUGIN" ]     || { echo "::error::tag $TAG != .claude-plugin/plugin.json version $PLUGIN"; FAIL=1; }
           [ "$TAG" = "$PLUGIN_NPX" ] || { echo "::error::tag $TAG != .claude-plugin/plugin.json npx pin $PLUGIN_NPX"; FAIL=1; }
+          [ "$TAG" = "$DSH" ]     || { echo "::error::tag $TAG != packages/dsh-plugin-agentworth/package.json version $DSH"; FAIL=1; }
+          [ "$TAG" = "$DSH_NPX" ] || { echo "::error::tag $TAG != packages/dsh-plugin-agentworth/cordis.patch.yml npx pin $DSH_NPX"; FAIL=1; }
           if [ "$FAIL" = "1" ]; then
             echo "::error::Bump every version to $TAG and re-tag before releasing."
             exit 1
@@ -202,6 +206,23 @@ jobs:
               echo "::error::Add one on the agentworth package: Settings -> Trusted Publisher"
               echo "::error::  org/user: unfoundbox-crew, repo: agentworth, workflow: release.yml"
               echo "::error::  allowed actions: npm publish"
+            fi
+            exit 1
+          fi
+
+      # The dsh bundle is plain files, no binary: it publishes right after the
+      # launcher so `dsh plugin add dsh-plugin-agentworth` resolves the same
+      # version its cordis.patch.yml pins. The first publish of a new npm
+      # package cannot go through OIDC (the package has to exist before a
+      # Trusted Publisher can be attached to it), so a missing package is
+      # reported as its own error rather than as a generic failure.
+      - name: Publish dsh-plugin-agentworth to NPM (trusted publishing / OIDC)
+        working-directory: packages/dsh-plugin-agentworth
+        run: |
+          if ! npm publish --access public 2>&1 | tee /tmp/publish-dsh.log; then
+            if grep -qiE "trusted publisher|oidc|not configured|404|E404" /tmp/publish-dsh.log; then
+              echo "::error::dsh-plugin-agentworth: first publish by hand (npm publish from packages/dsh-plugin-agentworth), then add a Trusted Publisher:"
+              echo "::error::  org/user: unfoundbox-crew, repo: agentworth, workflow: release.yml, allowed actions: npm publish"
             fi
             exit 1
           fi
