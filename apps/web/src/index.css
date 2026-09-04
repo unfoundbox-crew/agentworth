@@ -375,6 +375,10 @@ h1 .setup {
 /* Literal white, not a token: the screenshot inside is a light-theme
    capture, so on a dark page the plate has to stay light or the image
    floats on a mismatched ground. */
+.plate-tall {
+  max-width: 720px;
+  margin: 0 auto;
+}
 .plate {
   border: 1px solid var(--mv-border);
   border-radius: 14px;
