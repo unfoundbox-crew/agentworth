@@ -4,22 +4,27 @@ import { trackEvent } from "../analytics";
 import { SiteHeader, SiteFooter, SCAN_CMD, CURL_CMD } from "./SiteChrome";
 
 /**
- * The outcome distribution from one real machine.
- *
- * Source: `archie stats` on the author's laptop, 2026-09-02, over an
- * index of 2,960 sessions. Every figure here is copied from that output —
- * nothing on this page is illustrative. All six rows together are the whole
- * index: 7 + 449 + 808 + 120 + 86 + 1,490 = 2,960, and the percentages sum
- * to 100.0. Keep it that way — a column a reader can add up is the point.
+ * One machine's receipt, copied from `archie stats --json` and
+ * `archie stats usage --period month --json` on the author's laptop on
+ * 2026-09-04 (index of 3,981 sessions, 2026-02-15 to 2026-09-03). Nothing
+ * here is illustrative. The dollar figure is the API list-price equivalent
+ * of the tokens, the same basis `archie stats usage` reports; the account
+ * behind most of it is a flat subscription. Verified means the session left
+ * a test, build, commit or CI result somebody else can check (rung 3 and up).
  */
-const RUNGS = [
-  { label: "Nothing verified, or still running", n: 1490, pct: 50.3, evidence: false },
-  { label: "The agent said it was done", n: 7, pct: 0.2, evidence: false },
-  { label: "Some files on disk changed", n: 449, pct: 15.2, evidence: false },
-  { label: "A test or a build passed", n: 808, pct: 27.3, evidence: true },
-  { label: "A commit landed in git", n: 120, pct: 4.1, evidence: true },
-  { label: "CI or a deploy went green", n: 86, pct: 2.9, evidence: true },
-];
+const RECEIPT = {
+  span: "2026-02-15 to 2026-09-03",
+  sessions: "3,981",
+  harnesses: "3 of 21",
+  tokens: "114.6 B",
+  input: "331 M",
+  output: "303 M",
+  cacheWrites: "2.5 B",
+  cacheReads: "111.4 B",
+  listPrice: "$48,463",
+  verified: "1,938 (48.7%)",
+  topModel: "claude-sonnet-5",
+};
 
 const HARNESSES =
   "Claude Code · Codex · Cursor · Antigravity · Gemini · Goose · Aider · " +
@@ -84,8 +89,6 @@ function useReveal() {
 export const LandingPage: React.FC = () => {
   const main = useReveal();
 
-  const verifiedPct = 34.3;
-  const indexed = 2960;
 
   return (
     <>
@@ -104,16 +107,17 @@ export const LandingPage: React.FC = () => {
               </p>
 
               <h1 className="rise" style={{ ["--i" as string]: 1 }}>
-                <span className="setup">Every agent says it&rsquo;s done.</span>
-                AgentWorth checks the git log.
+                <span className="setup">You&rsquo;re burning tokens you can&rsquo;t see.</span>
+                Archie reads the receipts.
               </h1>
 
               <p className="lede rise" style={{ ["--i" as string]: 2 }}>
-                Claude Code, Codex, Cursor and eighteen others already write
-                down everything they do, in dot-directories you have never
-                opened. AgentWorth reads those logs and checks each claim
-                against what actually happened &mdash;{" "}
-                <b>files changed, tests run, commits made, CI green</b>.
+                Which model made the mistake, what it cost, which run to
+                trust. The answers are in transcripts nobody reads: Claude
+                Code, Codex, Cursor and eighteen others write down everything
+                they do. AgentWorth reads those logs and turns every run into
+                a receipt &mdash; <b>tokens, cost, blunders, and what was
+                actually verified</b>.
               </p>
 
               <div className="rise" style={{ ["--i" as string]: 3 }}>
@@ -131,39 +135,66 @@ export const LandingPage: React.FC = () => {
               </p>
             </div>
 
-            <div className="ladder rise" style={{ ["--i" as string]: 3 }}>
-              <div className="ladder-head">
-                <h2>How far did it actually get?</h2>
-                <p>
-                  {indexed.toLocaleString()} sessions on one laptop, graded
-                </p>
+            <div className="receipt rise" style={{ ["--i" as string]: 3 }}>
+              <div className="receipt-head">
+                <span>* * * FLIGHT RECEIPT * * *</span>
+                <span className="muted">one laptop &middot; {RECEIPT.span}</span>
               </div>
-
-              {RUNGS.map((r, i) => (
-                <React.Fragment key={r.label}>
-                  {i === 3 && (
-                    <div className="ladder-rule">Evidence starts here</div>
-                  )}
-                  <div className={`rung${r.evidence ? " evidence" : ""}`}>
-                    <span
-                      className="bar"
-                      style={{ ["--w" as string]: `${r.pct * 1.24}%` }}
-                      aria-hidden="true"
-                    />
-                    <span className="label">{r.label}</span>
-                    <span className="n">
-                      {r.n.toLocaleString()} <em>{r.pct}%</em>
-                    </span>
-                  </div>
-                </React.Fragment>
-              ))}
-
-              <p className="ladder-foot">
-                Half of them never got far enough to tell, and the two rows
-                above the line are things an agent can say without doing much.
-                Only the last three left a trace someone else can check.{" "}
-                <b>{verifiedPct}% of all {indexed.toLocaleString()} cleared
-                that line.</b>
+              <div className="receipt-body">
+                <div className="row">
+                  <span className="k">SESSIONS INDEXED</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.sessions}</span>
+                </div>
+                <div className="row">
+                  <span className="k">HARNESSES ON THIS MACHINE</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.harnesses}</span>
+                </div>
+                <div className="row">
+                  <span className="k">TOTAL TOKENS</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.tokens}</span>
+                </div>
+                <div className="row sub">
+                  <span className="k">├─ input</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.input}</span>
+                </div>
+                <div className="row sub">
+                  <span className="k">├─ output</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.output}</span>
+                </div>
+                <div className="row sub">
+                  <span className="k">├─ cache writes</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.cacheWrites}</span>
+                </div>
+                <div className="row sub">
+                  <span className="k">└─ cache reads</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.cacheReads}</span>
+                </div>
+                <div className="row">
+                  <span className="k">AT API LIST PRICE</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.listPrice}</span>
+                </div>
+                <div className="row">
+                  <span className="k">VERIFIED: TEST, COMMIT OR CI</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.verified}</span>
+                </div>
+                <div className="row">
+                  <span className="k">TOP MODEL</span>
+                  <span className="dots" aria-hidden="true" />
+                  <span className="v">{RECEIPT.topModel}</span>
+                </div>
+              </div>
+              <p className="receipt-foot">
+                [flown] read from local disk, nothing uploaded. Yours prints
+                with <code className="mono">archie stats</code>.
               </p>
             </div>
           </div>

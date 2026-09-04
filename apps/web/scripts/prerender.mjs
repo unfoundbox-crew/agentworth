@@ -208,9 +208,9 @@ pages.push({
   route: '/',
   file: 'index.html',
   head: head({
-    title: "AgentWorth — every agent says it's done. Check the git log.",
+    title: "AgentWorth — you're burning tokens you can't see. Archie reads the receipts.",
     description:
-      'AgentWorth reads the session logs your AI coding agents already left on disk and checks what they claimed against files changed, tests run, commits made and CI. 21 harnesses, 100% local, nothing uploaded.',
+      'Which model made the mistake, what it cost, which run to trust. AgentWorth reads the session logs your AI coding agents already left on disk and turns every run into a receipt: tokens, cost, blunders, and what was verified. 21 harnesses, local only, nothing uploaded.',
     canonical: `${SITE}/`,
     imageAlt: 'AgentWorth — AI coding agent receipts and archaeology',
     feeds: FEEDS,
@@ -715,7 +715,7 @@ write(
   'llms.txt',
   `# AgentWorth
 
-> Every agent says it's done. AgentWorth checks the git log. It reads the session logs that AI coding agents already leave in your dotfiles, and grades each claimed outcome against what actually happened: files changed, tests run, commits made, CI green. Native Rust, local-only, nothing uploaded.
+> You're burning tokens you can't see. Archie reads the receipts. AgentWorth reads the session logs that AI coding agents already leave in your dotfiles, and grades each claimed outcome against what actually happened: files changed, tests run, commits made, CI green. Native Rust, local-only, nothing uploaded.
 
 AgentWorth indexes trajectories from 21 coding-agent harnesses into a local SQLite database, then scores each session on a five-rung evidence ladder — done claimed, artifact changed, test or build passed, commit observed, CI or deployment verified. Rungs 3 and above require a captured exit code, so "tests passed" means exit 0 rather than "a test command appeared in the transcript".
 
@@ -781,7 +781,7 @@ write(
   'llms-full.txt',
   `# AgentWorth — full text
 
-> Every agent says it's done. AgentWorth checks the git log. Generated ${downloads.fetchedAt} from ${SITE}. Source: ${REPO} (Apache-2.0).
+> You're burning tokens you can't see. Archie reads the receipts. Generated ${downloads.fetchedAt} from ${SITE}. Source: ${REPO} (Apache-2.0).
 
 ## Install
 
