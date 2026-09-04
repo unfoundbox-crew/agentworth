@@ -202,10 +202,37 @@ export const LandingPage: React.FC = () => {
 
         <section className="shot wrap">
           <div className="shot-head reveal">
+            <h2>Archie reads them.</h2>
+            <p>
+              <code className="mono">archie scan</code> indexes every agent
+              history on the machine. <code className="mono">archie stats</code>{" "}
+              prints the receipt: tokens by kind, cost, the models and
+              harnesses behind them, and how many runs left proof.
+            </p>
+          </div>
+
+          <figure className="reveal" style={{ margin: 0 }}>
+            <div className="plate plate-tall">
+              <img
+                src="/stats-1440.webp"
+                width={1086}
+                height={1440}
+                alt="A terminal running archie stats: 3,981 sessions, 114.6 B tokens, an evidence ladder from unflown to CI verified, and the adapters and models behind the totals."
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
+            <figcaption>
+              The same laptop as the receipt above, on 2026-09-04. Three
+              harnesses, seven months, one command.
+            </figcaption>
+          </figure>
+
+          <div className="shot-head reveal" style={{ marginTop: "clamp(48px, 7vw, 88px)" }}>
             <h2>Then open it and look.</h2>
             <p>
-              <code className="mono">agentworth serve</code> runs a local
-              explorer on your own index. Every session, what it claimed, and
+              <code className="mono">archie serve</code> runs a local explorer
+              on your own index. Every run, what it cost, what it claimed, and
               the evidence behind the claim.
             </p>
           </div>
@@ -216,15 +243,14 @@ export const LandingPage: React.FC = () => {
                 src="/explorer-1440.webp"
                 width={1440}
                 height={560}
-                alt="The AgentWorth explorer showing one session scored 89, with its outcome ladder: CI or deployment green, commit observed in git log, test or build passed, artifact changed on disk, and done claimed by the agent."
+                alt="The AgentWorth explorer showing one session, its evidence ladder, and the commands behind each rung quoted from the transcript."
                 loading="lazy"
                 decoding="async"
               />
             </div>
             <figcaption>
-              A real session from the index above &mdash; a 56-minute
-              claude-sonnet-5 run that scored 89, with the command behind each
-              rung quoted from the transcript.
+              One real session: a 56-minute claude-sonnet-5 run, with the
+              command behind each piece of evidence quoted from its transcript.
             </figcaption>
           </figure>
         </section>
