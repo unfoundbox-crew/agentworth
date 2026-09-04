@@ -375,10 +375,6 @@ h1 .setup {
 /* Literal white, not a token: the screenshot inside is a light-theme
    capture, so on a dark page the plate has to stay light or the image
    floats on a mismatched ground. */
-.plate-tall {
-  max-width: 720px;
-  margin: 0 auto;
-}
 .plate {
   border: 1px solid var(--mv-border);
   border-radius: 14px;
@@ -388,13 +384,18 @@ h1 .setup {
   box-shadow: 0 1px 2px rgba(17, 17, 19, 0.04),
     0 24px 60px -30px rgba(17, 17, 19, 0.28);
 }
-.plate img {
+.plate img,
+.plate video {
   display: block;
   width: 100%;
   height: auto;
   border-radius: 8px 8px 0 0;
   border: 1px solid var(--mv-border-soft);
   border-bottom: 0;
+}
+.plate video {
+  background: #15191f;
+  object-fit: cover;
 }
 /* A 1440-wide UI shrunk to phone width is unreadable, so below 760px the
    plate pans instead of scaling. The page body still never scrolls
@@ -404,7 +405,8 @@ h1 .setup {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
-  .plate img {
+  .plate img,
+  .plate video {
     min-width: 680px;
   }
 }

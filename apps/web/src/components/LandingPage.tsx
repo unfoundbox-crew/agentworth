@@ -212,19 +212,64 @@ export const LandingPage: React.FC = () => {
           </div>
 
           <figure className="reveal" style={{ margin: 0 }}>
-            <div className="plate plate-tall">
-              <img
-                src="/stats-1440.webp"
-                width={1086}
-                height={1440}
-                alt="A terminal running archie stats: 3,981 sessions, 114.6 B tokens, an evidence ladder from unflown to CI verified, and the adapters and models behind the totals."
-                loading="lazy"
-                decoding="async"
-              />
+            <div className="plate">
+              <video
+                className="term-demo"
+                width={1440}
+                height={900}
+                poster="/stats-1440.webp"
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="none"
+              >
+                <source src="/stats-demo-1440.webm" type="video/webm" />
+                <source src="/stats-demo-1440.mp4" type="video/mp4" />
+                <img
+                  src="/stats-demo-1440.gif"
+                  width={1440}
+                  height={900}
+                  alt="A terminal running archie stats: 3,981 sessions, 114.6 B tokens, an evidence ladder from unflown to CI verified, and the adapters and models behind the totals."
+                  loading="lazy"
+                  decoding="async"
+                />
+              </video>
             </div>
             <figcaption>
               The same laptop as the receipt above, on 2026-09-04. Three
               harnesses, seven months, one command.
+            </figcaption>
+          </figure>
+
+          <figure className="reveal" style={{ margin: 0, marginTop: "clamp(28px, 4vw, 44px)" }}>
+            <div className="plate">
+              <video
+                className="term-demo"
+                width={1440}
+                height={900}
+                poster="/sessions-demo-1440-poster.webp"
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="none"
+              >
+                <source src="/sessions-demo-1440.webm" type="video/webm" />
+                <source src="/sessions-demo-1440.mp4" type="video/mp4" />
+                <img
+                  src="/sessions-demo-1440.gif"
+                  width={1440}
+                  height={900}
+                  alt="A terminal running archie session list --limit 20: twenty recent sessions, each with its evidence ladder, adapter, model, score, duration, and tokens."
+                  loading="lazy"
+                  decoding="async"
+                />
+              </video>
+            </div>
+            <figcaption>
+              Twenty of those sessions, one line each. The dots are the
+              same ladder, one row per run.
             </figcaption>
           </figure>
 
@@ -242,15 +287,16 @@ export const LandingPage: React.FC = () => {
               <img
                 src="/explorer-1440.webp"
                 width={1440}
-                height={560}
+                height={1040}
                 alt="The AgentWorth explorer showing one session, its evidence ladder, and the commands behind each rung quoted from the transcript."
                 loading="lazy"
                 decoding="async"
               />
             </div>
             <figcaption>
-              One real session: a 56-minute claude-sonnet-5 run, with the
-              command behind each piece of evidence quoted from its transcript.
+              One real session: a 25-minute claude-sonnet-5 run on this repo,
+              with the command behind each piece of evidence quoted from its
+              transcript.
             </figcaption>
           </figure>
         </section>
