@@ -1,0 +1,23 @@
+# The dsh-plugin-agentworth bundle: two rows over dsh-base.
+#
+# The MCP row runs the same pinned command the Claude Code plugin uses, so the
+# native binary comes down through npx on first use and nothing has to be on
+# PATH. The pin is checked against the release tag by version-gate in
+# .github/workflows/release.yml; bump it with every release.
+#
+# The skill row is this package's own plugin (index.js): it registers the
+# agentworth skill from the bundled SKILL.md through ctx.skills.register(),
+# so the skill travels with the package and needs no filesystem root.
+
+- insert:
+    - id: mcp-agentworth
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: agentworth
+        transport: stdio
+        command: npx
+        args: ['-y', 'agentworth@0.1.18', 'mcp']
+        failOnStartupError: false
+
+    - id: agentworth-skill
+      name: dsh-plugin-agentworth

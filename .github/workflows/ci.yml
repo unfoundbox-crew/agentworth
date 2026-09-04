@@ -62,6 +62,7 @@ jobs:
               - 'packages/ui/**'
             launcher:
               - 'packages/agentworth/**'
+              - 'packages/dsh-plugin-agentworth/**'
 
   # No dedicated "docs_only" filter: docs-only is just the case where none of
   # the build-triggering filters above matched. Computed here instead of via
@@ -266,3 +267,10 @@ jobs:
       - name: Run npm launcher tests
         working-directory: packages/agentworth
         run: npm ci && npm test
+
+      # The dsh bundle has no dependencies to install; its tests pin the
+      # bundled SKILL.md to skills/agentworth/SKILL.md and the npx pin to the
+      # package version.
+      - name: Run dsh bundle tests
+        working-directory: packages/dsh-plugin-agentworth
+        run: npm test

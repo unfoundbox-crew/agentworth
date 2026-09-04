@@ -60,6 +60,7 @@ npx -y agentworth@latest scan
 | Method | Command | Description |
 | :--- | :--- | :--- |
 | **Claude Code plugin** | `/plugin marketplace add unfoundbox-crew/agentworth` then `/plugin install agentworth@agentworth` | MCP server plus skill in one step; the binary comes down through `npx` on first use. |
+| **DeepSeek Harness plugin** | `dsh plugin --profile <name> add dsh-plugin-agentworth` | Same MCP server and skill as one dsh bundle. |
 | **Agent Skill** | `npx skills add unfoundbox-crew/agentworth -g` | Installs global Agent Skill for AI coding agents. |
 | **NPX (Zero Install)** | `npx -y agentworth@latest scan` | Instant runner that executes the native binary on demand. |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs pre-built native binary to `~/.local/bin`. |
@@ -366,7 +367,13 @@ ever coloured as one.
 /plugin install agentworth@agentworth
 ```
 
-Anywhere else, or without the plugin, register it once:
+In DeepSeek Harness the bundle does the same (`packages/dsh-plugin-agentworth`):
+
+```bash
+dsh plugin --profile <name> add dsh-plugin-agentworth
+```
+
+Anywhere else, or without a plugin, register it once:
 
 ```bash
 claude mcp add agentworth --scope user -- archie mcp
@@ -486,7 +493,7 @@ There is no publish step to run by hand. Pushing a `v*` tag does everything —
 builds four targets, creates the GitHub Release, publishes to npm, then smoke
 tests `npx agentworth@<version>` on clean Ubuntu and macOS.
 
-Five files carry the version and `version-gate` fails the release if the tag
+Six files carry the version and `version-gate` fails the release if the tag
 disagrees with any of them:
 
 | File | What |
@@ -495,11 +502,12 @@ disagrees with any of them:
 | `Cargo.lock` | the ten `agentworth-*` workspace crates |
 | `packages/agentworth/package.json` | the npm package |
 | `apps/web/src/version.ts` | the badge on the marketing site |
-| `.claude-plugin/plugin.json` | the plugin, twice: `version` and the `agentworth@<version>` pin in the `npx` args |
+| `.claude-plugin/plugin.json` | the Claude Code plugin, twice: `version` and the `agentworth@<version>` pin in the `npx` args |
+| `packages/dsh-plugin-agentworth/` | the dsh bundle, twice: `package.json` `version` and the pin in `cordis.patch.yml` |
 
 ```bash
 git checkout -b release/vX.Y.Z origin/main
-# bump all five, then:
+# bump all six, then:
 gh pr create --base main --title "chore(release): vX.Y.Z"
 # merge once CI is green, then tag the merged commit:
 git tag -a vX.Y.Z <merged-sha> -m "..." && git push origin vX.Y.Z
