@@ -1,0 +1,37 @@
+{
+  "name": "agentworth",
+  "displayName": "AgentWorth",
+  "version": "0.1.18",
+  "description": "Your agents left receipts. Local-first forensics for the AI-agent histories already on your machine: token spend and cost, verified outcomes vs claims, blunders, handoffs, AI code blame. 20+ adapters (Claude Code, Codex, Gemini CLI, Cursor, OpenCode, Aider...). Native Rust, SQLite index, zero telemetry.",
+  "author": {
+    "name": "unfoundbox",
+    "url": "https://agentworth.dev"
+  },
+  "homepage": "https://agentworth.dev",
+  "repository": "https://github.com/unfoundbox-crew/agentworth",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agentworth",
+    "tokens",
+    "cost",
+    "usage",
+    "receipts",
+    "session-history",
+    "forensics",
+    "atif",
+    "code-blame",
+    "local-first",
+    "mcp"
+  ],
+  "mcpServers": {
+    "agentworth": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "agentworth@0.1.18",
+        "mcp"
+      ]
+    }
+  },
+  "skills": "./skills/"
+}

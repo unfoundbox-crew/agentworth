@@ -59,6 +59,7 @@ npx -y agentworth@latest scan
 
 | Method | Command | Description |
 | :--- | :--- | :--- |
+| **Claude Code plugin** | `/plugin marketplace add unfoundbox-crew/agentworth` then `/plugin install agentworth@agentworth` | MCP server plus skill in one step; the binary comes down through `npx` on first use. |
 | **Agent Skill** | `npx skills add unfoundbox-crew/agentworth -g` | Installs global Agent Skill for AI coding agents. |
 | **NPX (Zero Install)** | `npx -y agentworth@latest scan` | Instant runner that executes the native binary on demand. |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs pre-built native binary to `~/.local/bin`. |
@@ -358,7 +359,14 @@ ever coloured as one.
 
 ## MCP Server
 
-`archie mcp` exposes the local session index to any MCP client (Claude Code, Codex, Cursor) as a stdio server, so a session can ask "what was I doing in this repo yesterday" or "which sessions touched `api.ts`" directly, without a human opening the dashboard first. Register it once:
+`archie mcp` exposes the local session index to any MCP client (Claude Code, Codex, Cursor) as a stdio server, so a session can ask "what was I doing in this repo yesterday" or "which sessions touched `api.ts`" directly, without a human opening the dashboard first. In Claude Code the plugin registers it, with the skill, in one step:
+
+```
+/plugin marketplace add unfoundbox-crew/agentworth
+/plugin install agentworth@agentworth
+```
+
+Anywhere else, or without the plugin, register it once:
 
 ```bash
 claude mcp add agentworth --scope user -- archie mcp
@@ -478,7 +486,7 @@ There is no publish step to run by hand. Pushing a `v*` tag does everything —
 builds four targets, creates the GitHub Release, publishes to npm, then smoke
 tests `npx agentworth@<version>` on clean Ubuntu and macOS.
 
-Four files carry the version and `version-gate` fails the release if the tag
+Five files carry the version and `version-gate` fails the release if the tag
 disagrees with any of them:
 
 | File | What |
@@ -487,10 +495,11 @@ disagrees with any of them:
 | `Cargo.lock` | the ten `agentworth-*` workspace crates |
 | `packages/agentworth/package.json` | the npm package |
 | `apps/web/src/version.ts` | the badge on the marketing site |
+| `.claude-plugin/plugin.json` | the plugin, twice: `version` and the `agentworth@<version>` pin in the `npx` args |
 
 ```bash
 git checkout -b release/vX.Y.Z origin/main
-# bump all four, then:
+# bump all five, then:
 gh pr create --base main --title "chore(release): vX.Y.Z"
 # merge once CI is green, then tag the merged commit:
 git tag -a vX.Y.Z <merged-sha> -m "..." && git push origin vX.Y.Z
