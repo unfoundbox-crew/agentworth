@@ -13,7 +13,7 @@ import { SiteHeader, SiteFooter, SCAN_CMD, CURL_CMD } from "./SiteChrome";
  * a test, build, commit or CI result somebody else can check (rung 3 and up).
  */
 const RECEIPT = {
-  span: "2026-02-15 to 2026-09-03",
+  span: "Feb to Sep 2026",
   sessions: "3,981",
   harnesses: "3 of 21",
   tokens: "114.6 B",

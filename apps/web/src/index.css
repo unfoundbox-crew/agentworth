@@ -293,8 +293,10 @@ h1 .setup {
 }
 .receipt-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 12px;
+  gap: 4px 12px;
+  white-space: nowrap;
   padding: 14px 18px 12px;
   border-bottom: 1px dashed var(--mv-border);
   letter-spacing: 0.06em;
