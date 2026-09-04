@@ -995,7 +995,14 @@ impl AgentWorthMcpServer {
 impl ServerHandler for AgentWorthMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::from_build_env())
+            .with_server_info(Implementation {
+                name: "agentworth".to_owned(),
+                title: Some("AgentWorth".to_owned()),
+                version: env!("CARGO_PKG_VERSION").to_owned(),
+                description: None,
+                icons: None,
+                website_url: Some("https://agentworth.dev".to_owned()),
+            })
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
                 "Read-only local index of AI-agent session histories on this machine. Tools: \

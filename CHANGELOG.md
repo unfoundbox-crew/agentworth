@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **AgentWorth is a Claude Code plugin.** The repo carries `.claude-plugin/plugin.json` and is its own marketplace (`.claude-plugin/marketplace.json`), so `/plugin marketplace add unfoundbox-crew/agentworth` then `/plugin install agentworth@agentworth` gives Claude Code the 13 read-only MCP tools (over `npx -y agentworth@<version> mcp`) and the `agentworth` skill in one step, with no `claude mcp add` and no `npx skills add`. The skill moved to `skills/agentworth/SKILL.md`, which is where the plugin loader looks; the root `SKILL.md` is a symlink to it so `npx skills add` keeps working. `claude plugin validate . --strict` passes. The release version gate now checks the plugin manifest's `version` and its pinned `npx` package version too.
+
 ### Fixed
+
+- **The MCP server now introduces itself as `agentworth`** with its own version, not as `rmcp 3.2.0`. `Implementation::from_build_env()` reads the crate name at rmcp's build, not ours, so every client saw the SDK's name in `serverInfo`.
 
 - **`cargo install agentworth-cli` and `brew install .../tap/agentworth` are gone from every doc and hint.** No such crate was ever published to crates.io (confirmed: the registry returns 404) and no such Homebrew tap exists. Removed from both READMEs, the translated READMEs, the npm package README, SKILL.md, the launcher's missing-binary message, `docs/SHOW_HN.md`, and the marketing site's getting-started guide. Building from source still works: `cargo install --path apps/cli` from a checkout.
 - **`README.md`'s "100% offline" claim wasn't true**, and neither was the same line repeated in `docs/SHOW_HN.md`: the optional `archie session search` feature downloads a model on first run. Reworded to local-first / your data never leaves your machine, everywhere it appeared.
