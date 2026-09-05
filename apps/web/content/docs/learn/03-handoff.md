@@ -58,7 +58,9 @@ prefix of a session id works anywhere the full id does.
 
 `session_handoff` returns the same markdown to a coding agent mid-session.
 `session_carry_forward(repo, n)` returns the last few handoffs for a repo, newest
-first, so a session's *first* tool call can be the catch-up. Neither writes a
+first, so a session's *first* tool call can be the catch-up. `session_wake` is
+the shorter version of that first call: the checkout, the newest session's
+task, proof and loose ends, and the next step, in 30 lines. Neither writes a
 file — where the handoff lands is your business. See
 [MCP setup](/docs/learn/mcp-setup/).
 

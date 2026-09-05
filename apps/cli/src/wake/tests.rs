@@ -98,7 +98,7 @@ fn the_whole_document_fits_the_budget_and_answers_the_four_questions() {
     assert!(markdown.contains("**Task** port the loose-ends detector to Rust"));
     assert!(markdown.contains("**Last asked** thanks, stop there"));
     assert!(markdown.contains("**Outcome** rung 4, commit_observed"));
-    assert!(markdown.contains("**Proof** last passed `git commit"));
+    assert!(markdown.contains("**Proof** last passed `cargo test -p agentworth-storage`"));
     assert!(markdown.contains("**Changed** 1 file · lib.rs (2)"));
     assert!(markdown.contains("**Loose ends** (1)"));
     assert!(markdown.contains("delete the stale worktree"));
@@ -259,9 +259,15 @@ fn a_checkout_that_could_not_be_read_says_which_way_it_failed() {
             "Checkout: git unavailable",
             gap::GIT_UNAVAILABLE,
         ),
+        (
+            CheckoutProbe::Unreadable,
+            "Checkout: git did not answer in time",
+            gap::GIT_TIMED_OUT,
+        ),
     ] {
         let report = build_wake_without_session("unfoundbox/agentworth", probe, "/tmp/x", None);
         assert!(report.checkout.is_none());
+        assert_ne!(report.checkout_state, checkout_state::FOUND);
         assert!(report.gaps.iter().any(|g| g == expected_gap));
         assert!(render_markdown(&report).contains(expected));
     }
@@ -305,7 +311,18 @@ fn fifty_loose_ends_forty_files_and_two_hundred_commands_still_fit_in_thirty_lin
     }
     trace.recalculate_stats();
 
-    let report = report_from(&trace, Some("a very long day"));
+    let mut report = report_from(&trace, Some("a very long day"));
+    report.before = (0..20)
+        .map(|i| PriorSession {
+            session_id: format!("older-{i}"),
+            started_at: trace.started_at,
+            outcome_rung: Some(3),
+            outcome_kind: Some("test_or_build_passed".to_string()),
+            task: Some(format!(
+                "session number {i}, which also had a long prompt behind it"
+            )),
+        })
+        .collect();
     let session = report.session.as_ref().expect("a session");
     assert_eq!(session.files.len(), 3, "the section carries three rows");
     assert_eq!(session.files_total, 40, "and states the true total");
@@ -463,5 +480,85 @@ fn a_path_under_the_home_directory_is_shortened_to_a_tilde() {
     assert!(
         render_markdown(&report).contains("Checkout ~/code/unfoundbox/agentworth"),
         "the home directory is shortened, never lengthened"
+    );
+}
+
+/// A bounded scan that ran out of budget found no session *yet*. Reporting that as "no session
+/// for this repo" is a partial answer wearing a complete one's clothes.
+#[test]
+fn a_scan_that_ran_out_of_budget_says_so_rather_than_claiming_no_session() {
+    let mut report = build_wake_without_session(
+        "unfoundbox/agentworth",
+        checkout(),
+        "/Users/x/code/unfoundbox/agentworth",
+        Some(scanned_at()),
+    );
+    assert!(!report.scan_exhausted);
+    report.mark_scan_exhausted(true);
+
+    assert!(report.scan_exhausted);
+    assert!(report.gaps.iter().any(|g| g == gap::SCAN_BUDGET_EXHAUSTED));
+    report.mark_scan_exhausted(true);
+    assert_eq!(
+        report
+            .gaps
+            .iter()
+            .filter(|g| *g == gap::SCAN_BUDGET_EXHAUSTED)
+            .count(),
+        1,
+        "the gap is named once, however often it is marked"
+    );
+
+    let markdown = render_markdown(&report);
+    assert!(lines(&markdown) <= MAX_LINES, "{markdown}");
+    assert!(
+        markdown.contains("The newest 5,000 sessions held none for this repo"),
+        "{markdown}"
+    );
+
+    // Unexhausted, the sentence is absent rather than softened.
+    report.mark_scan_exhausted(false);
+    assert!(!render_markdown(&report).contains("older ones may exist"));
+}
+
+/// The early return for a repo with no sessions has no trace to build a repository rule from,
+/// which is exactly why it was the path that forgot to redact at all.
+#[test]
+fn the_no_session_document_is_redacted_unless_raw_was_asked_for() {
+    use std::sync::Arc;
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/x".to_string());
+    let workspace = std::path::PathBuf::from(format!("{home}/code/unfoundbox/agentworth"));
+    let storage = Arc::new(agentworth_storage::Storage::open_in_memory().expect("open storage"));
+    let scanner = Scanner::new(Arc::clone(&storage));
+
+    let redacted = load_wake(
+        &storage,
+        &scanner,
+        "unfoundbox/agentworth",
+        &workspace,
+        WakeOptions { include_raw: false },
+    )
+    .expect("wake with no session");
+    assert!(redacted.session.is_none());
+    assert!(redacted.receipt.redacted);
+    assert!(
+        !redacted.workspace.contains(&home),
+        "the home directory must not survive redaction: {}",
+        redacted.workspace
+    );
+
+    let raw = load_wake(
+        &storage,
+        &scanner,
+        "unfoundbox/agentworth",
+        &workspace,
+        WakeOptions { include_raw: true },
+    )
+    .expect("wake with no session");
+    assert!(!raw.receipt.redacted);
+    assert!(
+        raw.workspace.contains(&home),
+        "include_raw is the opt-in, and it opts in"
     );
 }

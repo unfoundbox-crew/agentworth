@@ -1022,6 +1022,10 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_file_modifications_session ON file_modifications(session_id);
             CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
             CREATE INDEX IF NOT EXISTS idx_session_risk_demoted ON session_risk(demoted_claims);
+            -- `list_sessions_for_repo` orders by last activity, not start time, so the
+            -- bounded newest-first scan needs its own expression index to stay bounded.
+            CREATE INDEX IF NOT EXISTS idx_sessions_last_activity
+                ON sessions(COALESCE(ended_at, started_at));
 
             "#,
         )?;
@@ -3573,7 +3577,7 @@ impl Storage {
 /// `extract_repository_or_workspace` call over an already-fetched string, so this is cheap;
 /// the budget exists so an index that grows to six figures can't turn one handoff lookup into
 /// a full table scan.
-const REPO_SCAN_BUDGET: usize = 5_000;
+pub const REPO_SCAN_BUDGET: usize = 5_000;
 
 /// What `Storage::list_sessions_for_repo` found, and whether it ran out of budget looking.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -6504,6 +6508,23 @@ mod tests {
             vec!["early_start", "late_start"],
             "last activity (ended_at), not started_at, decides the order"
         );
+    }
+
+    /// `list_sessions_for_repo` scans newest-first by last activity, which is an expression and
+    /// so cannot use the plain `started_at` index. Without its own index the bounded scan reads
+    /// and sorts the whole table on every call.
+    #[test]
+    fn test_list_sessions_for_repo_ordering_has_its_own_index() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let conn = storage.conn.lock().expect("lock");
+        let found: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                ["idx_sessions_last_activity"],
+                |row| row.get(0),
+            )
+            .expect("query sqlite_master");
+        assert_eq!(found, 1, "the last-activity index is created on open");
     }
 
     #[test]

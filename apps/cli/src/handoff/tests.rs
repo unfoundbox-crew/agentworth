@@ -19,12 +19,19 @@ pub(crate) fn fixture_trace() -> AgentWorthTrace {
     let start = DateTime::parse_from_rfc3339("2026-09-01T14:02:00Z")
         .unwrap()
         .with_timezone(&Utc);
-    let mut trace = AgentWorthTrace::new("452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd", "claude_code", prov, start);
+    let mut trace = AgentWorthTrace::new(
+        "452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd",
+        "claude_code",
+        prov,
+        start,
+    );
 
     let mut push = |seq: u64, minutes: i64, payload: EventPayload| {
-        trace
-            .events
-            .push(NormalizedEvent::new(seq, start + Duration::minutes(minutes), payload));
+        trace.events.push(NormalizedEvent::new(
+            seq,
+            start + Duration::minutes(minutes),
+            payload,
+        ));
     };
 
     push(
@@ -176,13 +183,18 @@ pub(super) fn fixture_report(prompt_preview: Option<&str>) -> HandoffReport {
 fn assembles_every_section_from_the_fixture() {
     let report = fixture_report(Some("port the loose-ends detector to Rust"));
 
-    assert_eq!(report.task.as_deref(), Some("port the loose-ends detector to Rust"));
+    assert_eq!(
+        report.task.as_deref(),
+        Some("port the loose-ends detector to Rust")
+    );
     assert_eq!(report.receipt.repo, "unfoundbox/agentworth");
 
     // "I'll re-run the export once the schema lands" carries `once`, so it is gated, not
     // dropped. The other one is a genuine loose end.
     assert_eq!(report.loose_ends.len(), 1, "{:?}", report.loose_ends);
-    assert!(report.loose_ends[0].text.contains("delete the stale worktree"));
+    assert!(report.loose_ends[0]
+        .text
+        .contains("delete the stale worktree"));
 
     assert_eq!(report.decided.len(), 1);
     assert!(report.decided[0].text.contains("out of SQLite"));
@@ -190,7 +202,10 @@ fn assembles_every_section_from_the_fixture() {
     // The read of README.md is not a change, so it is not in "files touched".
     assert_eq!(report.files_total, 1);
     assert_eq!(report.files[0].path, "crates/storage/src/lib.rs");
-    assert_eq!(report.files[0].edits, 2, "two edits to the same file collapse to one row");
+    assert_eq!(
+        report.files[0].edits, 2,
+        "two edits to the same file collapse to one row"
+    );
 
     // `ls crates` ran too and is listed -- naming what ran is most of the point -- but it is
     // not verification-shaped, so it sorts below the test and the commit and is the first
@@ -198,7 +213,10 @@ fn assembles_every_section_from_the_fixture() {
     assert_eq!(report.ran_total, 3);
     assert!(report.ran[0].verification && report.ran[1].verification);
     assert_eq!(report.ran[2].command, "ls crates");
-    assert!(report.ran.iter().any(|c| c.command.starts_with("cargo test")));
+    assert!(report
+        .ran
+        .iter()
+        .any(|c| c.command.starts_with("cargo test")));
     assert_eq!(report.ran[2].ending(), "exit not recorded");
     assert_eq!(report.ran[0].ending(), "exit 0");
 }
@@ -250,7 +268,13 @@ fn a_command_with_no_exit_code_falls_back_to_the_tool_result_and_says_so() {
     ));
     trace.recalculate_stats();
 
-    let report = build_handoff(&fixture_summary(None), &trace, &[], None, HandoffOptions::default());
+    let report = build_handoff(
+        &fixture_summary(None),
+        &trace,
+        &[],
+        None,
+        HandoffOptions::default(),
+    );
     assert_eq!(report.ran.len(), 1);
     assert_eq!(report.ran[0].exit_code, None);
     assert_eq!(report.ran[0].failed, Some(true));
@@ -264,7 +288,9 @@ fn a_command_with_no_exit_code_falls_back_to_the_tool_result_and_says_so() {
 #[test]
 fn outcome_reports_the_highest_rung_reached() {
     let report = fixture_report(None);
-    let outcome = report.outcome.expect("a commit ran, so there is an outcome");
+    let outcome = report
+        .outcome
+        .expect("a commit ran, so there is an outcome");
     assert_eq!(outcome.rung, 4);
     assert_eq!(outcome.kind, "commit_observed");
 }
@@ -304,7 +330,10 @@ fn loose_ends_can_be_switched_off_and_the_gap_says_so() {
         },
     );
     assert!(report.loose_ends.is_empty());
-    assert!(report.gaps.iter().any(|g| g == gap::LOOSE_ENDS_NOT_REQUESTED));
+    assert!(report
+        .gaps
+        .iter()
+        .any(|g| g == gap::LOOSE_ENDS_NOT_REQUESTED));
 }
 
 #[test]
@@ -328,7 +357,13 @@ fn a_session_with_nothing_in_it_gets_a_receipt_and_no_body() {
     ));
     trace.recalculate_stats();
 
-    let report = build_handoff(&fixture_summary(None), &trace, &[], None, HandoffOptions::default());
+    let report = build_handoff(
+        &fixture_summary(None),
+        &trace,
+        &[],
+        None,
+        HandoffOptions::default(),
+    );
     assert!(report.body_is_empty());
 
     let markdown = render_markdown(&report, DEFAULT_MAX_LINES);
@@ -345,7 +380,9 @@ fn markdown_carries_a_receipt_on_the_document_and_on_every_line() {
 
     assert!(markdown.starts_with("# Session 452c23fd · unfoundbox/agentworth · 2026-09-01 14:02"));
     assert!(markdown.contains("**Outcome** rung 4, commit_observed"));
-    assert!(markdown.contains("session 452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd · claude_code · generated"));
+    assert!(
+        markdown.contains("session 452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd · claude_code · generated")
+    );
     assert!(markdown.contains("index last updated 2026-09-01T18:58Z"));
     assert!(markdown.contains("## Not in this handoff"));
 
@@ -378,8 +415,14 @@ fn the_line_budget_is_a_ceiling_and_truncation_is_stated() {
             lines <= budget,
             "budget {budget} exceeded: {lines} lines\n{markdown}"
         );
-        assert!(markdown.contains("## Not in this handoff"), "the note is never truncated");
-        assert!(markdown.contains("index last updated"), "the receipt is never truncated");
+        assert!(
+            markdown.contains("## Not in this handoff"),
+            "the note is never truncated"
+        );
+        assert!(
+            markdown.contains("index last updated"),
+            "the receipt is never truncated"
+        );
         // Nothing goes missing quietly: either a section is truncated and says so, or it is
         // dropped whole and gets named.
         assert!(
@@ -392,13 +435,19 @@ fn the_line_budget_is_a_ceiling_and_truncation_is_stated() {
     // section has to be named as dropped rather than vanishing.
     assert!(render_markdown(&report, 40).contains("more, not shown"));
     let tight = render_markdown(&report, 20);
-    assert!(tight.contains("Dropped whole, for room: Files touched (60)"), "{tight}");
+    assert!(
+        tight.contains("Dropped whole, for room: Files touched (60)"),
+        "{tight}"
+    );
 
     // Given room for everything, nothing is cut and nothing apologises for being cut.
     let roomy = render_markdown(&report, MAX_LINES_CEILING);
     assert!(!roomy.contains("more, not shown"), "{roomy}");
     assert!(!roomy.contains("Dropped whole"), "{roomy}");
-    assert!(roomy.contains("crates/thing/src/file_59.rs"), "all 60 rows are present");
+    assert!(
+        roomy.contains("crates/thing/src/file_59.rs"),
+        "all 60 rows are present"
+    );
 }
 
 #[test]
@@ -453,7 +502,8 @@ fn redaction_masks_paths_commands_and_quoted_text_through_one_instance() {
     let trace = fixture_trace();
     let mut report = fixture_report(Some("work in /Users/x/code/unfoundbox/agentworth"));
     report.ran.push(RanCommand {
-        command: "curl -H 'Authorization: Bearer sk-ant-abcdefghijklmnopqrstuvwxyz012345'".to_string(),
+        command: "curl -H 'Authorization: Bearer sk-ant-abcdefghijklmnopqrstuvwxyz012345'"
+            .to_string(),
         exit_code: Some(0),
         failed: Some(false),
         at: report.receipt.started_at,
@@ -475,7 +525,10 @@ fn redaction_masks_paths_commands_and_quoted_text_through_one_instance() {
         !markdown.contains("agentworth/fixture.jsonl"),
         "the session's own source path must be masked"
     );
-    assert!(markdown.contains("· redacted"), "the receipt says the copy is redacted");
+    assert!(
+        markdown.contains("· redacted"),
+        "the receipt says the copy is redacted"
+    );
 
     // The unredacted report is untouched -- `redacted` returns a copy, same guarantee
     // `Redactor::redact_trace` already gives.

@@ -1390,3 +1390,125 @@ fn test_stats_ladder_group_by_accepts_effort_and_rejects_anything_else() {
         serde_json::from_value(serde_json::json!({ "by": "worktree" }));
     assert!(params.is_err(), "by must reject anything off the four axes");
 }
+
+// -----------------------------------------------------------------------------
+// session_wake (docs/specs/wake.md)
+// -----------------------------------------------------------------------------
+
+use super::params::WakeParams;
+
+#[test]
+fn test_wake_include_raw_defaults_false() {
+    let params: WakeParams = serde_json::from_value(serde_json::json!({})).unwrap();
+    assert!(
+        !params.include_raw,
+        "redacted is the default for every tool that can carry event or file content"
+    );
+    assert_eq!(params.workspace, None);
+    assert_eq!(params.repo, None);
+}
+
+#[tokio::test]
+async fn test_session_wake_assembles_the_document_for_a_seeded_repo() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd";
+    seed_fixture_session(&storage, dir.path(), id, "2026-09-01");
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+
+    let workspace = tempfile::tempdir().unwrap();
+    let value = call_result_json(
+        server
+            .session_wake(Parameters(WakeParams {
+                workspace: Some(workspace.path().to_string_lossy().to_string()),
+                repo: Some("unfoundbox/agentworth".to_string()),
+                include_raw: true,
+            }))
+            .await
+            .expect("wake for a seeded repo"),
+    );
+    let markdown = value["markdown"].as_str().expect("markdown");
+
+    assert!(
+        markdown.lines().count() <= 30,
+        "the wake document is at most 30 lines:\n{markdown}"
+    );
+    assert!(markdown.contains("## Last session"), "{markdown}");
+    assert_eq!(value["report"]["checkout_state"], "not_a_checkout");
+    let gaps: Vec<&str> = value["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g.as_str().unwrap())
+        .collect();
+    assert!(gaps.contains(&"not_a_git_checkout"), "{gaps:?}");
+}
+
+#[tokio::test]
+async fn test_session_wake_unknown_repo_is_not_an_error() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+    let workspace = tempfile::tempdir().unwrap();
+
+    let value = call_result_json(
+        server
+            .session_wake(Parameters(WakeParams {
+                workspace: Some(workspace.path().to_string_lossy().to_string()),
+                repo: Some("nobody/nothing".to_string()),
+                include_raw: false,
+            }))
+            .await
+            .expect("no session for a repo is not an error"),
+    );
+
+    assert!(value["report"]["session"].is_null());
+    let gaps: Vec<&str> = value["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g.as_str().unwrap())
+        .collect();
+    assert!(gaps.contains(&"no_session_for_repo"), "{gaps:?}");
+}
+
+#[tokio::test]
+async fn test_session_wake_is_redacted_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open_in_memory().unwrap();
+    let id = "452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd";
+    seed_fixture_session(&storage, dir.path(), id, "2026-09-01");
+    let server = AgentWorthMcpServer::new(Arc::new(storage));
+    let workspace = tempfile::tempdir().unwrap();
+
+    let redacted = call_result_json(
+        server
+            .session_wake(Parameters(WakeParams {
+                workspace: Some(workspace.path().to_string_lossy().to_string()),
+                repo: Some("unfoundbox/agentworth".to_string()),
+                include_raw: false,
+            }))
+            .await
+            .expect("wake for a seeded repo"),
+    );
+    let redacted_markdown = redacted["markdown"].as_str().expect("markdown");
+    assert!(
+        !redacted_markdown.contains("unfoundbox/agentworth"),
+        "the session's own repository identity must be masked by default:\n{redacted_markdown}"
+    );
+
+    let raw = call_result_json(
+        server
+            .session_wake(Parameters(WakeParams {
+                workspace: Some(workspace.path().to_string_lossy().to_string()),
+                repo: Some("unfoundbox/agentworth".to_string()),
+                include_raw: true,
+            }))
+            .await
+            .expect("wake for a seeded repo"),
+    );
+    let raw_markdown = raw["markdown"].as_str().expect("markdown");
+    assert!(
+        raw_markdown.contains("unfoundbox/agentworth"),
+        "include_raw opts back in:\n{raw_markdown}"
+    );
+}

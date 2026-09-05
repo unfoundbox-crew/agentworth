@@ -23,12 +23,10 @@ pub(crate) mod markdown;
 mod statements;
 
 use agentworth_core::Scanner;
-use agentworth_outcomes::{
-    outcome_rank, Evidence, ForgottenStatement, LooseEnd, OutcomeDetector,
-};
+use agentworth_outcomes::{outcome_rank, Evidence, ForgottenStatement, LooseEnd, OutcomeDetector};
 use agentworth_redaction::Redactor;
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, OutcomeEvidence, OutcomeKind, extract_repository_or_workspace,
+    extract_repository_or_workspace, AgentWorthTrace, EventPayload, OutcomeEvidence, OutcomeKind,
 };
 use agentworth_storage::{SessionSummary, Storage};
 use anyhow::{Context, Result};
@@ -288,7 +286,13 @@ pub fn handoff_from_trace(
         .with_context(|| format!("session '{session_id}' is not in the index"))?;
     let outcomes = OutcomeDetector::new().detect_outcomes(trace);
     let index_last_updated = storage.last_scanned_at().unwrap_or(None);
-    Ok(build_handoff(&summary, trace, &outcomes, index_last_updated, options))
+    Ok(build_handoff(
+        &summary,
+        trace,
+        &outcomes,
+        index_last_updated,
+        options,
+    ))
 }
 
 pub fn load_handoff(
@@ -330,15 +334,15 @@ pub fn build_handoff(
     // Derived from the trace rather than read from `session_compaction`, so `build_handoff`
     // keeps needing nothing but what is already in memory. The stored boundaries exist to spare
     // `forgotten_context` a re-read of a 68 MB JSONL; here the trace is already parsed.
-    let (mut forgotten, forgotten_total) = if options.include_forgotten && trace.stats.compaction_count > 0
-    {
-        let rounds = agentworth_schema::compaction_rounds(trace);
-        let diff = agentworth_outcomes::diff_compaction_rounds(trace, &rounds, None);
-        let total = diff.forgotten_total();
-        (diff.forgotten, total)
-    } else {
-        (Vec::new(), 0)
-    };
+    let (mut forgotten, forgotten_total) =
+        if options.include_forgotten && trace.stats.compaction_count > 0 {
+            let rounds = agentworth_schema::compaction_rounds(trace);
+            let diff = agentworth_outcomes::diff_compaction_rounds(trace, &rounds, None);
+            let total = diff.forgotten_total();
+            (diff.forgotten, total)
+        } else {
+            (Vec::new(), 0)
+        };
     forgotten.truncate(SECTION_HARD_CAP);
 
     let outcome = strongest_outcome_line(outcomes);
@@ -408,10 +412,13 @@ pub fn build_handoff(
 ///
 /// Reads are excluded: a handoff answers "what changed", and a session that read two hundred
 /// files and edited one should hand over the one.
-pub(crate) fn collect_files(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<FileTouch>, usize) {
+pub(crate) fn collect_files(
+    events: &[&agentworth_schema::NormalizedEvent],
+) -> (Vec<FileTouch>, usize) {
     use agentworth_schema::FileActionType;
 
-    let mut by_path: std::collections::HashMap<String, FileTouch> = std::collections::HashMap::new();
+    let mut by_path: std::collections::HashMap<String, FileTouch> =
+        std::collections::HashMap::new();
     for event in events {
         let EventPayload::FileAction { path, action, .. } = &event.payload else {
             continue;
@@ -445,8 +452,32 @@ pub(crate) fn collect_files(events: &[&agentworth_schema::NormalizedEvent]) -> (
     (files, total)
 }
 
-/// Every command the session ran, verification-shaped ones first, each carrying the strongest
-/// thing known about how it ended.
+/// Every command the session ran, one row each, verification-shaped ones first. A command run
+/// more than once collapses to its last run -- this is an inventory, and the same `cargo test`
+/// listed four times says nothing the one row does not. [`collect_runs`] is the uncollapsed
+/// list, for the callers that need to see a failure and its retry.
+fn collect_commands(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<RanCommand>, usize) {
+    let mut latest: std::collections::HashMap<String, RanCommand> =
+        std::collections::HashMap::new();
+    for run in collect_runs(events) {
+        latest.insert(run.command.clone(), run);
+    }
+
+    let mut ran: Vec<RanCommand> = latest.into_values().collect();
+    // Verification first, then anything that failed, then most recent -- the three things a
+    // next session actually needs off this list, in that order.
+    ran.sort_by(|a, b| {
+        b.verification
+            .cmp(&a.verification)
+            .then_with(|| b.failed.unwrap_or(false).cmp(&a.failed.unwrap_or(false)))
+            .then_with(|| b.sequence.cmp(&a.sequence))
+    });
+    let total = ran.len();
+    ran.truncate(SECTION_HARD_CAP);
+    (ran, total)
+}
+
+/// Every shell command the session ran, in sequence order, one entry per run.
 ///
 /// **Exit codes mostly are not in the events.** `docs/specs/handoff.md` proposes persisting a
 /// shell-command exit-code index on the assumption that "the events hold this; the index does
@@ -457,8 +488,12 @@ pub(crate) fn collect_files(events: &[&agentworth_schema::NormalizedEvent]) -> (
 /// receipt than an exit code and is labelled as such rather than rounded up to success.
 ///
 /// A command with nothing known about its ending is still listed. Naming which commands ran is
-/// most of what this section is for; claiming one passed when nothing said so is not.
-fn collect_commands(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<RanCommand>, usize) {
+/// most of what this is for; claiming one passed when nothing said so is not.
+///
+/// Kept per-run rather than per-command because `wake::Proof` needs to see the same command fail
+/// and then pass later, which is invisible once each command string collapses to its last run.
+/// The handoff's own inventory does that collapsing in [`collect_commands`] above.
+pub(crate) fn collect_runs(events: &[&agentworth_schema::NormalizedEvent]) -> Vec<RanCommand> {
     use agentworth_schema::{ToolCall, ToolResult};
 
     // call id -> did the harness report the call as an error.
@@ -474,8 +509,7 @@ fn collect_commands(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<RanC
         }
     }
 
-    let mut latest: std::collections::HashMap<String, RanCommand> =
-        std::collections::HashMap::new();
+    let mut runs = Vec::new();
     let mut pending_call: Option<String> = None;
 
     for event in events {
@@ -496,38 +530,29 @@ fn collect_commands(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<RanC
                     continue;
                 }
                 let failed = cmd.exit_code.map_or_else(
-                    || pending_call.as_ref().and_then(|id| errored.get(id)).copied(),
+                    || {
+                        pending_call
+                            .as_ref()
+                            .and_then(|id| errored.get(id))
+                            .copied()
+                    },
                     |code| Some(code != 0),
                 );
-                latest.insert(
-                    command.clone(),
-                    RanCommand {
-                        verification: is_verification_command(&command),
-                        command,
-                        exit_code: cmd.exit_code,
-                        failed,
-                        at: event.timestamp,
-                        sequence: event.sequence,
-                    },
-                );
+                runs.push(RanCommand {
+                    verification: is_verification_command(&command),
+                    command,
+                    exit_code: cmd.exit_code,
+                    failed,
+                    at: event.timestamp,
+                    sequence: event.sequence,
+                });
                 pending_call = None;
             }
             _ => {}
         }
     }
 
-    let mut ran: Vec<RanCommand> = latest.into_values().collect();
-    // Verification first, then anything that failed, then most recent -- the three things a
-    // next session actually needs off this list, in that order.
-    ran.sort_by(|a, b| {
-        b.verification
-            .cmp(&a.verification)
-            .then_with(|| b.failed.unwrap_or(false).cmp(&a.failed.unwrap_or(false)))
-            .then_with(|| b.sequence.cmp(&a.sequence))
-    });
-    let total = ran.len();
-    ran.truncate(SECTION_HARD_CAP);
-    (ran, total)
+    runs
 }
 
 /// Test-, build- or release-shaped commands: the ones whose exit code is evidence rather than
@@ -536,10 +561,33 @@ fn collect_commands(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<RanC
 pub(crate) fn is_verification_command(command: &str) -> bool {
     let lower = command.to_lowercase();
     const NEEDLES: &[&str] = &[
-        "test", "cargo build", "cargo check", "cargo clippy", "cargo fmt", "npm run", "pnpm run",
-        "yarn ", "make ", "pytest", "go build", "go vet", "tsc", "eslint", "vitest", "jest",
-        "git commit", "git push", "gh pr", "gh run", "gh workflow", "docker build", "mvn ",
-        "gradle", "ruff", "mypy", "nextest",
+        "test",
+        "cargo build",
+        "cargo check",
+        "cargo clippy",
+        "cargo fmt",
+        "npm run",
+        "pnpm run",
+        "yarn ",
+        "make ",
+        "pytest",
+        "go build",
+        "go vet",
+        "tsc",
+        "eslint",
+        "vitest",
+        "jest",
+        "git commit",
+        "git push",
+        "gh pr",
+        "gh run",
+        "gh workflow",
+        "docker build",
+        "mvn ",
+        "gradle",
+        "ruff",
+        "mypy",
+        "nextest",
     ];
     NEEDLES.iter().any(|n| lower.contains(n))
 }

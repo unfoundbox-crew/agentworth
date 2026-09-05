@@ -32,13 +32,15 @@ use super::params::{
     parse_rfc3339_opt, BlameFindParams, CarryForwardParams, CoverageStatsParams,
     ForgottenContextParams, LadderParams, OutcomeRateParams, PacingWindowParams, SessionAsksParams,
     SessionGetParams, SessionHandoffParams, SessionsFindParams, SuspectCommitsParams,
-    UsagePeriodParam, UsageSummaryParams,
+    UsagePeriodParam, UsageSummaryParams, WakeParams,
 };
 use crate::asks::{self, AsksOptions, AsksReport};
 use crate::forgotten::{self, ForgottenOptions, ForgottenReport};
 use crate::handoff::{
     self, render_markdown, HandoffOptions, HandoffReport, DEFAULT_MAX_LINES, MAX_LINES_CEILING,
 };
+use crate::wake::{self, WakeOptions, WakeReport};
+use crate::wake::render_markdown as render_wake_markdown;
 
 /// Hard ceiling on `session_list`'s `limit`, so a remote model is forced to state how much
 /// it's asking for instead of getting a silently truncated "complete-looking" answer -- the
@@ -665,6 +667,59 @@ impl AgentWorthMcpServer {
     }
 
     #[tool(
+        description = "One call for a cold or just-compacted agent: the checkout it stands in \
+                        (branch, HEAD, dirty, ahead), the newest primary session for the repo \
+                        (task, last prompt, outcome rung, last passed and last failed \
+                        verification command and whether the failure was re-run, files \
+                        changed, loose ends, what it said it decided, what compaction \
+                        dropped), the two sessions before it one line each, and a Next block: \
+                        blocker and next step. At most 30 lines of markdown. Subagent \
+                        transcripts never answer for their parent. Every line is a row, a git \
+                        read, or a stat; missing facts are named in gaps, never padded. PR and \
+                        CI state are not in the index and the output says so. Redacted by \
+                        default; include_raw opts out per call. Does not scan."
+    )]
+    pub(crate) async fn session_wake(
+        &self,
+        Parameters(params): Parameters<WakeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let workspace = match params.workspace {
+            Some(w) => std::path::PathBuf::from(w),
+            None => std::env::current_dir().map_err(|e| {
+                McpError::invalid_params(
+                    format!("workspace not given and the server's working directory could not \
+                              be read: {e:#}"),
+                    None,
+                )
+            })?,
+        };
+        let repo = params
+            .repo
+            .unwrap_or_else(|| extract_repository_or_workspace(&workspace.to_string_lossy()));
+        let include_raw = params.include_raw;
+
+        let storage = self.storage.clone();
+        let scanner = self.scanner.clone();
+
+        let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+            let options = WakeOptions { include_raw };
+            let report: WakeReport =
+                wake::load_wake(&storage, &scanner, &repo, &workspace, options)?;
+
+            Ok(json!({
+                "markdown": render_wake_markdown(&report),
+                "report": report,
+                "gaps": report.gaps,
+            }))
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("session_wake failed: {e:#}"), None))?;
+
+        Self::json_result(&value)
+    }
+
+    #[tool(
         description = "The decisions this session's compaction rounds threw away, quoted \
                         verbatim with a receipt on each. Compaction replaces the conversation \
                         with a summary in the model's view while the full transcript stays on \
@@ -1003,9 +1058,9 @@ impl ServerHandler for AgentWorthMcpServer {
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  session_list, session_show, repo_blame, stats_usage, window_show, \
                  agent_list, stats_outcomes, stats_ladder, session_handoff, session_carry_forward, \
-                 session_forgotten, session_asks, repo_suspect. Start a \
-                 session in a repo with session_carry_forward to read what recent sessions there \
-                 actually did; end one with session_handoff. If a session has compacted, \
+                 session_wake, session_forgotten, session_asks, repo_suspect. Start a \
+                 session with session_wake; session_carry_forward lists the last few handoffs \
+                 in full. End a session with session_handoff. If a session has compacted, \
                  session_forgotten returns the decisions its own summaries dropped. \
                  session_asks finds where a question's answer already landed, so it never \
                  needs re-asking. Before \

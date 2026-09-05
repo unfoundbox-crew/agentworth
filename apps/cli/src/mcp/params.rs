@@ -320,6 +320,22 @@ pub struct CarryForwardParams {
     pub include_subagents: bool,
 }
 
+/// Parameters for the `session_wake` tool (`docs/specs/wake.md`).
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct WakeParams {
+    /// Directory to read the checkout from and to derive `repo` from when `repo` is absent.
+    /// Defaults to the server's working directory.
+    pub workspace: Option<String>,
+    /// Repository/workspace key, as `session_list`'s `repo` and `session_carry_forward` take
+    /// it (e.g. `unfoundbox/agentworth`). Defaults to the key derived from `workspace`.
+    pub repo: Option<String>,
+    /// Return unredacted paths, commands and quoted sentences. Defaults to false -- redacted
+    /// is the default for every tool that can carry event or file content
+    /// (docs/specs/mcp-server.md, "What it must not expose").
+    #[serde(default)]
+    pub include_raw: bool,
+}
+
 /// Parameters for the `session_asks` tool (`docs/specs/asks.md`).
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SessionAsksParams {

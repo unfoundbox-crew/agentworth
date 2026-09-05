@@ -47,16 +47,19 @@ pub mod gap {
     };
 
     pub const GIT_UNAVAILABLE: &str = "git_unavailable";
+    pub const GIT_TIMED_OUT: &str = "git_timed_out";
     pub const NOT_A_GIT_CHECKOUT: &str = "not_a_git_checkout";
     pub const SOURCE_UNREADABLE: &str = "source_unreadable";
     pub const NO_SESSION_FOR_REPO: &str = "no_session_for_repo";
     pub const NO_USER_MESSAGE: &str = "no_user_message";
     pub const NO_LOOSE_ENDS: &str = "no_loose_ends";
+    pub const SCAN_BUDGET_EXHAUSTED: &str = "scan_budget_exhausted";
 
     /// Every gap this module can emit. Exists so a caller can validate a `gaps` list, and so the
     /// tests can hold the whole set to one naming rule.
     pub const ALL: &[&str] = &[
         GIT_UNAVAILABLE,
+        GIT_TIMED_OUT,
         NOT_A_GIT_CHECKOUT,
         SOURCE_UNREADABLE,
         NO_SESSION_FOR_REPO,
@@ -66,6 +69,7 @@ pub mod gap {
         NO_COMMANDS_RECORDED,
         NO_FILE_MODIFICATIONS,
         NO_LOOSE_ENDS,
+        SCAN_BUDGET_EXHAUSTED,
     ];
 }
 
@@ -73,6 +77,7 @@ pub mod gap {
 pub mod checkout_state {
     pub const FOUND: &str = "found";
     pub const NOT_A_CHECKOUT: &str = "not_a_checkout";
+    pub const UNREADABLE: &str = "unreadable";
     pub const GIT_UNAVAILABLE: &str = "git_unavailable";
 }
 
@@ -172,6 +177,10 @@ pub struct WakeReport {
     pub index: IndexFreshness,
     pub session: Option<WakeSession>,
     pub before: Vec<PriorSession>,
+    /// True when the bounded newest-first scan for this repo ran out of budget before it found
+    /// what it was asked for. Older sessions for the repo may exist past it, so "no session"
+    /// means "none in the newest `REPO_SCAN_BUDGET`" and has to read that way.
+    pub scan_exhausted: bool,
     pub next: Next,
     pub gaps: Vec<String>,
 }
@@ -184,6 +193,15 @@ pub struct WakeOptions {
 }
 
 impl WakeReport {
+    /// Records that the repo scan ran out of budget, and names the gap when it did. A partial
+    /// answer that reads as complete is the failure this whole surface exists to avoid.
+    pub fn mark_scan_exhausted(&mut self, exhausted: bool) {
+        self.scan_exhausted = exhausted;
+        if exhausted && !self.gaps.iter().any(|g| g == gap::SCAN_BUDGET_EXHAUSTED) {
+            self.gaps.push(gap::SCAN_BUDGET_EXHAUSTED.to_string());
+        }
+    }
+
     /// A copy with every free-text field run through `redactor`.
     ///
     /// One [`Redactor::for_trace`] instance built from the same trace, used for nothing else --
@@ -282,19 +300,23 @@ pub fn load_wake(
 
     let page = storage.list_sessions_for_repo(repo, SECTION_ROWS, false)?;
     let Some((newest, prior)) = page.sessions.split_first() else {
-        return Ok(build_wake_without_session(
-            repo,
-            checkout,
-            &workspace_str,
-            index_last_updated,
-        ));
+        let mut report =
+            build_wake_without_session(repo, checkout, &workspace_str, index_last_updated);
+        report.mark_scan_exhausted(page.scan_exhausted);
+        // No trace to build a repository rule from, but the workspace path still carries the
+        // user's home directory and their repository name. Redacted is the default here too.
+        return Ok(if options.include_raw {
+            report
+        } else {
+            report.redacted(&Redactor::new())
+        });
     };
 
     let trace = scanner.load_trace(&newest.session_id)?;
     let outcomes = OutcomeDetector::new().detect_outcomes(&trace);
     let source_changed = source_changed_since_scan(newest);
 
-    let report = build_wake(
+    let mut report = build_wake(
         newest,
         &trace,
         &outcomes,
@@ -304,6 +326,8 @@ pub fn load_wake(
         index_last_updated,
         source_changed,
     );
+
+    report.mark_scan_exhausted(page.scan_exhausted);
 
     if options.include_raw {
         Ok(report)
@@ -372,10 +396,8 @@ pub fn build_wake(
     let outcome = strongest_outcome_line(outcomes);
 
     let mut gaps = Vec::new();
-    match &checkout {
-        CheckoutProbe::NotACheckout => gaps.push(gap::NOT_A_GIT_CHECKOUT.to_string()),
-        CheckoutProbe::GitUnavailable => gaps.push(gap::GIT_UNAVAILABLE.to_string()),
-        CheckoutProbe::Found(_) => {}
+    if let Some(name) = checkout_gap(&checkout) {
+        gaps.push(name.to_string());
     }
     if source_changed_since_scan.is_none() {
         gaps.push(gap::SOURCE_UNREADABLE.to_string());
@@ -443,6 +465,7 @@ pub fn build_wake(
             forgotten_total,
         }),
         before: prior.iter().map(prior_session).collect(),
+        scan_exhausted: false,
         next,
         gaps,
     }
@@ -457,10 +480,8 @@ pub fn build_wake_without_session(
     index_last_updated: Option<DateTime<Utc>>,
 ) -> WakeReport {
     let mut gaps = vec![gap::NO_SESSION_FOR_REPO.to_string()];
-    match &checkout {
-        CheckoutProbe::NotACheckout => gaps.push(gap::NOT_A_GIT_CHECKOUT.to_string()),
-        CheckoutProbe::GitUnavailable => gaps.push(gap::GIT_UNAVAILABLE.to_string()),
-        CheckoutProbe::Found(_) => {}
+    if let Some(name) = checkout_gap(&checkout) {
+        gaps.push(name.to_string());
     }
 
     WakeReport {
@@ -481,6 +502,7 @@ pub fn build_wake_without_session(
         },
         session: None,
         before: Vec::new(),
+        scan_exhausted: false,
         next: Next {
             blocker: None,
             step: None,
@@ -489,10 +511,21 @@ pub fn build_wake_without_session(
     }
 }
 
+/// The gap a failed checkout probe names, if it failed.
+fn checkout_gap(probe: &CheckoutProbe) -> Option<&'static str> {
+    match probe {
+        CheckoutProbe::Found(_) => None,
+        CheckoutProbe::NotACheckout => Some(gap::NOT_A_GIT_CHECKOUT),
+        CheckoutProbe::Unreadable => Some(gap::GIT_TIMED_OUT),
+        CheckoutProbe::GitUnavailable => Some(gap::GIT_UNAVAILABLE),
+    }
+}
+
 fn state_name(probe: &CheckoutProbe) -> &'static str {
     match probe {
         CheckoutProbe::Found(_) => checkout_state::FOUND,
         CheckoutProbe::NotACheckout => checkout_state::NOT_A_CHECKOUT,
+        CheckoutProbe::Unreadable => checkout_state::UNREADABLE,
         CheckoutProbe::GitUnavailable => checkout_state::GIT_UNAVAILABLE,
     }
 }
@@ -572,16 +605,27 @@ fn ran_in(trace: &AgentWorthTrace) -> Option<RanIn> {
     (ran.cwd.is_some() || ran.git_branch.is_some()).then_some(ran)
 }
 
-/// The last verification command that passed, the last that failed, and whether that failure was
-/// ever retried successfully.
+/// The last test- or build-shaped command that passed, the last that failed, and whether that
+/// failure was ever retried successfully.
 ///
 /// Every run is kept, not the last run per command string: `cargo test` failing at 16:02 and
 /// passing at 16:31 is two runs, and collapsing them loses exactly the fact this section exists
 /// to report. A run whose ending is unknown counts as neither passed nor failed -- `handoff`
 /// refuses to round an unrecorded exit up to success and so does this.
+/// Test- and build-shaped commands only. `handoff::is_verification_command` also counts
+/// commits, pushes and `gh` calls, which is right for an inventory and wrong here: a commit
+/// proves the tree was recorded, not that anything passed, and the Outcome line already
+/// reports it. Without this, a session whose last act was a commit shows "last passed
+/// `git commit`" and hides the test run before it.
+fn is_proof_command(c: &RanCommand) -> bool {
+    const VCS: &[&str] = &["git commit", "git push", "gh pr", "gh run", "gh workflow"];
+    let lower = c.command.to_lowercase();
+    c.verification && !VCS.iter().any(|n| lower.contains(n))
+}
+
 fn build_proof(events: &[&NormalizedEvent]) -> Proof {
-    let runs = collect_runs(events);
-    let verification: Vec<&RanCommand> = runs.iter().filter(|c| c.verification).collect();
+    let runs = crate::handoff::collect_runs(events);
+    let verification: Vec<&RanCommand> = runs.iter().filter(|c| is_proof_command(c)).collect();
 
     let passed = |c: &RanCommand| c.exit_code == Some(0) || c.failed == Some(false);
     let failed =
@@ -610,68 +654,6 @@ fn build_proof(events: &[&NormalizedEvent]) -> Proof {
         ran_total: runs.len(),
         verification_total: verification.len(),
     }
-}
-
-/// Every shell command the session ran, in sequence order, one entry per run.
-///
-/// Same correlation as `handoff::collect_commands` -- shell-shaped tool call to tool result, the
-/// harness's `is_error` flag standing in for the exit code Claude Code never records -- and
-/// deliberately without its deduplication.
-fn collect_runs(events: &[&NormalizedEvent]) -> Vec<RanCommand> {
-    use agentworth_schema::{ToolCall, ToolResult};
-
-    let mut errored: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
-    for event in events {
-        if let EventPayload::ToolResult(ToolResult {
-            call_id: Some(id),
-            is_error,
-            ..
-        }) = &event.payload
-        {
-            errored.insert(id.clone(), *is_error);
-        }
-    }
-
-    let mut runs = Vec::new();
-    let mut pending_call: Option<String> = None;
-    for event in events {
-        match &event.payload {
-            EventPayload::ToolCall(ToolCall { id, name, .. }) => {
-                let lower = name.to_lowercase();
-                pending_call = if lower.contains("bash") || lower.contains("shell") {
-                    id.clone()
-                } else {
-                    None
-                };
-            }
-            EventPayload::ShellCommand(cmd) => {
-                let command = cmd.command.trim().to_string();
-                if command.is_empty() {
-                    continue;
-                }
-                let failed = cmd.exit_code.map_or_else(
-                    || {
-                        pending_call
-                            .as_ref()
-                            .and_then(|id| errored.get(id))
-                            .copied()
-                    },
-                    |code| Some(code != 0),
-                );
-                runs.push(RanCommand {
-                    verification: crate::handoff::is_verification_command(&command),
-                    command,
-                    exit_code: cmd.exit_code,
-                    failed,
-                    at: event.timestamp,
-                    sequence: event.sequence,
-                });
-                pending_call = None;
-            }
-            _ => {}
-        }
-    }
-    runs
 }
 
 fn strongest_outcome_line(outcomes: &[OutcomeEvidence]) -> Option<OutcomeLine> {

@@ -15,6 +15,10 @@ use crate::handoff::{FileTouch, RanCommand};
 /// more than this many lines, for any report, at any size of session.
 pub const MAX_LINES: usize = 30;
 
+/// How many earlier sessions the "Before that" block names. Two, because the block is context
+/// and the budget belongs to the session being woken into.
+const MAX_PRIOR: usize = 2;
+
 /// Renders the wake document. Never longer than [`MAX_LINES`] lines.
 ///
 /// The head, the checkout block, the "Next" block and the receipt are always present. Everything
@@ -94,13 +98,19 @@ pub fn render_markdown(report: &WakeReport) -> String {
                 "_No session for this repo in the index. `archie scan` indexes what is on disk._"
                     .to_string(),
             );
+            if report.scan_exhausted {
+                pre.push(format!(
+                    "_The newest {} sessions held none for this repo; older ones may exist._",
+                    crate::ui::thousands(agentworth_storage::REPO_SCAN_BUDGET as u64)
+                ));
+            }
         }
     }
 
     if !report.before.is_empty() {
         post.push(String::new());
         post.push("## Before that".to_string());
-        post.extend(report.before.iter().map(prior_line));
+        post.extend(report.before.iter().take(MAX_PRIOR).map(prior_line));
     }
 
     if report.session.is_some() {
@@ -126,17 +136,19 @@ pub fn render_markdown(report: &WakeReport) -> String {
     }
     ends.truncate(room);
 
-    pre.into_iter()
-        .chain(ends)
-        .chain(post)
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut lines: Vec<String> = pre.into_iter().chain(ends).chain(post).collect();
+    // The arithmetic above already fits every section a report can hold. This is the backstop:
+    // the ceiling is a promise to the caller, and a promise enforced by arithmetic alone is one
+    // a later section can break without anyone noticing.
+    lines.truncate(MAX_LINES);
+    lines.join("\n")
 }
 
 fn checkout_line(report: &WakeReport) -> String {
     match (&report.checkout, report.checkout_state.as_str()) {
         (Some(checkout), _) => found_checkout_line(checkout),
         (None, checkout_state::GIT_UNAVAILABLE) => "Checkout: git unavailable".to_string(),
+        (None, checkout_state::UNREADABLE) => "Checkout: git did not answer in time".to_string(),
         _ => "Checkout: not a git checkout".to_string(),
     }
 }

@@ -19,8 +19,10 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-/// How long any single `git` call may take before it is killed.
-const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the whole probe may take. One deadline for all eight calls rather than two seconds
+/// each: the point is that a waking agent is never left waiting, and eight two-second calls is
+/// sixteen seconds of waiting.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// What the checkout looks like right now. Every field is one `git` read; every one of them can
 /// be absent on its own without invalidating the rest.
@@ -39,13 +41,17 @@ pub struct Checkout {
     pub upstream: Option<String>,
 }
 
-/// The three answers a probe can give. "No git on this machine" and "this is not a repository"
-/// are different facts and the document says which one it got.
+/// The four answers a probe can give. "No git on this machine", "not a repository" and "git did
+/// not answer" are three different facts, and the document says which one it got rather than
+/// rounding all three down to the same missing line.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "state", content = "checkout")]
 pub enum CheckoutProbe {
     Found(Checkout),
     NotACheckout,
+    /// `git` was there and did not answer inside the deadline -- a repository on a stalled
+    /// network mount, or one large enough that the probe is not worth the wait.
+    Unreadable,
     GitUnavailable,
 }
 
@@ -56,12 +62,18 @@ pub fn probe_checkout(path: &Path) -> CheckoutProbe {
 
 /// Same probe against a named `git` binary, so a test can point at one that does not exist.
 pub fn probe_checkout_with_git(path: &Path, git: &str) -> CheckoutProbe {
-    let run = |args: &[&str]| run_git(git, path, args);
+    let deadline = Instant::now() + PROBE_TIMEOUT;
+    let run = |args: &[&str]| run_git(git, path, args, deadline);
 
     let root = match run(&["rev-parse", "--show-toplevel"]) {
-        Run::Ok(root) => root,
-        Run::Failed => return CheckoutProbe::NotACheckout,
         Run::Unavailable => return CheckoutProbe::GitUnavailable,
+        Run::TimedOut => return CheckoutProbe::Unreadable,
+        // An empty root is no root. Everything after this point degrades to `None` instead,
+        // because a checkout with an unreadable branch is still a checkout.
+        other => match other.value() {
+            Some(root) => root,
+            None => return CheckoutProbe::NotACheckout,
+        },
     };
 
     let git_dir = run(&["rev-parse", "--git-dir"]).value();
@@ -107,6 +119,8 @@ enum Run {
     Ok(String),
     /// `git` ran and said no: not a repository, no upstream, a detached HEAD.
     Failed,
+    /// The deadline passed with the call still running, or before it started.
+    TimedOut,
     /// `git` could not be started at all.
     Unavailable,
 }
@@ -131,12 +145,16 @@ impl Run {
     }
 }
 
-/// Runs one `git` command with a hard timeout, killing it if it overruns.
+/// Runs one `git` command against the probe's shared deadline, killing it if it overruns.
 ///
 /// stdout is drained on its own thread rather than after the wait: a `status` on a large
 /// repository fills the pipe, and a child blocked writing into a full pipe never exits, so
 /// polling `try_wait` alone would time out every large repository.
-fn run_git(git: &str, path: &Path, args: &[&str]) -> Run {
+fn run_git(git: &str, path: &Path, args: &[&str], deadline: Instant) -> Run {
+    if Instant::now() >= deadline {
+        return Run::TimedOut;
+    }
+
     let mut child = match Command::new(git)
         .arg("-C")
         .arg(path)
@@ -161,26 +179,37 @@ fn run_git(git: &str, path: &Path, args: &[&str]) -> Run {
         });
     }
 
-    let deadline = Instant::now() + CALL_TIMEOUT;
+    let mut timed_out = false;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
+                timed_out = true;
                 break None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-            Err(_) => break None,
+            // `try_wait` itself failed, so this process is not going to learn how the child
+            // ended. Kill and reap it rather than leaving it behind.
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
         }
     };
 
     match status {
-        Some(status) if status.success() => match rx.recv_timeout(CALL_TIMEOUT) {
-            Ok(out) => Run::Ok(out.trim().to_string()),
-            Err(_) => Run::Failed,
-        },
+        Some(status) if status.success() => {
+            // The child has already exited, so the reader thread is at most one buffer behind.
+            match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(out) => Run::Ok(out.trim().to_string()),
+                Err(_) => Run::Failed,
+            }
+        }
         Some(_) => Run::Failed,
+        None if timed_out => Run::TimedOut,
         None => Run::Failed,
     }
 }
@@ -273,6 +302,17 @@ mod tests {
         }
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(probe_checkout(dir.path()), CheckoutProbe::NotACheckout);
+    }
+
+    /// The deadline covers the whole probe, so a call that starts after it has passed never
+    /// spawns anything -- and says it timed out rather than that the answer was no.
+    #[test]
+    fn a_call_that_starts_past_the_deadline_times_out_without_spawning() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(matches!(
+            run_git("git", dir.path(), &["--version"], Instant::now()),
+            Run::TimedOut
+        ));
     }
 
     #[test]

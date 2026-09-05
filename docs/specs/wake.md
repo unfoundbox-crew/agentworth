@@ -89,14 +89,14 @@ written by a model.
 
 | Line | Source | When absent |
 | :--- | :--- | :--- |
-| Checkout, branch, HEAD, dirty, ahead | `git` run read-only in `workspace`, two-second timeout per call | `git_unavailable` or `not_a_git_checkout` in `gaps`; the line says which |
+| Checkout, branch, HEAD, dirty, ahead | `git` run read-only in `workspace`, one five-second deadline for the whole probe | `git_unavailable`, `not_a_git_checkout` or `git_timed_out` in `gaps`; the line says which |
 | Index scanned, source changed | `MAX(scanned_at)`; the session's `sources.mtime` against the file's mtime now | `source_unreadable` |
-| Last session | newest **primary** session for `repo` by last activity (`COALESCE(ended_at, started_at)`), subagent transcripts excluded | `no_session_for_repo` and the document stops after the checkout block |
+| Last session | newest **primary** session for `repo` by last activity (`COALESCE(ended_at, started_at)`), subagent transcripts excluded | `no_session_for_repo` and the document stops after the checkout block; `scan_budget_exhausted` as well when the bounded scan ran out before finding one, and the document says so in its own sentence |
 | Task | `sessions.prompt_preview` | `prompt_preview_empty` |
 | Last asked | the last user message in the trace that is not a compaction summary | `no_user_message` |
 | Ran in | the `cwd` and `gitBranch` the adapter recorded from the transcript's own records | line omitted; adapters other than Claude Code do not carry it |
 | Outcome | the same strongest-rung logic `session_handoff` uses | `no_outcome_detected` |
-| Proof | newest verification-shaped command that passed, newest that failed, and whether the failed one's exact command string ran again later and passed | `no_commands_recorded` |
+| Proof | newest test- or build-shaped command that passed, newest that failed, and whether the failed one's exact command string ran again later and passed; commits and pushes are the Outcome line's business, not proof | `no_commands_recorded` |
 | Changed | files written or edited, three most recent by name, with the total | `no_file_modifications` |
 | Loose ends | `agentworth_outcomes::find_loose_ends`, newest three | `no_loose_ends` |
 | Said it decided | `handoff::find_decisions`, newest one | omitted |
