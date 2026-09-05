@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use agentworth_adapter_sdk::SessionSource;
 use agentworth_outcomes::outcome_rank;
 use agentworth_schema::{
-    compaction_rounds, AgentWorthTrace, CompactionRound, EventPayload, FileActionType, OutcomeKind,
-    TokenUsage,
+    compaction_rounds, is_subagent_transcript, AgentWorthTrace, CompactionRound, EventPayload,
+    FileActionType, OutcomeKind, TokenUsage,
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -3275,8 +3275,9 @@ impl Storage {
     }
 
     /// The most recent non-stub sessions whose derived repository/workspace name equals
-    /// `repo`, newest first. Backs `carry_forward` and the "most recent session for the
-    /// caller's cwd" default on `session_handoff` (docs/specs/handoff.md).
+    /// `repo`, ordered by last activity (newest first). Backs `carry_forward` and the "most
+    /// recent session for the caller's cwd" default on `session_handoff`
+    /// (docs/specs/handoff.md) and `session_wake` (docs/specs/wake.md).
     ///
     /// **`repo` is not a stored column.** There is only `source_path`, and
     /// `extract_repository_or_workspace` derives the key from it at read time -- the same
@@ -3286,11 +3287,22 @@ impl Storage {
     /// `scan_exhausted` says plainly when the budget ran out before `limit` was reached
     /// rather than letting a partial answer look complete.
     ///
+    /// Ordered by `COALESCE(ended_at, started_at) DESC`, not `started_at`: a parent session
+    /// that ran all day should outrank a subagent it spawned at noon and finished quickly.
+    /// `include_subagents` filters out rows `agentworth_schema::is_subagent_transcript` flags
+    /// (subagent transcripts otherwise "win newest" because they start after their parent);
+    /// pass `true` for the old behaviour.
+    ///
     /// Deliberately no schema change: the derivation is a pure string function over a column
     /// that is already indexed and already read, and adding a stored `repo` column would need
     /// a migration plus a rescan to backfill, for a query that runs at most a handful of times
     /// per session.
-    pub fn list_sessions_for_repo(&self, repo: &str, limit: usize) -> Result<RepoSessionPage> {
+    pub fn list_sessions_for_repo(
+        &self,
+        repo: &str,
+        limit: usize,
+        include_subagents: bool,
+    ) -> Result<RepoSessionPage> {
         if limit == 0 {
             return Ok(RepoSessionPage {
                 sessions: Vec::new(),
@@ -3309,7 +3321,7 @@ impl Storage {
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE ({NON_STUB_SQL_PREDICATE})
-            ORDER BY sessions.started_at DESC
+            ORDER BY COALESCE(sessions.ended_at, sessions.started_at) DESC
             LIMIT {REPO_SCAN_BUDGET}
             "#
         ))?;
@@ -3322,6 +3334,9 @@ impl Storage {
             scanned += 1;
             let source_path: String = row.get(2)?;
             if extract_repository_or_workspace(&source_path) != repo {
+                continue;
+            }
+            if !include_subagents && is_subagent_transcript(&source_path) {
                 continue;
             }
             sessions.push(row_to_session_summary(row)?);
@@ -6372,7 +6387,7 @@ mod tests {
         }
 
         let page = storage
-            .list_sessions_for_repo("unfoundbox/agentworth", 10)
+            .list_sessions_for_repo("unfoundbox/agentworth", 10, false)
             .expect("repo lookup");
         let ids: Vec<&str> = page.sessions.iter().map(|s| s.session_id.as_str()).collect();
         assert_eq!(
@@ -6385,7 +6400,7 @@ mod tests {
 
         // A limit smaller than the match count truncates without claiming exhaustion.
         let page = storage
-            .list_sessions_for_repo("unfoundbox/agentworth", 1)
+            .list_sessions_for_repo("unfoundbox/agentworth", 1, false)
             .expect("repo lookup");
         assert_eq!(page.sessions.len(), 1);
         assert_eq!(page.sessions[0].session_id, "newest");
@@ -6393,7 +6408,7 @@ mod tests {
 
         // An unknown repo is an empty list, not an error.
         let page = storage
-            .list_sessions_for_repo("nobody/nothing", 3)
+            .list_sessions_for_repo("nobody/nothing", 3, false)
             .expect("repo lookup");
         assert!(page.sessions.is_empty());
 
@@ -6401,6 +6416,93 @@ mod tests {
         assert!(
             storage.last_scanned_at().expect("last scanned").is_some(),
             "four upserts must leave a scanned_at behind"
+        );
+    }
+
+    #[test]
+    fn test_list_sessions_for_repo_excludes_subagents_unless_asked() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base = Utc::now();
+
+        let parent_path =
+            "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/parent-uuid.jsonl";
+        let subagent_path = "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/\
+                              parent-uuid/subagents/agent-abc123.jsonl";
+
+        for (id, path, offset_secs) in
+            [("parent", parent_path, 0), ("subagent", subagent_path, 60)]
+        {
+            let prov = Provenance::new(path, "claude_code", 100, 1, format!("fp_{id}"));
+            let mut trace = AgentWorthTrace::new(
+                id,
+                "claude_code",
+                prov,
+                base + Duration::seconds(offset_secs),
+            );
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).expect("seed session");
+        }
+
+        let excluded = storage
+            .list_sessions_for_repo("unfoundbox/agentworth", 10, false)
+            .expect("repo lookup");
+        let ids: Vec<&str> = excluded.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["parent"],
+            "the subagent starts later than its parent but must not answer for it"
+        );
+
+        let included = storage
+            .list_sessions_for_repo("unfoundbox/agentworth", 10, true)
+            .expect("repo lookup");
+        let ids: Vec<&str> = included.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["subagent", "parent"], "include_subagents=true keeps both");
+    }
+
+    #[test]
+    fn test_list_sessions_for_repo_orders_by_last_activity_not_start() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base = Utc::now();
+
+        // "early_start" started first but ran all day; "late_start" started later but ended
+        // sooner. Last activity should rank "early_start" first.
+        let prov = Provenance::new(
+            "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/early.jsonl",
+            "claude_code",
+            100,
+            1,
+            "fp_early",
+        );
+        let mut early = AgentWorthTrace::new("early_start", "claude_code", prov, base);
+        early.stats.total_events = 5;
+        early.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+        early.ended_at = Some(base + Duration::hours(10));
+        storage.upsert_trace(&early).expect("seed early");
+
+        let prov = Provenance::new(
+            "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/late.jsonl",
+            "claude_code",
+            100,
+            1,
+            "fp_late",
+        );
+        let mut late =
+            AgentWorthTrace::new("late_start", "claude_code", prov, base + Duration::hours(1));
+        late.stats.total_events = 5;
+        late.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+        late.ended_at = Some(base + Duration::hours(2));
+        storage.upsert_trace(&late).expect("seed late");
+
+        let page = storage
+            .list_sessions_for_repo("unfoundbox/agentworth", 10, false)
+            .expect("repo lookup");
+        let ids: Vec<&str> = page.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["early_start", "late_start"],
+            "last activity (ended_at), not started_at, decides the order"
         );
     }
 

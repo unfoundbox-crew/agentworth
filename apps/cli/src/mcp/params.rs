@@ -313,6 +313,11 @@ pub struct CarryForwardParams {
     /// Same per-call raw opt-in `session_handoff` has, applied to every handoff returned.
     #[serde(default)]
     pub include_raw: bool,
+    /// Include subagent transcripts as their own entries. Defaults to false: a subagent
+    /// starts after its parent and would otherwise win "newest" for a session the parent is
+    /// still running (docs/specs/wake.md).
+    #[serde(default)]
+    pub include_subagents: bool,
 }
 
 /// Parameters for the `session_asks` tool (`docs/specs/asks.md`).

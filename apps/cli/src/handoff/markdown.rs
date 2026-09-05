@@ -316,7 +316,7 @@ fn clock(t: chrono::DateTime<chrono::Utc>) -> String {
 
 /// Collapses whitespace and caps length, so one quoted sentence can never become three lines
 /// and blow a budget that was allocated in lines.
-fn one_line(text: &str, max_chars: usize) -> String {
+pub(crate) fn one_line(text: &str, max_chars: usize) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= max_chars {
         return flat;

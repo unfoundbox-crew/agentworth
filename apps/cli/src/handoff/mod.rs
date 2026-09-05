@@ -19,7 +19,7 @@
 //! composes storage, outcomes, scoring and redaction, and is consumed by the CLI and the MCP
 //! tools, both of which are here.
 
-mod markdown;
+pub(crate) mod markdown;
 mod statements;
 
 use agentworth_core::Scanner;
@@ -408,7 +408,7 @@ pub fn build_handoff(
 ///
 /// Reads are excluded: a handoff answers "what changed", and a session that read two hundred
 /// files and edited one should hand over the one.
-fn collect_files(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<FileTouch>, usize) {
+pub(crate) fn collect_files(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<FileTouch>, usize) {
     use agentworth_schema::FileActionType;
 
     let mut by_path: std::collections::HashMap<String, FileTouch> = std::collections::HashMap::new();
@@ -533,7 +533,7 @@ fn collect_commands(events: &[&agentworth_schema::NormalizedEvent]) -> (Vec<RanC
 /// Test-, build- or release-shaped commands: the ones whose exit code is evidence rather than
 /// trivia. Deliberately a prefix/substring list and not a parser -- the cost of a false
 /// positive here is one extra line in a section that is already ranked, not a wrong claim.
-fn is_verification_command(command: &str) -> bool {
+pub(crate) fn is_verification_command(command: &str) -> bool {
     let lower = command.to_lowercase();
     const NEEDLES: &[&str] = &[
         "test", "cargo build", "cargo check", "cargo clippy", "cargo fmt", "npm run", "pnpm run",
@@ -561,4 +561,4 @@ fn outcome_kind_wire_name(kind: OutcomeKind) -> String {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

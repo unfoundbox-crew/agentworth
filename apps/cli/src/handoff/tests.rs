@@ -8,7 +8,7 @@ use chrono::Duration;
 /// it, stated one decision, ran a test and a commit, and touched two files. It is deliberately
 /// the shape a real working session has, so a change to any of the four sections shows up here
 /// rather than in a test that only exercises one of them.
-pub(super) fn fixture_trace() -> AgentWorthTrace {
+pub(crate) fn fixture_trace() -> AgentWorthTrace {
     let prov = Provenance::new(
         "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/fixture.jsonl",
         "claude_code",
@@ -135,7 +135,7 @@ pub(super) fn fixture_trace() -> AgentWorthTrace {
     trace
 }
 
-pub(super) fn fixture_summary(prompt_preview: Option<&str>) -> SessionSummary {
+pub(crate) fn fixture_summary(prompt_preview: Option<&str>) -> SessionSummary {
     SessionSummary {
         session_id: "452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd".to_string(),
         adapter: "claude_code".to_string(),

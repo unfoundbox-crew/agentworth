@@ -168,7 +168,7 @@ impl AgentWorthMcpServer {
             )
         })?;
         storage
-            .list_sessions_for_repo(&repo, 1)?
+            .list_sessions_for_repo(&repo, 1, false)?
             .sessions
             .into_iter()
             .next()
@@ -598,7 +598,8 @@ impl AgentWorthMcpServer {
                         `unfoundbox/agentworth`); a repo's worktrees all answer to one value. \
                         n defaults to 3, ceiling 10. Handoffs are listed, never merged -- \
                         merging two contradictory facts needs judgment about which is current, \
-                        and that is not in the index. Redacted by default."
+                        and that is not in the index. Subagent transcripts are excluded unless \
+                        include_subagents is true. Redacted by default."
     )]
     pub(crate) async fn session_carry_forward(
         &self,
@@ -619,9 +620,10 @@ impl AgentWorthMcpServer {
         let scanner = self.scanner.clone();
         let repo = params.repo.clone();
         let include_raw = params.include_raw;
+        let include_subagents = params.include_subagents;
 
         let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
-            let page = storage.list_sessions_for_repo(&repo, n)?;
+            let page = storage.list_sessions_for_repo(&repo, n, include_subagents)?;
             let mut handoffs = Vec::new();
             let mut unreadable = Vec::new();
 

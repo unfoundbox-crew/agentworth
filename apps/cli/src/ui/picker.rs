@@ -177,7 +177,7 @@ pub fn exit_ambiguous(ui: &Ui, json: bool, input: &str, candidates: &[SessionSum
 pub fn resolve_last(storage: &Storage) -> Result<Option<String>> {
     if let Some(repo) = current_repo() {
         if let Some(session) = storage
-            .list_sessions_for_repo(&repo, 1)?
+            .list_sessions_for_repo(&repo, 1, false)?
             .sessions
             .into_iter()
             .next()
