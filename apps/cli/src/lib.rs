@@ -8,6 +8,7 @@ pub mod handoff;
 pub mod mcp;
 pub mod server;
 pub mod ui;
+pub mod wake;
 
 pub use app::run;
 pub use commands::*;

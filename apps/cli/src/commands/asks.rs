@@ -144,7 +144,7 @@ fn resolve_and_load(
             .map(|d| extract_repository_or_workspace(&d.to_string_lossy()));
         if let Some(repo) = repo.as_deref() {
             if let Some(summary) = storage
-                .list_sessions_for_repo(repo, 1)?
+                .list_sessions_for_repo(repo, 1, false)?
                 .sessions
                 .into_iter()
                 .next()

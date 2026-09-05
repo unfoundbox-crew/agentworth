@@ -366,12 +366,13 @@ claude mcp add agentworth --scope user -- archie mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-13 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, plus the two handoff tools, `session_forgotten`, `session_asks`, and `repo_suspect` below. A client's `tools/list` shows 23: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.20. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+14 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, `session_wake`, plus the two handoff tools, `session_forgotten`, `session_asks`, and `repo_suspect` below. A client's `tools/list` shows 24: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.20. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
 
 ### The handoff, over MCP
 
 | Tool | What it answers |
 | :--- | :--- |
+| `session_wake(workspace?, repo?, include_raw?)` | "What was I doing?" in 30 lines: the checkout, the newest primary session's task, proof, loose ends, and the next step. The first call of a cold or just-compacted session. |
 | `session_handoff(session_id?, max_lines?, include_loose_ends?, include_raw?)` | "What did this session actually do?" — what it said it would do and never did, what it said it decided, which files changed, which commands ran and how they ended, the outcome rung reached, and how often the context was compacted. Returns markdown under a line budget (default 60, ceiling 120), the receipt every claim traces back to, and `gaps`. Defaults to the newest session for the repo the server runs in. |
 | `session_carry_forward(repo, n?, since?, max_lines?, include_raw?)` | "What happened in this repo recently?" — the last `n` handoffs (default 3, ceiling 10), newest first, so a session's *first* tool call can be the catch-up. A repo's worktrees all answer to one `repo` key. |
 

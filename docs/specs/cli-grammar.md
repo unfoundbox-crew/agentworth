@@ -27,6 +27,7 @@ move, so the removal date moved out to v0.1.20 instead.)
 | `export <id>` | `session export <id>` | |
 | `receipt <id>` | `session receipt <id>` | |
 | `handoff [id]` | `session handoff [id]` | |
+| — | `session wake` | new: the checkout, the newest session, proof, and next step, in 30 lines |
 | `forgotten [id]` | `session forgotten [id]` | |
 | `loose-ends [id]` | `session loose-ends [id]` | |
 | `asks` | `session asks` | lands with #97 |
@@ -92,6 +93,7 @@ moves, because the CLI name is what a person types and remembers.
 | `coverage_stats` | `agent_list` | `agent list` |
 | `outcome_rate` | `stats_outcomes` | `stats outcomes` |
 | `carry_forward` | `session_carry_forward` | — |
+| — | `session_wake` | `session wake` |
 | `forgotten_context` | `session_forgotten` | `session forgotten` |
 | `suspect_commits` | `repo_suspect` | `repo suspect` |
 

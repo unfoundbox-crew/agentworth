@@ -9,8 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`session_wake` and `archie session wake`** — one call for a cold or just-compacted agent: the checkout it stands in (branch, HEAD, dirty, ahead), the newest primary session for the repo (task, last prompt, outcome rung, last passed and last failed verification command and whether the failure was re-run, files changed, loose ends, what it said it decided, what compaction dropped), the two sessions before it one line each, and a Next block naming the blocker and the next step. At most 30 lines of markdown, measured at 21 on the fixture; every line is a row, a `git` read, or a stat call, and a missing fact is named in `gaps` rather than padded. Redacted by default; `include_raw`/`--redact` opts out per call. Never scans (`docs/specs/wake.md`).
+
 ### Fixed
 
+- **Subagent transcripts no longer answer for their parent.** A subagent starts after the parent it was spawned from, so it used to win "newest session" in `session_carry_forward` and the no-id default of `session_handoff` and `session_forgotten`. All three now resolve to primary sessions only. `session_carry_forward` gains `include_subagents` (default false) for the old behaviour, and `--last` on the CLI resolves the same way.
+- **The Claude adapter keeps `cwd` and `gitBranch`.** Claude Code writes both on nearly every record; the adapter parsed past them. The last non-empty value of each now lands in the trace's `workspace.cwd` / `workspace.git_branch` metadata, which `session_wake`'s "Ran in" line reads.
 - **`cargo install agentworth-cli` and `brew install .../tap/agentworth` are gone from every doc and hint.** No such crate was ever published to crates.io (confirmed: the registry returns 404) and no such Homebrew tap exists. Removed from both READMEs, the translated READMEs, the npm package README, SKILL.md, the launcher's missing-binary message, `docs/SHOW_HN.md`, and the marketing site's getting-started guide. Building from source still works: `cargo install --path apps/cli` from a checkout.
 - **`README.md`'s "100% offline" claim wasn't true**, and neither was the same line repeated in `docs/SHOW_HN.md`: the optional `archie session search` feature downloads a model on first run. Reworded to local-first / your data never leaves your machine, everywhere it appeared.
 - **The MCP setup guide undercounted its own tools by one.** It said 12 read-only tools (22 with deprecated aliases); the real count is 13 (23 with aliases) — `stats_ladder` was missing from the table entirely.

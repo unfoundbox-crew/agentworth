@@ -46,6 +46,9 @@ mod forgotten_command;
 // Same collision, same fix again: `commands::asks` would clash with `crate::asks`.
 #[path = "commands/asks.rs"]
 mod asks_command;
+// Same collision, same fix again: `commands::wake` would clash with `crate::wake`.
+#[path = "commands/wake.rs"]
+mod wake_command;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -343,6 +346,10 @@ enum SessionCommand {
 
     /// Hand a session over: what it promised and dropped, decided, changed, ran, and proved
     Handoff(HandoffArgs),
+
+    /// What you were doing: the checkout, the newest session's task, proof, loose ends, and
+    /// the next step, in 30 lines
+    Wake(WakeArgs),
 
     /// What compaction dropped: decisions this session made and its own summaries did not keep
     Forgotten(ForgottenArgs),
@@ -841,6 +848,27 @@ struct HandoffArgs {
     max_lines: Option<usize>,
 
     /// Output the structured handoff as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct WakeArgs {
+    /// Directory to read the checkout from and to derive the repo from. Defaults to the
+    /// current directory
+    #[arg(long)]
+    workspace: Option<PathBuf>,
+
+    /// Repository/workspace key, as `session handoff`'s receipt reports it. Defaults to the
+    /// key derived from `--workspace`
+    #[arg(long)]
+    repo: Option<String>,
+
+    /// Mask secrets, paths, and this session's own repository name before printing
+    #[arg(short, long)]
+    redact: bool,
+
+    /// Output the wake report as JSON
     #[arg(long)]
     json: bool,
 }
@@ -1567,6 +1595,16 @@ pub fn run() -> Result<()> {
                 a.redact,
                 a.max_lines,
                 a.markdown,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::Wake(a)) => {
+            wake_command::run_wake_command(
+                a.workspace,
+                a.repo,
+                a.redact,
                 resolve_json(a.json),
                 cli.db_path,
                 &ui,

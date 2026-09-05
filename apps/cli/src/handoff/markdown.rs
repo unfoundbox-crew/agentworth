@@ -124,7 +124,10 @@ type Candidate = (&'static str, usize, Vec<String>);
 /// Returns the sections that fit and the ones that did not, because a section vanishing
 /// unannounced would make the document look complete when it isn't -- the exact failure this
 /// tool exists to prevent, and the easiest one to inflict on ourselves.
-fn allocate(report: &HandoffReport, budget: usize) -> (Vec<RenderedSection>, Vec<(&'static str, usize)>) {
+fn allocate(
+    report: &HandoffReport,
+    budget: usize,
+) -> (Vec<RenderedSection>, Vec<(&'static str, usize)>) {
     let mut candidates: Vec<Candidate> = Vec::new();
 
     if !report.forgotten.is_empty() {
@@ -163,7 +166,14 @@ fn allocate(report: &HandoffReport, budget: usize) -> (Vec<RenderedSection>, Vec
             report
                 .ran
                 .iter()
-                .map(|c| format!("- `{}` — {}, {}", one_line(&c.command, 110), c.ending(), clock(c.at)))
+                .map(|c| {
+                    format!(
+                        "- `{}` — {}, {}",
+                        one_line(&c.command, 110),
+                        c.ending(),
+                        clock(c.at)
+                    )
+                })
                 .collect(),
         ));
     }
@@ -316,7 +326,7 @@ fn clock(t: chrono::DateTime<chrono::Utc>) -> String {
 
 /// Collapses whitespace and caps length, so one quoted sentence can never become three lines
 /// and blow a budget that was allocated in lines.
-fn one_line(text: &str, max_chars: usize) -> String {
+pub(crate) fn one_line(text: &str, max_chars: usize) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= max_chars {
         return flat;

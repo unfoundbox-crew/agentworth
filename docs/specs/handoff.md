@@ -238,6 +238,8 @@ answer to one `repo` value, which is what carry-forward wants and what a
   a model writes the prose, the receipt stops meaning anything.
 - **No git or GitHub state.** Out of scope, and it is the largest thing the
   hand-written version has. Say so in the output rather than faking it.
+  `wake.md` reads the checkout, read-only, for the opposite question: not
+  what a past session did, but what the checkout looks like right now.
 - **No auto-run at session end.** Nothing in this product watches for a session
   ending. The agent asks.
 
