@@ -67,10 +67,10 @@ The standalone script draws its own progress, so a 22 MB download over a slow li
 longer looks like a hang:
 
 ```
- (*) archie  resolving    v0.1.20  aarch64-apple-darwin
+ (*) archie  resolving    v0.1.21  aarch64-apple-darwin
  (o) archie  downloading  ─────────────────────·······   75%  16.7 / 22.2 MB
  (*) archie  verifying    sha256 matches
- (*) archie  extracting   agentworth-v0.1.20-aarch64-apple-darwin.tar.gz
+ (*) archie  extracting   agentworth-v0.1.21-aarch64-apple-darwin.tar.gz
  (*) archie  installed    agentworth, archie, agwt in ~/.local/bin
 
   Next  archie --version   confirm the install
@@ -366,7 +366,7 @@ claude mcp add agentworth --scope user -- archie mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-16 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, `session_wake`, plus the two handoff tools, `session_forgotten`, `session_asks`, `repo_suspect`, `agent_status`, and `session_drift` below. A client's `tools/list` shows 26: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.20. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`, `docs/specs/loop.md`.
+16 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, `session_wake`, plus the two handoff tools, `session_forgotten`, `session_asks`, `repo_suspect`, `agent_status`, and `session_drift` below. A client's `tools/list` shows 26: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.21. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`, `docs/specs/loop.md`.
 
 ### The handoff, over MCP
 

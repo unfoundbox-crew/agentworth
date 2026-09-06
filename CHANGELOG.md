@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-09-06
+
 ### Added
 
 - **`archie hook`.** A harness (Claude Code today) posts its `PreToolUse`, `PostToolUse`, `Stop` and other lifecycle events as stdin JSON to this command, which forwards one line to `archie serve`'s loopback socket (`~/.agentworth/archie.sock`) with a 50ms budget. No socket, or serve down: it appends to `~/.agentworth/spool/<session_id>.jsonl` instead. Always exits 0. Never slows the agent, never blocks it, never fails visibly. `archie hook print claude` prints the settings.json snippet to paste in — it never writes the file for you.
