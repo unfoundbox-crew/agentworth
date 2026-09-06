@@ -472,6 +472,15 @@ Print the hook registration snippet for a harness. Never writes a settings file
 
 The governor's policy file: what it says, whether it parses, and clearing a session it suspended (docs/specs/governor.md). Nothing is governed until a `policy.toml` exists
 
+### `archie policy init`
+
+Write a starter policy.toml, with this machine's own token percentiles as comments
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `--repo` | no | Write `.agentworth/policy.toml` in the current repo instead of `~/.agentworth/policy.toml` | false | - |
+| `--force` | no | Overwrite an existing file | false | - |
+
 ### `archie policy show`
 
 What is governed right now, and which files were read to decide that

@@ -1599,6 +1599,28 @@
       "args": []
     },
     {
+      "path": "archie policy init",
+      "about": "Write a starter policy.toml, with this machine's own token percentiles as comments",
+      "args": [
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Write `.agentworth/policy.toml` in the current repo instead of `~/.agentworth/policy.toml`",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--force",
+          "positional": false,
+          "required": false,
+          "help": "Overwrite an existing file",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "archie policy show",
       "about": "What is governed right now, and which files were read to decide that",
       "args": [

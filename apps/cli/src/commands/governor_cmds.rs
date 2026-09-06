@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentworth_loop::{EditLedger, Governor, Policy, SessionSpend};
-use agentworth_storage::Storage;
+use agentworth_storage::{extract_repository_or_workspace, Percentiles, Storage};
 use anyhow::{anyhow, Result};
 use chrono::{Duration, Utc};
 use std::collections::BTreeMap;
@@ -188,17 +188,24 @@ pub fn run_policy_show_command(json_out: bool, _ui: &Ui) -> Result<()> {
 
 /// Parses both files and says what is wrong with them, naming the file and the line. A
 /// `[spend]` section with neither cap is the one shape that parses and means nothing.
-pub fn run_policy_check_command(_ui: &Ui) -> Result<()> {
+pub fn run_policy_check_command(db_path: Option<PathBuf>, _ui: &Ui) -> Result<()> {
     let cwd = std::env::current_dir().ok().map(|c| c.to_string_lossy().to_string());
     let home = agentworth_storage::default_db_dir()?.join("policy.toml");
-    let repo = repo_policy_file(cwd.as_deref());
-    let policy = Policy::load(&home, &repo)?;
+    let repo_file = repo_policy_file(cwd.as_deref());
+    let policy = Policy::load(&home, &repo_file)?;
     if let Some(spend) = policy.spend {
         if spend.tokens.is_none() && spend.usd.is_none() {
             return Err(anyhow!(
                 "[spend] sets neither `tokens` nor `usd`, so it caps nothing. Write one of them, \
                  or delete the section"
             ));
+        }
+        if let Some(cap) = spend.tokens {
+            let storage = open_storage(db_path)?;
+            let repo_name = cwd.as_deref().map(extract_repository_or_workspace);
+            for warning in spend_cap_warnings(&storage, cap, repo_name.as_deref())? {
+                println!("warning: {warning}");
+            }
         }
     }
     if policy.is_empty() {
@@ -207,6 +214,133 @@ pub fn run_policy_check_command(_ui: &Ui) -> Result<()> {
     }
     println!("both files parse · {} rule(s) in force", policy.describe().len());
     Ok(())
+}
+
+/// One line per population (machine-wide, and repo-wide when a repo file exists) where `cap`
+/// sits below that population's own p99 -- the exact shape of a cap that would halt sessions
+/// this machine has already run, not a hypothetical one.
+fn spend_cap_warnings(storage: &Storage, cap: u64, repo: Option<&str>) -> Result<Vec<String>> {
+    let mut warnings = Vec::new();
+    let machine = storage.session_token_percentiles(None)?;
+    if machine.n > 0 && cap < machine.p99 {
+        let tripped = storage.count_primary_sessions_over_tokens(cap, None)?;
+        warnings.push(format!(
+            "[spend] tokens = {cap} is below this machine's own p99 of {} across {} primary \
+             sessions ({tripped} would have tripped it)",
+            machine.p99, machine.n,
+        ));
+    }
+    if let Some(repo) = repo {
+        let repo_stats = storage.session_token_percentiles(Some(repo))?;
+        if repo_stats.n > 0 && cap < repo_stats.p99 {
+            let tripped = storage.count_primary_sessions_over_tokens(cap, Some(repo))?;
+            warnings.push(format!(
+                "[spend] tokens = {cap} is below {repo}'s own p99 of {} across {} primary \
+                 sessions ({tripped} would have tripped it)",
+                repo_stats.p99, repo_stats.n,
+            ));
+        }
+    }
+    Ok(warnings)
+}
+
+/// Writes a starter `policy.toml` with the thrash and loop rules on, and a `[spend]` block
+/// left commented out -- carrying this machine's own token percentiles as comments, so the
+/// number a person eventually uncomments is theirs, not a guess (AGENTS.md, "Dogfood before
+/// you propose": a cap picked without looking at this machine's own sessions is how a 20M
+/// example would have halted a 728M primary session).
+pub fn run_policy_init_command(
+    repo: bool,
+    force: bool,
+    db_path: Option<PathBuf>,
+    _ui: &Ui,
+) -> Result<()> {
+    let cwd = std::env::current_dir().ok().map(|c| c.to_string_lossy().to_string());
+    let target = if repo {
+        let file = repo_policy_file(cwd.as_deref());
+        if file.starts_with("/nonexistent") {
+            return Err(anyhow!(
+                "--repo needs a git repository; run this from inside one"
+            ));
+        }
+        file
+    } else {
+        agentworth_storage::default_db_dir()?.join("policy.toml")
+    };
+    if target.exists() && !force {
+        return Err(anyhow!(
+            "{} already exists; pass --force to overwrite it",
+            target.display()
+        ));
+    }
+
+    let storage = open_storage(db_path)?;
+    let machine = storage.session_token_percentiles(None)?;
+    let repo_name = cwd.as_deref().map(extract_repository_or_workspace);
+    let repo_stats = repo_name
+        .as_deref()
+        .map(|r| storage.session_token_percentiles(Some(r)))
+        .transpose()?;
+
+    let contents = render_policy_init_toml(repo_name.as_deref(), &machine, repo_stats.as_ref());
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&target, &contents)?;
+    println!("wrote {}", target.display());
+    println!(
+        "[thrash] and [loop] are on now. [spend] is commented out -- read the numbers in the \
+         file, then uncomment and set your own cap."
+    );
+    Ok(())
+}
+
+fn fmt_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M tokens", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K tokens", n as f64 / 1_000.0)
+    } else {
+        format!("{n} tokens")
+    }
+}
+
+fn percentile_comment_lines(label: &str, p: &Percentiles) -> String {
+    if p.n == 0 {
+        return format!("# {label}: no indexed primary sessions yet");
+    }
+    format!(
+        "# {label} (n={}): p50 = {}, p90 = {}, p99 = {}, max = {}",
+        p.n,
+        fmt_tokens(p.p50),
+        fmt_tokens(p.p90),
+        fmt_tokens(p.p99),
+        fmt_tokens(p.max),
+    )
+}
+
+fn render_policy_init_toml(
+    repo_name: Option<&str>,
+    machine: &Percentiles,
+    repo_stats: Option<&Percentiles>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("[thrash]\nedits = 3\naction = \"halt\"\n\n");
+    out.push_str("[loop]\nrepeats = 3\naction = \"note\"\n\n");
+    out.push_str("# [spend] tokens = ... usd = ... action = \"halt\"\n");
+    out.push_str(
+        "# These numbers are this machine's own primary-session token totals, read from the \
+         index\n# by `archie policy init` (docs/specs/governor.md, AGENTS.md \"Dogfood before \
+         you propose\"):\n",
+    );
+    out.push_str(&percentile_comment_lines("machine-wide, primary sessions", machine));
+    out.push('\n');
+    if let (Some(repo), Some(stats)) = (repo_name, repo_stats) {
+        out.push_str(&percentile_comment_lines(&format!("this repo ({repo})"), stats));
+        out.push('\n');
+    }
+    out.push_str("# a cap below your p99 halts your own long sessions\n");
+    out
 }
 
 pub fn run_policy_lift_command(session_id: String, db_path: Option<PathBuf>, _ui: &Ui) -> Result<()> {
@@ -342,4 +476,79 @@ pub fn run_policy_replay_command(
         value["tokens_after_first_trip"],
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentworth_schema::{AgentWorthTrace, Provenance, TokenUsage};
+    use agentworth_storage::Percentiles;
+    use chrono::Utc;
+
+    fn seed(storage: &Storage, path: &str, id: &str, tokens: u64) {
+        let prov = Provenance::new(path, "claude_code", 100, 100, format!("fp-{id}"));
+        let mut trace = AgentWorthTrace::new(id, "claude_code", prov, Utc::now());
+        trace.stats.token_usage = TokenUsage::new(tokens, 0, 0, 0);
+        trace.stats.total_events = 5;
+        storage.upsert_trace(&trace).expect("upsert");
+    }
+
+    #[test]
+    fn render_policy_init_toml_carries_thrash_and_loop_on_and_spend_commented_with_percentiles() {
+        let machine = Percentiles { n: 4, p50: 100, p90: 300, p99: 390, max: 400 };
+        let out = render_policy_init_toml(None, &machine, None);
+
+        assert!(out.contains("[thrash]"));
+        assert!(out.contains("action = \"halt\""));
+        assert!(out.contains("[loop]"));
+        assert!(out.contains("# [spend]"), "spend must ship commented out, not a live cap");
+        assert!(!out.lines().any(|l| l.trim_start().starts_with("[spend]")));
+        assert!(out.contains("p99 = 390"));
+        assert!(out.contains("n=4"));
+    }
+
+    #[test]
+    fn render_policy_init_toml_adds_a_second_block_for_the_repo() {
+        let machine = Percentiles { n: 10, p50: 100, p90: 900, p99: 990, max: 1000 };
+        let repo_stats = Percentiles { n: 3, p50: 50, p90: 90, p99: 99, max: 100 };
+        let out = render_policy_init_toml(Some("unfoundbox/agentworth"), &machine, Some(&repo_stats));
+
+        assert!(out.contains("unfoundbox/agentworth"));
+        assert!(out.contains("n=10"));
+        assert!(out.contains("n=3"));
+    }
+
+    #[test]
+    fn spend_cap_warnings_fires_when_cap_is_below_machine_p99() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        for (i, tokens) in [10u64, 20, 30, 728_000_000].into_iter().enumerate() {
+            seed(
+                &storage,
+                &format!("/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/s{i}.jsonl"),
+                &format!("sess_{i}"),
+                tokens,
+            );
+        }
+
+        let warnings = spend_cap_warnings(&storage, 20_000_000, None).expect("warnings");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("20000000"));
+        assert!(warnings[0].contains("1 would have tripped it"));
+    }
+
+    #[test]
+    fn spend_cap_warnings_is_silent_when_cap_is_above_p99() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        for (i, tokens) in [10u64, 20, 30].into_iter().enumerate() {
+            seed(
+                &storage,
+                &format!("/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/s{i}.jsonl"),
+                &format!("sess_{i}"),
+                tokens,
+            );
+        }
+
+        let warnings = spend_cap_warnings(&storage, 20_000_000, None).expect("warnings");
+        assert!(warnings.is_empty());
+    }
 }
