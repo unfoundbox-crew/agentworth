@@ -349,6 +349,14 @@ pub struct SessionDriftParams {
     pub session_id: Option<String>,
 }
 
+/// Parameters for the `session_burn` tool (`docs/specs/governor.md`).
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct SessionBurnParams {
+    /// The session, by full id or a unique prefix. Defaults to the most recently active
+    /// session in the loop's own index, which is the caller itself in the normal case.
+    pub session_id: Option<String>,
+}
+
 /// Parameters for the `session_asks` tool (`docs/specs/asks.md`).
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SessionAsksParams {

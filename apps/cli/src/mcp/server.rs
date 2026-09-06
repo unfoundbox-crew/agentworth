@@ -31,7 +31,8 @@ use serde_json::json;
 use super::params::{
     parse_rfc3339_opt, AgentStatusParams, BlameFindParams, CarryForwardParams, CoverageStatsParams,
     ForgottenContextParams, LadderParams, OutcomeRateParams, PacingWindowParams, SessionAsksParams,
-    SessionDriftParams, SessionGetParams, SessionHandoffParams, SessionsFindParams,
+    SessionBurnParams, SessionDriftParams, SessionGetParams, SessionHandoffParams,
+    SessionsFindParams,
     SuspectCommitsParams,
     UsagePeriodParam, UsageSummaryParams, WakeParams,
 };
@@ -720,6 +721,35 @@ impl AgentWorthMcpServer {
     }
 
     #[tool(
+        description = "What one session has spent so far, metered from its own transcript: \
+                        tokens, dollars at the pricing table's rates, turns, the cache read \
+                        share, and the rate over the last ten minutes. This is AgentWorth's \
+                        own count, not the provider's accounting -- it never reports a \
+                        'remaining'. When the harness writes its own rate-limit line (Codex \
+                        does; Claude Code does not) that line is returned verbatim under \
+                        `provider_limit`, labelled as the provider's. Numbers are as of the \
+                        last update `archie serve` wrote, and are zero on a machine with no \
+                        `policy.toml`, since nothing is metered until something is governed."
+    )]
+    pub(crate) async fn session_burn(
+        &self,
+        Parameters(params): Parameters<SessionBurnParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+            let session = crate::commands::loop_cmds::resolve_loop_session(
+                &storage,
+                params.session_id.as_deref(),
+            )?;
+            crate::commands::governor_cmds::session_burn_json(&storage, &session)
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("session_burn failed: {e:#}"), None))?;
+        Self::json_result(&value)
+    }
+
+    #[tool(
         description = "One call for a cold or just-compacted agent: the checkout it stands in \
                         (branch, HEAD, dirty, ahead), the newest primary session for the repo \
                         (task, last prompt, outcome rung, last passed and last failed \
@@ -1112,7 +1142,7 @@ impl ServerHandler for AgentWorthMcpServer {
                  session_list, session_show, repo_blame, stats_usage, window_show, \
                  agent_list, stats_outcomes, stats_ladder, session_handoff, session_carry_forward, \
                  session_wake, session_forgotten, session_asks, repo_suspect, agent_status, \
-                 session_drift. Start a \
+                 session_drift, session_burn. Start a \
                  session with session_wake; session_carry_forward lists the last few handoffs \
                  in full. End a session with session_handoff. If a session has compacted, \
                  session_forgotten returns the decisions its own summaries dropped. \
@@ -1122,7 +1152,9 @@ impl ServerHandler for AgentWorthMcpServer {
                  proved anything -- a list and a prompt, never a patch. agent_status says \
                  where every agent on this machine is right now, and session_drift says what \
                  moved under you since you read it and who moved it -- both fed by the \
-                 harness's own hooks rather than by a scan. Redacted \
+                 harness's own hooks rather than by a scan. session_burn says what the \
+                 session has cost so far, AgentWorth's own count and never a remaining. \
+                 Redacted \
                  output is the default \
                  everywhere event or file content is returned; include_raw is the only opt-in \
                  to raw content, and it is per-call, never global. Run `archie scan` first \

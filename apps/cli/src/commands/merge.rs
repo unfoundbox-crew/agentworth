@@ -149,6 +149,38 @@ const SESSION_CHILD_TABLES: &[ChildTable] = &[
         name: "trace_anchors",
         columns: &["session_id", "seq", "kind", "value"],
     },
+    // The governor's three (docs/specs/governor.md). `turn_usage` is a merged session's whole
+    // spend history; the other two are why it was stopped and whether it still is.
+    ChildTable {
+        name: "turn_usage",
+        columns: &[
+            "session_id",
+            "seq",
+            "at",
+            "model",
+            "input",
+            "output",
+            "cache_read",
+            "cache_creation",
+            "usd",
+        ],
+    },
+    ChildTable {
+        name: "governor_events",
+        columns: &[
+            "session_id",
+            "at",
+            "seq",
+            "rule",
+            "action",
+            "reason",
+            "evidence",
+        ],
+    },
+    ChildTable {
+        name: "session_suspensions",
+        columns: &["session_id", "rule", "reason", "since", "lifted_at"],
+    },
 ];
 
 /// Merge an external SQLite index database located at `source_db_path` into `target_db_path`.
@@ -812,6 +844,42 @@ mod tests {
                     kind: "sha256".to_string(),
                     value: "a".repeat(64),
                 }])
+                .unwrap();
+
+            // The governor's three.
+            storage2
+                .insert_turn_usage(&[agentworth_storage::TurnUsageRow {
+                    session_id: "sess-child".to_string(),
+                    seq: 1,
+                    at: now,
+                    model: "claude-fable-5-1".to_string(),
+                    input: Some(120),
+                    output: Some(40),
+                    cache_read: Some(9_000),
+                    cache_creation: Some(200),
+                    usd: 0.01,
+                }])
+                .unwrap();
+            storage2
+                .insert_governor_event(&agentworth_storage::GovernorEventRow {
+                    id: None,
+                    session_id: "sess-child".to_string(),
+                    at: now,
+                    seq: Some(4),
+                    rule: "thrash".to_string(),
+                    action: "halt".to_string(),
+                    reason: "src/lib.rs has been edited 3 times".to_string(),
+                    evidence: Some("{\"edits\":3}".to_string()),
+                })
+                .unwrap();
+            storage2
+                .suspend_session(&agentworth_storage::SuspensionRow {
+                    session_id: "sess-child".to_string(),
+                    rule: "spend".to_string(),
+                    reason: "over the cap".to_string(),
+                    since: now,
+                    lifted_at: None,
+                })
                 .unwrap();
         }
 

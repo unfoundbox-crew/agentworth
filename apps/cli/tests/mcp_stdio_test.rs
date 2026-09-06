@@ -73,6 +73,7 @@ async fn test_stdio_tools_list_and_sessions_find() {
         "session_asks",
         "agent_status",
         "session_drift",
+        "session_burn",
     ] {
         assert!(
             tool_names.contains(&expected),

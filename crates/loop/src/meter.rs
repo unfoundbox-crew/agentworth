@@ -191,8 +191,9 @@ impl TranscriptTail {
         let cache_read = count("cached_input_tokens");
         let input = count("input_tokens").saturating_sub(cache_read);
         let output = count("output_tokens") + count("reasoning_output_tokens");
+        let cache_creation = count("cache_write_input_tokens");
         let model = self.model.clone().unwrap_or_else(|| "unknown".to_string());
-        Some(self.finish(value, model, input, output, cache_read, 0, rates))
+        Some(self.finish(value, model, input, output, cache_read, cache_creation, rates))
     }
 
     fn claude_turn(
@@ -440,13 +441,24 @@ mod tests {
         assert!(tail.read_new(&flat_rates).expect("read").is_empty());
     }
 
-    fn codex_token_count(input: u64, cached: u64, output: u64, reasoning: u64, limits: bool) -> String {
+    /// The fields `codex-rs/protocol/src/protocol.rs` declares on `TokenUsage` and
+    /// `RateLimitWindow`, read 2026-09-06: `cache_write_input_tokens` rides beside
+    /// `cached_input_tokens`, and `resets_at` is a unix timestamp, not a string.
+    fn codex_token_count(
+        input: u64,
+        cached: u64,
+        cache_write: u64,
+        output: u64,
+        reasoning: u64,
+        limits: bool,
+    ) -> String {
         let mut payload = serde_json::json!({
             "type": "token_count",
             "info": {
                 "total_token_usage": {
                     "input_tokens": input,
                     "cached_input_tokens": cached,
+                    "cache_write_input_tokens": cache_write,
                     "output_tokens": output,
                     "reasoning_output_tokens": reasoning,
                     "total_tokens": input + output
@@ -454,6 +466,7 @@ mod tests {
                 "last_token_usage": {
                     "input_tokens": input,
                     "cached_input_tokens": cached,
+                    "cache_write_input_tokens": cache_write,
                     "output_tokens": output,
                     "reasoning_output_tokens": reasoning,
                     "total_tokens": input + output
@@ -491,8 +504,8 @@ mod tests {
             &path,
             &format!(
                 "{turn_context}\n{}\n{}\n",
-                codex_token_count(9_000, 8_000, 300, 700, false),
-                codex_token_count(12_000, 11_000, 100, 0, true)
+                codex_token_count(9_000, 8_000, 500, 300, 700, false),
+                codex_token_count(12_000, 11_000, 0, 100, 0, true)
             ),
         );
 
@@ -503,7 +516,7 @@ mod tests {
         assert_eq!(turns[0].cache_read, 8_000);
         assert_eq!(turns[0].input, 1_000, "cached input is not counted twice");
         assert_eq!(turns[0].output, 1_000, "reasoning tokens are output");
-        assert_eq!(turns[0].cache_creation, 0);
+        assert_eq!(turns[0].cache_creation, 500, "cache_write_input_tokens is cache creation");
         assert_eq!(turns[1].seq, 2);
 
         let primary = tail.latest_limit().expect("the provider's own window");

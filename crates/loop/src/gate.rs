@@ -77,6 +77,40 @@ impl GateOutput {
         }
     }
 
+    /// `PostToolUse` on Codex: `decision: "block"` replaces the tool result the model sees with
+    /// `reason`, and `additionalContext` rides along beside it (learn.chatgpt.com/docs/hooks,
+    /// read 2026-09-06). Claude Code's `PostToolUse` cannot block, so on that harness only the
+    /// `additionalContext` half of this shape has an effect.
+    pub fn post_tool_use_replace(reason: &str, ground_truth: &str) -> Self {
+        Self {
+            exit_code: 0,
+            stdout: Some(serde_json::json!({
+                "decision": "block",
+                "reason": reason,
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": ground_truth,
+                }
+            })),
+            stderr: None,
+        }
+    }
+
+    /// `PostToolUse` on Claude Code, which cannot block: the model reads the evidence and
+    /// keeps working. The same field name Codex uses, in the shape Claude Code documents.
+    pub fn post_tool_use_context(ground_truth: &str) -> Self {
+        Self {
+            exit_code: 0,
+            stdout: Some(serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": ground_truth,
+                }
+            })),
+            stderr: None,
+        }
+    }
+
     /// `PreToolUse`: deny this one call. A denial is not a pause -- the model gets a new error
     /// to loop on -- so the reason has to say what would satisfy the gate.
     pub fn pre_tool_use_deny(reason: &str) -> Self {
@@ -166,6 +200,20 @@ mod tests {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "deny",
                     "permissionDecisionReason": "40 reads in a row"
+                }
+            })
+        );
+
+        let replace = GateOutput::post_tool_use_replace("over the cap", "you spent 6000 tokens");
+        assert_eq!(replace.exit_code, 0);
+        assert_eq!(
+            replace.stdout.expect("stdout"),
+            serde_json::json!({
+                "decision": "block",
+                "reason": "over the cap",
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": "you spent 6000 tokens"
                 }
             })
         );

@@ -4108,6 +4108,38 @@ impl Storage {
         Ok(rows)
     }
 
+    /// Every intent this session recorded, oldest first. The governor's ledger is rebuilt from
+    /// these when a restarted `serve` meets a session already in flight.
+    pub fn intents_for_session(&self, session_id: &str) -> Result<Vec<IntentRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT tool_use_id, session_id, seq, tool, predicted_paths, command, known, at, result
+            FROM tool_intents WHERE session_id = ?1 ORDER BY seq ASC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                let paths: String = row.get(4)?;
+                let at: String = row.get(7)?;
+                Ok(IntentRow {
+                    tool_use_id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    seq: row.get(2)?,
+                    tool: row.get(3)?,
+                    predicted_paths: serde_json::from_str(&paths).unwrap_or_default(),
+                    command: row.get(5)?,
+                    known: row.get::<_, i64>(6)? != 0,
+                    at: DateTime::parse_from_rfc3339(&at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    result: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Record (or refresh) one entry in a session's support set U.
     pub fn upsert_support(&self, support: &SupportRow) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -4293,6 +4325,43 @@ impl Storage {
         let mut stmt = conn.prepare(&sql)?;
         let row = stmt.query_row(params![session_id], Self::row_to_spend)?;
         Ok(row)
+    }
+
+    /// One session's priced turns, oldest first. `since` bounds them for a rate question --
+    /// tokens per minute over the last ten minutes -- and `None` returns the whole session.
+    pub fn turn_usage_for_session(
+        &self,
+        session_id: &str,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<TurnUsageRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, seq, at, model, input, output, cache_read, cache_creation, usd
+            FROM turn_usage
+            WHERE session_id = ?1 AND (?2 IS NULL OR at >= ?2)
+            ORDER BY seq ASC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![session_id, since.map(|s| s.to_rfc3339())], |row| {
+                let at: String = row.get(2)?;
+                Ok(TurnUsageRow {
+                    session_id: row.get(0)?,
+                    seq: row.get(1)?,
+                    at: DateTime::parse_from_rfc3339(&at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    model: row.get(3)?,
+                    input: row.get(4)?,
+                    output: row.get(5)?,
+                    cache_read: row.get(6)?,
+                    cache_creation: row.get(7)?,
+                    usd: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// Total spend across every session since `since`, for a per-window cap.

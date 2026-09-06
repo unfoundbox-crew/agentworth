@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use agentworth_loop::{
     absolutise, classify, extract_anchors, hash_paths_for_anchors, observe_checkout,
-    support_from_read, AgentState, Anchor, HookEvent, HookEventName, Intent, LoopState,
-    SessionLive, SpoolReader,
+    support_from_read, AgentState, Anchor, GateOutput, GateRequest, HookEvent, HookEventName,
+    Intent, LoopState, SessionLive, SpoolReader,
 };
 use agentworth_schema::MachineInfo;
 use agentworth_storage::{AgentStateRow, AnchorRow, IntentRow, MachineRow, Storage, SupportRow};
@@ -65,16 +65,20 @@ pub struct LoopRuntime {
     /// The same boundary in wall-clock time, for the one question `seq` cannot answer: which
     /// *other* session wrote a path, and whether it did so after this session's last `Stop`.
     last_stop_at: HashMap<String, chrono::DateTime<Utc>>,
+    /// The brake (docs/specs/governor.md). Costs nothing until a `policy.toml` exists.
+    governor: crate::loop_governor::GovernorHost,
 }
 
 impl LoopRuntime {
     pub fn new(storage: Arc<Storage>) -> Self {
+        let governor_storage = storage.clone();
         Self {
             storage,
             state: LoopState::new(),
             unpersisted: HashMap::new(),
             last_stop_seq: HashMap::new(),
             last_stop_at: HashMap::new(),
+            governor: crate::loop_governor::GovernorHost::new(governor_storage),
         }
     }
 
@@ -111,6 +115,10 @@ impl LoopRuntime {
             }
         }
 
+        if !event.is_subagent() {
+            self.governor.observe(&event, seq);
+        }
+
         let counter = self.unpersisted.entry(session_id.clone()).or_insert(0);
         *counter += 1;
         if transition.is_some() || *counter >= PERSIST_EVERY {
@@ -118,6 +126,23 @@ impl LoopRuntime {
             self.persist_state(&session_id, None)?;
         }
         Ok(())
+    }
+
+    /// Answers one gate request: the event is applied first, so the decision is made against a
+    /// state that includes the event asking for it, and then the rules run.
+    ///
+    /// Synchronous like `apply`, and called the same way -- under `spawn_blocking`, from the
+    /// connection's own task, because the hook on the other end is holding its breath.
+    pub fn decide(&mut self, request: GateRequest) -> GateOutput {
+        if let Err(e) = self.apply(request.event.clone()) {
+            tracing::warn!("loop: could not apply a gated event: {e:#}");
+        }
+        let seq = self
+            .state
+            .get(&request.event.session_id)
+            .map(|live| live.last_seq)
+            .unwrap_or(0);
+        self.governor.decide(&request, seq)
     }
 
     /// Drains `dir`: every spool file is renamed aside, read, applied, and only then deleted.
