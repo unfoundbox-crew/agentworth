@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-09-06
+
 ### Fixed
 
 - **A `grep`-for-"test" no longer counts as a passing test.** `is_verification_command` substring-matched the whole command line, so `cd repo && /usr/bin/grep -n "test"` registered as wake's "last passed" proof. It now splits the command into segments, strips `cd`, env assignments, `sudo`, `time`, `nice`, `flock`, and a leading path, and matches the program and its first verb against a small table (`cargo test|build|check|...`, `npm|pnpm|yarn|bun test|run|build|ci`, `pytest`, `go build|vet|test`, `tsc`, `eslint`, `vitest`, `jest`, `make`, `mvn`, `gradle`/`gradlew`, `ruff`, `mypy`, `docker build`, `git commit|push`, `gh pr|run|workflow`).
