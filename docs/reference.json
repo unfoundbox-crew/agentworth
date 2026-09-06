@@ -1167,6 +1167,36 @@
       ]
     },
     {
+      "path": "archie session burn",
+      "about": "What this session has spent so far, from its own transcript: tokens, dollars at the table price, turns, cache read share, and the rate over the last ten minutes",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "The session, by full id or a unique prefix. Defaults to the most recently active one",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "The most recently active session, which is also the default",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "archie agent",
       "about": "The agent adapters: what each one extracts, and how one is doing on this machine",
       "args": []
@@ -1527,7 +1557,16 @@
     {
       "path": "archie hook",
       "about": "Plumbing: read one harness hook event on stdin and hand it to the loop (docs/specs/loop.md). Never prints to stdout, never fails the agent, exits 0 always. `archie hook print claude` prints the settings.json snippet that registers it",
-      "args": []
+      "args": [
+        {
+          "name": "--gate",
+          "positional": false,
+          "required": false,
+          "help": "Answer the harness synchronously instead of recording and returning: one socket round trip inside 50 ms, and exit 0 with nothing on stdout if it misses",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
     },
     {
       "path": "archie hook print",
@@ -1537,11 +1576,80 @@
           "name": "HARNESS",
           "positional": true,
           "required": true,
-          "help": "The harness to print for. `claude` is the only one verified against a real hooks reference (docs/specs/loop.md)",
+          "help": "The harness to print for. Both are verified against that harness's own hooks reference (docs/specs/loop.md, docs/specs/governor.md)",
           "default": null,
           "possibleValues": [
-            "claude"
+            "claude",
+            "codex"
           ]
+        },
+        {
+          "name": "--govern",
+          "positional": false,
+          "required": false,
+          "help": "Also register the sync gates, so the governor can stop a turn. Claude Code only: the Codex snippet is gated by construction, since Codex has no batch hook",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie policy",
+      "about": "The governor's policy file: what it says, whether it parses, and clearing a session it suspended (docs/specs/governor.md). Nothing is governed until a `policy.toml` exists",
+      "args": []
+    },
+    {
+      "path": "archie policy show",
+      "about": "What is governed right now, and which files were read to decide that",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie policy check",
+      "about": "Parse both files and say what is wrong with them, naming the file and the line",
+      "args": []
+    },
+    {
+      "path": "archie policy lift",
+      "about": "Clear a spend-cap suspension so the session can submit prompts again",
+      "args": [
+        {
+          "name": "SESSION",
+          "positional": true,
+          "required": true,
+          "help": "The session to lift, by full id",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie policy replay",
+      "about": "What the current thresholds would have done to the sessions already indexed",
+      "args": [
+        {
+          "name": "--since",
+          "positional": false,
+          "required": false,
+          "help": "How far back to replay, in days",
+          "default": "30d",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
         }
       ]
     },
@@ -2062,6 +2170,23 @@
             "default": false,
             "description": "Only questions that are not `answered` -- still open, or handed back to the user.\nDefaults to false.",
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "session_burn",
+      "description": "What one session has spent so far, metered from its own transcript: tokens, dollars at the pricing table's rates, turns, the cache read share, and the rate over the last ten minutes. This is AgentWorth's own count, not the provider's accounting -- it never reports a 'remaining'. When the harness writes its own rate-limit line (Codex does; Claude Code does not) that line is returned verbatim under `provider_limit`, labelled as the provider's. Numbers are as of the last update `archie serve` wrote, and are zero on a machine with no `policy.toml`, since nothing is metered until something is governed.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "session_id": {
+            "description": "The session, by full id or a unique prefix. Defaults to the most recently active\nsession in the loop's own index, which is the caller itself in the normal case.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "type": "object"
