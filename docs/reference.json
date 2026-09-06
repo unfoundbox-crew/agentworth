@@ -1107,6 +1107,66 @@
       ]
     },
     {
+      "path": "archie session drift",
+      "about": "What moved under this session since it read it, and which session moved it",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "The session, by full id or a unique prefix. Defaults to the most recently active one",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "The most recently active session, which is also the default",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session anchors",
+      "about": "The join keys this session's tool results carried -- a SpacePilot run_id, a receipt hash -- and the other sessions that carried them",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "The session, by full id or a unique prefix. Defaults to the most recently active one",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "The most recently active session, which is also the default",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "archie agent",
       "about": "The agent adapters: what each one extracts, and how one is doing on this machine",
       "args": []
@@ -1137,6 +1197,20 @@
           "default": null,
           "possibleValues": []
         },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie agent status",
+      "about": "Where every agent on this machine is right now, one line each, from the loop's own hook events rather than from a scan",
+      "args": [
         {
           "name": "--json",
           "positional": false,
@@ -1434,6 +1508,14 @@
           "help": "Optional path to custom web frontend dist directory",
           "default": null,
           "possibleValues": []
+        },
+        {
+          "name": "--no-socket",
+          "positional": false,
+          "required": false,
+          "help": "Do not listen on the loop's Unix socket. Hook events then take the spool, and `archie scan` ingests them (docs/specs/loop.md section 1)",
+          "default": "false",
+          "possibleValues": []
         }
       ]
     },
@@ -1441,6 +1523,27 @@
       "path": "archie mcp",
       "about": "Start the read-only MCP server over stdio, for a coding agent to query this machine's session index mid-session (see docs/specs/mcp-server.md). Register it once with `claude mcp add agentworth --scope user -- archie mcp`",
       "args": []
+    },
+    {
+      "path": "archie hook",
+      "about": "Plumbing: read one harness hook event on stdin and hand it to the loop (docs/specs/loop.md). Never prints to stdout, never fails the agent, exits 0 always. `archie hook print claude` prints the settings.json snippet that registers it",
+      "args": []
+    },
+    {
+      "path": "archie hook print",
+      "about": "Print the hook registration snippet for a harness. Never writes a settings file",
+      "args": [
+        {
+          "name": "HARNESS",
+          "positional": true,
+          "required": true,
+          "help": "The harness to print for. `claude` is the only one verified against a real hooks reference (docs/specs/loop.md)",
+          "default": null,
+          "possibleValues": [
+            "claude"
+          ]
+        }
+      ]
     },
     {
       "path": "archie doctor",
@@ -1842,6 +1945,14 @@
       }
     },
     {
+      "name": "agent_status",
+      "description": "Where every agent on this machine is right now: one row per session the loop has seen, with its state (registered / working / idle / ended), when it entered that state, the repository it is working in, its terminal pane when herdr exported one, and its event sequence. Fed by the harness's own hooks (`archie hook`), not by a scan, so it is current rather than as-of-last-scan. An empty list means no hook is registered -- `archie hook print claude` prints the snippet.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object"
+      }
+    },
+    {
       "name": "repo_blame",
       "description": "Find sessions whose recorded file modifications match a substring of file_path -- AI Code Blame, the same query /api/blame makes. Returned paths are redacted.",
       "inputSchema": {
@@ -2005,6 +2116,23 @@
         "required": [
           "repo"
         ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "session_drift",
+      "description": "What moved under a session since it read it. The support set U is the paths the session actually read, hashed at the time; this re-hashes them and returns the ones that differ, each with the session that predicted a write to that path afterwards, or nothing when no agent on this machine did (someone edited it by hand, or another tool did). The answer to \"did my ground move because of me or someone else\", which no harness summary can give. Reads files and rows; never scans, never writes. Files over 4 MB were not hashed and are counted as unhashed rather than reported as unchanged.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "session_id": {
+            "description": "The session, by full id or a unique prefix. Defaults to the most recently active\nsession in the loop's own index, which is the caller itself in the normal case.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       }
     },

@@ -8,7 +8,7 @@ author: AgentWorth
 ---
 
 Three tools. Three records. No shared field. That is the whole first plate
-of a thesis someone wrote about this codebase, and it names the gap we spent
+of the Cross-Domain Map, a thesis written about these three tools, and it names the gap we spent
 the last stretch of work closing.
 
 AgentWorth answers "which model, and how hard?" SpacePilot answers "where
