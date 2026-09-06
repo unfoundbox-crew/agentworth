@@ -220,6 +220,10 @@ impl AgentAdapter for ClaudeCodeAdapter {
         let mut latest_ts: Option<DateTime<Utc>> = None;
         // Tool calls whose result describes something other than a finished command.
         let mut unfinished_calls: HashSet<String> = HashSet::new();
+        // Real Claude Code records carry top-level `cwd`/`gitBranch` on most lines; the last
+        // non-empty value of each is what `session_wake`'s "Ran in" line reads.
+        let mut last_cwd: Option<String> = None;
+        let mut last_git_branch: Option<String> = None;
 
         let file = File::open(&source.path)?;
         let mut reader = BufReader::new(file);
@@ -266,6 +270,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
                         }
 
                         collect_unfinished_calls(item, &mut unfinished_calls);
+                        track_workspace_fields(item, &mut last_cwd, &mut last_git_branch);
                         let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
@@ -280,6 +285,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
                     }
 
                     trace.recalculate_stats();
+                    apply_workspace_metadata(&mut trace, last_cwd, last_git_branch);
 
                     return Ok(ParseResult {
                         trace,
@@ -314,6 +320,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 }
 
                 collect_unfinished_calls(&val, &mut unfinished_calls);
+                track_workspace_fields(&val, &mut last_cwd, &mut last_git_branch);
                 let events = parse_claude_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
@@ -329,6 +336,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
         }
 
         trace.recalculate_stats();
+        apply_workspace_metadata(&mut trace, last_cwd, last_git_branch);
 
         Ok(ParseResult {
             trace,
@@ -426,6 +434,47 @@ fn derive_session_id(path: &Path) -> String {
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+}
+
+/// Updates `last_cwd`/`last_git_branch` with `val`'s top-level `cwd`/`gitBranch`, if present
+/// and non-empty. Called on every record so the trace ends up with the last value seen.
+fn track_workspace_fields(val: &Value, last_cwd: &mut Option<String>, last_git_branch: &mut Option<String>) {
+    if let Some(cwd) = val.get("cwd").and_then(|v| v.as_str()) {
+        if !cwd.is_empty() {
+            *last_cwd = Some(cwd.to_string());
+        }
+    }
+    if let Some(branch) = val.get("gitBranch").and_then(|v| v.as_str()) {
+        if !branch.is_empty() {
+            *last_git_branch = Some(branch.to_string());
+        }
+    }
+}
+
+/// Sets `trace.metadata["workspace"]` from the last `cwd`/`gitBranch` seen while parsing,
+/// merging into any existing metadata rather than overwriting it. Only includes the keys that
+/// were actually seen; `metadata` stays `Null` when neither was, so a fresh trace still
+/// round-trips through `Storage::upsert_trace` the same way it always has.
+fn apply_workspace_metadata(trace: &mut AgentWorthTrace, cwd: Option<String>, git_branch: Option<String>) {
+    if cwd.is_none() && git_branch.is_none() {
+        return;
+    }
+    let mut workspace = serde_json::Map::new();
+    if let Some(cwd) = cwd {
+        workspace.insert("cwd".to_string(), Value::String(cwd));
+    }
+    if let Some(git_branch) = git_branch {
+        workspace.insert("git_branch".to_string(), Value::String(git_branch));
+    }
+
+    if !trace.metadata.is_object() {
+        trace.metadata = Value::Object(serde_json::Map::new());
+    }
+    trace
+        .metadata
+        .as_object_mut()
+        .expect("just ensured trace.metadata is an object")
+        .insert("workspace".to_string(), Value::Object(workspace));
 }
 
 fn parse_timestamp(val: &Value) -> Option<DateTime<Utc>> {
@@ -1095,6 +1144,42 @@ mod tests {
         assert_eq!(trace.stats.tool_calls_count, 1);
         assert_eq!(trace.stats.tools_used.get("Bash"), Some(&1));
         assert!(trace.stats.duration_seconds.unwrap() >= 10.0);
+    }
+
+    #[test]
+    fn test_parse_records_last_seen_cwd_and_git_branch_in_metadata() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","cwd":"/home/x/repo","gitBranch":"main","content":"start"}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","cwd":"/home/x/repo","gitBranch":"feat/x","content":[{"type":"text","text":"switched branch"}]}
+{"type":"user","timestamp":"2026-08-29T10:00:10Z","content":"no workspace fields on this one"}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        assert_eq!(
+            result.trace.metadata,
+            serde_json::json!({ "workspace": { "cwd": "/home/x/repo", "git_branch": "feat/x" } }),
+            "the last non-empty value of each field wins"
+        );
+    }
+
+    #[test]
+    fn test_parse_leaves_metadata_null_when_no_workspace_fields_present() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = r#"
+{"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"no cwd or gitBranch anywhere"}
+"#;
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let result = adapter.parse(&source).expect("parse failed");
+
+        assert!(result.trace.metadata.is_null());
     }
 
     #[test]

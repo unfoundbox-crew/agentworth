@@ -4,6 +4,30 @@ Owner of this doc: the master session. Everything below this section is a
 historical log from earlier sessions — kept for the record, not maintained
 going forward.
 
+## 2026-09-05, session_wake
+
+**PARSER_VERSION is not bumped for the workspace metadata. Decided; no revisit
+planned.**
+
+What was added: the Claude Code adapter now records the last non-empty `cwd` and
+`gitBranch` it sees in a transcript into the trace's `metadata`, as
+`workspace.cwd` and `workspace.git_branch`. Claude Code writes both on every
+record and the adapter had always dropped them. `session_wake` reads the generic
+keys for its "Ran in" line and says nothing when they are absent, which is what
+every other adapter will produce until it records the same two facts.
+
+Why no bump: wake re-parses the transcript it reports on, so the value it prints
+is live regardless of what the index holds. A `PARSER_VERSION` bump re-parses
+every Claude Code session on every machine -- tens of thousands of files for some
+users -- to backfill one optional line on one surface. That trade is not worth
+making.
+
+The consequence, stated so nobody rediscovers it: `sessions.metadata` stays NULL
+for every row scanned before this change until the user runs `archie scan
+--force`. Anything reading the workspace keys off the *index* rather than off a
+freshly parsed trace will find nothing there for old sessions. Wake is unaffected
+because it never reads them from the index.
+
 ## 2026-09-02, master session
 
 What landed today:

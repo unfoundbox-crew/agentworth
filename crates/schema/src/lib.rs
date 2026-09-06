@@ -15,7 +15,7 @@ pub use event::{
     CompactionEvent, EventPayload, EventType, FileActionType, HumanIntervention, ModelSwitch,
     NormalizedEvent, OutcomeEvidence, OutcomeKind, ShellCommand, ToolCall, ToolResult,
 };
-pub use provenance::{extract_repository_or_workspace, Provenance};
+pub use provenance::{extract_repository_or_workspace, is_subagent_transcript, Provenance};
 pub use text::{preview, tail_chars, truncate_chars};
 pub use tokens::TokenUsage;
 pub use trace::{AgentWorthTrace, TraceStats};

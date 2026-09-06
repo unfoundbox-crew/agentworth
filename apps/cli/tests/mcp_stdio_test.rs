@@ -68,6 +68,7 @@ async fn test_stdio_tools_list_and_sessions_find() {
         "stats_outcomes",
         "session_handoff",
         "session_carry_forward",
+        "session_wake",
         "session_forgotten",
         "session_asks",
     ] {

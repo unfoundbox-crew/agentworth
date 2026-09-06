@@ -29,6 +29,7 @@
 | `convergence.md` | proposed, measured | — |
 | `done-gate.md` | proposed, measured | — |
 | `extensions.md` | proposed | — |
+| `wake.md` | built | #TBD — `session_wake`, `archie session wake`; carry-forward and the cwd default skip subagent transcripts |
 
 Twenty-six specs sit beside this file. They are independent of each other but
 not of the backend, and two of them are worth less than they look until a bug
