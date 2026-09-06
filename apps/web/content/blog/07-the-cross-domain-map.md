@@ -24,6 +24,21 @@ no two of them name the same thing." (Plate I, page 1)
   <figcaption><span class="fig-tag">Plate I</span>Three tools, three good records, no field that joins them.</figcaption>
 </figure>
 
+## The body already solved this
+
+Plate II says why the analogy is allowed: "Not metaphor — the same
+engineering problem, solved by a different substrate, under harder
+constraints, for longer." It maps the tools onto the brain: AgentWorth is
+the basal ganglia, selecting among competing actions, trained on the gap
+between expected and verified; SpacePilot is the part that knows what this
+body can actually do; the return path is observation, and without it you
+have a projectile, not a controller.
+
+<figure>
+  <img src="/blog-figures/cross-domain-map-plate-ii.webp" alt="Plate II. A brain drawn as cortex, basal ganglia, cerebellum and a gate above the periphery, each line mapped to a component: latent space, AgentWorth, SpacePilot, commit kernel, execution plane, observation as the return path, and an evidence lattice." width="760" height="552" loading="lazy" />
+  <figcaption><span class="fig-tag">Plate II</span>The body already solved this: each tool sits on the part of the nervous system that does its job.</figcaption>
+</figure>
+
 ## Efference copy
 
 Plate III is the one that gave us the mechanism, not just the diagnosis:
@@ -33,6 +48,11 @@ III, page 2) In the body, that copy is the efference copy: the motor
 command goes to the muscles and, at the same time, to a forward model that
 predicts the sensation it will cause. In a system, the analogue is a typed
 operation sent for execution and a `support_set` of what it should leave true.
+
+<figure>
+  <img src="/blog-figures/cross-domain-map-plate-iii.webp" alt="Plate III. Two columns. In the organism: motor intention, motor command with an efference copy to a forward model, the body acts, actual sensation, and a subtraction yielding prediction error. In the system: goal, typed operations with expected effects to a support set, commit kernel, observation, and a subtraction yielding a receipt and policy update." width="760" height="552" loading="lazy" />
+  <figcaption><span class="fig-tag">Plate III</span>Efference copy, drawn twice: independently derived, same mechanism, same failure mode.</figcaption>
+</figure>
 
 The thesis names the failure when that copy is missing as the same failure
 in both: "delusion of control: the person can no longer tell their own
