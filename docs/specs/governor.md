@@ -1,6 +1,6 @@
 # Governor
 
-Status: proposed, 2026-09-06. Nothing built. Answers the three-part
+Status: proposed, 2026-09-06, revised the same day after review: v0.1.22 is the brake, not a simulator. Nothing built. Answers the three-part
 operational thesis (in-flight circuit breakers, asymmetric division of
 labour, cache-prefix preservation) with what the harnesses actually expose
 and what the index already holds. Sources are dated 2026-09-06.
@@ -86,46 +86,91 @@ researched here.
 
 ```
  transcript (usage per turn) ─▶ meter ─┐
- hook events (v0.1.21 loop) ─────────▶ governor: policies ─▶ note | deny | halt ─▶ governor_events
+ hook events (v0.1.21 loop) ─────────▶ governor: policies ─▶ note | deny | halt | suspend ─▶ governor_events
                                        ▲ sync gate: archie hook --gate (≤ 50 ms, fails open)
 ```
 
-| Part | What |
-| :--- | :--- |
-| meter, in `crates/loop` | per live session: tokens per turn, tokens per minute, price at the table, cache read share, cache breaks with attributed cause, rake share by model cost class, verification runs and their results. Fed by the transcript tail the server already has and by the hook events already flowing |
-| policies, `~/.agentworth/policy.toml`, repo override `.agentworth/policy.toml` | budgets (tokens or dollars per session per window the person names), thrash (N edits of one file with no passing verification between; the Loop Sentinel's rules), rake (M consecutive read-only calls by a cost class above X), cache (block `ConfigChange`, block `PreModelSwitch`, warn on compaction), and per rule an action: `note`, `deny`, `halt`, plus `fail: open|closed` |
-| gate, `archie hook --gate` | the same binary in synchronous mode for `PreToolUse` (matcher `Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob`), `PostToolBatch`, `UserPromptSubmit`, `ConfigChange`, `PreModelSwitch`. One socket round trip against in-memory state, 50 ms budget, exit 0 on any failure unless the rule says closed. Emits the exact JSON the harness documents |
-| receipts | `governor_events(session_id, at, seq, rule, action, reason, evidence JSON)`; `archie session burn [id]` (live: rate, price, cache share, breaks, rake share); `archie policy show|check|replay`; `session_wake` gains a "Burn" line; MCP `session_burn` |
-| replay | `archie policy replay --since 30d` runs every rule over the index without touching anything and prints what would have tripped, per rule, with tokens after the trip. Deterministic, so the launch post has a number instead of a claim |
+## The brake, v0.1.22
 
-`archie hook print claude --govern` prints both the async recorders that
-exist today and the sync gates, so a person who wants only the meter keeps
-what they have.
+Two rules, both active, both blocking, both shipped in the first release.
+A meter that only reports is a post-mortem with a shorter delay; the point
+of the release is that a session running tonight cannot burn to zero.
+
+**Thrash halt.** Evidence: the same file edited `N` times (default 3) with
+no verification command passing between edits. The edits come from the
+`PostToolBatch` payload's own `tools` array and from `tool_intents`; the
+verification results come from the transcript, which is written before the
+batch hook fires. Action at `PostToolBatch`: `{"continue": false,
+"additionalContext": "<the ground truth>"}` where the ground truth is the
+file, the edit count, the last failing command and its last output line,
+and the sequence numbers. The next model call does not happen. When the
+person prompts again, the same text arrives as `additionalContext` on
+`UserPromptSubmit`, so the model resumes knowing why it was stopped.
+
+**Session spend cap.** Evidence: the session's tokens or dollars at the
+table price since it started, from the transcript tail, against `X` tokens
+or `$Y` in `policy.toml` (per session; a per-window cap across sessions is
+the same check over `sessions` plus the live tail). Action at
+`PostToolBatch`: `continue: false` with the reason. Then, until lifted,
+every `UserPromptSubmit` for that session exits 2 with the same reason,
+which blocks the prompt before any model call. That is a suspension the
+harness can actually enforce. `archie policy lift <session>` clears it;
+raising the cap in `policy.toml` clears it for everyone.
+
+**Fail open, and only open.** The gate is one socket round trip with a 50 ms
+budget. If `archie serve` is not there, the hook exits 0 and writes one
+line to the spool so the miss is on record. When it is there, it stops the
+spend. There is no fail-closed mode in v0.1.22: a governor that can brick
+every agent on the machine when its own server dies is a worse failure than
+one missed halt.
+
+**The meter is inside v0.1.22, not before it.** Per-turn usage from the
+transcript tail is what the cap reads, so it ships in the same release,
+with `archie session burn [id]` as its face. Shadow mode exists as a
+switch (`action = "note"`), not as a phase: a person who wants to watch
+before they block sets it. `archie policy replay` stays as a threshold
+tuning tool over the index and is not the product.
+
+| Rule | Gate event | Action | Cleared by |
+| :--- | :--- | :--- | :--- |
+| thrash | `PostToolBatch` | `continue: false` + ground truth; the truth repeats on the next prompt | a passing verification of that file, or the next edit of a different file |
+| spend cap | `PostToolBatch`, then `UserPromptSubmit` | halt, then block every prompt with the reason | `archie policy lift`, or a higher cap |
+| identical call ×3 | `PostToolBatch` | `note` by default, `halt` if set | the next different call |
+| cache: config change or model switch mid-session | `ConfigChange`, `PreModelSwitch` | block with the priced reason, if set | the person |
+
+**On Codex.** Third-party guides describe `PreToolUse` with
+`{"decision":"block","reason"}` and no batch-level halt. If OpenAI's docs
+confirm that, the cap on Codex denies every tool call with the reason once
+tripped; the model call itself still happens, so the brake is weaker there
+and the spec says so rather than pretending parity. Reading those docs is
+the first task of the Codex lane, in the same release if they confirm, not
+a later one.
 
 ## What each rule needs, and where it comes from
 
 | Rule | Evidence | Already in Archie |
 | :--- | :--- | :--- |
-| thrash: file edited N times, no passing verification between | `tool_intents` for edits; verification commands and their results from `PostToolUse` | yes: `is_verification_command`, result classification, the Loop Sentinel |
+| thrash: file edited N times, no passing verification between | `PostToolBatch.tools`, `tool_intents` for edits; verification commands and results from the transcript | yes: `is_verification_command`, result classification, the Loop Sentinel |
 | blind loop: identical tool call three times | the Loop Sentinel | yes |
-| burn: tokens per window over budget | the transcript tail | tail yes, per-turn usage in the runtime no |
-| rake: M read-only calls by a frontier model | hook events with `tool_name`, model from the transcript's assistant records | partly: model cost class comes from the pricing table |
-| cache break | consecutive `usage` records; hook events in the window | cache doctor does it after the fact; in-flight no |
+| spend cap | the transcript tail, per turn | tail yes; per-turn usage in the runtime is new |
+| rake: M read-only calls by a frontier model | hook events with `tool_name`, model from the assistant records | partly: cost class from the pricing table |
+| cache break | consecutive `usage` records; hook events in the window | cache doctor does it after the fact; in-flight is new |
 
 ## Sequencing
 
 | Release | What | Gate |
 | :--- | :--- | :--- |
-| v0.1.22, the meter | per-turn usage in the loop runtime from the transcript tail; `session burn`; `governor_events` in shadow mode (every rule evaluated, every action logged as `would_have`); `policy replay` over the index | the replay prints, for this machine's 5,256 sessions, how many would have tripped each rule and the tokens spent after the trip |
-| v0.1.23, the gates | `hook --gate`, `note` by default, `deny` and `halt` opt-in, `ConfigChange`/`PreModelSwitch` blocks | a thrashing fixture session is halted before its next model call, with the reason visible and the row written; the gate's p95 under 20 ms |
-| v0.1.24, the other harnesses | Codex `hooks.json` adapter once OpenAI's docs are read; Cursor and Gemini CLI if they expose a gate | one turn governed end to end on Codex |
+| v0.1.22, the brake | the meter, `session burn`, `hook --gate` on `PostToolBatch` and `UserPromptSubmit`, the thrash halt and the spend cap active, `governor_events`, `policy lift`, `policy show|check`, Codex `hooks.json` adapter if OpenAI's docs confirm the block | a thrashing fixture session is halted before its next model call with the ground truth in the next prompt; a session over cap cannot submit a prompt until lifted; the gate's p95 under 20 ms; serve killed mid-session, the agent keeps working and the spool has the miss |
+| v0.1.23 | rake share and its advisory, cache-break attribution in-flight, `ConfigChange`/`PreModelSwitch` blocks, `PreToolUse` gate for per-call denies | one priced cache break named with its cause while the session runs |
+| v0.1.24 | Cursor and Gemini CLI, if they expose a gate | one governed turn on each |
 
 ## What stays true
 
 No model is called by Archie; the governor speaks to the model through the
 harness's own channel. No routing. No upload. Every action is a row with
-its evidence, and shadow mode runs before any rule can block. The gate fails
-open by default, and the person, not the tool, turns `deny` and `halt` on.
+its evidence. The gate fails open. The two rules that ship first block by
+default once a cap or a threshold is written in `policy.toml`; writing it is
+the person's decision, and a missing file means nothing is governed.
 
 ## Open questions
 
