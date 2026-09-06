@@ -179,7 +179,15 @@ const SESSION_CHILD_TABLES: &[ChildTable] = &[
     },
     ChildTable {
         name: "session_suspensions",
-        columns: &["session_id", "rule", "reason", "since", "lifted_at"],
+        columns: &[
+            "session_id",
+            "rule",
+            "reason",
+            "since",
+            "lifted_at",
+            "tokens_at_lift",
+            "usd_at_lift",
+        ],
     },
 ];
 
@@ -879,6 +887,8 @@ mod tests {
                     reason: "over the cap".to_string(),
                     since: now,
                     lifted_at: None,
+                    tokens_at_lift: None,
+                    usd_at_lift: None,
                 })
                 .unwrap();
         }

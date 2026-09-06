@@ -212,7 +212,10 @@ pub fn run_policy_check_command(_ui: &Ui) -> Result<()> {
 pub fn run_policy_lift_command(session_id: String, db_path: Option<PathBuf>, _ui: &Ui) -> Result<()> {
     let storage = open_storage(db_path)?;
     let active = storage.active_suspension(&session_id)?;
-    if !storage.lift_session(&session_id)? {
+    // What the session has spent right now becomes the baseline the cap is measured from, so
+    // the lift buys another cap's worth of work rather than a single prompt.
+    let spend = storage.session_spend(&session_id)?;
+    if !storage.lift_session(&session_id, spend.tokens, spend.usd)? {
         return Err(anyhow!(
             "nothing to lift: {session_id} is not suspended. `archie session burn {session_id}` \
              says what it has spent"
@@ -220,11 +223,12 @@ pub fn run_policy_lift_command(session_id: String, db_path: Option<PathBuf>, _ui
     }
     match active {
         Some(row) => println!(
-            "lifted {session_id}: {} (suspended since {})",
+            "lifted {session_id} at {} tokens: {} (suspended since {})",
+            spend.tokens,
             row.reason,
             row.since.format("%Y-%m-%d %H:%M")
         ),
-        None => println!("lifted {session_id}"),
+        None => println!("lifted {session_id} at {} tokens", spend.tokens),
     }
     Ok(())
 }

@@ -134,7 +134,14 @@ impl GovernorHost {
             if !EDIT_TOOLS.contains(&name) {
                 continue;
             }
-            if let Some(id) = tool.get("tool_use_id").and_then(|i| i.as_str()) {
+            // Claude Code's own hooks reference does not document the element shape of
+            // `PostToolBatch.tools` (fetched 2026-09-06), so both spellings of the id are
+            // accepted. Whichever it turns out to be, an edit is counted once.
+            if let Some(id) = tool
+                .get("tool_use_id")
+                .or_else(|| tool.get("id"))
+                .and_then(|i| i.as_str())
+            {
                 if !self.mark_counted(&event.session_id, id) {
                     continue;
                 }
@@ -191,6 +198,10 @@ impl GovernorHost {
                     reason: halt.reason.clone(),
                     since: Utc::now(),
                     lifted_at: None,
+                    // Set by `policy lift`, not here: this row is the suspension, and the
+                    // baseline is what the person's lift stamps on it.
+                    tokens_at_lift: None,
+                    usd_at_lift: None,
                 };
                 if let Err(e) = self.storage.suspend_session(&row) {
                     tracing::warn!("governor: could not suspend the session: {e:#}");
@@ -248,7 +259,12 @@ impl GovernorHost {
             if let Err(e) = self.storage.insert_governor_event(&row) {
                 tracing::warn!("governor: could not record the blocked prompt: {e:#}");
             }
-            return GateOutput::user_prompt_block(&suspension.reason);
+            // A block with no way out is a dead end. The person reading stderr gets the two
+            // things that clear it, in the order they would try them.
+            return GateOutput::user_prompt_block(&format!(
+                "{}. Lift with `archie policy lift {}`, or raise the cap in policy.toml.",
+                suspension.reason, suspension.session_id
+            ));
         }
         // The halt ended the turn; the person is starting the next one. They get the same
         // evidence again, so the model resumes knowing why it stopped -- unless something has
@@ -302,8 +318,42 @@ impl GovernorHost {
             .get(&event.session_id)
             .map(|(_, count)| *count)
             .unwrap_or(0);
+        // The cap is measured from the last lift, not from the start of the session. Without
+        // this a lifted session is over its cap again on the next turn, and `policy lift` buys
+        // one prompt instead of another cap's worth of work.
+        let baseline = self
+            .storage
+            .lift_baseline(&event.session_id)
+            .ok()
+            .flatten();
+        let mut since_lift = spend;
+        if let Some((tokens, usd)) = baseline {
+            since_lift.tokens = since_lift.tokens.saturating_sub(tokens.max(0) as u64);
+            since_lift.usd = (since_lift.usd - usd).max(0.0);
+        }
         let ledger = self.ledger_mut(&event.session_id);
-        agentworth_loop::Governor::evaluate(policy, ledger, &spend, repeats, suspension)
+        let mut decisions =
+            agentworth_loop::Governor::evaluate(policy, ledger, &since_lift, repeats, suspension);
+        if let Some((tokens, _)) = baseline {
+            let next = policy
+                .spend
+                .and_then(|rule| rule.tokens)
+                .map(|cap| tokens.max(0) as u64 + cap);
+            for decision in decisions
+                .iter_mut()
+                .filter(|d| d.rule == Rule::Spend && suspension.is_none())
+            {
+                let note = match next {
+                    Some(next) => format!(
+                        " Lifted at {tokens} tokens; the next halt is at {next}."
+                    ),
+                    None => format!(" Lifted at {tokens} tokens."),
+                };
+                decision.reason.push_str(&note);
+                decision.ground_truth.push_str(&note);
+            }
+        }
+        decisions
     }
 
     fn record(&self, event: &HookEvent, seq: u64, decision: &Decision) {
@@ -347,6 +397,10 @@ impl GovernorHost {
             .insert(session_id.to_string(), SessionSpend::from_turns(&turns));
 
         let mut ledger = EditLedger::new();
+        // Every edit folded in below is already counted. Without this the next `PostToolBatch`
+        // re-counts whichever of them its `tools` array repeats, and the threshold fires one
+        // edit early after every restart.
+        let mut counted = std::collections::HashSet::new();
         for intent in self
             .storage
             .intents_for_session(session_id)
@@ -357,6 +411,7 @@ impl GovernorHost {
                 for path in &intent.predicted_paths {
                     ledger.record_edit(path, seq);
                 }
+                counted.insert(intent.tool_use_id.clone());
                 continue;
             }
             let Some(command) = intent.command.as_deref() else {
@@ -374,6 +429,7 @@ impl GovernorHost {
             }
         }
         self.ledgers.insert(session_id.to_string(), ledger);
+        self.counted.insert(session_id.to_string(), counted);
     }
 
     fn ledger_mut(&mut self, session_id: &str) -> &mut EditLedger {
@@ -397,6 +453,10 @@ impl GovernorHost {
                         tail.offset = offset;
                     }
                 }
+                // `turn_usage` is keyed on `(session_id, seq)` and inserts nothing on conflict,
+                // so a counter that restarted at one would write every new turn under a seq
+                // that already exists and silently drop it.
+                tail.turns_seen = self.storage.max_turn_seq(&session_id).unwrap_or(0);
                 self.meters.entry(session_id.clone()).or_insert(tail)
             }
         };
@@ -594,12 +654,14 @@ fn command_of(event: &HookEvent) -> Option<String> {
 
 /// Passed means the harness reported no error and no non-zero exit. Anything ambiguous counts
 /// as not passing: a halt that fires one edit late is recoverable, one that never fires is not.
-fn passed(event: &HookEvent) -> bool {
+pub(crate) fn passed(event: &HookEvent) -> bool {
     if event.hook_event_name == HookEventName::PostToolUseFailure || event.tool_error.is_some() {
         return false;
     }
+    // No result at all is ambiguous, and ambiguous is not passing: a halt that fires one edit
+    // late is recoverable, a verification credited to a command that may never have run is not.
     let Some(response) = event.tool_response.as_ref() else {
-        return true;
+        return false;
     };
     if response
         .get("is_error")
@@ -756,6 +818,16 @@ mod tests {
         }))));
     }
 
+    /// A verification whose result never arrived is not a verification that passed. Crediting
+    /// one would clear every edit the thrash rule is counting.
+    #[test]
+    fn a_result_that_never_arrived_is_not_a_pass() {
+        assert!(!passed(&event(serde_json::json!({
+            "session_id": "s", "hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"}
+        }))));
+    }
+
     #[test]
     fn nothing_is_governed_and_nothing_is_read_without_a_policy_file() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -769,6 +841,121 @@ mod tests {
             "session_id": "s", "hook_event_name": "PostToolBatch", "cwd": cwd,
         })));
         assert_eq!(host.decide(&request, 1), GateOutput::allow());
+    }
+
+    /// Everything a restarted `archie serve` has to get right when it meets a session already
+    /// in flight: the meter resumes its turn counter, the ledger comes back from the intents,
+    /// the edits already in it are not counted a second time, and a verification that failed
+    /// stays failed.
+    #[test]
+    fn a_restarted_host_resumes_the_meter_and_recounts_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join("policy.toml");
+        std::fs::write(&home, "[thrash]\nedits = 3\naction = \"halt\"\n").expect("write");
+        let storage = Arc::new(agentworth_storage::Storage::open_in_memory().expect("storage"));
+        let cwd = dir.path().to_string_lossy().to_string();
+        let file = dir.path().join("x.rs");
+        let transcript = dir.path().join("t.jsonl");
+        let session = "sess_restart";
+
+        let turn = |id: &str| {
+            serde_json::json!({
+                "type": "assistant",
+                "timestamp": "2026-09-06T10:00:00.000Z",
+                "message": {"model": "claude-fable-5-1", "id": id, "role": "assistant",
+                    "usage": {"input_tokens": 100, "output_tokens": 10,
+                        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}
+            })
+            .to_string()
+        };
+        std::fs::write(&transcript, format!("{}\n{}\n", turn("m1"), turn("m2"))).expect("write");
+
+        let edit_event = |id: &str| {
+            event(serde_json::json!({
+                "session_id": session, "hook_event_name": "PreToolUse", "cwd": cwd,
+                "transcript_path": transcript, "tool_name": "Edit", "tool_use_id": id,
+                "tool_input": {"file_path": file},
+            }))
+        };
+
+        let mut first = GovernorHost::new(storage.clone());
+        first.home_file = home.clone();
+        first.observe(&edit_event("toolu_1"), 1);
+        first.observe(&edit_event("toolu_2"), 2);
+        assert_eq!(storage.max_turn_seq(session).expect("max"), 2);
+        assert_eq!(storage.session_spend(session).expect("spend").turns, 2);
+
+        // What `LoopRuntime` would have written for those two edits and one failed test run.
+        for (id, seq, tool, command, result) in [
+            ("toolu_1", 1i64, "Edit", None, Some("ok")),
+            ("toolu_2", 2, "Edit", None, Some("ok")),
+            ("toolu_3", 3, "Bash", Some("cargo test"), Some("error")),
+        ] {
+            storage
+                .insert_intent(
+                    &agentworth_storage::IntentRow {
+                        tool_use_id: id.to_string(),
+                        session_id: session.to_string(),
+                        seq,
+                        tool: tool.to_string(),
+                        predicted_paths: if tool == "Edit" {
+                            vec![file.to_string_lossy().to_string()]
+                        } else {
+                            Vec::new()
+                        },
+                        command: command.map(str::to_string),
+                        known: true,
+                        at: Utc::now(),
+                        result: result.map(str::to_string),
+                    },
+                    &[],
+                )
+                .expect("intent");
+        }
+
+        // The restart. A third turn lands while it is coming back up.
+        std::fs::write(
+            &transcript,
+            format!("{}\n{}\n{}\n", turn("m1"), turn("m2"), turn("m3")),
+        )
+        .expect("write");
+        let mut second = GovernorHost::new(storage.clone());
+        second.home_file = home;
+        second.observe(&edit_event("toolu_2"), 4);
+
+        assert_eq!(
+            storage.max_turn_seq(session).expect("max"),
+            3,
+            "the new turn is stored under a fresh seq, not dropped on the old one"
+        );
+        assert_eq!(storage.session_spend(session).expect("spend").turns, 3);
+
+        // Two distinct edits are in the ledger, and the failed run did not clear them. A third
+        // fires the rule; the second, already counted before the restart, does not.
+        let batch = |id: &str| {
+            let mut request = agentworth_loop::GateRequest::new(event(serde_json::json!({
+                "session_id": session, "hook_event_name": "PostToolBatch", "cwd": cwd,
+                "transcript_path": transcript,
+            })));
+            request.batch_tools = vec![serde_json::json!({
+                "tool_name": "Edit", "tool_use_id": id, "tool_input": {"file_path": file}
+            })];
+            request
+        };
+        assert_eq!(
+            second.decide(&batch("toolu_2"), 5),
+            GateOutput::allow(),
+            "an edit the ledger already holds is not counted twice by the batch"
+        );
+        let halt = second.decide(&batch("toolu_4"), 6);
+        let stdout = halt.stdout.expect("the third edit halts");
+        assert_eq!(stdout["continue"], false);
+        assert!(
+            stdout["additionalContext"]
+                .as_str()
+                .is_some_and(|t| t.contains("edited 3 times")),
+            "three edits, counted once each: {stdout}"
+        );
     }
 
     #[test]

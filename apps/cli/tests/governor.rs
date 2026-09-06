@@ -53,8 +53,16 @@ fn archie(home: &Path, db: &Path) -> Command {
 }
 
 fn start_serve(home: &Path, db: &Path) -> Serve {
+    start_serve_with(home, db, &[])
+}
+
+fn start_serve_with(home: &Path, db: &Path, env: &[(&str, &str)]) -> Serve {
     let bin = assert_cmd::cargo::cargo_bin("agentworth");
-    let child = std::process::Command::new(bin)
+    let mut command = std::process::Command::new(bin);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let child = command
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env_remove("HERDR_PANE_ID")
@@ -306,6 +314,11 @@ fn the_governor_halts_a_thrashing_session_then_a_spending_one_and_fails_open_whe
     assert_eq!(code, 2, "exit 2 blocks the prompt");
     assert!(stdout.is_none(), "a blocked prompt says nothing on stdout");
     assert!(!stderr.trim().is_empty(), "the person is told why");
+    assert!(
+        stderr.contains(&format!("archie policy lift {SESSION}")),
+        "and how to unblock it: {stderr}"
+    );
+    assert!(stderr.contains("policy.toml"), "or how to raise the cap: {stderr}");
 
     archie(home, &db)
         .arg("policy")
@@ -324,6 +337,70 @@ fn the_governor_halts_a_thrashing_session_then_a_spending_one_and_fails_open_whe
     );
     assert_eq!(code, 0, "a lifted session can prompt again");
 
+    // A lift buys another cap's worth of work, not one prompt: the cap is measured from the
+    // 6,000 tokens already spent, so the next batch is allowed.
+    let (code, stdout, _) = gate(
+        home,
+        &db,
+        json!({
+            "session_id": SESSION, "hook_event_name": "PostToolBatch", "cwd": work,
+            "transcript_path": transcript, "tools": [],
+        }),
+    );
+    assert_eq!(code, 0);
+    // The thrash rule still holds -- two edits, nothing passing -- but the spend rule does not,
+    // so the session is not suspended again and its next prompt goes through.
+    let message = stdout
+        .as_ref()
+        .and_then(|s| s["systemMessage"].as_str())
+        .unwrap_or_default();
+    assert!(
+        !message.contains("cap"),
+        "a lifted session is not re-suspended on its next batch: {message}"
+    );
+    let (code, _, _) = gate(
+        home,
+        &db,
+        json!({
+            "session_id": SESSION, "hook_event_name": "UserPromptSubmit", "cwd": work,
+            "transcript_path": transcript, "prompt": "still going",
+        }),
+    );
+    assert_eq!(code, 0, "and it can still submit a prompt");
+
+    // Another 5,100 tokens past the lift, and it halts again -- naming where the lift was.
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(file, "{}", assistant("msg_3", 5_100, 0)).unwrap();
+    }
+    hook(
+        home,
+        &db,
+        json!({
+            "session_id": SESSION, "hook_event_name": "PreToolUse", "cwd": work,
+            "transcript_path": transcript, "tool_name": "Read", "tool_use_id": "toolu_read_2",
+            "tool_input": {"file_path": file},
+        }),
+    );
+    let (_, stdout, _) = gate(
+        home,
+        &db,
+        json!({
+            "session_id": SESSION, "hook_event_name": "PostToolBatch", "cwd": work,
+            "transcript_path": transcript, "tools": [],
+        }),
+    );
+    let stdout = stdout.expect("the cap trips again past the lift");
+    assert_eq!(stdout["continue"], false);
+    let truth = stdout["additionalContext"].as_str().unwrap_or_default();
+    assert!(
+        truth.contains("Lifted at 6000 tokens") && truth.contains("11000"),
+        "the halt says where the lift was and where the next one is: {truth}"
+    );
+
     let burn = archie(home, &db)
         .arg("session")
         .arg("burn")
@@ -332,8 +409,8 @@ fn the_governor_halts_a_thrashing_session_then_a_spending_one_and_fails_open_whe
         .output()
         .expect("burn runs");
     let burn: Value = serde_json::from_slice(&burn.stdout).expect("burn printed JSON");
-    assert_eq!(burn["tokens"], 6_000, "the meter counted both turns once");
-    assert_eq!(burn["turns"], 2);
+    assert_eq!(burn["tokens"], 11_100, "every turn counted once, none twice");
+    assert_eq!(burn["turns"], 3);
 
     // (d) with nothing listening the gate is invisible to the agent, and the miss is a row.
     drop(serve);
@@ -363,6 +440,48 @@ fn the_governor_halts_a_thrashing_session_then_a_spending_one_and_fails_open_whe
                 .is_some_and(|v| v["gate_miss"] == true)
         }),
         "the miss is on record: {spooled}"
+    );
+}
+
+/// A runtime slower than the agent's budget must cost the agent the budget and nothing more.
+/// The gate is one deadline across connect, write and read -- not 50 ms for each of them.
+#[test]
+fn a_runtime_slower_than_the_budget_fails_open_inside_it() {
+    let (home, db, work, transcript) = sandbox();
+    let home = home.path();
+    let _serve = start_serve_with(home, &db, &[("ARCHIE_GATE_TEST_DELAY_MS", "3000")]);
+
+    let started = Instant::now();
+    let output = Command::cargo_bin("agentworth")
+        .unwrap()
+        .env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("ARCHIE_GATE_BUDGET_MS", "50")
+        .env_remove("HERDR_PANE_ID")
+        .arg("--db-path")
+        .arg(&db)
+        .arg("hook")
+        .arg("--gate")
+        .write_stdin(
+            json!({
+                "session_id": SESSION, "hook_event_name": "PostToolBatch", "cwd": work,
+                "transcript_path": transcript, "tools": [],
+            })
+            .to_string(),
+        )
+        .output()
+        .expect("the gate runs");
+    let elapsed = started.elapsed();
+
+    assert!(output.status.success(), "a slow server never fails the agent");
+    assert!(
+        output.stdout.is_empty(),
+        "and never speaks to the model: {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        elapsed < Duration::from_millis(1_500),
+        "the whole round trip is one budget, not one per step: {elapsed:?}"
     );
 }
 

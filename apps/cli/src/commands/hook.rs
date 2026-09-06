@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agentworth_loop::{GateOutput, HookEvent, SpoolWriter};
 
@@ -164,21 +164,35 @@ pub fn run_gate_command(verbose: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One round trip inside `SOCKET_BUDGET`: connect, write the line, read one reply line.
-/// `None` for every failure, which is the whole point.
+/// One round trip inside one deadline: connect, write the line, read one reply line. Each step
+/// gets what is left of the budget rather than the whole of it, so three slow steps cannot cost
+/// the agent three budgets. `None` for every failure, which is the whole point.
+///
+/// The connect runs on its own thread because `std::os::unix::net::UnixStream::connect` takes no
+/// timeout and the crate has no `socket2` dependency to do a non-blocking connect with. A
+/// connect that never returns leaves that thread behind, but this process is about to exit
+/// anyway, and the agent is already on its way with an `allow`.
 #[cfg(unix)]
 fn ask_gate(line: &str) -> Option<GateOutput> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
 
+    let deadline = Instant::now() + gate_budget();
+    let remaining = || deadline.checked_duration_since(Instant::now());
+
     let path = agentworth_storage::default_socket_path().ok()?;
-    let budget = gate_budget();
-    let mut stream = UnixStream::connect(&path).ok()?;
-    stream.set_write_timeout(Some(budget)).ok()?;
-    stream.set_read_timeout(Some(budget)).ok()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(UnixStream::connect(&path));
+    });
+    let mut stream = rx.recv_timeout(remaining()?).ok()?.ok()?;
+
+    stream.set_write_timeout(Some(remaining()?)).ok()?;
     stream.write_all(line.as_bytes()).ok()?;
     stream.write_all(b"\n").ok()?;
     stream.flush().ok()?;
+
+    stream.set_read_timeout(Some(remaining()?)).ok()?;
     let mut reply = String::new();
     BufReader::new(&stream).read_line(&mut reply).ok()?;
     serde_json::from_str(reply.trim()).ok()

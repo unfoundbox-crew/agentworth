@@ -862,6 +862,12 @@ pub struct SuspensionRow {
     pub reason: String,
     pub since: DateTime<Utc>,
     pub lifted_at: Option<DateTime<Utc>>,
+    /// What the session had already spent when a person lifted it. The cap is measured from
+    /// here afterwards, so a lift buys a whole cap's worth of work rather than one prompt.
+    #[serde(default)]
+    pub tokens_at_lift: Option<i64>,
+    #[serde(default)]
+    pub usd_at_lift: Option<f64>,
 }
 
 /// Label for a `FileActionType`, matching its `#[serde(rename_all = "snake_case")]` form.
@@ -1148,10 +1154,32 @@ impl Storage {
                 rule TEXT NOT NULL,
                 reason TEXT NOT NULL,
                 since TEXT NOT NULL,
-                lifted_at TEXT
+                lifted_at TEXT,
+                tokens_at_lift INTEGER,
+                usd_at_lift REAL
             );
             "#,
         )?;
+
+        // The lift baseline arrived after `session_suspensions` shipped, so an index written by
+        // v0.1.22's first build has the table without these two columns.
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(session_suspensions)")?;
+            let columns: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(Result::ok)
+                .collect();
+            if !columns.is_empty() && !columns.contains(&"tokens_at_lift".to_string()) {
+                let _ = conn.execute(
+                    "ALTER TABLE session_suspensions ADD COLUMN tokens_at_lift INTEGER",
+                    [],
+                );
+                let _ = conn.execute(
+                    "ALTER TABLE session_suspensions ADD COLUMN usd_at_lift REAL",
+                    [],
+                );
+            }
+        }
 
         // Fallback schema migrations for existing databases before creating indexes
         let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
@@ -4477,19 +4505,57 @@ impl Storage {
         Ok(())
     }
 
-    /// Lift an active suspension. Returns `false` when nothing was active for this session.
-    pub fn lift_session(&self, session_id: &str) -> Result<bool> {
+    /// Lift an active suspension, stamping what the session had spent at that moment. Returns
+    /// `false` when nothing was active for this session.
+    ///
+    /// The baseline is the whole point: without it the next turn is over the cap again the
+    /// instant it starts, and the lift buys one prompt.
+    pub fn lift_session(&self, session_id: &str, tokens: i64, usd: f64) -> Result<bool> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let changed = conn.execute(
-            "UPDATE session_suspensions SET lifted_at = ?1 WHERE session_id = ?2 AND lifted_at IS NULL",
-            params![Utc::now().to_rfc3339(), session_id],
+            r#"
+            UPDATE session_suspensions
+            SET lifted_at = ?1, tokens_at_lift = ?2, usd_at_lift = ?3
+            WHERE session_id = ?4 AND lifted_at IS NULL
+            "#,
+            params![Utc::now().to_rfc3339(), tokens, usd, session_id],
         )?;
         Ok(changed > 0)
+    }
+
+    /// What this session had spent when it was last lifted, if it ever was. `None` means the
+    /// cap is measured from the start of the session.
+    pub fn lift_baseline(&self, session_id: &str) -> Result<Option<(i64, f64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT tokens_at_lift, usd_at_lift FROM session_suspensions WHERE session_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![session_id], |row| {
+            let tokens: Option<i64> = row.get(0)?;
+            let usd: Option<f64> = row.get(1)?;
+            Ok(tokens.map(|t| (t, usd.unwrap_or(0.0))))
+        })?;
+        Ok(rows.next().transpose()?.flatten())
+    }
+
+    /// The highest turn sequence already stored for this session. A restarted `serve` resumes
+    /// its transcript counter here: `turn_usage` is keyed on `(session_id, seq)` and inserts
+    /// nothing on conflict, so a counter that restarted at zero would discard every new turn.
+    pub fn max_turn_seq(&self, session_id: &str) -> Result<u64> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let max: Option<i64> = conn.query_row(
+            "SELECT MAX(seq) FROM turn_usage WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )?;
+        Ok(max.unwrap_or(0).max(0) as u64)
     }
 
     fn row_to_suspension(row: &rusqlite::Row) -> rusqlite::Result<SuspensionRow> {
         let since: String = row.get(3)?;
         let lifted_at: Option<String> = row.get(4)?;
+        let tokens_at_lift: Option<i64> = row.get(5)?;
+        let usd_at_lift: Option<f64> = row.get(6)?;
         Ok(SuspensionRow {
             session_id: row.get(0)?,
             rule: row.get(1)?,
@@ -4500,6 +4566,8 @@ impl Storage {
             lifted_at: lifted_at
                 .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&Utc)),
+            tokens_at_lift,
+            usd_at_lift,
         })
     }
 
@@ -4508,7 +4576,7 @@ impl Storage {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut stmt = conn.prepare(
             r#"
-            SELECT session_id, rule, reason, since, lifted_at
+            SELECT session_id, rule, reason, since, lifted_at, tokens_at_lift, usd_at_lift
             FROM session_suspensions
             WHERE session_id = ?1 AND lifted_at IS NULL
             "#,
@@ -4522,9 +4590,9 @@ impl Storage {
     pub fn list_suspensions(&self, include_lifted: bool) -> Result<Vec<SuspensionRow>> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let sql = if include_lifted {
-            "SELECT session_id, rule, reason, since, lifted_at FROM session_suspensions ORDER BY since DESC"
+            "SELECT session_id, rule, reason, since, lifted_at, tokens_at_lift, usd_at_lift FROM session_suspensions ORDER BY since DESC"
         } else {
-            "SELECT session_id, rule, reason, since, lifted_at FROM session_suspensions WHERE lifted_at IS NULL ORDER BY since DESC"
+            "SELECT session_id, rule, reason, since, lifted_at, tokens_at_lift, usd_at_lift FROM session_suspensions WHERE lifted_at IS NULL ORDER BY since DESC"
         };
         let mut stmt = conn.prepare(sql)?;
         let rows = stmt
@@ -7834,6 +7902,8 @@ mod tests {
                 reason: "over budget".to_string(),
                 since: first_since,
                 lifted_at: None,
+                tokens_at_lift: None,
+                usd_at_lift: None,
             })
             .unwrap();
         storage
@@ -7843,6 +7913,8 @@ mod tests {
                 reason: "over budget again".to_string(),
                 since: Utc::now(),
                 lifted_at: None,
+                tokens_at_lift: None,
+                usd_at_lift: None,
             })
             .unwrap();
         let active = storage.active_suspension("sess_a").unwrap().unwrap();
@@ -7853,7 +7925,7 @@ mod tests {
     #[test]
     fn test_lift_session_returns_false_when_nothing_active() {
         let storage = Storage::open_in_memory().expect("open storage");
-        assert!(!storage.lift_session("sess_none").unwrap());
+        assert!(!storage.lift_session("sess_none", 0, 0.0).unwrap());
 
         storage
             .suspend_session(&SuspensionRow {
@@ -7862,10 +7934,38 @@ mod tests {
                 reason: "over budget".to_string(),
                 since: Utc::now(),
                 lifted_at: None,
+                tokens_at_lift: None,
+                usd_at_lift: None,
             })
             .unwrap();
-        assert!(storage.lift_session("sess_a").unwrap());
+        assert!(storage.lift_session("sess_a", 6_000, 0.42).unwrap());
         assert!(storage.active_suspension("sess_a").unwrap().is_none());
-        assert!(!storage.lift_session("sess_a").unwrap());
+        assert!(!storage.lift_session("sess_a", 6_000, 0.42).unwrap());
+        assert_eq!(
+            storage.lift_baseline("sess_a").unwrap(),
+            Some((6_000, 0.42)),
+            "the cap is measured from the lift, not from the start of the session"
+        );
+    }
+
+    #[test]
+    fn test_max_turn_seq_is_where_a_restarted_meter_resumes() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        assert_eq!(storage.max_turn_seq("sess_a").unwrap(), 0);
+        storage
+            .insert_turn_usage(&[TurnUsageRow {
+                session_id: "sess_a".to_string(),
+                seq: 7,
+                at: Utc::now(),
+                model: "claude-fable-5-1".to_string(),
+                input: Some(10),
+                output: Some(5),
+                cache_read: Some(0),
+                cache_creation: Some(0),
+                usd: 0.001,
+            }])
+            .unwrap();
+        assert_eq!(storage.max_turn_seq("sess_a").unwrap(), 7);
+        assert_eq!(storage.max_turn_seq("sess_b").unwrap(), 0);
     }
 }

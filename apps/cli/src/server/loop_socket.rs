@@ -89,9 +89,12 @@ pub async fn start_loop_socket(storage: Arc<Storage>, path: PathBuf) -> Result<P
                 }
             }
             let runtime = drain.clone();
+            // The lock is taken per event, not per batch. A gate request waiting behind the
+            // drain waits for one event, and a busy machine's batch of sixty-four cannot spend
+            // the agent's whole 50 ms budget for it.
             let applied = tokio::task::spawn_blocking(move || {
-                let mut runtime = runtime.blocking_lock();
                 for event in batch {
+                    let mut runtime = runtime.blocking_lock();
                     if let Err(e) = runtime.apply(event) {
                         tracing::warn!("loop: could not apply a hook event: {e:#}");
                     }

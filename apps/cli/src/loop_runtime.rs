@@ -134,6 +134,16 @@ impl LoopRuntime {
     /// Synchronous like `apply`, and called the same way -- under `spawn_blocking`, from the
     /// connection's own task, because the hook on the other end is holding its breath.
     pub fn decide(&mut self, request: GateRequest) -> GateOutput {
+        // A debug-build-only hold, so a test can prove the gate fails open when the runtime is
+        // slower than the agent's budget. `debug_assertions` keeps it out of every shipped
+        // binary, where an environment variable that could stall the loop has no business.
+        #[cfg(debug_assertions)]
+        if let Some(ms) = std::env::var("ARCHIE_GATE_TEST_DELAY_MS")
+            .ok()
+            .and_then(|ms| ms.parse::<u64>().ok())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
         if let Err(e) = self.apply(request.event.clone()) {
             tracing::warn!("loop: could not apply a gated event: {e:#}");
         }
@@ -274,7 +284,15 @@ impl LoopRuntime {
 
     fn on_post_tool_use(&mut self, event: &HookEvent, seq: u64) -> Result<()> {
         if let Some(tool_use_id) = &event.tool_use_id {
-            self.storage.set_intent_result(tool_use_id, "ok")?;
+            // The result is what the harness reported, not the fact that a `PostToolUse` fired.
+            // Storing "ok" for a failed `cargo test` told the governor's rehydrated ledger that
+            // a verification had passed, which cleared every edit the thrash rule was counting.
+            let result = if crate::loop_governor::passed(event) {
+                "ok"
+            } else {
+                "error"
+            };
+            self.storage.set_intent_result(tool_use_id, result)?;
         }
 
         if let Some(entry) = support_from_read(event, seq) {
