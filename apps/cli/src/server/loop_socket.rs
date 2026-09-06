@@ -11,10 +11,11 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use agentworth_loop::HookEvent;
 use agentworth_storage::Storage;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
@@ -26,17 +27,39 @@ use crate::loop_runtime::LoopRuntime;
 /// arrive.
 const QUEUE: usize = 1024;
 
+/// How long one connection may stay open without sending a line. `archie hook` writes one line
+/// and closes, so anything holding the socket past this is not a hook, and every connection
+/// held is a file descriptor this process cannot get back.
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Binds the loop socket and starts draining it. Returns the bound path.
 ///
-/// A stale socket file left by a killed server would make `bind` fail with `EADDRINUSE`
-/// forever, so it is removed first: nothing else owns this path, and a live server holding it
-/// is the case a second `archie serve` on the same index already conflicts on.
+/// A socket file left behind by a killed server would make `bind` fail forever, so a stale one
+/// is removed -- but only after asking it whether anyone is home. The two cases look identical
+/// on disk and are opposite in consequence: unlinking a live server's socket takes the loop
+/// down silently for every agent on the machine, and the second server then answers for hooks
+/// the first one is still being told about.
 pub async fn start_loop_socket(storage: Arc<Storage>, path: PathBuf) -> Result<PathBuf> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
     }
-    let _ = std::fs::remove_file(&path);
+    if path.exists() {
+        match std::os::unix::net::UnixStream::connect(&path) {
+            Ok(_) => {
+                return Err(anyhow!(
+                    "another archie serve already owns the loop socket at {} -- stop it, or \
+                     start this one with --no-socket",
+                    path.display()
+                ))
+            }
+            // Nobody is listening (ECONNREFUSED), or it went away between the two calls
+            // (ENOENT): the file is a leftover and removing it is safe.
+            Err(_) => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
     let listener = UnixListener::bind(&path)
         .with_context(|| format!("binding the loop socket at {}", path.display()))?;
     restrict(&path)?;
@@ -96,7 +119,14 @@ pub async fn start_loop_socket(storage: Arc<Storage>, path: PathBuf) -> Result<P
 async fn read_connection(stream: UnixStream, tx: mpsc::Sender<HookEvent>) {
     let mut lines = BufReader::new(stream).lines();
     loop {
-        match lines.next_line().await {
+        let next = match tokio::time::timeout(READ_TIMEOUT, lines.next_line()).await {
+            Ok(next) => next,
+            Err(_) => {
+                tracing::debug!("loop: a socket connection went quiet; dropping it");
+                return;
+            }
+        };
+        match next {
             Ok(Some(line)) => {
                 if line.trim().is_empty() {
                     continue;
@@ -150,5 +180,43 @@ pub fn ingest_spool_at_startup(storage: Arc<Storage>) {
         }
         Ok(_) => {}
         Err(e) => tracing::warn!("loop: could not ingest the spool: {e:#}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn storage() -> Arc<Storage> {
+        Arc::new(Storage::open_in_memory().expect("open storage"))
+    }
+
+    /// The two socket files that look identical on disk. A live one must never be unlinked:
+    /// doing so takes the loop down for every agent on the machine and leaves the first server
+    /// listening on a path nothing can reach.
+    #[tokio::test]
+    async fn a_live_socket_is_refused_and_a_dead_one_is_replaced() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("archie.sock");
+
+        let bound = start_loop_socket(storage(), path.clone())
+            .await
+            .expect("the first server binds");
+        assert_eq!(bound, path);
+
+        let second = start_loop_socket(storage(), path.clone()).await;
+        let error = second.expect_err("a second server must not take the socket").to_string();
+        assert!(
+            error.contains("another archie serve"),
+            "the error names the cause: {error}"
+        );
+        assert!(path.exists(), "the live socket is still there");
+
+        // A leftover file with nothing behind it is the opposite case, and is replaced.
+        let stale = dir.path().join("stale.sock");
+        std::fs::write(&stale, b"not a socket").expect("write");
+        start_loop_socket(storage(), stale.clone())
+            .await
+            .expect("a stale socket file is replaced");
     }
 }

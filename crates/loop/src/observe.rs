@@ -107,7 +107,11 @@ fn parse_porcelain(output: &str) -> Vec<ObservedChange> {
 
 /// Makes a path absolute against `cwd` and removes `.` and `..` textually. Textually because a
 /// deleted file cannot be canonicalised, and a deleted file is exactly the case that matters.
-fn absolutise(cwd: &Path, path: &Path) -> PathBuf {
+///
+/// Public because every path the loop stores goes through it: a relative `file_path` in a tool
+/// input is only meaningful next to the `cwd` of the event that carried it, and two sessions in
+/// different directories would otherwise collide on `src/lib.rs`.
+pub fn absolutise(cwd: &Path, path: &Path) -> PathBuf {
     let joined = if path.is_absolute() {
         path.to_path_buf()
     } else {

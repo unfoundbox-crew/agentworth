@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agentworth_loop::{
-    classify, extract_anchors, hash_paths_for_anchors, observe_checkout, support_from_read,
-    Anchor, HookEvent, HookEventName, Intent, LoopState, SpoolReader,
+    absolutise, classify, extract_anchors, hash_paths_for_anchors, observe_checkout,
+    support_from_read, AgentState, Anchor, HookEvent, HookEventName, Intent, LoopState,
+    SessionLive, SpoolReader,
 };
 use agentworth_schema::MachineInfo;
 use agentworth_storage::{AgentStateRow, AnchorRow, IntentRow, MachineRow, Storage, SupportRow};
@@ -37,6 +38,11 @@ const PERSIST_EVERY: u64 = 20;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct StopReport {
     pub at: Option<chrono::DateTime<Utc>>,
+    /// This session's own sequence at the `Stop`, so a restarted process classifies only what
+    /// happened after it. `#[serde(default)]` because rows written before this field existed
+    /// read back as zero, which classifies more than it should rather than less.
+    #[serde(default)]
+    pub seq: u64,
     pub cwd: Option<String>,
     pub head: Option<String>,
     pub own: Vec<String>,
@@ -75,6 +81,7 @@ impl LoopRuntime {
     /// Applies one event. Errors are returned, never propagated to the agent: every caller
     /// logs and carries on, because a hook that fails must not become an agent's problem.
     pub fn apply(&mut self, event: HookEvent) -> Result<()> {
+        self.rehydrate(&event.session_id);
         let transition = self.state.apply(&event);
         let session_id = event.session_id.clone();
         let seq = self
@@ -113,32 +120,78 @@ impl LoopRuntime {
         Ok(())
     }
 
-    /// Every event in `dir`, in file order, then the files themselves removed. A file that
-    /// fails to parse is still ingested line by line by `SpoolReader`, which counts what it
-    /// skipped rather than refusing the session.
+    /// Drains `dir`: every spool file is renamed aside, read, applied, and only then deleted.
+    ///
+    /// The rename is the whole point. `archie hook` appends to `<session>.jsonl` and a drain
+    /// that read the file, applied it, and deleted the path would lose every line a hook wrote
+    /// in between -- and hooks fire while the scan runs. A rename is atomic within the
+    /// directory, so the writer's next append recreates the original name and is picked up by
+    /// the next drain. A file whose events did not all apply is left as `.ingesting` rather
+    /// than deleted: late is recoverable, gone is not.
     pub fn ingest_spool(&mut self, dir: &Path) -> Result<SpoolIngest> {
-        let read = SpoolReader::read_dir(dir)?;
-        let mut ingest = SpoolIngest {
-            events: read.events.len(),
-            skipped_lines: read.skipped,
-            files: 0,
-        };
-        for event in read.events {
-            if let Err(e) = self.apply(event) {
-                tracing::warn!("loop: a spooled event could not be applied: {e:#}");
+        let mut ingest = SpoolIngest::default();
+        for path in SpoolReader::files(dir)? {
+            let claimed = path.with_extension(format!("jsonl.{}.ingesting", std::process::id()));
+            if std::fs::rename(&path, &claimed).is_err() {
+                // Another drain took it, or it vanished. Either way it is not ours.
+                continue;
             }
-        }
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "jsonl")
-                    && std::fs::remove_file(&path).is_ok()
-                {
+            let read = SpoolReader::read_file(&claimed)?;
+            ingest.events += read.events.len();
+            ingest.skipped_lines += read.skipped;
+            let mut all_applied = true;
+            for event in read.events {
+                if let Err(e) = self.apply(event) {
+                    all_applied = false;
+                    tracing::warn!("loop: a spooled event could not be applied: {e:#}");
+                }
+            }
+            if all_applied {
+                if std::fs::remove_file(&claimed).is_ok() {
                     ingest.files += 1;
                 }
+            } else {
+                tracing::warn!(
+                    "loop: {} kept -- not every event in it applied",
+                    claimed.display()
+                );
             }
         }
         Ok(ingest)
+    }
+
+    /// Puts a session back where storage left it, once, the first time this process sees it.
+    ///
+    /// Without this every restart -- a `serve` that came back, or the `archie scan` that
+    /// drains the spool -- would start the session's sequence again at one and re-classify
+    /// every path it ever predicted at the next `Stop`.
+    fn rehydrate(&mut self, session_id: &str) {
+        if self.state.get(session_id).is_some() {
+            return;
+        }
+        let Ok(Some(row)) = self.storage.get_agent_state(session_id) else {
+            return;
+        };
+        let Some(state) = AgentState::from_label(&row.state) else {
+            return;
+        };
+        self.state.seed(SessionLive {
+            session_id: row.session_id.clone(),
+            state,
+            since: row.since,
+            pane_id: row.pane_id.clone(),
+            cwd: row.cwd.clone(),
+            last_seq: row.last_seq.max(0) as u64,
+            updated_at: row.updated_at,
+        });
+        if let Ok(Some(json)) = self.storage.get_agent_last_stop(session_id) {
+            if let Ok(report) = serde_json::from_str::<StopReport>(&json) {
+                self.last_stop_seq.insert(session_id.to_string(), report.seq);
+                if let Some(at) = report.at {
+                    self.last_stop_at.insert(session_id.to_string(), at);
+                }
+            }
+        }
     }
 
     fn on_session_start(&mut self, session_id: &str) {
@@ -215,10 +268,18 @@ impl LoopRuntime {
             event.tool_name.as_deref(),
             Some("Write" | "Edit" | "MultiEdit" | "NotebookEdit")
         ) {
-            let prediction = agentworth_loop::predicted_writes(
+            let mut prediction = agentworth_loop::predicted_writes(
                 event.tool_name.as_deref().unwrap_or_default(),
                 event.tool_input.as_ref(),
             );
+            if let Some(cwd) = event.cwd.as_deref() {
+                let cwd = Path::new(cwd);
+                prediction.paths = prediction
+                    .paths
+                    .iter()
+                    .map(|path| absolutise(cwd, path))
+                    .collect();
+            }
             anchors.extend(hash_paths_for_anchors(&event.session_id, seq, &prediction));
         }
         if let Some(text) = event.tool_response_text() {
@@ -258,10 +319,21 @@ impl LoopRuntime {
         let observation = match observe_checkout(&cwd) {
             Ok(observation) => observation,
             // Not a checkout, no git, or a stalled mount: `Stop` still closes the loop, it just
-            // has nothing to say about the working tree.
+            // has nothing to say about the working tree. The boundary is still recorded --
+            // without it a restarted process would classify this session's whole history at
+            // its next Stop.
             Err(e) => {
                 tracing::debug!("loop: no checkout observation at Stop: {e:#}");
-                return self.persist_state(&event.session_id, None);
+                self.persist_state(&event.session_id, None)?;
+                let report = StopReport {
+                    at: Some(event.received_at),
+                    seq,
+                    cwd: Some(cwd.to_string_lossy().to_string()),
+                    ..StopReport::default()
+                };
+                self.storage
+                    .set_agent_last_stop(&event.session_id, &serde_json::to_string(&report)?)?;
+                return Ok(());
             }
         };
 
@@ -284,6 +356,7 @@ impl LoopRuntime {
 
         let report = StopReport {
             at: Some(event.received_at),
+            seq,
             cwd: Some(cwd.to_string_lossy().to_string()),
             head: observation.head.clone(),
             own: classified
@@ -359,4 +432,149 @@ fn anchor_rows(anchors: &[Anchor]) -> Vec<AnchorRow> {
 pub fn ingest_default_spool(storage: Arc<Storage>) -> Result<SpoolIngest> {
     let dir = agentworth_storage::default_spool_dir()?;
     LoopRuntime::new(storage).ingest_spool(&dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentworth_loop::SpoolWriter;
+    use std::collections::HashMap as Map;
+
+    fn storage() -> Arc<Storage> {
+        Arc::new(Storage::open_in_memory().expect("open storage"))
+    }
+
+    fn event(session: &str, name: &str, extra: serde_json::Value) -> HookEvent {
+        let mut value = serde_json::json!({
+            "session_id": session,
+            "hook_event_name": name,
+        });
+        if let (Some(object), Some(extra)) = (value.as_object_mut(), extra.as_object()) {
+            for (key, item) in extra {
+                object.insert(key.clone(), item.clone());
+            }
+        }
+        HookEvent::from_stdin_json(value, &Map::new()).expect("parses")
+    }
+
+    /// The race the rename exists for: a hook appends while the drain is mid-file. The line
+    /// written after the drain read the file must still be there afterwards.
+    #[test]
+    fn an_event_written_during_a_drain_survives_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spool = dir.path().join("spool");
+        SpoolWriter::append(&spool, &event("s1", "SessionStart", serde_json::json!({})))
+            .expect("append");
+
+        let mut runtime = LoopRuntime::new(storage());
+        // Stands in for the hook that fires between the rename and the delete: it recreates
+        // the original path, which the drain has already moved aside.
+        let during = event("s1", "UserPromptSubmit", serde_json::json!({}));
+        let claimed = spool.join("s1.jsonl");
+        std::fs::rename(&claimed, spool.join("s1.jsonl.test.ingesting")).expect("claim");
+        SpoolWriter::append(&spool, &during).expect("append during");
+        std::fs::rename(spool.join("s1.jsonl.test.ingesting"), &claimed).ok();
+
+        let ingest = runtime.ingest_spool(&spool).expect("drain");
+        assert_eq!(ingest.events, 1, "the drain took the file as it stood");
+        assert!(
+            std::fs::read_dir(&spool)
+                .expect("spool")
+                .filter_map(Result::ok)
+                .all(|entry| entry.path().extension().is_some_and(|e| e != "jsonl")),
+            "the drained file is gone"
+        );
+
+        // And the event written during the drain is still deliverable: it is a fresh file at
+        // the original path, which the next drain picks up.
+        SpoolWriter::append(&spool, &during).expect("append after");
+        let second = runtime.ingest_spool(&spool).expect("second drain");
+        assert_eq!(second.events, 1, "nothing was lost");
+    }
+
+    #[test]
+    fn a_second_runtime_continues_the_sequence_and_the_stop_boundary() {
+        let storage = storage();
+        let cwd = tempfile::tempdir().expect("tempdir");
+        let cwd_json = serde_json::json!({ "cwd": cwd.path() });
+
+        let mut first = LoopRuntime::new(storage.clone());
+        first
+            .apply(event("s1", "SessionStart", cwd_json.clone()))
+            .expect("start");
+        first
+            .apply(event("s1", "UserPromptSubmit", cwd_json.clone()))
+            .expect("prompt");
+        first.apply(event("s1", "Stop", cwd_json.clone())).expect("stop");
+        let after_first = storage
+            .get_agent_state("s1")
+            .expect("read")
+            .expect("a row")
+            .last_seq;
+        assert_eq!(after_first, 3);
+
+        let mut second = LoopRuntime::new(storage.clone());
+        second
+            .apply(event("s1", "UserPromptSubmit", cwd_json))
+            .expect("prompt again");
+        let row = storage.get_agent_state("s1").expect("read").expect("a row");
+        assert_eq!(row.last_seq, 4, "the sequence continued rather than restarting");
+        assert_eq!(row.state, "working");
+
+        let stop: StopReport = serde_json::from_str(
+            &storage
+                .get_agent_last_stop("s1")
+                .expect("read")
+                .expect("a stop"),
+        )
+        .expect("parses");
+        assert_eq!(stop.seq, 3, "the Stop boundary is stored and read back");
+    }
+
+    /// A relative `file_path` is only meaningful next to the event's `cwd`. Stored relative, it
+    /// would never match the path another session wrote.
+    #[test]
+    fn a_relative_tool_path_is_stored_absolute_and_still_finds_its_writer() {
+        let storage = storage();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("notes.md");
+        std::fs::write(&file, "before\n").expect("write");
+
+        let mut runtime = LoopRuntime::new(storage.clone());
+        let reader = serde_json::json!({
+            "cwd": dir.path(),
+            "tool_name": "Read",
+            "tool_use_id": "toolu_read",
+            "tool_input": {"file_path": "notes.md"},
+            "tool_response": "before",
+        });
+        runtime
+            .apply(event("reader", "PostToolUse", reader))
+            .expect("read");
+
+        let support = storage.support_for_session("reader").expect("support");
+        assert_eq!(support.len(), 1);
+        assert_eq!(
+            support[0].path,
+            file.to_string_lossy(),
+            "the stored path is absolute"
+        );
+
+        let writer = serde_json::json!({
+            "cwd": dir.path(),
+            "tool_name": "Edit",
+            "tool_use_id": "toolu_edit",
+            "tool_input": {"file_path": "notes.md"},
+        });
+        runtime
+            .apply(event("writer", "PreToolUse", writer))
+            .expect("edit");
+        std::fs::write(&file, "after\n").expect("rewrite");
+
+        let drift = crate::commands::loop_cmds::session_drift_json(&storage, "reader")
+            .expect("drift");
+        let drifted = drift["drift"].as_array().expect("a list");
+        assert_eq!(drifted.len(), 1, "{drift}");
+        assert_eq!(drifted[0]["writer"]["session_id"], "writer");
+    }
 }

@@ -46,37 +46,54 @@ pub struct SpoolRead {
 pub struct SpoolReader;
 
 impl SpoolReader {
-    /// Every event in `dir`, in file-name then line order. A missing directory reads as empty.
-    pub fn read_dir(dir: &Path) -> Result<SpoolRead> {
+    /// Every event in one spool file, in line order. A missing file reads as empty, because a
+    /// caller that renamed the file out from under a writer is racing a hook that may never
+    /// have created it.
+    pub fn read_file(path: &Path) -> Result<SpoolRead> {
+        let mut read = SpoolRead::default();
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(read),
+            Err(err) => return Err(err).with_context(|| format!("opening {}", path.display())),
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line.with_context(|| format!("reading {}", path.display()))?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<HookEvent>(&line) {
+                Ok(event) => read.events.push(event),
+                Err(_) => read.skipped += 1,
+            }
+        }
+        Ok(read)
+    }
+
+    /// The spool files in `dir`, in file-name order. A missing directory lists as empty.
+    pub fn files(dir: &Path) -> Result<Vec<PathBuf>> {
         let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
             Ok(entries) => entries
                 .filter_map(std::result::Result::ok)
                 .map(|entry| entry.path())
                 .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
                 .collect(),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(SpoolRead::default())
-            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(err) => {
                 return Err(err)
                     .with_context(|| format!("reading spool directory {}", dir.display()))
             }
         };
         files.sort();
+        Ok(files)
+    }
 
+    /// Every event in `dir`, in file-name then line order. A missing directory reads as empty.
+    pub fn read_dir(dir: &Path) -> Result<SpoolRead> {
         let mut read = SpoolRead::default();
-        for path in files {
-            let file = File::open(&path).with_context(|| format!("opening {}", path.display()))?;
-            for line in BufReader::new(file).lines() {
-                let line = line.with_context(|| format!("reading {}", path.display()))?;
-                if line.trim().is_empty() {
-                    continue;
-                }
-                match serde_json::from_str::<HookEvent>(&line) {
-                    Ok(event) => read.events.push(event),
-                    Err(_) => read.skipped += 1,
-                }
-            }
+        for path in Self::files(dir)? {
+            let one = Self::read_file(&path)?;
+            read.events.extend(one.events);
+            read.skipped += one.skipped;
         }
         Ok(read)
     }

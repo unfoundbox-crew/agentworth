@@ -91,6 +91,12 @@ pub fn support_from_read(event: &HookEvent, read_seq: u64) -> Option<SupportEntr
         .and_then(serde_json::Value::as_str)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)?;
+    // Same rule as an intent's predicted paths: what is stored is absolute, resolved against
+    // the directory the read happened in, or drift compares two different files.
+    let path = match event.cwd.as_deref() {
+        Some(cwd) => crate::observe::absolutise(Path::new(cwd), &path),
+        None => path,
+    };
     let size = std::fs::metadata(&path).ok()?.len();
     Some(SupportEntry {
         path: path.clone(),

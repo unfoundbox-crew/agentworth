@@ -38,12 +38,23 @@ impl Intent {
             return None;
         }
         let tool = event.tool_name.clone()?;
+        let mut prediction = predicted_writes(&tool, event.tool_input.as_ref());
+        // A relative path means nothing without the directory the tool ran in, and two
+        // sessions in different checkouts would both store `src/lib.rs`.
+        if let Some(cwd) = event.cwd.as_deref() {
+            let cwd = std::path::Path::new(cwd);
+            prediction.paths = prediction
+                .paths
+                .iter()
+                .map(|path| crate::observe::absolutise(cwd, path))
+                .collect();
+        }
         Some(Intent {
             session_id: event.session_id.clone(),
             tool_use_id: event.tool_use_id.clone(),
             seq,
             tool: tool.clone(),
-            prediction: predicted_writes(&tool, event.tool_input.as_ref()),
+            prediction,
             at: event.received_at,
         })
     }

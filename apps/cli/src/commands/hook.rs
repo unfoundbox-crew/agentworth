@@ -17,6 +17,16 @@ use agentworth_loop::{HookEvent, SpoolWriter};
 /// waiting on Archie is a worse outcome than an event arriving a scan late.
 const SOCKET_BUDGET: Duration = Duration::from_millis(50);
 
+/// The most stdin this reads. A hook payload carries a tool result, and a tool result can be a
+/// whole file: past this the event is not worth the memory it would cost every hook on the
+/// machine, and a truncated payload will not parse, so it is dropped rather than half-stored.
+const MAX_STDIN_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Where events go when the config directory is not under the user's home. `default_db_dir`
+/// falls back to a relative `.agentworth`, which for a hook means spooling into whatever
+/// repository the agent happened to be standing in.
+const TEMP_SPOOL_DIR: &str = "agentworth-spool";
+
 /// The hook events `archie hook print claude` registers. Every one Claude Code documents
 /// (code.claude.com/docs/en/hooks, read 2026-09-06); the loop ignores the ones it has no rule
 /// for rather than asking the harness to send fewer.
@@ -43,9 +53,19 @@ const MATCHED_EVENTS: &[&str] = &["PreToolUse", "PostToolUse", "PostToolUseFailu
 /// hook that gets uninstalled.
 pub fn run_hook_command(verbose: bool) -> anyhow::Result<()> {
     let mut input = String::new();
-    if let Err(e) = std::io::stdin().read_to_string(&mut input) {
+    if let Err(e) = std::io::stdin()
+        .lock()
+        .take(MAX_STDIN_BYTES)
+        .read_to_string(&mut input)
+    {
         note(verbose, &format!("could not read stdin: {e}"));
         return Ok(());
+    }
+    if input.len() as u64 == MAX_STDIN_BYTES {
+        note(
+            verbose,
+            "the payload hit the 8 MiB cap; it will be dropped unless it happens to parse",
+        );
     }
     let value: serde_json::Value = match serde_json::from_str(&input) {
         Ok(value) => value,
@@ -63,7 +83,7 @@ pub fn run_hook_command(verbose: bool) -> anyhow::Result<()> {
         }
     };
 
-    match deliver(&event) {
+    match deliver(&event, verbose) {
         Ok(Delivery::Socket) => note(verbose, "delivered on the socket"),
         Ok(Delivery::Spool(path)) => {
             note(verbose, &format!("spooled to {}", path.display()));
@@ -78,15 +98,40 @@ enum Delivery {
     Spool(PathBuf),
 }
 
-fn deliver(event: &HookEvent) -> anyhow::Result<Delivery> {
+fn deliver(event: &HookEvent, verbose: bool) -> anyhow::Result<Delivery> {
     let line = serde_json::to_string(event)?;
     if let Some(error) = try_socket(&line) {
         tracing::debug!("loop: socket unavailable ({error}), spooling");
-        let dir = agentworth_storage::default_spool_dir()?;
-        let path = SpoolWriter::append(&dir, event)?;
+        let path = SpoolWriter::append(&spool_dir(verbose), event)?;
         return Ok(Delivery::Spool(path));
     }
     Ok(Delivery::Socket)
+}
+
+/// The spool directory, but never inside whatever repository the agent is standing in.
+///
+/// `agentworth_storage::default_db_dir` falls back to a *relative* `.agentworth` when it cannot
+/// find a home directory. For every other command that is a visible directory in the cwd; for a
+/// hook, which runs inside the agent's own checkout, it would write session events into the
+/// repository under review. So the fallback is the system temp directory instead.
+fn spool_dir(verbose: bool) -> PathBuf {
+    let under_home = agentworth_storage::default_spool_dir()
+        .ok()
+        .filter(|dir| home_dir().is_some_and(|home| dir.starts_with(home)));
+    match under_home {
+        Some(dir) => dir,
+        None => {
+            note(
+                verbose,
+                "no home directory to spool under; using the system temp directory",
+            );
+            std::env::temp_dir().join(TEMP_SPOOL_DIR)
+        }
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
 }
 
 /// `None` on success, the reason otherwise. Not a `Result` because every caller treats the

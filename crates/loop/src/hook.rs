@@ -137,7 +137,14 @@ impl HookEvent {
         let mut event: HookEvent = serde_json::from_value(value.clone())?;
         event.received_at = Utc::now();
         event.pane_id = env.get(PANE_ID_ENV).filter(|v| !v.is_empty()).cloned();
-        event.raw = value;
+        // `raw` exists so a later reader can find a field this crate did not know about. The
+        // tool result is not that: it is already on `tool_response`, it is the largest thing in
+        // the payload by far, and keeping both stores every tool output twice.
+        let mut raw = value;
+        if let Some(object) = raw.as_object_mut() {
+            object.remove("tool_response");
+        }
+        event.raw = raw;
         Ok(event)
     }
 
@@ -201,6 +208,23 @@ mod tests {
             event.raw.get("some_future_field"),
             Some(&serde_json::json!(7))
         );
+    }
+
+    #[test]
+    fn the_tool_result_is_kept_once_and_not_again_inside_raw() {
+        let value = serde_json::json!({
+            "session_id": "s1",
+            "hook_event_name": "PostToolUse",
+            "tool_response": "a very long tool result",
+            "tool_name": "Read"
+        });
+        let event = HookEvent::from_stdin_json(value, &HashMap::new()).expect("parses");
+        assert_eq!(
+            event.tool_response_text().as_deref(),
+            Some("a very long tool result")
+        );
+        assert_eq!(event.raw.get("tool_response"), None, "stored once, not twice");
+        assert_eq!(event.raw.get("tool_name"), Some(&serde_json::json!("Read")));
     }
 
     #[test]

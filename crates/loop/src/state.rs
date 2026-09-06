@@ -23,6 +23,19 @@ pub enum AgentState {
 }
 
 impl AgentState {
+    /// The inverse of [`AgentState::as_str`], for a state read back out of storage. `None` for
+    /// a label this version does not know, which a caller treats as "start again from scratch"
+    /// rather than guessing.
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "registered" => Some(AgentState::Registered),
+            "working" => Some(AgentState::Working),
+            "idle" => Some(AgentState::Idle),
+            "ended" => Some(AgentState::Ended),
+            _ => None,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             AgentState::Registered => "registered",
@@ -63,6 +76,13 @@ pub struct LoopState {
 impl LoopState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Puts a session back the way storage remembers it, so a restarted process continues a
+    /// session's sequence instead of starting it again at one. Overwrites whatever is held for
+    /// that session: the caller only seeds a session this instance has not seen.
+    pub fn seed(&mut self, live: SessionLive) {
+        self.sessions.insert(live.session_id.clone(), live);
     }
 
     pub fn get(&self, session_id: &str) -> Option<&SessionLive> {
@@ -146,6 +166,39 @@ impl LoopState {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn a_seeded_session_continues_its_sequence_instead_of_restarting_it() {
+        let mut state = LoopState::new();
+        let at = Utc::now();
+        state.seed(SessionLive {
+            session_id: "s1".to_string(),
+            state: AgentState::Working,
+            since: at,
+            pane_id: Some("%3".to_string()),
+            cwd: Some("/repo".to_string()),
+            last_seq: 41,
+            updated_at: at,
+        });
+        assert!(state.apply(&event("PreToolUse")).is_none());
+        let live = state.get("s1").expect("known");
+        assert_eq!(live.last_seq, 42);
+        assert_eq!(live.state, AgentState::Working);
+        assert_eq!(live.pane_id.as_deref(), Some("%3"));
+    }
+
+    #[test]
+    fn every_state_label_reads_back_as_the_state_it_names() {
+        for state in [
+            AgentState::Registered,
+            AgentState::Working,
+            AgentState::Idle,
+            AgentState::Ended,
+        ] {
+            assert_eq!(AgentState::from_label(state.as_str()), Some(state));
+        }
+        assert_eq!(AgentState::from_label("something_else"), None);
+    }
 
     fn event(name: &str) -> HookEvent {
         HookEvent::from_stdin_json(

@@ -25,7 +25,8 @@ pub mod support;
 pub use anchors::{extract_anchors, hash_paths_for_anchors, Anchor, AnchorKind};
 pub use hook::{HookEvent, HookEventName, PANE_ID_ENV};
 pub use observe::{
-    classify, observe_checkout, observe_checkout_with_git, Classified, Observation, ObservedChange,
+    absolutise, classify, observe_checkout, observe_checkout_with_git, Classified, Observation,
+    ObservedChange,
 };
 pub use predict::{predicted_writes, Intent, Prediction};
 pub use spool::{SpoolRead, SpoolReader, SpoolWriter};
