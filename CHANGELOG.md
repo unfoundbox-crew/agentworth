@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-09-06
+
 ### Added
 
 - **The governor.** `~/.agentworth/policy.toml` (or a repo's own `.agentworth/policy.toml`) turns on two rules, both blocking, both on by default once the file exists: thrash halt (a file edited `N` times with no passing verification between edits) and a session spend cap (tokens or dollars at the table price). No file, nothing governed. `archie hook --gate` is the same hook binary in synchronous mode, one socket round trip, a 50ms budget, and it fails open — `archie serve` down, or a miss, and the hook exits 0 and writes one spool line rather than blocking the agent.
