@@ -1,0 +1,18 @@
+{
+  "session_id": "8f2a1c40-3d5e-4b7a-9c1e-2f6d8a0b3e51",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-code-archie/8f2a1c40-3d5e-4b7a-9c1e-2f6d8a0b3e51.jsonl",
+  "cwd": "/Users/dev/code/archie",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_01Cw3JkNp8Ty6Ur4Ma2Qz7Hb",
+  "tool_input": {
+    "command": "cargo test -p agentworth-loop",
+    "description": "Run the loop crate tests"
+  },
+  "tool_error": "error: no such command: `nextest`",
+  "tool_response": {
+    "stdout": "",
+    "stderr": "error: no such command: `nextest`",
+    "exit_code": 101
+  }
+}
