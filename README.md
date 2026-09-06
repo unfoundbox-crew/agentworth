@@ -366,7 +366,7 @@ claude mcp add agentworth --scope user -- archie mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-14 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, `session_wake`, plus the two handoff tools, `session_forgotten`, `session_asks`, and `repo_suspect` below. A client's `tools/list` shows 24: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.20. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+16 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, `session_wake`, plus the two handoff tools, `session_forgotten`, `session_asks`, `repo_suspect`, `agent_status`, and `session_drift` below. A client's `tools/list` shows 26: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.20. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`, `docs/specs/loop.md`.
 
 ### The handoff, over MCP
 
@@ -379,6 +379,35 @@ claude mcp add agentworth --scope user -- archie mcp
 Two things these deliberately do not do. They never write a file — where a handoff lands is the caller's business. And they never summarise: every line is a fact from a row, quoted verbatim with a sequence number or a timestamp, because the moment a model writes the prose the receipt stops meaning anything.
 
 What they cannot answer is stated in the output rather than filled in: open decisions, PR and CI state, and environment traps are not in the index. The machine owns the inventory; the judgment is still yours. Full design: `docs/specs/handoff.md`.
+
+### The loop
+
+`session_wake` answers "what was I doing." It reads a closed tape. The loop
+answers two live questions instead: what state is each agent in right now,
+and what moved under me while I wasn't looking, and who moved it.
+
+A harness hook posts each `PreToolUse`/`PostToolUse`/`Stop` event to
+`archie hook`, which forwards it to `archie serve`'s loopback socket (or the
+spool, when serve is down) and always exits 0 -- the agent is never slowed
+and never sees an error. Install it in three lines:
+
+```bash
+archie hook print claude   # prints the settings.json snippet
+# paste it into ~/.claude/settings.json under "hooks"
+# restart the session
+```
+
+| Tool | What it answers |
+| :--- | :--- |
+| `agent_status` | Which sessions are `registered`, `working`, `idle`, or `ended`, right now. |
+| `session_drift(session_id?)` | Did the files this session read change since it last checked, and which session (or nobody on this machine) changed them. |
+
+On the CLI: `archie agent status`, `archie session drift [id]`, and
+`archie session anchors [id]` for the join keys (`run_id`, file hashes, pane
+id) a session's own tool results carried.
+
+What the loop never does: it never uploads anything, never blocks or slows
+the agent, and never calls a model. Full design: `docs/specs/loop.md`.
 
 ### What compaction dropped
 

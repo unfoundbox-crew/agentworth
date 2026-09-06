@@ -217,6 +217,14 @@ enum Commands {
     /// `claude mcp add agentworth --scope user -- archie mcp`.
     Mcp,
 
+    /// Plumbing: read one harness hook event on stdin and hand it to the loop
+    /// (docs/specs/loop.md). Never prints to stdout, never fails the agent, exits 0 always.
+    /// `archie hook print claude` prints the settings.json snippet that registers it
+    Hook {
+        #[command(subcommand)]
+        action: Option<HookCommand>,
+    },
+
     /// Check local environment, adapter discoveries, and SQLite database health
     Doctor(DoctorArgs),
 
@@ -389,6 +397,26 @@ enum SessionCommand {
 
     /// Rank indexed sessions by real secret/credential exposure risk, by category and severity
     Risk(RiskArgs),
+
+    /// What moved under this session since it read it, and which session moved it
+    Drift(LoopSessionArgs),
+
+    /// The join keys this session's tool results carried -- a SpacePilot run_id, a receipt
+    /// hash -- and the other sessions that carried them
+    Anchors(LoopSessionArgs),
+}
+
+/// `archie hook print <harness>`. One harness so far; the subcommand exists so the second
+/// one is an addition rather than a breaking change to the first one's output.
+#[derive(Subcommand, Debug, PartialEq)]
+enum HookCommand {
+    /// Print the hook registration snippet for a harness. Never writes a settings file
+    Print {
+        /// The harness to print for. `claude` is the only one verified against a real
+        /// hooks reference (docs/specs/loop.md)
+        #[arg(value_parser = ["claude"])]
+        harness: String,
+    },
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -399,6 +427,10 @@ enum AgentCommand {
     /// One adapter in detail: what it extracts, whether it is present here, and what it
     /// has actually put in the index
     Show(AgentShowArgs),
+
+    /// Where every agent on this machine is right now, one line each, from the loop's own
+    /// hook events rather than from a scan
+    Status(AgentStatusArgs),
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -728,6 +760,31 @@ struct RiskArgs {
     json: bool,
 }
 
+/// The session reference the loop verbs take. Not `SessionRefArgs`: a session that has only
+/// ever spoken through hooks has no row in `sessions` for the picker to offer, so these
+/// resolve against the loop's own index (`agent_state`) instead.
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct LoopSessionArgs {
+    /// The session, by full id or a unique prefix. Defaults to the most recently active one
+    #[arg(value_name = "SESSION_ID")]
+    session_id: Option<String>,
+
+    /// The most recently active session, which is also the default
+    #[arg(long)]
+    last: bool,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct AgentStatusArgs {
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(clap::Args, Debug, PartialEq)]
 struct ServeArgs {
     /// Port to bind the server to
@@ -741,6 +798,11 @@ struct ServeArgs {
     /// Optional path to custom web frontend dist directory
     #[arg(long)]
     dist: Option<PathBuf>,
+
+    /// Do not listen on the loop's Unix socket. Hook events then take the spool, and
+    /// `archie scan` ingests them (docs/specs/loop.md section 1)
+    #[arg(long)]
+    no_socket: bool,
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
@@ -1285,6 +1347,7 @@ enum Action {
     Scan(ScanArgs),
     Serve(ServeArgs),
     Mcp,
+    Hook(Option<HookCommand>),
     Doctor(DoctorArgs),
     Docs(DocsArgs),
     Config(ConfigAction),
@@ -1307,6 +1370,7 @@ fn normalize(command: Commands) -> Action {
         Commands::Scan(a) => Action::Scan(a),
         Commands::Serve(a) => Action::Serve(a),
         Commands::Mcp => Action::Mcp,
+        Commands::Hook { action } => Action::Hook(action),
         Commands::Doctor(a) => Action::Doctor(a),
         Commands::Docs(a) => Action::Docs(a),
         Commands::Config { action } => Action::Config(action),
@@ -1610,6 +1674,22 @@ pub fn run() -> Result<()> {
                 &ui,
             )?;
         }
+        Action::Session(SessionCommand::Drift(a)) => {
+            crate::commands::run_session_drift_command(
+                if a.last { None } else { a.session_id },
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::Anchors(a)) => {
+            crate::commands::run_session_anchors_command(
+                if a.last { None } else { a.session_id },
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
         Action::Session(SessionCommand::Forgotten(a)) => {
             forgotten_command::run_forgotten_command(
                 a.session_id,
@@ -1708,6 +1788,9 @@ pub fn run() -> Result<()> {
         Action::Agent(AgentCommand::Show(a)) => {
             run_agent_show_command(&a.adapter, resolve_json(a.json), cli.db_path, &ui)?;
         }
+        Action::Agent(AgentCommand::Status(a)) => {
+            crate::commands::run_agent_status_command(resolve_json(a.json), cli.db_path, &ui)?;
+        }
         Action::Repo(RepoCommand::List(a)) => {
             let limit = config::resolve_limit(a.limit, persisted_config.limit, 20);
             run_repo_list_command(limit, resolve_json(a.json), cli.db_path, &ui)?;
@@ -1750,7 +1833,23 @@ pub fn run() -> Result<()> {
             let storage = open_storage(cli.db_path)?;
             let dist_path = crate::server::resolve_dist_dir(a.dist)?;
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(crate::start_server(storage, a.port, a.open, dist_path, &ui))?;
+            runtime.block_on(crate::start_server(
+                storage,
+                a.port,
+                a.open,
+                dist_path,
+                !a.no_socket,
+                &ui,
+            ))?;
+        }
+        Action::Hook(None) => {
+            crate::commands::run_hook_command(cli.verbose)?;
+        }
+        Action::Hook(Some(HookCommand::Print { harness })) => {
+            match harness.as_str() {
+                "claude" => crate::commands::print_claude_snippet()?,
+                other => anyhow::bail!("no hook snippet for {other}; `claude` is the one harness"),
+            }
         }
         Action::Mcp => {
             let storage = open_storage(cli.db_path)?;
@@ -1911,6 +2010,22 @@ fn run_scan_command(
         progress.tick(current, total);
     })?;
     progress.clear();
+
+    // The spool is a raw history like any other, so a scan is where it lands when nothing was
+    // listening on the socket (docs/specs/loop.md section 1). Ingested files are deleted, so
+    // this is idempotent and a failure here never fails the scan.
+    match crate::loop_runtime::ingest_default_spool(storage.clone()) {
+        Ok(ingest) if ingest.events > 0 => {
+            if !json {
+                println!(
+                    "Loop: ingested {} hook event(s) from the spool",
+                    ingest.events
+                );
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("loop: could not ingest the spool: {e:#}"),
+    }
 
     if json {
         println!("{}", serde_json::to_string_pretty(&summary)?);

@@ -165,6 +165,18 @@ pub struct Next {
     pub step: Option<LooseEnd>,
 }
 
+/// What drifted under this session since it read it, in the one line a waking agent can act
+/// on. The full list is `archie session drift` / the `session_drift` tool; this is the pointer
+/// to it, and it appears only when something actually moved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MovedUnderYou {
+    pub count: usize,
+    pub first_path: String,
+    /// The session that predicted a write to `first_path` after this one read it. `None` when
+    /// no agent on this machine did.
+    pub first_writer: Option<String>,
+}
+
 /// Everything the wake document says, before it is rendered into anything.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WakeReport {
@@ -182,6 +194,10 @@ pub struct WakeReport {
     /// means "none in the newest `REPO_SCAN_BUDGET`" and has to read that way.
     pub scan_exhausted: bool,
     pub next: Next,
+    /// Absent unless the loop has hook events for this session and at least one path it read
+    /// has changed since (docs/specs/loop.md section 1).
+    #[serde(default)]
+    pub moved_under_you: Option<MovedUnderYou>,
     pub gaps: Vec<String>,
 }
 
@@ -277,6 +293,10 @@ impl WakeReport {
                 blocker: self.next.blocker.as_ref().map(&command),
                 step: self.next.step.as_ref().map(&loose_end),
             },
+            moved_under_you: self.moved_under_you.as_ref().map(|moved| MovedUnderYou {
+                first_path: redactor.redact_text(&moved.first_path),
+                ..moved.clone()
+            }),
             ..self.clone()
         }
     }
@@ -328,12 +348,31 @@ pub fn load_wake(
     );
 
     report.mark_scan_exhausted(page.scan_exhausted);
+    report.moved_under_you = moved_under_you(storage, &newest.session_id);
 
     if options.include_raw {
         Ok(report)
     } else {
         Ok(report.redacted(&Redactor::new().for_trace(&trace)))
     }
+}
+
+/// The loop's answer for this session, or `None` when the loop has never seen it, nothing it
+/// read has moved, or the query failed. Never an error: wake is a report, and a loop that is
+/// not wired up yet is a missing line rather than a failed call.
+fn moved_under_you(storage: &Storage, session_id: &str) -> Option<MovedUnderYou> {
+    let value = crate::commands::loop_cmds::session_drift_json(storage, session_id).ok()?;
+    let drifted = value.get("drift")?.as_array()?;
+    let first = drifted.first()?;
+    Some(MovedUnderYou {
+        count: drifted.len(),
+        first_path: first.get("path")?.as_str()?.to_string(),
+        first_writer: first
+            .get("writer")
+            .and_then(|writer| writer.get("session_short"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+    })
 }
 
 /// The indexed mtime against the file's mtime now. `None` when either is unavailable, which is
@@ -467,6 +506,7 @@ pub fn build_wake(
         before: prior.iter().map(prior_session).collect(),
         scan_exhausted: false,
         next,
+        moved_under_you: None,
         gaps,
     }
 }
@@ -507,6 +547,7 @@ pub fn build_wake_without_session(
             blocker: None,
             step: None,
         },
+        moved_under_you: None,
         gaps,
     }
 }

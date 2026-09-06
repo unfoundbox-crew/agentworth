@@ -71,6 +71,8 @@ async fn test_stdio_tools_list_and_sessions_find() {
         "session_wake",
         "session_forgotten",
         "session_asks",
+        "agent_status",
+        "session_drift",
     ] {
         assert!(
             tool_names.contains(&expected),

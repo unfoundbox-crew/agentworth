@@ -1122,6 +1122,21 @@ impl Storage {
             }
         }
 
+        // `agent_state.last_stop` holds the JSON classification of the last `Stop`: what this
+        // session predicted it would change, what changed anyway, and who else predicted those
+        // paths. A column rather than a table because there is exactly one per session and it
+        // is replaced, never accumulated.
+        let mut stmt = conn.prepare("PRAGMA table_info(agent_state)")?;
+        let agent_state_columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+        if !agent_state_columns.is_empty() && !agent_state_columns.contains(&"last_stop".to_string())
+        {
+            let _ = conn.execute("ALTER TABLE agent_state ADD COLUMN last_stop TEXT", []);
+        }
+
         // Data migration: `primary_outcome` used to be written in hand-rolled PascalCase
         // (e.g. "CommitObserved") by a since-fixed bug in `outcome_kind_name` (see
         // crates/outcomes/src/outcome.rs) that diverged from `OutcomeKind`'s own serde
@@ -3787,6 +3802,27 @@ impl Storage {
         Ok(())
     }
 
+    /// Store this session's last `Stop` classification, as JSON. A session with no
+    /// `agent_state` row yet gets one written first by `upsert_agent_state`; this only ever
+    /// updates, so it is a no-op on a session the loop has never seen.
+    pub fn set_agent_last_stop(&self, session_id: &str, last_stop_json: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            "UPDATE agent_state SET last_stop = ?1 WHERE session_id = ?2",
+            params![last_stop_json, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// The JSON written by `set_agent_last_stop`, if this session has stopped at least once.
+    pub fn get_agent_last_stop(&self, session_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt =
+            conn.prepare("SELECT last_stop FROM agent_state WHERE session_id = ?1")?;
+        let mut rows = stmt.query_map(params![session_id], |row| row.get::<_, Option<String>>(0))?;
+        Ok(rows.next().transpose()?.flatten())
+    }
+
     fn row_to_agent_state(row: &rusqlite::Row) -> rusqlite::Result<AgentStateRow> {
         let since: String = row.get(2)?;
         let updated_at: String = row.get(7)?;
@@ -3919,6 +3955,48 @@ impl Storage {
             .query_map(params![path, after_seq, excluding_session], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every session (other than `excluding_session`) that predicted a write to `path` after
+    /// `since`, newest first.
+    ///
+    /// Time, not `seq`, because `seq` counts one session's own events: comparing "my seq 5" to
+    /// "your seq 2" says nothing about which happened first, and drift is always a question
+    /// across two sessions. `writers_of_path` stays for callers comparing within one.
+    pub fn writers_of_path_since(
+        &self,
+        path: &str,
+        since: DateTime<Utc>,
+        excluding_session: Option<&str>,
+    ) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT p.session_id, p.seq FROM intent_paths p
+            JOIN tool_intents t ON t.tool_use_id = p.tool_use_id
+            WHERE p.path = ?1 AND t.at > ?2 AND (?3 IS NULL OR p.session_id != ?3)
+            ORDER BY t.at DESC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![path, since.to_rfc3339(), excluding_session], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every path this session predicted it would write at or after `after_seq`. The union
+    /// a `Stop` classifies the working tree against.
+    pub fn intent_paths_for_session(&self, session_id: &str, after_seq: i64) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT path FROM intent_paths WHERE session_id = ?1 AND seq > ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![session_id, after_seq], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -4207,6 +4285,18 @@ pub fn normalize_metadata(raw: Option<String>) -> Option<serde_json::Value> {
         // Not JSON at all: hand back what is actually stored rather than dropping it.
         Err(_) => Some(serde_json::Value::String(raw)),
     }
+}
+
+/// The Unix socket `archie serve` listens on and `archie hook` writes to, in the same
+/// directory as the index (docs/specs/loop.md section 1).
+pub fn default_socket_path() -> Result<PathBuf> {
+    Ok(default_db_dir()?.join("archie.sock"))
+}
+
+/// Where `archie hook` appends when nothing is listening on the socket, and where
+/// `archie scan` ingests from.
+pub fn default_spool_dir() -> Result<PathBuf> {
+    Ok(default_db_dir()?.join("spool"))
 }
 
 pub fn default_db_dir() -> Result<PathBuf> {

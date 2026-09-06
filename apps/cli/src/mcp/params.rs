@@ -336,6 +336,19 @@ pub struct WakeParams {
     pub include_raw: bool,
 }
 
+/// Parameters for the `agent_status` tool. None: the loop's live index is machine-wide and
+/// already bounded, so there is nothing to filter or page.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct AgentStatusParams {}
+
+/// Parameters for the `session_drift` tool (`docs/specs/loop.md` section 1).
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct SessionDriftParams {
+    /// The session, by full id or a unique prefix. Defaults to the most recently active
+    /// session in the loop's own index, which is the caller itself in the normal case.
+    pub session_id: Option<String>,
+}
+
 /// Parameters for the `session_asks` tool (`docs/specs/asks.md`).
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SessionAsksParams {

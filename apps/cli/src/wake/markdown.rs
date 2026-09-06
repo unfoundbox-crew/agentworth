@@ -8,7 +8,9 @@
 //! Nothing here pads. A fact the index does not hold prints the phrasing
 //! `docs/specs/wake.md` gives it and nothing else.
 
-use super::{checkout_state, Checkout, Next, PriorSession, Proof, WakeReport, WakeSession};
+use super::{
+    checkout_state, Checkout, MovedUnderYou, Next, PriorSession, Proof, WakeReport, WakeSession,
+};
 use crate::handoff::{FileTouch, RanCommand};
 
 /// The line ceiling, and it is a ceiling rather than a target: `render_markdown` never returns
@@ -66,6 +68,9 @@ pub fn render_markdown(report: &WakeReport) -> String {
                 None => "**Outcome** _no outcome evidence in this session_".to_string(),
             });
             pre.push(format!("**Proof** {}", proof_line(&session.proof)));
+            if let Some(moved) = &report.moved_under_you {
+                pre.push(moved_line(moved));
+            }
             pre.push(format!("**Changed** {}", changed_line(session)));
 
             if !session.loose_ends.is_empty() {
@@ -252,6 +257,24 @@ fn command_at(command: &RanCommand) -> String {
         "`{}` {}",
         one_line(&command.command, 120),
         clock(command.at)
+    )
+}
+
+/// One line, never two: the count, the first path, and who moved it. The rest is
+/// `session_drift`'s job.
+fn moved_line(moved: &MovedUnderYou) -> String {
+    let by = match &moved.first_writer {
+        Some(writer) => format!(" by {writer}"),
+        None => String::new(),
+    };
+    let more = if moved.count > 1 { " …" } else { "" };
+    format!(
+        "**Moved under you** {} file{} since you read them · {}{}{}",
+        moved.count,
+        if moved.count == 1 { "" } else { "s" },
+        shorten_path(&moved.first_path),
+        by,
+        more
     )
 }
 

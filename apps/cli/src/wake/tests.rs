@@ -595,3 +595,41 @@ fn the_no_session_document_is_redacted_unless_raw_was_asked_for() {
         "include_raw is the opt-in, and it opts in"
     );
 }
+
+#[test]
+fn drift_adds_exactly_one_line_after_proof_and_stays_inside_the_budget() {
+    let mut report = fixture_report();
+    report.moved_under_you = Some(MovedUnderYou {
+        count: 3,
+        first_path: "/Users/x/code/unfoundbox/agentworth/crates/loop/src/state.rs".to_string(),
+        first_writer: Some("1c7e4b92".to_string()),
+    });
+    let markdown = render_markdown(&report);
+    let moved: Vec<&str> = markdown
+        .lines()
+        .filter(|line| line.starts_with("**Moved under you**"))
+        .collect();
+    assert_eq!(moved.len(), 1, "one line, never two: {markdown}");
+    assert!(moved[0].contains("3 files"), "{}", moved[0]);
+    assert!(moved[0].contains("by 1c7e4b92"), "{}", moved[0]);
+    assert!(lines(&markdown) <= MAX_LINES, "{markdown}");
+
+    let proof = markdown
+        .lines()
+        .position(|line| line.starts_with("**Proof**"))
+        .expect("a proof line");
+    let moved_at = markdown
+        .lines()
+        .position(|line| line.starts_with("**Moved under you**"))
+        .expect("a moved line");
+    assert_eq!(moved_at, proof + 1, "it sits right after Proof");
+}
+
+#[test]
+fn a_session_nothing_moved_under_keeps_the_line_out() {
+    let markdown = render_markdown(&fixture_report());
+    assert!(
+        !markdown.contains("Moved under you"),
+        "no drift, no line: {markdown}"
+    );
+}

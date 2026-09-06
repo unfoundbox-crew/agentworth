@@ -1,8 +1,9 @@
 # Loop
 
-Status: proposed, 2026-09-06. Nothing built. Facts below were read from the
-three codebases and Claude Code's hooks reference on that date; each carries
-its source.
+Status: built, PR #TBD (2026-09-06). Facts below were read from the three
+codebases and Claude Code's hooks reference on 2026-09-06; each carries its
+source. Where the build diverged from the design, a **Shipped:** note sits
+next to the paragraph it changes, same convention as `handoff.md`.
 
 ## The one-line version
 
@@ -37,10 +38,16 @@ hooks, which is exactly what herdr uses.
 ```
 
 - `archie hook` reads the hook JSON on stdin, connects to `~/.agentworth/archie.sock` with a 50 ms budget, writes one line, exits 0. No socket, no time: append to `~/.agentworth/spool/<session_id>.jsonl`. The agent is never slowed and never sees an error.
+
+  **Shipped:** the classifier that turns a `PreToolUse` event into predicted write paths (`classify`) also takes the event's `cwd`, not just `tool_name`/`tool_input`. A relative `Edit`/`Write` path is common and resolving it against the session's own working directory, rather than the daemon's, is what keeps the predicted-path set matching what actually lands on disk.
 - `archie serve` owns the socket (a Unix socket is loopback by construction; same JSON-lines framing herdr uses). It keeps `agent_state` per session: `registered → working → idle → ended`, from `SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd`. Subagents (`agent_id` present) update their parent's `last_seq`, never its state, for the reason herdr's script gives: a subagent must not revive an idle pane.
 - `archie scan` ingests the spool, so the loop works with no server running, offline, and the spool is a raw history like any other adapter's.
 - Efference copy, literally. `PreToolUse` is the copy of the motor command: tool, input, and the write set Archie predicts from it (`Edit`/`Write`/`NotebookEdit` → the path; `Bash` → the command string, write set unknown). `PostToolUse`/`PostToolUseFailure` is the reafference: what came back. At `Stop`, Archie compares: `git status --porcelain` and HEAD in the session's `cwd` against the union of this session's predicted writes since its last `Stop`. A changed path nobody in this session predicted is exafference: the world moved. Archie names the mover when another session predicted that path, else "not an agent on this machine".
+
+  **Shipped:** the `Stop` comparison is stored as JSON in `agent_state.last_stop`, not as rows in a dedicated table. It's one report per session per `Stop`, read whole every time (`agent_status`, `session_wake`'s "Moved under you" line) and never queried by column — a table bought nothing a JSON blob didn't already give, at the cost of a migration.
 - `support_set` U, narrower than the read set: the paths this session `Read`, hashed at `PostToolUse`. `session_drift` re-hashes U and returns the entries that changed, each with the session that wrote it and its sequence. That is the answer to "did my ground move because of me or someone else", which no harness summary can give.
+
+  **Shipped:** `support_from_read` — the function that turns a `Read` tool result into a `support_set` row — takes the read's own sequence number as a parameter, rather than looking it up again from storage. The caller already has it off the event it's processing; threading it through avoids a second query per read on what can be a high-frequency path.
 - Heartbeat is not a timer. It is `Stop`: the moment the agent goes idle is the moment the loop closes, and the next `session_wake` reads a closed loop, not a tape.
 
 ## 2. The shared field
@@ -53,6 +60,16 @@ uuid, so Archie indexes it without either product learning about the other.
 | Record | Field today | Archie indexes it as | Ask of that product |
 | :--- | :--- | :--- | :--- |
 | SpacePilot `Measurement` | `run_id`, `system_id` | anchor `run_id`; `machines.system_id` | none; adopt its `host_fingerprint` algorithm so ids match |
+
+**Shipped:** `system_id` and `host_fingerprint` turned out not to be the same
+thing. `host_fingerprint` identifies the box — the salted sha256[:12] over
+stable hardware facts, the value that has to match SpacePilot's for the join
+to work. `system_id` is a configuration id (SpacePilot mints one per install,
+and a box can be reinstalled or reconfigured without becoming a different
+machine). So `machines` is keyed on `host_fingerprint`, with `system_id`
+carried as a column, not the key — two configurations on one physical
+machine resolve to one `machines` row, which is what "the same box" should
+mean.
 | MotionVector `Receipt` v1 | `document.canonical_sha256`, `render.out_sha256` | anchor `sha256`, hashed at `PostToolUse` on the document and the output path | Receipt v2 adds `run_id` printed by `mvec render`; hashes join until then |
 | Herdr pane | `HERDR_PANE_ID` in the hook environment | `agent_state.pane_id` | none |
 
@@ -98,3 +115,14 @@ About 1.4M tokens across six lanes: loop crate 300k, storage and anchors
 Cursor and Codex hook shapes herdr's scripts imply are not verified here.
 `git status` at `Stop` on a large checkout costs tens of milliseconds and runs
 async. Files over 4 MB are not hashed into U; they are listed as unhashed.
+
+**Shipped:** the Claude-Code-only scope held. Cursor and Codex hooks were not
+built in v0.1.21 — `archie hook print claude` is the only harness snippet
+that ships; a Cursor or Codex user still has no path onto the socket.
+
+**Shipped, and it differs from the design above:** drift and the Stop
+report name writers by time (`writers_of_path_since`, joined through
+`tool_intents.at`), not by sequence: a sequence counts one session's own
+events, so one session's seq 5 says nothing about another's seq 2. The
+loop's five session-keyed tables are registered with `archie merge`;
+`machines` is not, since it has no session id.

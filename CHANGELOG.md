@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`archie hook`.** A harness (Claude Code today) posts its `PreToolUse`, `PostToolUse`, `Stop` and other lifecycle events as stdin JSON to this command, which forwards one line to `archie serve`'s loopback socket (`~/.agentworth/archie.sock`) with a 50ms budget. No socket, or serve down: it appends to `~/.agentworth/spool/<session_id>.jsonl` instead. Always exits 0. Never slows the agent, never blocks it, never fails visibly. `archie hook print claude` prints the settings.json snippet to paste in — it never writes the file for you.
+- **`archie serve` listens on the loop socket.** Beside the dashboard and API, `archie serve` now owns `~/.agentworth/archie.sock` and ingests anything sitting in the spool at startup. `--no-socket` turns the listener off. `archie scan` also ingests the spool, so the loop works with no server running at all.
+- **`archie agent status`.** Live state per session — `registered`, `working`, `idle`, `ended` — driven by the hook events, not a poll.
+- **`archie session drift [id]`** and **`archie session anchors [id]`.** `drift` re-checks the files a session read against what's on disk now and names who changed each one (another session on this machine, or "not an agent on this machine"). `anchors` lists the join keys a session's tool results carried — `run_id`, file hashes, pane id — for tying its work to what SpacePilot measured or MotionVector rendered.
+- **`agent_status` and `session_drift` over MCP.** Same two answers, callable mid-session. `session_wake` gains a "Moved under you" line when the files a session read have changed since it last checked.
+- **A machine fingerprint.** `sessions.host_fingerprint`, a salted sha256 truncated to 12 characters — the same algorithm SpacePilot already uses for `System.host_fingerprint` — so a run on this machine and a run SpacePilot recorded resolve to the same id without either product asking the other. Backs six new tables: `machines`, `agent_state`, `tool_intents`, `intent_paths`, `support_set`, `trace_anchors`, plus `host_fingerprint` on `sessions`. `machines.system_id` stays empty until SpacePilot writes it; nothing here invents a configuration id.
+
 ## [0.1.20] - 2026-09-06
 
 ### Fixed
