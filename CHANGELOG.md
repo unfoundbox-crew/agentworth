@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-09-06
+
 ### Added
 
 - **`session_wake` and `archie session wake`** — one call for a cold or just-compacted agent: the checkout it stands in (branch, HEAD, dirty, ahead), the newest primary session for the repo (task, last prompt, outcome rung, last passed and last failed verification command and whether the failure was re-run, files changed, loose ends, what it said it decided, what compaction dropped), the two sessions before it one line each, and a Next block naming the blocker and the next step. At most 30 lines of markdown, measured at 21 on the fixture; every line is a row, a `git` read, or a stat call, and a missing fact is named in `gaps` rather than padded. Redacted by default; `include_raw`/`--redact` opts out per call. Never scans (`docs/specs/wake.md`).

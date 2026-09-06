@@ -67,10 +67,10 @@ The standalone script draws its own progress, so a 22 MB download over a slow li
 longer looks like a hang:
 
 ```
- (*) archie  resolving    v0.1.18  aarch64-apple-darwin
+ (*) archie  resolving    v0.1.19  aarch64-apple-darwin
  (o) archie  downloading  ─────────────────────·······   75%  16.7 / 22.2 MB
  (*) archie  verifying    sha256 matches
- (*) archie  extracting   agentworth-v0.1.18-aarch64-apple-darwin.tar.gz
+ (*) archie  extracting   agentworth-v0.1.19-aarch64-apple-darwin.tar.gz
  (*) archie  installed    agentworth, archie, agwt in ~/.local/bin
 
   Next  archie --version   confirm the install
