@@ -31,8 +31,9 @@
 | `extensions.md` | proposed | — |
 | `wake.md` | built | #TBD — `session_wake`, `archie session wake`; carry-forward and the cwd default skip subagent transcripts |
 | `loop.md` | built | #TBD — the return path: archie hook, the socket, drift, anchors, machine fingerprint |
+| `governor.md` | built | #TBD — `archie hook --gate`, the thrash halt, the session spend cap, `session burn`, `policy show|check|lift|replay` |
 
-Twenty-six specs sit beside this file. They are independent of each other but
+Twenty-seven specs sit beside this file. They are independent of each other but
 not of the backend, and two of them are worth less than they look until a bug
 lands first. This is the sequencing.
 

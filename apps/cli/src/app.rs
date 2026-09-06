@@ -223,6 +223,18 @@ enum Commands {
     Hook {
         #[command(subcommand)]
         action: Option<HookCommand>,
+
+        /// Answer the harness synchronously instead of recording and returning: one socket
+        /// round trip inside 50 ms, and exit 0 with nothing on stdout if it misses
+        #[arg(long)]
+        gate: bool,
+    },
+
+    /// The governor's policy file: what it says, whether it parses, and clearing a session
+    /// it suspended (docs/specs/governor.md). Nothing is governed until a `policy.toml` exists
+    Policy {
+        #[command(subcommand)]
+        action: PolicyCommand,
     },
 
     /// Check local environment, adapter discoveries, and SQLite database health
@@ -404,6 +416,10 @@ enum SessionCommand {
     /// The join keys this session's tool results carried -- a SpacePilot run_id, a receipt
     /// hash -- and the other sessions that carried them
     Anchors(LoopSessionArgs),
+
+    /// What this session has spent so far, from its own transcript: tokens, dollars at the
+    /// table price, turns, cache read share, and the rate over the last ten minutes
+    Burn(LoopSessionArgs),
 }
 
 /// `archie hook print <harness>`. One harness so far; the subcommand exists so the second
@@ -412,11 +428,71 @@ enum SessionCommand {
 enum HookCommand {
     /// Print the hook registration snippet for a harness. Never writes a settings file
     Print {
-        /// The harness to print for. `claude` is the only one verified against a real
-        /// hooks reference (docs/specs/loop.md)
-        #[arg(value_parser = ["claude"])]
+        /// The harness to print for. Both are verified against that harness's own hooks
+        /// reference (docs/specs/loop.md, docs/specs/governor.md)
+        #[arg(value_parser = ["claude", "codex"])]
         harness: String,
+
+        /// Also register the sync gates, so the governor can stop a turn. Claude Code only:
+        /// the Codex snippet is gated by construction, since Codex has no batch hook
+        #[arg(long)]
+        govern: bool,
     },
+}
+
+/// `archie policy`: the four verbs over `policy.toml` (docs/specs/governor.md).
+#[derive(Subcommand, Debug, PartialEq)]
+enum PolicyCommand {
+    /// What is governed right now, and which files were read to decide that
+    Show(PolicyShowArgs),
+
+    /// Parse both files and say what is wrong with them, naming the file and the line
+    Check,
+
+    /// Clear a spend-cap suspension so the session can submit prompts again
+    Lift {
+        /// The session to lift, by full id
+        #[arg(value_name = "SESSION")]
+        session_id: String,
+    },
+
+    /// What the current thresholds would have done to the sessions already indexed
+    Replay(PolicyReplayArgs),
+}
+
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct PolicyShowArgs {
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct PolicyReplayArgs {
+    /// How far back to replay, in days
+    #[arg(long, value_name = "DAYS", default_value = "30d", value_parser = parse_since_days)]
+    since: i64,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+/// `30d`, `30`, `2w`: the replay window, in days. Anything else is an error rather than a
+/// silent default, because a mistyped window would quietly report on the wrong period.
+fn parse_since_days(raw: &str) -> Result<i64, String> {
+    let text = raw.trim();
+    let (number, multiplier) = match text.strip_suffix('d') {
+        Some(rest) => (rest, 1),
+        None => match text.strip_suffix('w') {
+            Some(rest) => (rest, 7),
+            None => (text, 1),
+        },
+    };
+    number
+        .parse::<i64>()
+        .map(|n| n * multiplier)
+        .map_err(|_| format!("{raw} is not a window like 30d or 2w"))
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -1347,7 +1423,8 @@ enum Action {
     Scan(ScanArgs),
     Serve(ServeArgs),
     Mcp,
-    Hook(Option<HookCommand>),
+    Hook(Option<HookCommand>, bool),
+    Policy(PolicyCommand),
     Doctor(DoctorArgs),
     Docs(DocsArgs),
     Config(ConfigAction),
@@ -1370,7 +1447,8 @@ fn normalize(command: Commands) -> Action {
         Commands::Scan(a) => Action::Scan(a),
         Commands::Serve(a) => Action::Serve(a),
         Commands::Mcp => Action::Mcp,
-        Commands::Hook { action } => Action::Hook(action),
+        Commands::Hook { action, gate } => Action::Hook(action, gate),
+        Commands::Policy { action } => Action::Policy(action),
         Commands::Doctor(a) => Action::Doctor(a),
         Commands::Docs(a) => Action::Docs(a),
         Commands::Config { action } => Action::Config(action),
@@ -1682,6 +1760,14 @@ pub fn run() -> Result<()> {
                 &ui,
             )?;
         }
+        Action::Session(SessionCommand::Burn(a)) => {
+            crate::commands::run_session_burn_command(
+                if a.last { None } else { a.session_id },
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
         Action::Session(SessionCommand::Anchors(a)) => {
             crate::commands::run_session_anchors_command(
                 if a.last { None } else { a.session_id },
@@ -1842,14 +1928,35 @@ pub fn run() -> Result<()> {
                 &ui,
             ))?;
         }
-        Action::Hook(None) => {
+        Action::Hook(None, true) => {
+            crate::commands::run_gate_command(cli.verbose)?;
+        }
+        Action::Hook(None, false) => {
             crate::commands::run_hook_command(cli.verbose)?;
         }
-        Action::Hook(Some(HookCommand::Print { harness })) => {
+        Action::Hook(Some(HookCommand::Print { harness, govern }), _) => {
             match harness.as_str() {
-                "claude" => crate::commands::print_claude_snippet()?,
-                other => anyhow::bail!("no hook snippet for {other}; `claude` is the one harness"),
+                "claude" => crate::commands::print_claude_snippet(govern)?,
+                "codex" => crate::commands::print_codex_snippet()?,
+                other => anyhow::bail!("no hook snippet for {other}; `claude` and `codex` are the harnesses"),
             }
+        }
+        Action::Policy(PolicyCommand::Show(a)) => {
+            crate::commands::run_policy_show_command(resolve_json(a.json), &ui)?;
+        }
+        Action::Policy(PolicyCommand::Check) => {
+            crate::commands::run_policy_check_command(&ui)?;
+        }
+        Action::Policy(PolicyCommand::Lift { session_id }) => {
+            crate::commands::run_policy_lift_command(session_id, cli.db_path, &ui)?;
+        }
+        Action::Policy(PolicyCommand::Replay(a)) => {
+            crate::commands::run_policy_replay_command(
+                a.since,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
         }
         Action::Mcp => {
             let storage = open_storage(cli.db_path)?;

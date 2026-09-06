@@ -314,6 +314,16 @@ The join keys this session's tool results carried -- a SpacePilot run_id, a rece
 | `--last` | no | The most recently active session, which is also the default | false | - |
 | `--json` | no | Output as formatted JSON | false | - |
 
+### `archie session burn`
+
+What this session has spent so far, from its own transcript: tokens, dollars at the table price, turns, cache read share, and the rate over the last ten minutes
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `SESSION_ID` | no | The session, by full id or a unique prefix. Defaults to the most recently active one | - | - |
+| `--last` | no | The most recently active session, which is also the default | false | - |
+| `--json` | no | Output as formatted JSON | false | - |
+
 ### `archie agent`
 
 The agent adapters: what each one extracts, and how one is doing on this machine
@@ -445,13 +455,51 @@ Start the read-only MCP server over stdio, for a coding agent to query this mach
 
 Plumbing: read one harness hook event on stdin and hand it to the loop (docs/specs/loop.md). Never prints to stdout, never fails the agent, exits 0 always. `archie hook print claude` prints the settings.json snippet that registers it
 
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `--gate` | no | Answer the harness synchronously instead of recording and returning: one socket round trip inside 50 ms, and exit 0 with nothing on stdout if it misses | false | - |
+
 ### `archie hook print`
 
 Print the hook registration snippet for a harness. Never writes a settings file
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `HARNESS` | yes | The harness to print for. `claude` is the only one verified against a real hooks reference (docs/specs/loop.md) | - | claude |
+| `HARNESS` | yes | The harness to print for. Both are verified against that harness's own hooks reference (docs/specs/loop.md, docs/specs/governor.md) | - | claude, codex |
+| `--govern` | no | Also register the sync gates, so the governor can stop a turn. Claude Code only: the Codex snippet is gated by construction, since Codex has no batch hook | false | - |
+
+### `archie policy`
+
+The governor's policy file: what it says, whether it parses, and clearing a session it suspended (docs/specs/governor.md). Nothing is governed until a `policy.toml` exists
+
+### `archie policy show`
+
+What is governed right now, and which files were read to decide that
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `--json` | no | Output as formatted JSON | false | - |
+
+### `archie policy check`
+
+Parse both files and say what is wrong with them, naming the file and the line
+
+### `archie policy lift`
+
+Clear a spend-cap suspension so the session can submit prompts again
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `SESSION` | yes | The session to lift, by full id | - | - |
+
+### `archie policy replay`
+
+What the current thresholds would have done to the sessions already indexed
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `--since` | no | How far back to replay, in days | 30d | - |
+| `--json` | no | Output as formatted JSON | false | - |
 
 ### `archie doctor`
 
@@ -876,6 +924,34 @@ The questions-to-answers index for one session: every question asked (a `?` sent
       "default": false,
       "description": "Only questions that are not `answered` -- still open, or handed back to the user.\nDefaults to false.",
       "type": "boolean"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `session_burn`
+
+What one session has spent so far, metered from its own transcript: tokens, dollars at the pricing table's rates, turns, the cache read share, and the rate over the last ten minutes. This is AgentWorth's own count, not the provider's accounting -- it never reports a 'remaining'. When the harness writes its own rate-limit line (Codex does; Claude Code does not) that line is returned verbatim under `provider_limit`, labelled as the provider's. Numbers are as of the last update `archie serve` wrote, and are zero on a machine with no `policy.toml`, since nothing is metered until something is governed.
+
+| Param | Required | Type | Description |
+|---|---|---|---|
+| `session_id` | no | string or null | The session, by full id or a unique prefix. Defaults to the most recently active<br>session in the loop's own index, which is the caller itself in the normal case. |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "session_id": {
+      "description": "The session, by full id or a unique prefix. Defaults to the most recently active\nsession in the loop's own index, which is the caller itself in the normal case.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "type": "object"

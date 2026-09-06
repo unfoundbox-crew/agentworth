@@ -555,90 +555,9 @@ pub(crate) fn collect_runs(events: &[&agentworth_schema::NormalizedEvent]) -> Ve
     runs
 }
 
-/// Test-, build- or release-shaped commands: the ones whose exit code is evidence rather than
-/// trivia. Matches the program and its first verb rather than substring-matching the whole
-/// command line -- a `grep -n "test"` or `cd repo && ls` is not a passing test just because the
-/// word "test" appears in it. Deliberately a small table and not a shell parser: it splits on
-/// the usual separators, strips the wrappers a real invocation carries (`cd`, env assignments,
-/// `sudo`, `time`, `nice`, `flock <file>`, a leading path), and checks only the program name and
-/// its first argument.
-pub(crate) fn is_verification_command(command: &str) -> bool {
-    command
-        .split(['\n'])
-        .flat_map(|line| line.split("&&"))
-        .flat_map(|s| s.split("||"))
-        .flat_map(|s| s.split(['|', ';']))
-        .any(|segment| segment_is_verification(segment.trim()))
-}
-
-/// One `&&`/`;`/`|`-separated segment of a shell command, after stripping the wrappers a real
-/// invocation carries around the program that actually runs.
-fn segment_is_verification(segment: &str) -> bool {
-    let mut words: Vec<&str> = segment.split_whitespace().collect();
-
-    loop {
-        match words.first().copied() {
-            Some("cd") => {
-                words.remove(0);
-                if !words.is_empty() {
-                    words.remove(0);
-                }
-            }
-            Some(w) if w.contains('=') && !w.starts_with('-') => {
-                words.remove(0);
-            }
-            Some("sudo") | Some("time") | Some("nice") => {
-                words.remove(0);
-            }
-            Some("flock") => {
-                words.remove(0);
-                if !words.is_empty() {
-                    words.remove(0);
-                }
-            }
-            _ => break,
-        }
-    }
-
-    let Some(program_path) = words.first() else {
-        return false;
-    };
-    let program = program_path.rsplit('/').next().unwrap_or(program_path);
-    let verb = words.get(1).copied();
-
-    const VERB_PROGRAMS: &[(&str, &[&str])] = &[
-        (
-            "cargo",
-            &["test", "build", "check", "clippy", "fmt", "nextest", "run"],
-        ),
-        ("npm", &["test", "run", "build", "ci"]),
-        ("pnpm", &["test", "run", "build", "ci"]),
-        ("yarn", &["test", "run", "build", "ci"]),
-        ("bun", &["test", "run", "build", "ci"]),
-        ("go", &["build", "vet", "test"]),
-        ("git", &["commit", "push"]),
-        ("gh", &["pr", "run", "workflow"]),
-        ("gradle", &[]),
-        ("gradlew", &[]),
-    ];
-    const BARE_PROGRAMS: &[&str] = &[
-        "pytest", "tsc", "eslint", "vitest", "jest", "make", "mvn", "ruff", "mypy",
-    ];
-
-    if program == "docker" {
-        return verb == Some("build");
-    }
-    if BARE_PROGRAMS.contains(&program) {
-        return true;
-    }
-    for (name, verbs) in VERB_PROGRAMS {
-        if program != *name {
-            continue;
-        }
-        return verbs.is_empty() || verb.is_some_and(|v| verbs.contains(&v));
-    }
-    false
-}
+/// Verification classification lives in `agentworth-loop` now: the governor needs the same
+/// notion of "a command whose exit code is evidence" while the session is still running.
+pub(crate) use agentworth_loop::is_verification_command;
 
 /// The highest rung any evidence in this session reached.
 fn strongest_outcome_line(outcomes: &[OutcomeEvidence]) -> Option<OutcomeLine> {

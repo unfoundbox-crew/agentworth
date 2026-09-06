@@ -1,6 +1,6 @@
 # Governor
 
-Status: proposed, 2026-09-06, revised the same day after review: v0.1.22 is the brake, not a simulator. Nothing built. Answers the three-part
+Status: built, PR #TBD (2026-09-06). Answers the three-part
 operational thesis (in-flight circuit breakers, asymmetric division of
 labour, cache-prefix preservation) with what the harnesses actually expose
 and what the index already holds. Sources are dated 2026-09-06.
@@ -18,7 +18,7 @@ next model call before it is paid for.
 | :--- | :--- |
 | A Claude Code `PreToolUse` hook can deny one tool call (`hookSpecificOutput.permissionDecision: "deny"` plus `permissionDecisionReason`, or exit 2). `PostToolBatch` with `continue: false` "stops the agentic loop before the next model call". `ConfigChange` and `PreModelSwitch` can block. `UserPromptSubmit`, `SessionStart`, `PostToolBatch`, `Stop` accept `additionalContext` the model sees. Sync hooks have a timeout; `async: true` hooks cannot block | code.claude.com/docs/en/hooks |
 | Hook payloads carry no token usage. Usage is in the transcript: every assistant record has `usage.{input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}` | the Claude adapter, `crates/adapters/src/claude.rs` |
-| Codex CLI has hooks (`hooks.json`, `PreToolUse` blocks with `{"decision":"block","reason"}`, on by default since mid-2026) according to third-party guides. **Not confirmed against OpenAI's own docs.** No `PostToolBatch` equivalent was described | knightli.com, agenticcontrolplane.com, hookstack.app |
+| Codex CLI hooks, from OpenAI's own docs and source: on by default (`hooks.json` or `[hooks]` in `config.toml`); `PreToolUse` denies with the same `hookSpecificOutput.permissionDecision` shape Claude Code uses (the older `{"decision":"block"}` still accepted); `UserPromptSubmit` blocks a prompt with `{"decision":"block","reason"}` or exit 2; `PostToolUse` `decision: block` replaces the tool result the model sees and takes `additionalContext`; no batch-level halt exists. The rollout JSONL carries `event_msg`/`token_count` records with `last_token_usage` and a `rate_limits` snapshot: `used_percent`, `window_minutes`, `resets_at`, `plan_type`, `spend_control_reached` | learn.chatgpt.com/docs/hooks; codex-rs/protocol/src/protocol.rs; both fetched 2026-09-06 |
 | Archie already has: the Loop Sentinel (`crates/outcomes/src/loops.rs`: three identical tool calls, four revisions of one file, self-corrected vs human-rescued), `archie session watch` polling it, a pricing table with cache rates and `estimate_model_tokens_cost_usd`, the cache-economics report (#42) and cache doctor, `window show` pacing, and since v0.1.21 the loop: hook events over a socket, per-session state, `tool_intents`, verification-shaped commands classified by result | the checkout at v0.1.21 |
 | The tweet that started this (a $200/month Codex weekly limit gone in 14 hours) was not fetched; the search found Codex's 5-hour window and weekly cap, not the post | WebSearch |
 
@@ -90,6 +90,18 @@ researched here.
                                        ▲ sync gate: archie hook --gate (≤ 50 ms, fails open)
 ```
 
+**Shipped, and where the build differs from the design above:** batch
+edits are deduplicated by `tool_use_id`, so an edit reported at `PreToolUse`
+and again in the `PostToolBatch` payload counts once. When a spend halt and
+a thrash halt trip on the same batch, only the spend halt suspends. The
+gate's round-trip budget is 50 ms by default and `ARCHIE_GATE_BUDGET_MS`
+overrides it. `policy replay` replays the current policy over indexed
+intents, not over recorded decisions, because a tuning tool must answer
+"what would this number have done". The `[cache]` rules parse but do not
+act until v0.1.23. The loop rule counts consecutive identical calls in the
+runtime; it does not yet read the Loop Sentinel. Codex's
+`cache_write_input_tokens` lands in `cache_creation`.
+
 ## The brake, v0.1.22
 
 Two rules, both active, both blocking, both shipped in the first release.
@@ -138,13 +150,16 @@ tuning tool over the index and is not the product.
 | identical call ×3 | `PostToolBatch` | `note` by default, `halt` if set | the next different call |
 | cache: config change or model switch mid-session | `ConfigChange`, `PreModelSwitch` | block with the priced reason, if set | the person |
 
-**On Codex.** Third-party guides describe `PreToolUse` with
-`{"decision":"block","reason"}` and no batch-level halt. If OpenAI's docs
-confirm that, the cap on Codex denies every tool call with the reason once
-tripped; the model call itself still happens, so the brake is weaker there
-and the spec says so rather than pretending parity. Reading those docs is
-the first task of the Codex lane, in the same release if they confirm, not
-a later one.
+**On Codex.** OpenAI's docs confirm the levers, so the Codex brake ships in
+v0.1.22, not later. Thrash: `PostToolUse` with `decision: block` replaces
+what the model sees with the ground truth. Spend cap: once tripped, every
+`PreToolUse` is denied with the reason and every `UserPromptSubmit` is
+blocked until lifted. What Codex lacks is a batch-level halt, so the model
+call that follows a denied tool still happens; the spec says so. What Codex
+has that Claude Code does not is the provider's own quota in the transcript:
+`session burn` reads the `rate_limits` snapshot and speaks it as "provider
+says", the one place a remaining-percentage may be said aloud, because it is
+the provider's number and not ours.
 
 ## What each rule needs, and where it comes from
 
@@ -160,7 +175,7 @@ a later one.
 
 | Release | What | Gate |
 | :--- | :--- | :--- |
-| v0.1.22, the brake | the meter, `session burn`, `hook --gate` on `PostToolBatch` and `UserPromptSubmit`, the thrash halt and the spend cap active, `governor_events`, `policy lift`, `policy show|check`, Codex `hooks.json` adapter if OpenAI's docs confirm the block | a thrashing fixture session is halted before its next model call with the ground truth in the next prompt; a session over cap cannot submit a prompt until lifted; the gate's p95 under 20 ms; serve killed mid-session, the agent keeps working and the spool has the miss |
+| v0.1.22, the brake | the meter, `session burn`, `hook --gate` on `PostToolBatch` and `UserPromptSubmit` (and `PreToolUse`/`PostToolUse` on Codex), the thrash halt and the spend cap active on both harnesses, `governor_events`, `policy lift`, `policy show|check|replay`, `hook print codex` | a thrashing fixture session is halted before its next model call with the ground truth in the next prompt; a session over cap cannot submit a prompt until lifted; the gate's p95 under 20 ms; serve killed mid-session, the agent keeps working and the spool has the miss |
 | v0.1.23 | rake share and its advisory, cache-break attribution in-flight, `ConfigChange`/`PreModelSwitch` blocks, `PreToolUse` gate for per-call denies | one priced cache break named with its cause while the session runs |
 | v0.1.24 | Cursor and Gemini CLI, if they expose a gate | one governed turn on each |
 

@@ -5,6 +5,7 @@ pub mod completions;
 pub mod cost_basis;
 pub mod forgotten;
 pub mod handoff;
+pub mod loop_governor;
 pub mod loop_runtime;
 pub mod mcp;
 pub mod server;

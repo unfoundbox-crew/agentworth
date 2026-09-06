@@ -4,6 +4,7 @@ pub mod audit;
 pub mod blunder;
 pub mod blunder_blame;
 pub mod docs;
+pub mod governor_cmds;
 pub mod hook;
 pub mod ladder;
 pub mod loop_cmds;
@@ -15,7 +16,11 @@ pub use audit::run_audit_command;
 pub use blunder::run_blunder_command;
 pub use blunder_blame::run_blunder_blame_command;
 pub use docs::run_docs_command;
-pub use hook::{print_claude_snippet, run_hook_command};
+pub use governor_cmds::{
+    run_policy_check_command, run_policy_lift_command, run_policy_replay_command,
+    run_policy_show_command, run_session_burn_command,
+};
+pub use hook::{print_claude_snippet, print_codex_snippet, run_gate_command, run_hook_command};
 pub use ladder::{run_ladder_command, LadderArgs};
 pub use loop_cmds::{
     run_agent_status_command, run_session_anchors_command, run_session_drift_command,
