@@ -840,6 +840,36 @@ pub struct SpendRow {
     pub last_at: Option<DateTime<Utc>>,
 }
 
+/// The distribution of `total_tokens` across some population of primary sessions. `n` is the
+/// sample size the other four numbers are drawn from -- always check it before trusting a
+/// percentile computed from a handful of sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Percentiles {
+    pub n: usize,
+    pub p50: u64,
+    pub p90: u64,
+    pub p99: u64,
+    pub max: u64,
+}
+
+impl Percentiles {
+    /// Nearest-rank percentiles over `samples`, sorted in place. Empty input is all zeros with
+    /// `n: 0` rather than an error -- a machine with no indexed sessions yet is a fact to show,
+    /// not a failure to propagate.
+    fn from_samples(samples: &mut [u64]) -> Self {
+        samples.sort_unstable();
+        let n = samples.len();
+        if n == 0 {
+            return Percentiles { n: 0, p50: 0, p90: 0, p99: 0, max: 0 };
+        }
+        let at = |pct: f64| -> u64 {
+            let rank = ((pct * n as f64).ceil() as usize).clamp(1, n);
+            samples[rank - 1]
+        };
+        Percentiles { n, p50: at(0.50), p90: at(0.90), p99: at(0.99), max: samples[n - 1] }
+    }
+}
+
 /// One governor decision, with its evidence (docs/specs/governor.md "The brake").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GovernorEventRow {
@@ -3010,6 +3040,66 @@ impl Storage {
         Ok(ranked)
     }
 
+    /// `total_tokens` across primary sessions (subagent transcripts excluded, per
+    /// `is_subagent_transcript` -- a fan-out of small subagent runs would otherwise drag the
+    /// distribution down and hide how big a real session gets), optionally narrowed to one
+    /// repo by `extract_repository_or_workspace`. Feeds `archie policy init`'s comments and
+    /// `archie policy check`'s warning: the number a spend cap should be judged against is this
+    /// machine's own history, not a guess.
+    pub fn session_token_percentiles(&self, repo: Option<&str>) -> Result<Percentiles> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&format!(
+            "SELECT source_path, total_tokens FROM sessions WHERE {NON_STUB_SQL_PREDICATE}"
+        ))?;
+        let mut rows = stmt.query([])?;
+
+        let mut tokens: Vec<u64> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let source_path: String = row.get(0)?;
+            if is_subagent_transcript(&source_path) {
+                continue;
+            }
+            if let Some(repo) = repo {
+                if extract_repository_or_workspace(&source_path) != repo {
+                    continue;
+                }
+            }
+            let total_tokens: i64 = row.get(1)?;
+            tokens.push(total_tokens.max(0) as u64);
+        }
+
+        Ok(Percentiles::from_samples(&mut tokens))
+    }
+
+    /// How many primary sessions (subagents excluded, as in `session_token_percentiles`) spent
+    /// more than `cap` tokens. Feeds `archie policy check`'s warning: a cap below the machine's
+    /// own p99 is a cap that would have tripped on real, already-indexed sessions.
+    pub fn count_primary_sessions_over_tokens(&self, cap: u64, repo: Option<&str>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&format!(
+            "SELECT source_path, total_tokens FROM sessions WHERE {NON_STUB_SQL_PREDICATE}"
+        ))?;
+        let mut rows = stmt.query([])?;
+
+        let mut count = 0usize;
+        while let Some(row) = rows.next()? {
+            let source_path: String = row.get(0)?;
+            if is_subagent_transcript(&source_path) {
+                continue;
+            }
+            if let Some(repo) = repo {
+                if extract_repository_or_workspace(&source_path) != repo {
+                    continue;
+                }
+            }
+            let total_tokens: i64 = row.get(1)?;
+            if total_tokens.max(0) as u64 > cap {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     /// Retrieve daily usage summaries grouped by day and adapter.
     pub fn get_daily_usage(&self, limit: Option<usize>) -> Result<Vec<UsagePeriodSummary>> {
         self.query_usage_view("v_daily_usage", limit.unwrap_or(30))
@@ -5125,6 +5215,67 @@ mod tests {
         assert!(!repos.is_empty());
         assert_eq!(repos[0].0, "unfoundbox/agentworth");
         assert_eq!(repos[0].1, 2);
+    }
+
+    #[test]
+    fn test_session_token_percentiles_excludes_subagents_and_narrows_by_repo() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        // Primary sessions in one repo: 100, 200, 300, ..., 1000 tokens.
+        for i in 1..=10u64 {
+            let path = format!(
+                "/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/sess{i}.jsonl"
+            );
+            let prov = Provenance::new(path, "claude_code", 100, 100, format!("fp{i}"));
+            let mut trace =
+                AgentWorthTrace::new(format!("sess_{i}"), "claude_code", prov, Utc::now());
+            trace.stats.token_usage = TokenUsage::new(i * 100, 0, 0, 0);
+            trace.stats.total_events = 5;
+            storage.upsert_trace(&trace).expect("upsert");
+        }
+
+        // A subagent transcript with a huge token count that must not skew the percentiles.
+        let sub_prov = Provenance::new(
+            "/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/uuid1234/subagents/agent-abc123.jsonl",
+            "claude_code",
+            100,
+            100,
+            "fp_sub",
+        );
+        let mut sub_trace =
+            AgentWorthTrace::new("sess_sub".to_string(), "claude_code", sub_prov, Utc::now());
+        sub_trace.stats.token_usage = TokenUsage::new(10_000_000, 0, 0, 0);
+        sub_trace.stats.total_events = 5;
+        storage.upsert_trace(&sub_trace).expect("upsert subagent");
+
+        // A primary session in a different repo, to prove repo narrowing.
+        let other_prov = Provenance::new(
+            "/Users/saurabh/.claude/projects/-Users-saurabh-code-motionvector-fleet/sess_other.jsonl",
+            "claude_code",
+            100,
+            100,
+            "fp_other",
+        );
+        let mut other_trace = AgentWorthTrace::new(
+            "sess_other".to_string(),
+            "claude_code",
+            other_prov,
+            Utc::now(),
+        );
+        other_trace.stats.token_usage = TokenUsage::new(5_000_000, 0, 0, 0);
+        other_trace.stats.total_events = 5;
+        storage.upsert_trace(&other_trace).expect("upsert other");
+
+        let machine_wide = storage.session_token_percentiles(None).expect("percentiles");
+        assert_eq!(machine_wide.n, 11, "the subagent row is excluded, both repos counted");
+        assert_eq!(machine_wide.max, 5_000_000, "not the 10M subagent row");
+
+        let this_repo = storage
+            .session_token_percentiles(Some("unfoundbox/agentworth"))
+            .expect("repo percentiles");
+        assert_eq!(this_repo.n, 10);
+        assert_eq!(this_repo.max, 1000);
+        assert_eq!(this_repo.p50, 500);
     }
 
     #[test]

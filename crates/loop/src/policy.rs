@@ -7,9 +7,10 @@
 //!
 //! ```toml
 //! [thrash]   edits = 3            action = "halt"
-//! [spend]    tokens = 20000000    usd = 40.0     action = "halt"
 //! [loop]     repeats = 3          action = "note"
 //! [cache]    block_config_change = false         block_model_switch = false
+//! # [spend]  tokens = ...         usd = ...      action = "halt"
+//! # set this only after `archie policy init` shows you your own sessions' sizes
 //! ```
 
 use crate::governor::Action;

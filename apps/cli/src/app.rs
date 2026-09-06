@@ -443,6 +443,9 @@ enum HookCommand {
 /// `archie policy`: the four verbs over `policy.toml` (docs/specs/governor.md).
 #[derive(Subcommand, Debug, PartialEq)]
 enum PolicyCommand {
+    /// Write a starter policy.toml, with this machine's own token percentiles as comments
+    Init(PolicyInitArgs),
+
     /// What is governed right now, and which files were read to decide that
     Show(PolicyShowArgs),
 
@@ -458,6 +461,17 @@ enum PolicyCommand {
 
     /// What the current thresholds would have done to the sessions already indexed
     Replay(PolicyReplayArgs),
+}
+
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct PolicyInitArgs {
+    /// Write `.agentworth/policy.toml` in the current repo instead of `~/.agentworth/policy.toml`
+    #[arg(long)]
+    repo: bool,
+
+    /// Overwrite an existing file
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(clap::Args, Debug, PartialEq, Default)]
@@ -1941,11 +1955,14 @@ pub fn run() -> Result<()> {
                 other => anyhow::bail!("no hook snippet for {other}; `claude` and `codex` are the harnesses"),
             }
         }
+        Action::Policy(PolicyCommand::Init(a)) => {
+            crate::commands::run_policy_init_command(a.repo, a.force, cli.db_path, &ui)?;
+        }
         Action::Policy(PolicyCommand::Show(a)) => {
             crate::commands::run_policy_show_command(resolve_json(a.json), &ui)?;
         }
         Action::Policy(PolicyCommand::Check) => {
-            crate::commands::run_policy_check_command(&ui)?;
+            crate::commands::run_policy_check_command(cli.db_path, &ui)?;
         }
         Action::Policy(PolicyCommand::Lift { session_id }) => {
             crate::commands::run_policy_lift_command(session_id, cli.db_path, &ui)?;

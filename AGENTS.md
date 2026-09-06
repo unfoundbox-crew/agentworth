@@ -17,6 +17,7 @@ The immediate product is not a marketplace.
 - `docs/DECISION-INBOX.md` — dated status at the top; the body below it is a historical log.
 - `CHANGELOG.md` — what shipped per release.
 - `README.md` — the user-facing description of the product.
+- `CLAUDE.md` — a symlink to this file, so Claude Code sessions load it too.
 
 To check any of these is still current: `git log -1 <path>` for when it last changed, and `gh pr view <N>` for any PR number it cites.
 
@@ -51,6 +52,27 @@ All distribution methods should execute the same native binary.
 * AgentWorth never sends a prompt to a model on its own. A command may call one only behind an explicit flag that names the model, after printing the estimated cost.
 * Keep marketplace logic outside the core scanner.
 * Gemini / Antigravity (gemini-3.7-flash): Never rush or take shortcuts. Read the full specification, understand the structural intent, and execute thoroughly — other agents are not in a hurry, and accuracy beats hasty completion.
+
+## Dogfood before you propose
+
+AgentWorth's own index is the first source for any number about sessions. Before
+you propose a threshold, a default, a cap, or a claim about "typical" sessions,
+query it. Use `archie session list --json`, `archie stats`, `archie session burn`,
+the MCP tools `session_list`/`session_show`/`session_burn`, or SQLite directly.
+Put the query and its result in the proposal.
+
+Here is the receipt that made this rule. On 2026-09-06, a proposed spend cap of
+`[spend] tokens = 20000000` went into the governor's docs as an example, before
+anyone queried the index. The index held primary sessions of 728M, 273M, 131M,
+and 107M tokens on this machine. A cap at 20M would have halted every one of
+them, dozens of times over. Nobody checked before writing the number down.
+
+`archie policy init` exists so this check is one command, not a memory: it
+writes a starter `policy.toml` with this machine's own token percentiles in the
+comments, so the number a person sets is theirs, not a guess.
+
+Memory is not canon; this file is. A rule that lives only in a session's memory
+dies with the worktree.
 
 ## Pipeline
 

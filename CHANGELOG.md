@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`archie policy init [--repo] [--force]`.** Writes a starter `policy.toml` with the thrash and loop rules on, and a `[spend]` block left commented out, carrying this machine's own primary-session token percentiles (p50/p90/p99/max) as comments — read from the index with the new `Storage::session_token_percentiles`.
+- **`archie policy check` warns on a spend cap below your own p99.** Names the cap, the machine's (or repo's) p99, and how many already-indexed sessions would have tripped it. Still exits 0 — a warning, not an error.
+
+### Changed
+
+- **The `[spend]` example in `crates/loop/src/policy.rs`'s doc comment dropped its token number** — `[spend]` now ships commented out, pointing at `archie policy init`. A 20M-token example would have halted this machine's own 728M-token primary sessions dozens of times; the rule stands, the number is now yours to set from your own history.
+
 ## [0.1.22] - 2026-09-06
 
 ### Added
