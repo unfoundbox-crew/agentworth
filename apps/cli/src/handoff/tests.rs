@@ -534,3 +534,15 @@ fn redaction_masks_paths_commands_and_quoted_text_through_one_instance() {
     // `Redactor::redact_trace` already gives.
     assert!(report.ran.iter().any(|c| c.command.contains("sk-ant-")));
 }
+
+#[test]
+fn is_verification_command_matches_the_program_not_the_word_test() {
+    assert!(!is_verification_command(
+        r#"cd x; /usr/bin/grep -n -A4 "…test…""#
+    ));
+    assert!(is_verification_command("cd x && cargo test -p foo"));
+    assert!(is_verification_command("FOO=1 pytest tests/"));
+    assert!(!is_verification_command(r#"grep -rn "test" src"#));
+    assert!(!is_verification_command("ls crates"));
+    assert!(is_verification_command("git commit -m x"));
+}

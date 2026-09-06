@@ -571,18 +571,39 @@ fn parse_outcome_kind(name: &str) -> Option<OutcomeKind> {
 /// (`crates/adapters/src/claude.rs` routes `isCompactSummary` records there), and a user record
 /// carrying only a tool result becomes a `ToolResult` event with no text left over. The prefix
 /// guard stays anyway: it costs one string comparison, and an adapter that has not learned the
-/// distinction yet would otherwise hand back a summary as if the user had typed it.
+/// distinction yet would otherwise hand back a summary, a cross-session relay or a harness
+/// notification as if the person had typed it -- [`is_human_prompt`] is where that list lives.
 fn last_user_message(events: &[&NormalizedEvent]) -> Option<String> {
     events.iter().rev().find_map(|event| {
         let EventPayload::UserMessage { content } = &event.payload else {
             return None;
         };
         let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
-        if flat.is_empty() || flat.starts_with("This session is being continued") {
+        if flat.is_empty() || !is_human_prompt(&flat) {
             return None;
         }
         Some(flat)
     })
+}
+
+/// False for a user-role message the harness injected rather than the person typed: a
+/// cross-session relay, a system notification, a compaction summary continuation, or any of the
+/// other machine-generated envelopes that arrive on the `UserMessage` role. `wake` wants the
+/// last thing a human asked for, not the last event on that role.
+fn is_human_prompt(content: &str) -> bool {
+    const INJECTED_PREFIXES: &[&str] = &[
+        "Another Claude session sent a message",
+        "<cross-session-message",
+        "[SYSTEM NOTIFICATION",
+        "<task-notification",
+        "<system-reminder",
+        "<command-name>",
+        "<local-command",
+        "This session is being continued",
+    ];
+    !INJECTED_PREFIXES
+        .iter()
+        .any(|prefix| content.starts_with(prefix))
 }
 
 /// The `cwd` and branch the adapter recorded from the transcript's own records. Absent for every

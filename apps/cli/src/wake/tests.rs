@@ -208,6 +208,39 @@ fn a_compaction_summary_is_not_what_the_user_last_asked() {
 }
 
 #[test]
+fn last_asked_skips_harness_relays_and_notifications() {
+    let mut trace = empty_trace("relay-session");
+    push(
+        &mut trace,
+        1,
+        EventPayload::UserMessage {
+            content: "Rebuild the landing page terminals at 2x and push".to_string(),
+        },
+    );
+    push(
+        &mut trace,
+        2,
+        EventPayload::UserMessage {
+            content: "Another Claude session sent a message: the CI is red on main".to_string(),
+        },
+    );
+    push(
+        &mut trace,
+        3,
+        EventPayload::UserMessage {
+            content: "[SYSTEM NOTIFICATION] background task finished".to_string(),
+        },
+    );
+    trace.recalculate_stats();
+
+    let session = report_from(&trace, None).session.expect("a session");
+    assert_eq!(
+        session.last_asked.as_deref(),
+        Some("Rebuild the landing page terminals at 2x and push")
+    );
+}
+
+#[test]
 fn no_user_message_at_all_is_a_gap_and_the_line_is_omitted() {
     let mut trace = empty_trace("silent-session");
     push(&mut trace, 1, shell("ls", None));
