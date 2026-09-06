@@ -173,17 +173,15 @@ fn found_checkout_line(checkout: &Checkout) -> String {
         });
     }
     if let Some(upstream) = &checkout.upstream {
-        let mut drift = Vec::new();
-        if let Some(ahead) = checkout.ahead.filter(|n| *n > 0) {
-            drift.push(format!("{ahead} ahead"));
-        }
-        if let Some(behind) = checkout.behind.filter(|n| *n > 0) {
-            drift.push(format!("{behind} behind"));
-        }
-        parts.push(if drift.is_empty() {
-            format!("even with {upstream}")
-        } else {
-            format!("{} of {upstream}", drift.join(", "))
+        let ahead = checkout.ahead.filter(|n| *n > 0);
+        let behind = checkout.behind.filter(|n| *n > 0);
+        parts.push(match (ahead, behind) {
+            (None, None) => format!("even with {upstream}"),
+            (Some(ahead), None) => format!("{ahead} ahead of {upstream}"),
+            (None, Some(behind)) => format!("{behind} behind {upstream}"),
+            (Some(ahead), Some(behind)) => {
+                format!("{ahead} ahead, {behind} behind {upstream}")
+            }
         });
     }
     parts.join(" · ")

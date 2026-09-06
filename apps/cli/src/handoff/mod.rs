@@ -556,40 +556,88 @@ pub(crate) fn collect_runs(events: &[&agentworth_schema::NormalizedEvent]) -> Ve
 }
 
 /// Test-, build- or release-shaped commands: the ones whose exit code is evidence rather than
-/// trivia. Deliberately a prefix/substring list and not a parser -- the cost of a false
-/// positive here is one extra line in a section that is already ranked, not a wrong claim.
+/// trivia. Matches the program and its first verb rather than substring-matching the whole
+/// command line -- a `grep -n "test"` or `cd repo && ls` is not a passing test just because the
+/// word "test" appears in it. Deliberately a small table and not a shell parser: it splits on
+/// the usual separators, strips the wrappers a real invocation carries (`cd`, env assignments,
+/// `sudo`, `time`, `nice`, `flock <file>`, a leading path), and checks only the program name and
+/// its first argument.
 pub(crate) fn is_verification_command(command: &str) -> bool {
-    let lower = command.to_lowercase();
-    const NEEDLES: &[&str] = &[
-        "test",
-        "cargo build",
-        "cargo check",
-        "cargo clippy",
-        "cargo fmt",
-        "npm run",
-        "pnpm run",
-        "yarn ",
-        "make ",
-        "pytest",
-        "go build",
-        "go vet",
-        "tsc",
-        "eslint",
-        "vitest",
-        "jest",
-        "git commit",
-        "git push",
-        "gh pr",
-        "gh run",
-        "gh workflow",
-        "docker build",
-        "mvn ",
-        "gradle",
-        "ruff",
-        "mypy",
-        "nextest",
+    command
+        .split(['\n'])
+        .flat_map(|line| line.split("&&"))
+        .flat_map(|s| s.split("||"))
+        .flat_map(|s| s.split(['|', ';']))
+        .any(|segment| segment_is_verification(segment.trim()))
+}
+
+/// One `&&`/`;`/`|`-separated segment of a shell command, after stripping the wrappers a real
+/// invocation carries around the program that actually runs.
+fn segment_is_verification(segment: &str) -> bool {
+    let mut words: Vec<&str> = segment.split_whitespace().collect();
+
+    loop {
+        match words.first().copied() {
+            Some("cd") => {
+                words.remove(0);
+                if !words.is_empty() {
+                    words.remove(0);
+                }
+            }
+            Some(w) if w.contains('=') && !w.starts_with('-') => {
+                words.remove(0);
+            }
+            Some("sudo") | Some("time") | Some("nice") => {
+                words.remove(0);
+            }
+            Some("flock") => {
+                words.remove(0);
+                if !words.is_empty() {
+                    words.remove(0);
+                }
+            }
+            _ => break,
+        }
+    }
+
+    let Some(program_path) = words.first() else {
+        return false;
+    };
+    let program = program_path.rsplit('/').next().unwrap_or(program_path);
+    let verb = words.get(1).copied();
+
+    const VERB_PROGRAMS: &[(&str, &[&str])] = &[
+        (
+            "cargo",
+            &["test", "build", "check", "clippy", "fmt", "nextest", "run"],
+        ),
+        ("npm", &["test", "run", "build", "ci"]),
+        ("pnpm", &["test", "run", "build", "ci"]),
+        ("yarn", &["test", "run", "build", "ci"]),
+        ("bun", &["test", "run", "build", "ci"]),
+        ("go", &["build", "vet", "test"]),
+        ("git", &["commit", "push"]),
+        ("gh", &["pr", "run", "workflow"]),
+        ("gradle", &[]),
+        ("gradlew", &[]),
     ];
-    NEEDLES.iter().any(|n| lower.contains(n))
+    const BARE_PROGRAMS: &[&str] = &[
+        "pytest", "tsc", "eslint", "vitest", "jest", "make", "mvn", "ruff", "mypy",
+    ];
+
+    if program == "docker" {
+        return verb == Some("build");
+    }
+    if BARE_PROGRAMS.contains(&program) {
+        return true;
+    }
+    for (name, verbs) in VERB_PROGRAMS {
+        if program != *name {
+            continue;
+        }
+        return verbs.is_empty() || verb.is_some_and(|v| verbs.contains(&v));
+    }
+    false
 }
 
 /// The highest rung any evidence in this session reached.

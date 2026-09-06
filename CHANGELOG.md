@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `grep`-for-"test" no longer counts as a passing test.** `is_verification_command` substring-matched the whole command line, so `cd repo && /usr/bin/grep -n "test"` registered as wake's "last passed" proof. It now splits the command into segments, strips `cd`, env assignments, `sudo`, `time`, `nice`, `flock`, and a leading path, and matches the program and its first verb against a small table (`cargo test|build|check|...`, `npm|pnpm|yarn|bun test|run|build|ci`, `pytest`, `go build|vet|test`, `tsc`, `eslint`, `vitest`, `jest`, `make`, `mvn`, `gradle`/`gradlew`, `ruff`, `mypy`, `docker build`, `git commit|push`, `gh pr|run|workflow`).
+- **`session_wake`'s "Last asked" no longer picks up a harness relay or system notification.** A cross-session message or a `[SYSTEM NOTIFICATION]` line arrives on the same `UserMessage` role as a real prompt; `last_asked` now skips those (and compaction continuations) and reports the human's actual last prompt.
+- **The checkout line's drift wording read "2 behind of origin/main".** Now "N ahead of X", "N behind X" (no stray "of"), or "N ahead, M behind X" when the branch has both.
+
 ## [0.1.19] - 2026-09-06
 
 ### Added
