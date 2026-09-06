@@ -294,6 +294,26 @@ Rank indexed sessions by real secret/credential exposure risk, by category and s
 | `--min-severity` | no | Only include sessions whose worst finding is at least this severity | low | low, medium, high, critical |
 | `--json` | no | Output results as JSON | false | - |
 
+### `archie session drift`
+
+What moved under this session since it read it, and which session moved it
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `SESSION_ID` | no | The session, by full id or a unique prefix. Defaults to the most recently active one | - | - |
+| `--last` | no | The most recently active session, which is also the default | false | - |
+| `--json` | no | Output as formatted JSON | false | - |
+
+### `archie session anchors`
+
+The join keys this session's tool results carried -- a SpacePilot run_id, a receipt hash -- and the other sessions that carried them
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `SESSION_ID` | no | The session, by full id or a unique prefix. Defaults to the most recently active one | - | - |
+| `--last` | no | The most recently active session, which is also the default | false | - |
+| `--json` | no | Output as formatted JSON | false | - |
+
 ### `archie agent`
 
 The agent adapters: what each one extracts, and how one is doing on this machine
@@ -313,6 +333,14 @@ One adapter in detail: what it extracts, whether it is present here, and what it
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
 | `ADAPTER` | yes | Adapter name (e.g. claude_code, codex, gemini, opencode) | - | - |
+| `--json` | no | Output as formatted JSON | false | - |
+
+### `archie agent status`
+
+Where every agent on this machine is right now, one line each, from the loop's own hook events rather than from a scan
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
 | `--json` | no | Output as formatted JSON | false | - |
 
 ### `archie repo`
@@ -407,10 +435,23 @@ Start the local API server and interactive explorer UI
 | `--port, -p` | no | Port to bind the server to | 3000 | - |
 | `--open` | no | Automatically open the Web UI in the default browser | false | - |
 | `--dist` | no | Optional path to custom web frontend dist directory | - | - |
+| `--no-socket` | no | Do not listen on the loop's Unix socket. Hook events then take the spool, and `archie scan` ingests them (docs/specs/loop.md section 1) | false | - |
 
 ### `archie mcp`
 
 Start the read-only MCP server over stdio, for a coding agent to query this machine's session index mid-session (see docs/specs/mcp-server.md). Register it once with `claude mcp add agentworth --scope user -- archie mcp`
+
+### `archie hook`
+
+Plumbing: read one harness hook event on stdin and hand it to the loop (docs/specs/loop.md). Never prints to stdout, never fails the agent, exits 0 always. `archie hook print claude` prints the settings.json snippet that registers it
+
+### `archie hook print`
+
+Print the hook registration snippet for a harness. Never writes a settings file
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `HARNESS` | yes | The harness to print for. `claude` is the only one verified against a real hooks reference (docs/specs/loop.md) | - | claude |
 
 ### `archie doctor`
 
@@ -671,6 +712,21 @@ Machine-wide aggregate stats: total sessions/events, token usage, sessions by ad
 
 </details>
 
+### `agent_status`
+
+Where every agent on this machine is right now: one row per session the loop has seen, with its state (registered / working / idle / ended), when it entered that state, the repository it is working in, its terminal pane when herdr exported one, and its event sequence. Fed by the harness's own hooks (`archie hook`), not by a scan, so it is current rather than as-of-last-scan. An empty list means no hook is registered -- `archie hook print claude` prints the snippet.
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object"
+}
+```
+
+</details>
+
 ### `repo_blame`
 
 Find sessions whose recorded file modifications match a substring of file_path -- AI Code Blame, the same query /api/blame makes. Returned paths are redacted.
@@ -890,6 +946,34 @@ The last N handoffs for one repository, newest first, so a session's first tool 
   "required": [
     "repo"
   ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `session_drift`
+
+What moved under a session since it read it. The support set U is the paths the session actually read, hashed at the time; this re-hashes them and returns the ones that differ, each with the session that predicted a write to that path afterwards, or nothing when no agent on this machine did (someone edited it by hand, or another tool did). The answer to "did my ground move because of me or someone else", which no harness summary can give. Reads files and rows; never scans, never writes. Files over 4 MB were not hashed and are counted as unhashed rather than reported as unchanged.
+
+| Param | Required | Type | Description |
+|---|---|---|---|
+| `session_id` | no | string or null | The session, by full id or a unique prefix. Defaults to the most recently active<br>session in the loop's own index, which is the caller itself in the normal case. |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "session_id": {
+      "description": "The session, by full id or a unique prefix. Defaults to the most recently active\nsession in the loop's own index, which is the caller itself in the normal case.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
   "type": "object"
 }
 ```

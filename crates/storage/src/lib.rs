@@ -745,6 +745,73 @@ pub struct AnchoredBlame {
     pub unanchored_rows: usize,
 }
 
+/// One machine, keyed by its box fingerprint (`agentworth_schema::host_fingerprint`).
+/// `system_id` is SpacePilot's configuration id (chip+memory), stored alongside for the join
+/// described in docs/specs/loop.md section 2 -- it is not this row's key, because the same box
+/// can report different configuration ids over its lifetime (RAM upgrade, a different backend).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MachineRow {
+    pub host_fingerprint: String,
+    pub system_id: Option<String>,
+    pub os: Option<String>,
+    pub arch: Option<String>,
+    pub first_seen: DateTime<Utc>,
+}
+
+/// Where one session's agent sits right now: `registered → working → idle → ended`
+/// (docs/specs/loop.md section 1). `last_seq` is bumped by subagent activity without moving
+/// `state`, so a subagent can never revive an idle pane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentStateRow {
+    pub session_id: String,
+    pub state: String,
+    pub since: DateTime<Utc>,
+    pub pane_id: Option<String>,
+    pub cwd: Option<String>,
+    pub git_head: Option<String>,
+    pub last_seq: i64,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// The efference copy of one tool call: what a session predicted it would touch, recorded at
+/// `PreToolUse` before the tool runs. `result` is filled in later from `PostToolUse` /
+/// `PostToolUseFailure` (`ok` / `error`), and stays `None` until then.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IntentRow {
+    pub tool_use_id: String,
+    pub session_id: String,
+    pub seq: i64,
+    pub tool: String,
+    pub predicted_paths: Vec<String>,
+    pub command: Option<String>,
+    pub known: bool,
+    pub at: DateTime<Utc>,
+    pub result: Option<String>,
+}
+
+/// One path this session read, hashed at `PostToolUse` -- the support set U that
+/// `session_drift` re-checks (docs/specs/loop.md section 1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SupportRow {
+    pub session_id: String,
+    pub path: String,
+    pub sha256: Option<String>,
+    pub size: Option<i64>,
+    pub read_seq: i64,
+    pub read_at: DateTime<Utc>,
+}
+
+/// A join key seen in this session's own trace: a `run_id`, a `sha256`, or a `pane_id`
+/// (docs/specs/loop.md section 2). `sessions_for_anchor` is the other side of this table --
+/// "who else produced or held this value."
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnchorRow {
+    pub session_id: String,
+    pub seq: i64,
+    pub kind: String,
+    pub value: String,
+}
+
 /// Label for a `FileActionType`, matching its `#[serde(rename_all = "snake_case")]` form.
 fn file_action_label(action: FileActionType) -> &'static str {
     match action {
@@ -922,6 +989,78 @@ impl Storage {
                 PRIMARY KEY(session_id, model),
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
             );
+
+            -- The box a session ran on. Keyed by `agentworth_schema::host_fingerprint`, the
+            -- salted hostname digest ported from SpacePilot so both products assign the same
+            -- machine the same id (docs/specs/loop.md section 2). `system_id` is SpacePilot's
+            -- own configuration id, carried here only for the join.
+            CREATE TABLE IF NOT EXISTS machines (
+                host_fingerprint TEXT PRIMARY KEY,
+                system_id TEXT,
+                os TEXT,
+                arch TEXT,
+                first_seen TEXT NOT NULL
+            );
+
+            -- Live state for the loop (docs/specs/loop.md section 1): registered / working /
+            -- idle / ended, updated from Claude Code hooks rather than scanned from a tape.
+            CREATE TABLE IF NOT EXISTS agent_state (
+                session_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                since TEXT NOT NULL,
+                pane_id TEXT,
+                cwd TEXT,
+                git_head TEXT,
+                last_seq INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+
+            -- Efference copy of a tool call, written at `PreToolUse`: what this session
+            -- predicted it would touch. `predicted_paths` is a JSON array; the actual paths
+            -- are denormalized into `intent_paths` below so "who wrote this path after seq N"
+            -- is one indexed query instead of a JSON scan over every intent.
+            CREATE TABLE IF NOT EXISTS tool_intents (
+                tool_use_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                tool TEXT NOT NULL,
+                predicted_paths TEXT NOT NULL,
+                command TEXT,
+                known INTEGER NOT NULL,
+                at TEXT NOT NULL,
+                result TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS intent_paths (
+                tool_use_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                PRIMARY KEY(tool_use_id, path)
+            );
+
+            -- The support set U: paths this session read, hashed at `PostToolUse`
+            -- (docs/specs/loop.md section 1). `session_drift` re-hashes these and reports what
+            -- changed underneath the session and who changed it.
+            CREATE TABLE IF NOT EXISTS support_set (
+                session_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                sha256 TEXT,
+                size INTEGER,
+                read_seq INTEGER NOT NULL,
+                read_at TEXT NOT NULL,
+                PRIMARY KEY(session_id, path)
+            );
+
+            -- Join keys seen in a session's own trace -- `run_id`, `sha256`, `pane_id`
+            -- (docs/specs/loop.md section 2).
+            CREATE TABLE IF NOT EXISTS trace_anchors (
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY(session_id, seq, kind, value)
+            );
             "#,
         )?;
 
@@ -975,6 +1114,27 @@ impl Storage {
             if !columns.contains(&"effort".to_string()) {
                 let _ = conn.execute("ALTER TABLE sessions ADD COLUMN effort TEXT", []);
             }
+            // NULL on every row scanned before this column existed: the box that ran the
+            // session was never recorded, and there is no source to backfill it from.
+            if !columns.contains(&"host_fingerprint".to_string()) {
+                let _ =
+                    conn.execute("ALTER TABLE sessions ADD COLUMN host_fingerprint TEXT", []);
+            }
+        }
+
+        // `agent_state.last_stop` holds the JSON classification of the last `Stop`: what this
+        // session predicted it would change, what changed anyway, and who else predicted those
+        // paths. A column rather than a table because there is exactly one per session and it
+        // is replaced, never accumulated.
+        let mut stmt = conn.prepare("PRAGMA table_info(agent_state)")?;
+        let agent_state_columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+        if !agent_state_columns.is_empty() && !agent_state_columns.contains(&"last_stop".to_string())
+        {
+            let _ = conn.execute("ALTER TABLE agent_state ADD COLUMN last_stop TEXT", []);
         }
 
         // Data migration: `primary_outcome` used to be written in hand-rolled PascalCase
@@ -1022,6 +1182,9 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_file_modifications_session ON file_modifications(session_id);
             CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
             CREATE INDEX IF NOT EXISTS idx_session_risk_demoted ON session_risk(demoted_claims);
+            CREATE INDEX IF NOT EXISTS idx_tool_intents_session_seq ON tool_intents(session_id, seq);
+            CREATE INDEX IF NOT EXISTS idx_intent_paths_path_seq ON intent_paths(path, seq);
+            CREATE INDEX IF NOT EXISTS idx_trace_anchors_kind_value ON trace_anchors(kind, value);
             -- `list_sessions_for_repo` orders by last activity, not start time, so the
             -- bounded newest-first scan needs its own expression index to stay bounded.
             CREATE INDEX IF NOT EXISTS idx_sessions_last_activity
@@ -3571,6 +3734,385 @@ impl Storage {
             unanchored_rows,
         })
     }
+
+    /// Record or refresh a machine. Idempotent on `host_fingerprint`; `first_seen` is set only
+    /// on the row's first insert -- a later `upsert_machine` call for the same box updates
+    /// `system_id`/`os`/`arch` without moving when it was first seen.
+    pub fn upsert_machine(&self, machine: &MachineRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO machines (host_fingerprint, system_id, os, arch, first_seen)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(host_fingerprint) DO UPDATE SET
+                system_id = excluded.system_id,
+                os = excluded.os,
+                arch = excluded.arch;
+            "#,
+            params![
+                machine.host_fingerprint,
+                machine.system_id,
+                machine.os,
+                machine.arch,
+                machine.first_seen.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Stamp a session with the machine it ran on.
+    pub fn set_session_host(&self, session_id: &str, host_fingerprint: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            "UPDATE sessions SET host_fingerprint = ?1 WHERE session_id = ?2",
+            params![host_fingerprint, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Write or replace this session's current loop state.
+    pub fn upsert_agent_state(&self, state: &AgentStateRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO agent_state (
+                session_id, state, since, pane_id, cwd, git_head, last_seq, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ON CONFLICT(session_id) DO UPDATE SET
+                state = excluded.state,
+                since = excluded.since,
+                pane_id = excluded.pane_id,
+                cwd = excluded.cwd,
+                git_head = excluded.git_head,
+                last_seq = excluded.last_seq,
+                updated_at = excluded.updated_at;
+            "#,
+            params![
+                state.session_id,
+                state.state,
+                state.since.to_rfc3339(),
+                state.pane_id,
+                state.cwd,
+                state.git_head,
+                state.last_seq,
+                state.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Store this session's last `Stop` classification, as JSON. A session with no
+    /// `agent_state` row yet gets one written first by `upsert_agent_state`; this only ever
+    /// updates, so it is a no-op on a session the loop has never seen.
+    pub fn set_agent_last_stop(&self, session_id: &str, last_stop_json: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            "UPDATE agent_state SET last_stop = ?1 WHERE session_id = ?2",
+            params![last_stop_json, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// The JSON written by `set_agent_last_stop`, if this session has stopped at least once.
+    pub fn get_agent_last_stop(&self, session_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt =
+            conn.prepare("SELECT last_stop FROM agent_state WHERE session_id = ?1")?;
+        let mut rows = stmt.query_map(params![session_id], |row| row.get::<_, Option<String>>(0))?;
+        Ok(rows.next().transpose()?.flatten())
+    }
+
+    fn row_to_agent_state(row: &rusqlite::Row) -> rusqlite::Result<AgentStateRow> {
+        let since: String = row.get(2)?;
+        let updated_at: String = row.get(7)?;
+        Ok(AgentStateRow {
+            session_id: row.get(0)?,
+            state: row.get(1)?,
+            since: DateTime::parse_from_rfc3339(&since)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            pane_id: row.get(3)?,
+            cwd: row.get(4)?,
+            git_head: row.get(5)?,
+            last_seq: row.get(6)?,
+            updated_at: DateTime::parse_from_rfc3339(&updated_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+        })
+    }
+
+    /// Every session currently tracked by the loop, newest `updated_at` first.
+    pub fn list_agent_states(&self, limit: usize) -> Result<Vec<AgentStateRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, state, since, pane_id, cwd, git_head, last_seq, updated_at
+            FROM agent_state
+            ORDER BY updated_at DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], Self::row_to_agent_state)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The loop state for one session, if it has ever reported one.
+    pub fn get_agent_state(&self, session_id: &str) -> Result<Option<AgentStateRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, state, since, pane_id, cwd, git_head, last_seq, updated_at
+            FROM agent_state
+            WHERE session_id = ?1
+            "#,
+        )?;
+        let mut rows = stmt.query_map(params![session_id], Self::row_to_agent_state)?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    /// Record one tool call's predicted write set, idempotent on `tool_use_id` -- a retried
+    /// hook delivery updates the row in place rather than duplicating it or erroring.
+    pub fn insert_intent(&self, intent: &IntentRow, paths: &[String]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let predicted_json = serde_json::to_string(&intent.predicted_paths)?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            r#"
+            INSERT INTO tool_intents (
+                tool_use_id, session_id, seq, tool, predicted_paths, command, known, at, result
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(tool_use_id) DO UPDATE SET
+                session_id = excluded.session_id,
+                seq = excluded.seq,
+                tool = excluded.tool,
+                predicted_paths = excluded.predicted_paths,
+                command = excluded.command,
+                known = excluded.known,
+                at = excluded.at;
+            "#,
+            params![
+                intent.tool_use_id,
+                intent.session_id,
+                intent.seq,
+                intent.tool,
+                predicted_json,
+                intent.command,
+                intent.known as i64,
+                intent.at.to_rfc3339(),
+                intent.result,
+            ],
+        )?;
+        tx.execute(
+            "DELETE FROM intent_paths WHERE tool_use_id = ?1",
+            params![intent.tool_use_id],
+        )?;
+        for path in paths {
+            tx.execute(
+                r#"
+                INSERT INTO intent_paths (tool_use_id, session_id, seq, path)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(tool_use_id, path) DO NOTHING;
+                "#,
+                params![intent.tool_use_id, intent.session_id, intent.seq, path],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Fill in the reafference for a previously recorded intent: `ok` or `error` from
+    /// `PostToolUse` / `PostToolUseFailure`.
+    pub fn set_intent_result(&self, tool_use_id: &str, result: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            "UPDATE tool_intents SET result = ?1 WHERE tool_use_id = ?2",
+            params![result, tool_use_id],
+        )?;
+        Ok(())
+    }
+
+    /// Every session (other than `excluding_session`) that predicted a write to `path` at or
+    /// after `after_seq`, newest first -- "who moved this, and when" for `session_drift`.
+    pub fn writers_of_path(
+        &self,
+        path: &str,
+        after_seq: i64,
+        excluding_session: Option<&str>,
+    ) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, seq FROM intent_paths
+            WHERE path = ?1 AND seq >= ?2 AND (?3 IS NULL OR session_id != ?3)
+            ORDER BY seq DESC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![path, after_seq, excluding_session], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every session (other than `excluding_session`) that predicted a write to `path` after
+    /// `since`, newest first.
+    ///
+    /// Time, not `seq`, because `seq` counts one session's own events: comparing "my seq 5" to
+    /// "your seq 2" says nothing about which happened first, and drift is always a question
+    /// across two sessions. `writers_of_path` stays for callers comparing within one.
+    pub fn writers_of_path_since(
+        &self,
+        path: &str,
+        since: DateTime<Utc>,
+        excluding_session: Option<&str>,
+    ) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT p.session_id, p.seq FROM intent_paths p
+            JOIN tool_intents t ON t.tool_use_id = p.tool_use_id
+            WHERE p.path = ?1 AND t.at > ?2 AND (?3 IS NULL OR p.session_id != ?3)
+            ORDER BY t.at DESC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![path, since.to_rfc3339(), excluding_session], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every path this session predicted it would write at or after `after_seq`. The union
+    /// a `Stop` classifies the working tree against.
+    pub fn intent_paths_for_session(&self, session_id: &str, after_seq: i64) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT path FROM intent_paths WHERE session_id = ?1 AND seq > ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![session_id, after_seq], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Record (or refresh) one entry in a session's support set U.
+    pub fn upsert_support(&self, support: &SupportRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO support_set (session_id, path, sha256, size, read_seq, read_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(session_id, path) DO UPDATE SET
+                sha256 = excluded.sha256,
+                size = excluded.size,
+                read_seq = excluded.read_seq,
+                read_at = excluded.read_at;
+            "#,
+            params![
+                support.session_id,
+                support.path,
+                support.sha256,
+                support.size,
+                support.read_seq,
+                support.read_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The current support set U for one session.
+    pub fn support_for_session(&self, session_id: &str) -> Result<Vec<SupportRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, path, sha256, size, read_seq, read_at
+            FROM support_set WHERE session_id = ?1
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                let read_at: String = row.get(5)?;
+                Ok(SupportRow {
+                    session_id: row.get(0)?,
+                    path: row.get(1)?,
+                    sha256: row.get(2)?,
+                    size: row.get(3)?,
+                    read_seq: row.get(4)?,
+                    read_at: DateTime::parse_from_rfc3339(&read_at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Record join keys seen in a session's trace. Idempotent: a duplicate
+    /// `(session_id, seq, kind, value)` is silently ignored rather than erroring, since the
+    /// same anchor can legitimately be re-emitted by a retried hook delivery.
+    pub fn insert_anchors(&self, anchors: &[AnchorRow]) -> Result<()> {
+        if anchors.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tx = conn.transaction()?;
+        for anchor in anchors {
+            tx.execute(
+                r#"
+                INSERT INTO trace_anchors (session_id, seq, kind, value)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(session_id, seq, kind, value) DO NOTHING;
+                "#,
+                params![anchor.session_id, anchor.seq, anchor.kind, anchor.value],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every anchor recorded for one session.
+    pub fn anchors_for_session(&self, session_id: &str) -> Result<Vec<AnchorRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT session_id, seq, kind, value FROM trace_anchors WHERE session_id = ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                Ok(AnchorRow {
+                    session_id: row.get(0)?,
+                    seq: row.get(1)?,
+                    kind: row.get(2)?,
+                    value: row.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every session that has recorded this `(kind, value)` anchor -- e.g. every session that
+    /// touched a given `run_id` -- newest `seq` first.
+    pub fn sessions_for_anchor(&self, kind: &str, value: &str) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, seq FROM trace_anchors
+            WHERE kind = ?1 AND value = ?2
+            ORDER BY seq DESC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![kind, value], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
 }
 
 /// How many sessions `list_sessions_for_repo` will walk before giving up. Every row is one
@@ -3743,6 +4285,18 @@ pub fn normalize_metadata(raw: Option<String>) -> Option<serde_json::Value> {
         // Not JSON at all: hand back what is actually stored rather than dropping it.
         Err(_) => Some(serde_json::Value::String(raw)),
     }
+}
+
+/// The Unix socket `archie serve` listens on and `archie hook` writes to, in the same
+/// directory as the index (docs/specs/loop.md section 1).
+pub fn default_socket_path() -> Result<PathBuf> {
+    Ok(default_db_dir()?.join("archie.sock"))
+}
+
+/// Where `archie hook` appends when nothing is listening on the socket, and where
+/// `archie scan` ingests from.
+pub fn default_spool_dir() -> Result<PathBuf> {
+    Ok(default_db_dir()?.join("spool"))
 }
 
 pub fn default_db_dir() -> Result<PathBuf> {
@@ -6531,5 +7085,176 @@ mod tests {
     fn test_last_scanned_at_is_none_on_an_empty_index() {
         let storage = Storage::open_in_memory().expect("open storage");
         assert_eq!(storage.last_scanned_at().expect("last scanned"), None);
+    }
+
+    fn table_exists(storage: &Storage, name: &str) -> bool {
+        let conn = storage.conn.lock().expect("lock");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![name],
+                |row| row.get(0),
+            )
+            .expect("query sqlite_master");
+        count == 1
+    }
+
+    #[test]
+    fn test_loop_tables_exist_after_open() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        for name in [
+            "machines",
+            "agent_state",
+            "tool_intents",
+            "intent_paths",
+            "support_set",
+            "trace_anchors",
+        ] {
+            assert!(table_exists(&storage, name), "{name} must exist after open");
+        }
+    }
+
+    #[test]
+    fn test_host_fingerprint_alter_is_idempotent_across_two_opens() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let storage = Storage::open_path(temp.path()).expect("open 1");
+            storage.set_session_host("sess_x", "abc123").ok();
+        }
+        // Reopening re-runs initialize_schema, including the guarded ALTER. It must not error
+        // on a column that already exists.
+        let storage = Storage::open_path(temp.path()).expect("open 2");
+        let conn = storage.conn.lock().expect("lock");
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)").unwrap();
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(
+            columns.iter().filter(|c| c.as_str() == "host_fingerprint").count(),
+            1,
+            "the guarded ALTER must not duplicate the column on a second open"
+        );
+    }
+
+    #[test]
+    fn test_writers_of_path_returns_newest_and_excludes_asking_session() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        storage
+            .insert_intent(
+                &IntentRow {
+                    tool_use_id: "tu_1".to_string(),
+                    session_id: "sess_a".to_string(),
+                    seq: 1,
+                    tool: "Write".to_string(),
+                    predicted_paths: vec!["/repo/foo.rs".to_string()],
+                    command: None,
+                    known: true,
+                    at: Utc::now(),
+                    result: None,
+                },
+                &["/repo/foo.rs".to_string()],
+            )
+            .expect("insert intent 1");
+        storage
+            .insert_intent(
+                &IntentRow {
+                    tool_use_id: "tu_2".to_string(),
+                    session_id: "sess_b".to_string(),
+                    seq: 5,
+                    tool: "Edit".to_string(),
+                    predicted_paths: vec!["/repo/foo.rs".to_string()],
+                    command: None,
+                    known: true,
+                    at: Utc::now(),
+                    result: None,
+                },
+                &["/repo/foo.rs".to_string()],
+            )
+            .expect("insert intent 2");
+
+        let writers = storage
+            .writers_of_path("/repo/foo.rs", 0, Some("sess_a"))
+            .expect("writers");
+        assert_eq!(writers, vec![("sess_b".to_string(), 5)]);
+
+        let writers_no_exclude = storage
+            .writers_of_path("/repo/foo.rs", 0, None)
+            .expect("writers");
+        assert_eq!(
+            writers_no_exclude,
+            vec![("sess_b".to_string(), 5), ("sess_a".to_string(), 1)],
+            "newest seq first"
+        );
+    }
+
+    #[test]
+    fn test_sessions_for_anchor_round_trips_a_run_id() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage
+            .insert_anchors(&[
+                AnchorRow {
+                    session_id: "sess_a".to_string(),
+                    seq: 3,
+                    kind: "run_id".to_string(),
+                    value: "run-xyz".to_string(),
+                },
+                AnchorRow {
+                    session_id: "sess_b".to_string(),
+                    seq: 7,
+                    kind: "run_id".to_string(),
+                    value: "run-xyz".to_string(),
+                },
+            ])
+            .expect("insert anchors");
+
+        let sessions = storage.sessions_for_anchor("run_id", "run-xyz").expect("lookup");
+        assert_eq!(
+            sessions,
+            vec![("sess_b".to_string(), 7), ("sess_a".to_string(), 3)]
+        );
+        assert_eq!(storage.anchors_for_session("sess_a").expect("anchors").len(), 1);
+    }
+
+    #[test]
+    fn test_list_agent_states_orders_newest_updated_first() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let older = Utc::now() - Duration::minutes(10);
+        let newer = Utc::now();
+
+        storage
+            .upsert_agent_state(&AgentStateRow {
+                session_id: "sess_old".to_string(),
+                state: "idle".to_string(),
+                since: older,
+                pane_id: None,
+                cwd: None,
+                git_head: None,
+                last_seq: 1,
+                updated_at: older,
+            })
+            .expect("upsert old");
+        storage
+            .upsert_agent_state(&AgentStateRow {
+                session_id: "sess_new".to_string(),
+                state: "working".to_string(),
+                since: newer,
+                pane_id: Some("pane_1".to_string()),
+                cwd: Some("/repo".to_string()),
+                git_head: Some("deadbeef".to_string()),
+                last_seq: 2,
+                updated_at: newer,
+            })
+            .expect("upsert new");
+
+        let states = storage.list_agent_states(10).expect("list");
+        let ids: Vec<&str> = states.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["sess_new", "sess_old"]);
+        assert_eq!(
+            storage.get_agent_state("sess_new").expect("get").unwrap().pane_id,
+            Some("pane_1".to_string())
+        );
     }
 }

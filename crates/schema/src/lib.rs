@@ -2,6 +2,7 @@
 
 mod compaction;
 mod event;
+mod machine;
 mod provenance;
 pub mod text;
 mod tokens;
@@ -14,6 +15,10 @@ pub use compaction::{
 pub use event::{
     CompactionEvent, EventPayload, EventType, FileActionType, HumanIntervention, ModelSwitch,
     NormalizedEvent, OutcomeEvidence, OutcomeKind, ShellCommand, ToolCall, ToolResult,
+};
+pub use machine::{
+    host_fingerprint, host_fingerprint_for, MachineInfo, FINGERPRINT_SALT_DEFAULT,
+    FINGERPRINT_SALT_ENV, FINGERPRINT_SALT_ENV_LEGACY,
 };
 pub use provenance::{extract_repository_or_workspace, is_subagent_transcript, Provenance};
 pub use text::{preview, tail_chars, truncate_chars};

@@ -37,6 +37,7 @@ agentworth-redaction.workspace = true
 agentworth-export-atif.workspace = true
 agentworth-outcomes.workspace = true
 agentworth-scoring.workspace = true
+agentworth-loop.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 serde.workspace = true

@@ -52,15 +52,21 @@ move, so the removal date moved out to v0.1.20 instead.)
 | `usage --pacing` | `window show` | the rolling window is its own noun |
 | — | `window list` | new: recent windows |
 | — | `stats outcomes` | new: `outcome_rate` gets a CLI surface |
+| — | `agent status` | new: live per-session state from the loop (`docs/specs/loop.md`) |
+| — | `session drift [id]` | new: which files this session read have changed, and who changed them |
+| — | `session anchors [id]` | new: the join keys (`run_id`, hashes, pane id) a session's tool results carried |
 
 ### Top-level
 
 `scan`, `stats`, `serve`, `mcp`, `doctor`, `docs`, `config`, `version`,
-`update`, `completions`, `merge` — unchanged except the last three.
+`update`, `completions`, `merge`, `hook` — unchanged except the last four.
 
 `docs` and `completions` are new. `docs` prints the generated reference.
 `merge` stays top-level because it acts on the index itself, not on any
-noun; whether an `index` noun should exist is open.
+noun; whether an `index` noun should exist is open. `hook` (`docs/specs/loop.md`)
+stays top-level for the same reason `scan` does: it's plumbing on the index,
+not a verb over a session or a repo — a harness calls it, a person rarely
+does.
 
 ### Every show-style verb behaves the same
 
@@ -96,6 +102,8 @@ moves, because the CLI name is what a person types and remembers.
 | — | `session_wake` | `session wake` |
 | `forgotten_context` | `session_forgotten` | `session forgotten` |
 | `suspect_commits` | `repo_suspect` | `repo suspect` |
+| — | `agent_status` | `agent status` |
+| — | `session_drift` | `session drift` |
 
 `session_handoff` and `session_asks` already match and do not move. Old
 tool names stay registered and hidden until v0.1.20, same as the CLI

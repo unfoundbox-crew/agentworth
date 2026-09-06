@@ -5,6 +5,7 @@ members = [
     "crates/adapters",
     "crates/storage",
     "crates/core",
+    "crates/loop",
     "crates/outcomes",
     "crates/scoring",
     "crates/redaction",
@@ -52,6 +53,7 @@ agentworth-adapter-sdk = { path = "crates/adapter-sdk" }
 agentworth-adapters = { path = "crates/adapters" }
 agentworth-storage = { path = "crates/storage", default-features = false }
 agentworth-core = { path = "crates/core", default-features = false }
+agentworth-loop = { path = "crates/loop" }
 agentworth-outcomes = { path = "crates/outcomes" }
 agentworth-scoring = { path = "crates/scoring" }
 agentworth-redaction = { path = "crates/redaction" }

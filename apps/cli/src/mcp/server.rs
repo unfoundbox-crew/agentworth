@@ -29,9 +29,10 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler
 use serde_json::json;
 
 use super::params::{
-    parse_rfc3339_opt, BlameFindParams, CarryForwardParams, CoverageStatsParams,
+    parse_rfc3339_opt, AgentStatusParams, BlameFindParams, CarryForwardParams, CoverageStatsParams,
     ForgottenContextParams, LadderParams, OutcomeRateParams, PacingWindowParams, SessionAsksParams,
-    SessionGetParams, SessionHandoffParams, SessionsFindParams, SuspectCommitsParams,
+    SessionDriftParams, SessionGetParams, SessionHandoffParams, SessionsFindParams,
+    SuspectCommitsParams,
     UsagePeriodParam, UsageSummaryParams, WakeParams,
 };
 use crate::asks::{self, AsksOptions, AsksReport};
@@ -667,6 +668,58 @@ impl AgentWorthMcpServer {
     }
 
     #[tool(
+        description = "Where every agent on this machine is right now: one row per session \
+                        the loop has seen, with its state (registered / working / idle / \
+                        ended), when it entered that state, the repository it is working in, \
+                        its terminal pane when herdr exported one, and its event sequence. \
+                        Fed by the harness's own hooks (`archie hook`), not by a scan, so it \
+                        is current rather than as-of-last-scan. An empty list means no hook \
+                        is registered -- `archie hook print claude` prints the snippet."
+    )]
+    pub(crate) async fn agent_status(
+        &self,
+        Parameters(_params): Parameters<AgentStatusParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let value = tokio::task::spawn_blocking(move || {
+            crate::commands::loop_cmds::agent_status_json(&storage)
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("agent_status failed: {e:#}"), None))?;
+        Self::json_result(&value)
+    }
+
+    #[tool(
+        description = "What moved under a session since it read it. The support set U is the \
+                        paths the session actually read, hashed at the time; this re-hashes \
+                        them and returns the ones that differ, each with the session that \
+                        predicted a write to that path afterwards, or nothing when no agent \
+                        on this machine did (someone edited it by hand, or another tool did). \
+                        The answer to \"did my ground move because of me or someone else\", \
+                        which no harness summary can give. Reads files and rows; never scans, \
+                        never writes. Files over 4 MB were not hashed and are counted as \
+                        unhashed rather than reported as unchanged."
+    )]
+    pub(crate) async fn session_drift(
+        &self,
+        Parameters(params): Parameters<SessionDriftParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+            let session = crate::commands::loop_cmds::resolve_loop_session(
+                &storage,
+                params.session_id.as_deref(),
+            )?;
+            crate::commands::loop_cmds::session_drift_json(&storage, &session)
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("session_drift failed: {e:#}"), None))?;
+        Self::json_result(&value)
+    }
+
+    #[tool(
         description = "One call for a cold or just-compacted agent: the checkout it stands in \
                         (branch, HEAD, dirty, ahead), the newest primary session for the repo \
                         (task, last prompt, outcome rung, last passed and last failed \
@@ -1058,14 +1111,18 @@ impl ServerHandler for AgentWorthMcpServer {
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  session_list, session_show, repo_blame, stats_usage, window_show, \
                  agent_list, stats_outcomes, stats_ladder, session_handoff, session_carry_forward, \
-                 session_wake, session_forgotten, session_asks, repo_suspect. Start a \
+                 session_wake, session_forgotten, session_asks, repo_suspect, agent_status, \
+                 session_drift. Start a \
                  session with session_wake; session_carry_forward lists the last few handoffs \
                  in full. End a session with session_handoff. If a session has compacted, \
                  session_forgotten returns the decisions its own summaries dropped. \
                  session_asks finds where a question's answer already landed, so it never \
                  needs re-asking. Before \
                  pushing, repo_suspect names the commits whose authoring session never \
-                 proved anything -- a list and a prompt, never a patch. Redacted \
+                 proved anything -- a list and a prompt, never a patch. agent_status says \
+                 where every agent on this machine is right now, and session_drift says what \
+                 moved under you since you read it and who moved it -- both fed by the \
+                 harness's own hooks rather than by a scan. Redacted \
                  output is the default \
                  everywhere event or file content is returned; include_raw is the only opt-in \
                  to raw content, and it is per-call, never global. Run `archie scan` first \

@@ -1,5 +1,5 @@
 [package]
-name = "agentworth-schema"
+name = "agentworth-loop"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -12,7 +12,10 @@ workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
-uuid.workspace = true
-thiserror.workspace = true
+anyhow.workspace = true
+regex.workspace = true
 sha2.workspace = true
 hex.workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
