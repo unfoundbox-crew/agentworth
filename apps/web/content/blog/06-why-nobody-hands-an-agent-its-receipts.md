@@ -21,15 +21,17 @@ came up, and neither carries evidence.
 | Cursor | "Load prior context" | The docs do not say |
 | OpenCode | `--continue`, `--session`, `--fork` | The docs do not say |
 
-Sources: [Claude Code sessions](https://code.claude.com/docs/en/sessions) and
-[context window](https://code.claude.com/docs/en/context-window);
-[Gemini CLI session management](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/session-management.md)
-and [checkpointing](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/checkpointing.md);
-[Codex CLI](https://learn.chatgpt.com/docs/codex/cli); [Cursor CLI](https://cursor.com/docs/cli/using);
-[OpenCode CLI](https://opencode.ai/docs/cli/). We did not verify Amp or Aider from their own pages, so they are not in the table.
+Sources, all fetched 2026-09-06:
 
-So the choice is replay everything, which costs the whole context again, or
-replay a summary a model wrote. Claude Code's docs say what the summary
+- Claude Code: [sessions](https://code.claude.com/docs/en/sessions), [context window](https://code.claude.com/docs/en/context-window)
+- Gemini CLI: [session management](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/session-management.md), [checkpointing](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/checkpointing.md)
+- [Codex CLI](https://learn.chatgpt.com/docs/codex/cli), [Cursor CLI](https://cursor.com/docs/cli/using), [OpenCode CLI](https://opencode.ai/docs/cli/)
+
+Amp and Aider are not in the table: we did not read their own pages, and a
+search snippet is not a receipt.
+
+So you get one of two things: the whole transcript again, at the price of
+the whole context, or a summary a model wrote. Claude Code's docs say what the summary
 keeps: intent, files, errors, pending tasks. They also say what it drops:
 "full tool outputs and intermediate reasoning are gone." The exit code of
 the last test run is a tool output. The line where the agent promised to
@@ -44,12 +46,12 @@ holds the command, the `is_error` flag on its result, the edit to each
 file, and the sentence that said "I'll do that next", each with a position.
 A resume feature replays those to the model. It does not answer from them.
 
-That is the gap, and as of their docs on that date no harness fills it.
+That is the gap. As of their own docs on that date, nobody fills it.
 
 ## Why we built it from the index
 
 AgentWorth already indexes every session on the machine, across harnesses,
-with the receipts intact. So `session_wake` does not summarise. It reads
+receipts intact. So `session_wake` does not summarise anything. It reads
 the newest session for the repo back from its transcript and reports the
 last test that passed, the last that failed and whether anything re-ran it,
 the promises with no later evidence, and the checkout as it is right now,
