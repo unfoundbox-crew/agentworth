@@ -90,8 +90,17 @@ researched here.
                                        ▲ sync gate: archie hook --gate (≤ 50 ms, fails open)
 ```
 
-**Shipped:** placeholder — the build lane edits this note in place of this
-sentence if the shipped shape differs from what follows.
+**Shipped, and where the build differs from the design above:** batch
+edits are deduplicated by `tool_use_id`, so an edit reported at `PreToolUse`
+and again in the `PostToolBatch` payload counts once. When a spend halt and
+a thrash halt trip on the same batch, only the spend halt suspends. The
+gate's round-trip budget is 50 ms by default and `ARCHIE_GATE_BUDGET_MS`
+overrides it. `policy replay` replays the current policy over indexed
+intents, not over recorded decisions, because a tuning tool must answer
+"what would this number have done". The `[cache]` rules parse but do not
+act until v0.1.23. The loop rule counts consecutive identical calls in the
+runtime; it does not yet read the Loop Sentinel. Codex's
+`cache_write_input_tokens` lands in `cache_creation`.
 
 ## The brake, v0.1.22
 
