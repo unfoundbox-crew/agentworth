@@ -172,3 +172,10 @@ are correct; they answer different questions.
 - The `~300 token` target. Measured on the fixture the markdown is under 30
   lines; the token count depends on path lengths and is reported in the PR,
   not promised here.
+- The repo key. `extract_repository_or_workspace` gives two answers for one
+  checkout: the workspace path `~/code/motionvector` yields `motionvector`,
+  while the Claude Code or Antigravity project slug for that same directory
+  yields `code/motionvector`. Wake defaults `repo` from the workspace path
+  and the index was keyed from the slug, so a repo that sits directly under
+  `code/` finds no session unless `repo` is passed. Align the two
+  derivations so the same directory always yields the same key.
