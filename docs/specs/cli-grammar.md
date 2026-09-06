@@ -55,6 +55,11 @@ move, so the removal date moved out to v0.1.20 instead.)
 | — | `agent status` | new: live per-session state from the loop (`docs/specs/loop.md`) |
 | — | `session drift [id]` | new: which files this session read have changed, and who changed them |
 | — | `session anchors [id]` | new: the join keys (`run_id`, hashes, pane id) a session's tool results carried |
+| — | `session burn [id]` | new: live tokens, dollars, turns, cache-read share, burn rate (`docs/specs/governor.md`) |
+| — | `policy show` | new: the active `policy.toml` |
+| — | `policy check <session>` | new: check one session against it |
+| — | `policy lift <session>` | new: clear a suspension |
+| — | `policy replay` | new: tune thresholds over the index |
 
 ### Top-level
 
@@ -66,7 +71,12 @@ move, so the removal date moved out to v0.1.20 instead.)
 noun; whether an `index` noun should exist is open. `hook` (`docs/specs/loop.md`)
 stays top-level for the same reason `scan` does: it's plumbing on the index,
 not a verb over a session or a repo — a harness calls it, a person rarely
-does.
+does. `hook --gate` (`docs/specs/governor.md`) is the same command in
+synchronous mode, for `PostToolBatch` and `UserPromptSubmit`.
+
+`policy` (`docs/specs/governor.md`) is a new noun: `policy show`, `policy
+check <session>`, `policy lift <session>`, `policy replay`. It reads and
+clears the governor's `policy.toml` rules; it never writes them.
 
 ### Every show-style verb behaves the same
 
@@ -104,6 +114,7 @@ moves, because the CLI name is what a person types and remembers.
 | `suspect_commits` | `repo_suspect` | `repo suspect` |
 | — | `agent_status` | `agent status` |
 | — | `session_drift` | `session drift` |
+| — | `session_burn` | `session burn` |
 
 `session_handoff` and `session_asks` already match and do not move. Old
 tool names stay registered and hidden until v0.1.20, same as the CLI

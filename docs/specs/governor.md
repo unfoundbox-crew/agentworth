@@ -1,6 +1,6 @@
 # Governor
 
-Status: proposed, 2026-09-06, revised the same day after review: v0.1.22 is the brake, not a simulator. Nothing built. Answers the three-part
+Status: built, PR #TBD (2026-09-06). Answers the three-part
 operational thesis (in-flight circuit breakers, asymmetric division of
 labour, cache-prefix preservation) with what the harnesses actually expose
 and what the index already holds. Sources are dated 2026-09-06.
@@ -89,6 +89,9 @@ researched here.
  hook events (v0.1.21 loop) ─────────▶ governor: policies ─▶ note | deny | halt | suspend ─▶ governor_events
                                        ▲ sync gate: archie hook --gate (≤ 50 ms, fails open)
 ```
+
+**Shipped:** placeholder — the build lane edits this note in place of this
+sentence if the shipped shape differs from what follows.
 
 ## The brake, v0.1.22
 

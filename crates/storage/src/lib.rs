@@ -812,6 +812,58 @@ pub struct AnchorRow {
     pub value: String,
 }
 
+/// One turn's priced usage from the transcript tail (docs/specs/governor.md): what the
+/// spend cap reads. `input`/`output`/`cache_read`/`cache_creation` are `Option` because not
+/// every adapter's assistant record carries every field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnUsageRow {
+    pub session_id: String,
+    pub seq: i64,
+    pub at: DateTime<Utc>,
+    pub model: String,
+    pub input: Option<i64>,
+    pub output: Option<i64>,
+    pub cache_read: Option<i64>,
+    pub cache_creation: Option<i64>,
+    pub usd: f64,
+}
+
+/// Aggregate spend over some set of turns -- one session (`session_spend`) or a time window
+/// across every session (`window_spend`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpendRow {
+    pub tokens: i64,
+    pub usd: f64,
+    pub turns: i64,
+    pub cache_read_share: f64,
+    pub first_at: Option<DateTime<Utc>>,
+    pub last_at: Option<DateTime<Utc>>,
+}
+
+/// One governor decision, with its evidence (docs/specs/governor.md "The brake").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GovernorEventRow {
+    pub id: Option<i64>,
+    pub session_id: String,
+    pub at: DateTime<Utc>,
+    pub seq: Option<i64>,
+    pub rule: String,
+    pub action: String,
+    pub reason: String,
+    pub evidence: Option<String>,
+}
+
+/// A session currently blocked from submitting a prompt (the spend-cap halt), until
+/// `lift_session` or a raised cap clears it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SuspensionRow {
+    pub session_id: String,
+    pub rule: String,
+    pub reason: String,
+    pub since: DateTime<Utc>,
+    pub lifted_at: Option<DateTime<Utc>>,
+}
+
 /// Label for a `FileActionType`, matching its `#[serde(rename_all = "snake_case")]` form.
 fn file_action_label(action: FileActionType) -> &'static str {
     match action {
@@ -1061,6 +1113,43 @@ impl Storage {
                 value TEXT NOT NULL,
                 PRIMARY KEY(session_id, seq, kind, value)
             );
+
+            -- Per-turn priced usage from the transcript tail (docs/specs/governor.md): what
+            -- the meter and the spend cap read.
+            CREATE TABLE IF NOT EXISTS turn_usage (
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                at TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input INTEGER,
+                output INTEGER,
+                cache_read INTEGER,
+                cache_creation INTEGER,
+                usd REAL NOT NULL,
+                PRIMARY KEY(session_id, seq)
+            );
+
+            -- One governor decision, with its evidence (docs/specs/governor.md "The brake").
+            CREATE TABLE IF NOT EXISTS governor_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                at TEXT NOT NULL,
+                seq INTEGER,
+                rule TEXT NOT NULL,
+                action TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                evidence TEXT
+            );
+
+            -- A session blocked from submitting a prompt by the spend cap, until
+            -- `archie policy lift` or a raised cap clears it.
+            CREATE TABLE IF NOT EXISTS session_suspensions (
+                session_id TEXT PRIMARY KEY,
+                rule TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                since TEXT NOT NULL,
+                lifted_at TEXT
+            );
             "#,
         )?;
 
@@ -1137,6 +1226,23 @@ impl Storage {
             let _ = conn.execute("ALTER TABLE agent_state ADD COLUMN last_stop TEXT", []);
         }
 
+        // The meter's resume point (docs/specs/governor.md): how far into which transcript
+        // file it has already priced, so a restart of `archie serve` does not re-price turns
+        // already written to `turn_usage`.
+        if !agent_state_columns.is_empty()
+            && !agent_state_columns.contains(&"transcript_offset".to_string())
+        {
+            let _ = conn.execute(
+                "ALTER TABLE agent_state ADD COLUMN transcript_offset INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+        }
+        if !agent_state_columns.is_empty()
+            && !agent_state_columns.contains(&"transcript_path".to_string())
+        {
+            let _ = conn.execute("ALTER TABLE agent_state ADD COLUMN transcript_path TEXT", []);
+        }
+
         // Data migration: `primary_outcome` used to be written in hand-rolled PascalCase
         // (e.g. "CommitObserved") by a since-fixed bug in `outcome_kind_name` (see
         // crates/outcomes/src/outcome.rs) that diverged from `OutcomeKind`'s own serde
@@ -1185,6 +1291,7 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_tool_intents_session_seq ON tool_intents(session_id, seq);
             CREATE INDEX IF NOT EXISTS idx_intent_paths_path_seq ON intent_paths(path, seq);
             CREATE INDEX IF NOT EXISTS idx_trace_anchors_kind_value ON trace_anchors(kind, value);
+            CREATE INDEX IF NOT EXISTS idx_governor_events_session_at ON governor_events(session_id, at);
             -- `list_sessions_for_repo` orders by last activity, not start time, so the
             -- bounded newest-first scan needs its own expression index to stay bounded.
             CREATE INDEX IF NOT EXISTS idx_sessions_last_activity
@@ -4112,6 +4219,282 @@ impl Storage {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Record turns' priced usage. Idempotent on `(session_id, seq)`: a re-tailed transcript
+    /// line is silently ignored rather than double-counted.
+    pub fn insert_turn_usage(&self, rows: &[TurnUsageRow]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tx = conn.transaction()?;
+        for row in rows {
+            tx.execute(
+                r#"
+                INSERT INTO turn_usage (
+                    session_id, seq, at, model, input, output, cache_read, cache_creation, usd
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                ON CONFLICT(session_id, seq) DO NOTHING;
+                "#,
+                params![
+                    row.session_id,
+                    row.seq,
+                    row.at.to_rfc3339(),
+                    row.model,
+                    row.input,
+                    row.output,
+                    row.cache_read,
+                    row.cache_creation,
+                    row.usd,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn row_to_spend(row: &rusqlite::Row) -> rusqlite::Result<SpendRow> {
+        let cache_read_sum: i64 = row.get(3)?;
+        let denom: i64 = row.get(4)?;
+        let first_at: Option<String> = row.get(5)?;
+        let last_at: Option<String> = row.get(6)?;
+        Ok(SpendRow {
+            tokens: row.get(0)?,
+            usd: row.get(1)?,
+            turns: row.get(2)?,
+            cache_read_share: if denom > 0 { cache_read_sum as f64 / denom as f64 } else { 0.0 },
+            first_at: first_at
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+            last_at: last_at
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+        })
+    }
+
+    const SPEND_AGGREGATE_SQL: &'static str = r#"
+        SELECT
+            COALESCE(SUM(COALESCE(input, 0) + COALESCE(output, 0) + COALESCE(cache_read, 0) + COALESCE(cache_creation, 0)), 0) AS tokens,
+            COALESCE(SUM(usd), 0.0) AS usd,
+            COUNT(*) AS turns,
+            COALESCE(SUM(COALESCE(cache_read, 0)), 0) AS cache_read_sum,
+            COALESCE(SUM(COALESCE(input, 0) + COALESCE(cache_read, 0) + COALESCE(cache_creation, 0)), 0) AS denom,
+            MIN(at) AS first_at,
+            MAX(at) AS last_at
+        FROM turn_usage
+    "#;
+
+    /// One session's total spend since it started, from `turn_usage`.
+    pub fn session_spend(&self, session_id: &str) -> Result<SpendRow> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = format!("{} WHERE session_id = ?1", Self::SPEND_AGGREGATE_SQL);
+        let mut stmt = conn.prepare(&sql)?;
+        let row = stmt.query_row(params![session_id], Self::row_to_spend)?;
+        Ok(row)
+    }
+
+    /// Total spend across every session since `since`, for a per-window cap.
+    pub fn window_spend(&self, since: DateTime<Utc>) -> Result<SpendRow> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = format!("{} WHERE at >= ?1", Self::SPEND_AGGREGATE_SQL);
+        let mut stmt = conn.prepare(&sql)?;
+        let row = stmt.query_row(params![since.to_rfc3339()], Self::row_to_spend)?;
+        Ok(row)
+    }
+
+    /// Record one governor decision.
+    pub fn insert_governor_event(&self, event: &GovernorEventRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO governor_events (session_id, at, seq, rule, action, reason, evidence)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+            "#,
+            params![
+                event.session_id,
+                event.at.to_rfc3339(),
+                event.seq,
+                event.rule,
+                event.action,
+                event.reason,
+                event.evidence,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn row_to_governor_event(row: &rusqlite::Row) -> rusqlite::Result<GovernorEventRow> {
+        let at: String = row.get(2)?;
+        Ok(GovernorEventRow {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            at: DateTime::parse_from_rfc3339(&at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            seq: row.get(3)?,
+            rule: row.get(4)?,
+            action: row.get(5)?,
+            reason: row.get(6)?,
+            evidence: row.get(7)?,
+        })
+    }
+
+    /// This session's governor events, newest first.
+    pub fn governor_events_for_session(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<GovernorEventRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, session_id, at, seq, rule, action, reason, evidence
+            FROM governor_events
+            WHERE session_id = ?1
+            ORDER BY at DESC, id DESC
+            LIMIT ?2
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![session_id, limit as i64], Self::row_to_governor_event)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The most recent governor events across every session.
+    pub fn recent_governor_events(&self, limit: usize) -> Result<Vec<GovernorEventRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, session_id, at, seq, rule, action, reason, evidence
+            FROM governor_events
+            ORDER BY at DESC, id DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], Self::row_to_governor_event)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Suspend a session, or update the reason on an already-suspended one. `since` is kept
+    /// as the original suspension time when the session is already suspended and not yet
+    /// lifted -- a second trip for the same breach must not reset the clock.
+    pub fn suspend_session(&self, suspension: &SuspensionRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO session_suspensions (session_id, rule, reason, since, lifted_at)
+            VALUES (?1, ?2, ?3, ?4, NULL)
+            ON CONFLICT(session_id) DO UPDATE SET
+                rule = excluded.rule,
+                reason = excluded.reason,
+                since = CASE
+                    WHEN session_suspensions.lifted_at IS NULL THEN session_suspensions.since
+                    ELSE excluded.since
+                END,
+                lifted_at = NULL;
+            "#,
+            params![
+                suspension.session_id,
+                suspension.rule,
+                suspension.reason,
+                suspension.since.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Lift an active suspension. Returns `false` when nothing was active for this session.
+    pub fn lift_session(&self, session_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let changed = conn.execute(
+            "UPDATE session_suspensions SET lifted_at = ?1 WHERE session_id = ?2 AND lifted_at IS NULL",
+            params![Utc::now().to_rfc3339(), session_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    fn row_to_suspension(row: &rusqlite::Row) -> rusqlite::Result<SuspensionRow> {
+        let since: String = row.get(3)?;
+        let lifted_at: Option<String> = row.get(4)?;
+        Ok(SuspensionRow {
+            session_id: row.get(0)?,
+            rule: row.get(1)?,
+            reason: row.get(2)?,
+            since: DateTime::parse_from_rfc3339(&since)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            lifted_at: lifted_at
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+        })
+    }
+
+    /// This session's active suspension, if any.
+    pub fn active_suspension(&self, session_id: &str) -> Result<Option<SuspensionRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, rule, reason, since, lifted_at
+            FROM session_suspensions
+            WHERE session_id = ?1 AND lifted_at IS NULL
+            "#,
+        )?;
+        let mut rows = stmt.query_map(params![session_id], Self::row_to_suspension)?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    /// Every suspension on record, newest `since` first. `include_lifted` also returns
+    /// suspensions that have already been cleared.
+    pub fn list_suspensions(&self, include_lifted: bool) -> Result<Vec<SuspensionRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = if include_lifted {
+            "SELECT session_id, rule, reason, since, lifted_at FROM session_suspensions ORDER BY since DESC"
+        } else {
+            "SELECT session_id, rule, reason, since, lifted_at FROM session_suspensions WHERE lifted_at IS NULL ORDER BY since DESC"
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt
+            .query_map([], Self::row_to_suspension)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Stamp how far the meter has read into this session's transcript, so a restart resumes
+    /// instead of re-pricing turns already in `turn_usage`. Creates a minimal `agent_state`
+    /// row if the loop has never seen this session.
+    pub fn set_transcript_cursor(&self, session_id: &str, path: &str, offset: u64) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            r#"
+            INSERT INTO agent_state (session_id, state, since, last_seq, updated_at, transcript_path, transcript_offset)
+            VALUES (?1, 'unknown', ?2, 0, ?2, ?3, ?4)
+            ON CONFLICT(session_id) DO UPDATE SET
+                transcript_path = excluded.transcript_path,
+                transcript_offset = excluded.transcript_offset;
+            "#,
+            params![session_id, now, path, offset as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Where the meter left off for this session, if it has ever recorded a cursor.
+    pub fn get_transcript_cursor(&self, session_id: &str) -> Result<Option<(String, u64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT transcript_path, transcript_offset FROM agent_state WHERE session_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![session_id], |row| {
+            let path: Option<String> = row.get(0)?;
+            let offset: i64 = row.get(1)?;
+            Ok(path.map(|p| (p, offset as u64)))
+        })?;
+        Ok(rows.next().transpose()?.flatten())
     }
 }
 
@@ -7256,5 +7639,164 @@ mod tests {
             storage.get_agent_state("sess_new").expect("get").unwrap().pane_id,
             Some("pane_1".to_string())
         );
+    }
+
+    #[test]
+    fn test_governor_tables_exist_after_open() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        for name in ["turn_usage", "governor_events", "session_suspensions"] {
+            assert!(table_exists(&storage, name), "{name} must exist after open");
+        }
+    }
+
+    #[test]
+    fn test_transcript_cursor_alter_is_idempotent_across_two_opens() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let storage = Storage::open_path(temp.path()).expect("open 1");
+            storage.set_transcript_cursor("sess_x", "/tmp/x.jsonl", 42).unwrap();
+        }
+        let storage = Storage::open_path(temp.path()).expect("open 2");
+        {
+            let conn = storage.conn.lock().expect("lock");
+            let mut stmt = conn.prepare("PRAGMA table_info(agent_state)").unwrap();
+            let columns: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect();
+            for name in ["transcript_offset", "transcript_path"] {
+                assert_eq!(
+                    columns.iter().filter(|c| c.as_str() == name).count(),
+                    1,
+                    "the guarded ALTER must not duplicate {name} on a second open"
+                );
+            }
+        }
+        assert_eq!(
+            storage.get_transcript_cursor("sess_x").unwrap(),
+            Some(("/tmp/x.jsonl".to_string(), 42))
+        );
+    }
+
+    fn turn(session_id: &str, seq: i64, cache_read: Option<i64>, usd: f64) -> TurnUsageRow {
+        TurnUsageRow {
+            session_id: session_id.to_string(),
+            seq,
+            at: Utc::now(),
+            model: "sonnet".to_string(),
+            input: Some(100),
+            output: Some(50),
+            cache_read,
+            cache_creation: Some(0),
+            usd,
+        }
+    }
+
+    #[test]
+    fn test_session_spend_arithmetic_and_cache_read_share() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage
+            .insert_turn_usage(&[
+                turn("sess_a", 1, Some(0), 0.10),
+                turn("sess_a", 2, Some(100), 0.20),
+                turn("sess_b", 1, Some(0), 5.0),
+            ])
+            .unwrap();
+        // Duplicate seq is ignored, not double-counted.
+        storage.insert_turn_usage(&[turn("sess_a", 1, Some(0), 999.0)]).unwrap();
+
+        let spend = storage.session_spend("sess_a").unwrap();
+        assert_eq!(spend.turns, 2);
+        assert_eq!(spend.tokens, 150 + 250);
+        assert!((spend.usd - 0.30).abs() < 1e-9);
+        let denom: i64 = 100 + 200;
+        assert!((spend.cache_read_share - (100.0 / denom as f64)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_session_spend_zero_denominator_does_not_divide_by_zero() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let spend = storage.session_spend("sess_none").unwrap();
+        assert_eq!(spend.turns, 0);
+        assert_eq!(spend.cache_read_share, 0.0);
+    }
+
+    #[test]
+    fn test_window_spend_spans_sessions() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage
+            .insert_turn_usage(&[turn("sess_a", 1, Some(0), 1.0), turn("sess_b", 1, Some(0), 2.0)])
+            .unwrap();
+        let spend = storage.window_spend(Utc::now() - Duration::minutes(1)).unwrap();
+        assert_eq!(spend.turns, 2);
+        assert!((spend.usd - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_governor_events_round_trip() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage
+            .insert_governor_event(&GovernorEventRow {
+                id: None,
+                session_id: "sess_a".to_string(),
+                at: Utc::now(),
+                seq: Some(7),
+                rule: "thrash".to_string(),
+                action: "halt".to_string(),
+                reason: "lib.rs edited 3 times, no passing run".to_string(),
+                evidence: Some(r#"{"file":"lib.rs"}"#.to_string()),
+            })
+            .unwrap();
+        let events = storage.governor_events_for_session("sess_a", 10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].rule, "thrash");
+        assert_eq!(storage.recent_governor_events(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_suspend_session_upsert_keeps_original_since() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let first_since = Utc::now() - Duration::minutes(30);
+        storage
+            .suspend_session(&SuspensionRow {
+                session_id: "sess_a".to_string(),
+                rule: "spend_cap".to_string(),
+                reason: "over budget".to_string(),
+                since: first_since,
+                lifted_at: None,
+            })
+            .unwrap();
+        storage
+            .suspend_session(&SuspensionRow {
+                session_id: "sess_a".to_string(),
+                rule: "spend_cap".to_string(),
+                reason: "over budget again".to_string(),
+                since: Utc::now(),
+                lifted_at: None,
+            })
+            .unwrap();
+        let active = storage.active_suspension("sess_a").unwrap().unwrap();
+        assert_eq!(active.since.timestamp(), first_since.timestamp());
+        assert_eq!(active.reason, "over budget again");
+    }
+
+    #[test]
+    fn test_lift_session_returns_false_when_nothing_active() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        assert!(!storage.lift_session("sess_none").unwrap());
+
+        storage
+            .suspend_session(&SuspensionRow {
+                session_id: "sess_a".to_string(),
+                rule: "spend_cap".to_string(),
+                reason: "over budget".to_string(),
+                since: Utc::now(),
+                lifted_at: None,
+            })
+            .unwrap();
+        assert!(storage.lift_session("sess_a").unwrap());
+        assert!(storage.active_suspension("sess_a").unwrap().is_none());
+        assert!(!storage.lift_session("sess_a").unwrap());
     }
 }

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The governor.** `~/.agentworth/policy.toml` (or a repo's own `.agentworth/policy.toml`) turns on two rules, both blocking, both on by default once the file exists: thrash halt (a file edited `N` times with no passing verification between edits) and a session spend cap (tokens or dollars at the table price). No file, nothing governed. `archie hook --gate` is the same hook binary in synchronous mode, one socket round trip, a 50ms budget, and it fails open — `archie serve` down, or a miss, and the hook exits 0 and writes one spool line rather than blocking the agent.
+- **Thrash halt.** The batch stops before the next model call (`continue: false`) with the ground truth attached: the file, the edit count, the last failing command and its last output line, and the sequence numbers. The same text repeats as `additionalContext` on the next prompt, so the model resumes knowing why it was stopped.
+- **Session spend cap.** Once a session crosses its `policy.toml` cap, the batch halts and every prompt after it is blocked with the reason until `archie policy lift <session>` or a higher cap.
+- **`archie session burn [id]`.** Live tokens, dollars, turns, cache-read share, and burn rate per minute for a session, read from the same transcript tail the cap reads.
+- **`archie policy show|check|lift <session>|replay`**, `governor_events` and `session_suspensions` tables, and `turn_usage` per turn.
+- **`session_burn` over MCP.** Tool count moves from 16 to 17 (27 in `tools/list`, aliases included).
+
 ## [0.1.21] - 2026-09-06
 
 ### Added

@@ -366,7 +366,7 @@ claude mcp add agentworth --scope user -- archie mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-16 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, `session_wake`, plus the two handoff tools, `session_forgotten`, `session_asks`, `repo_suspect`, `agent_status`, and `session_drift` below. A client's `tools/list` shows 26: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.21. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`, `docs/specs/loop.md`.
+17 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, `session_wake`, plus the two handoff tools, `session_forgotten`, `session_asks`, `repo_suspect`, `agent_status`, `session_drift`, and `session_burn` below. A client's `tools/list` shows 27: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.21. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`, `docs/specs/loop.md`, `docs/specs/governor.md`.
 
 ### The handoff, over MCP
 
@@ -408,6 +408,34 @@ id) a session's own tool results carried.
 
 What the loop never does: it never uploads anything, never blocks or slows
 the agent, and never calls a model. Full design: `docs/specs/loop.md`.
+
+### The brake
+
+Watching a session burn is not enough — by the time a person reads the
+report, the money is spent. `~/.agentworth/policy.toml` (or a repo's own
+`.agentworth/policy.toml`) turns on two rules. No file, nothing is governed.
+
+- **Thrash halt.** The same file edited three times with no passing
+  verification in between stops the batch before the next model call, with
+  the file, the edit count, and the last failing command attached.
+- **Session spend cap.** Tokens or dollars over the line in `policy.toml`
+  stops the batch, then blocks every prompt after it until
+  `archie policy lift <session>` or a higher cap.
+
+| Tool | What it answers |
+| :--- | :--- |
+| `session_burn(session_id?)` | Live tokens, dollars, turns, cache-read share, and burn rate for a session. |
+
+Both rules run through `archie hook --gate`, a synchronous round trip with a
+50ms budget that **fails open**: `archie serve` down, or a miss, and the
+hook exits 0 and writes one spool line rather than blocking the agent. One
+command turns it on:
+
+```bash
+archie hook print claude --govern   # prints both the async recorders and the sync gates
+```
+
+Full design: `docs/specs/governor.md`.
 
 ### What compaction dropped
 
