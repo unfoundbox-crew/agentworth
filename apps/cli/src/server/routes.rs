@@ -1441,6 +1441,8 @@ mod tests {
             scanner,
             dist_dir: None,
             live_tail: live_tail_tx,
+            #[cfg(unix)]
+            home: None,
         };
 
         let response = get_stats_handler(State(state))
@@ -1564,6 +1566,8 @@ mod tests {
             scanner,
             dist_dir: None,
             live_tail: live_tail_tx,
+            #[cfg(unix)]
+            home: None,
         };
 
         let response = get_stats_handler(State(state))

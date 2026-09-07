@@ -28,6 +28,8 @@ fn test_app() -> axum::Router {
         scanner,
         dist_dir: None,
         live_tail,
+        #[cfg(unix)]
+        home: None,
     })
 }
 

@@ -291,26 +291,11 @@ struct HerdrAgent {
     revision: u64,
 }
 
-#[derive(Debug, Deserialize)]
-struct HerdrAgentListResult {
-    agents: Vec<HerdrAgent>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HerdrEnvelope<T> {
-    #[serde(default)]
-    result: Option<T>,
-    #[serde(default)]
-    error: Option<HerdrErrorBody>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HerdrErrorBody {
-    #[allow(dead_code)]
-    code: String,
-    message: String,
-}
-
+/// herdr's every CLI response is the same envelope: `{"id": ..., "result": {...}}` or
+/// `{"id": ..., "error": {"code", "message"}}`. Parsed as a bare `Value` rather than a generic
+/// `HerdrEnvelope<T>` -- serde's derive adds a `T: Default` bound to any generic field marked
+/// `#[serde(default)]` regardless of nesting, which `Option<T>` doesn't actually need but
+/// which every non-`Default` `T` (this module's response types included) then fails.
 async fn herdr_agent_list() -> anyhow::Result<Vec<HerdrAgent>> {
     let output = Command::new("herdr")
         .args(["agent", "list"])
@@ -323,11 +308,15 @@ async fn herdr_agent_list() -> anyhow::Result<Vec<HerdrAgent>> {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let envelope: HerdrEnvelope<HerdrAgentListResult> = serde_json::from_slice(&output.stdout)?;
-    if let Some(err) = envelope.error {
-        anyhow::bail!("herdr agent list: {}", err.message);
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    if let Some(message) = envelope.pointer("/error/message").and_then(|v| v.as_str()) {
+        anyhow::bail!("herdr agent list: {message}");
     }
-    Ok(envelope.result.map(|r| r.agents).unwrap_or_default())
+    let agents = envelope
+        .pointer("/result/agents")
+        .cloned()
+        .unwrap_or(serde_json::Value::Array(Vec::new()));
+    Ok(serde_json::from_value(agents)?)
 }
 
 /// State one connected client's `hello` and `backfill` frames are built from, and the target
