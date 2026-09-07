@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { Artifact, Message, Persona, ServerFrame, Space } from '../protocol';
+import type { Artifact, Direction, Message, Persona, ServerFrame, Space, Stop } from '../protocol';
 import { plain, type Theme } from './theme';
 
 export type Connection = 'connecting' | 'open' | 'closed';
@@ -10,6 +10,9 @@ export interface State {
   personas: Record<string, Persona>;
   spaces: Record<string, Space>;
   spaceOrder: string[];
+  directions: Record<string, Direction>;
+  stops: Record<string, Stop[]>;
+  selectedDirection: string | null;
   messages: Record<string, Message[]>;
   artifacts: Record<string, Artifact>;
   currentSpace: string | null;
@@ -22,6 +25,9 @@ const initial: State = {
   personas: {},
   spaces: {},
   spaceOrder: [],
+  directions: {},
+  stops: {},
+  selectedDirection: null,
   messages: {},
   artifacts: {},
   currentSpace: null,
@@ -32,6 +38,7 @@ type Action =
   | { type: 'frame'; frame: ServerFrame }
   | { type: 'connection'; connection: Connection }
   | { type: 'select'; spaceId: string }
+  | { type: 'select_direction'; directionId: string | null }
   | { type: 'theme'; theme: Theme }
   | { type: 'drawer'; open: boolean; artifactId?: string | null }
   | { type: 'local'; message: Message };
@@ -42,6 +49,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, connection: a.connection };
     case 'select':
       return { ...s, currentSpace: a.spaceId, spaces: { ...s.spaces, [a.spaceId]: { ...s.spaces[a.spaceId], unread: 0 } } };
+    case 'select_direction':
+      return { ...s, selectedDirection: a.directionId };
     case 'theme':
       return { ...s, theme: a.theme };
     case 'drawer':
@@ -58,7 +67,8 @@ function applyFrame(s: State, f: ServerFrame): State {
     case 'hello': {
       const personas = Object.fromEntries(f.personas.map((p) => [p.id, p]));
       const spaces = Object.fromEntries(f.spaces.map((sp) => [sp.id, sp]));
-      return { ...s, personas, spaces, spaceOrder: f.spaces.map((sp) => sp.id), currentSpace: s.currentSpace ?? f.spaces[0]?.id ?? null };
+      const directions = Object.fromEntries(f.directions.map((d) => [d.id, d]));
+      return { ...s, personas, spaces, directions, spaceOrder: f.spaces.map((sp) => sp.id), currentSpace: s.currentSpace ?? f.spaces[0]?.id ?? null };
     }
     case 'presence': {
       const p = s.personas[f.personaId];
@@ -76,6 +86,13 @@ function applyFrame(s: State, f: ServerFrame): State {
         messages: { ...s.messages, [m.spaceId]: [...list, m] },
         spaces: sp ? { ...s.spaces, [m.spaceId]: { ...sp, unread, lastActivity: m.at, lastSummary: m.kind === 'speech' ? m.text.slice(0, 120) : sp.lastSummary } } : s.spaces,
       };
+    }
+    case 'direction':
+      return { ...s, directions: { ...s.directions, [f.direction.id]: f.direction } };
+    case 'stop': {
+      const list = s.stops[f.stop.directionId] ?? [];
+      if (list.some((x) => x.id === f.stop.id)) return s;
+      return { ...s, stops: { ...s.stops, [f.stop.directionId]: [...list, f.stop] } };
     }
     case 'artifact':
       return { ...s, artifacts: { ...s.artifacts, [f.artifact.id]: f.artifact } };
@@ -115,4 +132,17 @@ export function useHome<T>(select: (s: State) => T): T {
 
 export function getState() {
   return state;
+}
+
+const RUNGS = ['said', 'artifact', 'test', 'commit', 'ci'] as const;
+
+/** Exceptions first, oldest wait first; then the rest by last update. The strip board's order. */
+export function orderDirections(ds: Direction[]): Direction[] {
+  const waiting = ds.filter((d) => d.exception).sort((a, b) => a.exception!.since.localeCompare(b.exception!.since));
+  const rest = ds.filter((d) => !d.exception).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...waiting, ...rest];
+}
+
+export function rungIndex(r: Direction['reached']): number {
+  return r ? RUNGS.indexOf(r) : -1;
 }

@@ -16,7 +16,8 @@ const id = (p) => `${p}-${seq++}`;
 
 wss.on('connection', (ws) => {
   const send = (f) => ws.readyState === 1 && ws.send(JSON.stringify(f));
-  send({ t: 'hello', protocol: 1, personas: fixture.personas, spaces: fixture.spaces });
+  send({ t: 'hello', protocol: 2, personas: fixture.personas, spaces: fixture.spaces, directions: fixture.directions });
+  for (const stop of fixture.stops) send({ t: 'stop', stop });
 
   ws.on('message', (raw) => {
     let f;
@@ -36,6 +37,14 @@ wss.on('connection', (ws) => {
         send({ t: 'message', message: { id: id('m'), spaceId: f.spaceId, from: who, kind: 'speech', text: `On it. ${f.text.length > 40 ? 'That is a bigger ask than it looks; I will start with the smallest piece.' : 'Done, one file changed.'}`, at: now() } });
         send({ t: 'presence', personaId: who, presence: 'idle', title: 'idle', revision: seq });
       }, 1200);
+    }
+    if (f.t === 'steer') {
+      const d = fixture.directions.find((x) => x.id === f.directionId);
+      if (!d) return;
+      const next = { ...d, state: 'riding', exception: null, updatedAt: now() };
+      Object.assign(d, next);
+      send({ t: 'direction', direction: next });
+      setTimeout(() => send({ t: 'stop', stop: { id: id('s'), directionId: d.id, from: d.riders[0], rung: 'artifact', artifactId: null, at: now() } }), 1500);
     }
     if (f.t === 'fetch') {
       const a = fixture.artifacts.find((x) => x.id === f.artifactId);
