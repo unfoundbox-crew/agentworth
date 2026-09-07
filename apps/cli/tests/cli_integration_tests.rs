@@ -126,8 +126,8 @@ fn test_cli_matrix_command_table_and_json() {
         .stdout(predicate::str::contains("manus"))
         // fix/matrix-coverage replaced the old hardcoded "100% extraction parity" claim
         // with a real per-adapter capability score; see the --json assertion below for
-        // the exact computed rate (27.1%, fixed given the current 4 real + 16 default
-        // capability profiles). The table view (feat/cli-followups) folded that score
+        // the exact computed rate (26.4%, fixed given the current 4 real + 15 default
+        // + 1 empty capability profiles). The table view (feat/cli-followups) folded that score
         // into the header instead of a closing sentence.
         .stdout(predicate::str::contains("grounded coverage"));
 
@@ -140,10 +140,11 @@ fn test_cli_matrix_command_table_and_json() {
         .success()
         .stdout(predicate::str::contains("\"total_adapters\": 20"))
         // Real computed rate: 4 adapters have full/partial hand-written capability
-        // profiles (claude_code 7/7, codex 6/7, cursor 2/7, gemini 7/7 = 22 of 28); the
-        // other 16 fall back to the trait default (prompts only = 1/7 = 16). Total
-        // 38 / 140 = 27.1%, fixed regardless of what's actually detected on this machine.
-        .stdout(predicate::str::contains("\"coverage_rate\": \"27.1%\""))
+        // profiles (claude_code 7/7, codex 6/7, cursor 2/7, gemini 7/7 = 22 of 28); herdr
+        // reports 0/7 (a workspace snapshot has no prompts); the other 15 fall back to the
+        // trait default (prompts only = 1/7 = 15). Total 37 / 140 = 26.4%, fixed
+        // regardless of what's actually detected on this machine.
+        .stdout(predicate::str::contains("\"coverage_rate\": \"26.4%\""))
         .stdout(predicate::str::contains("\"adapter\": \"claude_code\""))
         .stdout(predicate::str::contains("\"prompts\": true"))
         .stdout(predicate::str::contains("\"tokens\": true"))
