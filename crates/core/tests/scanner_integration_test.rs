@@ -340,7 +340,9 @@ fn test_scanner_with_all_11_adapters_end_to_end() {
     assert_eq!(by_adapter.get("gemini"), Some(&1));
     assert_eq!(by_adapter.get("goose"), Some(&1));
     assert_eq!(by_adapter.get("grok"), Some(&1));
-    assert_eq!(by_adapter.get("herdr"), Some(&1));
+    // herdr indexed a fleet_snapshot, not a session, so it is a row in the index
+    // (total_indexed_sessions counts it) but not in the conversation aggregate.
+    assert_eq!(by_adapter.get("herdr"), None);
     assert_eq!(by_adapter.get("hermes"), Some(&1));
     assert_eq!(by_adapter.get("openclaw"), Some(&1));
     assert_eq!(by_adapter.get("opencode"), Some(&1));

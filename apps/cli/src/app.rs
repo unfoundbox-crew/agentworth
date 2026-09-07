@@ -2122,8 +2122,8 @@ fn run_scan_command(
     // still been scanned once, and a second introduction is a lie about which run this is.
     if !json
         && storage
-            .get_aggregate_stats(true)
-            .map(|s| s.total_sessions == 0)
+            .total_row_count()
+            .map(|n| n == 0)
             .unwrap_or(false)
     {
         let index = storage
@@ -3042,11 +3042,11 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>, ui: &c
 
     if let Ok(st) = &storage_res {
         storage_healthy = true;
-        // true: this is a raw index-health count ("total_indexed_sessions" under "storage"),
-        // matching `archie scan`'s own "Total Indexed... in SQLite index" promise -- not a
-        // "real activity" metric.
-        if let Ok(stats) = st.get_aggregate_stats(true) {
-            total_indexed = stats.total_sessions;
+        // Raw index-health count ("total_indexed_sessions" under "storage"), matching
+        // `archie scan`'s own "Total Indexed... in SQLite index" promise -- every row,
+        // snapshots included -- not a "real activity" metric (that is get_aggregate_stats).
+        if let Ok(n) = st.total_row_count() {
+            total_indexed = n;
         }
         let actual_path = PathBuf::from(&db_path_display);
         if let Ok(meta) = std::fs::metadata(&actual_path) {
@@ -4502,8 +4502,8 @@ fn run_cockpit_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui)
     let (storage, missing) = match open_storage(db_path) {
         Ok(s) => {
             let empty = s
-                .get_aggregate_stats(true)
-                .map(|a| a.total_sessions == 0)
+                .total_row_count()
+                .map(|n| n == 0)
                 .unwrap_or(true);
             (Some(s), if empty { Some(String::new()) } else { None })
         }

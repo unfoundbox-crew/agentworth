@@ -68,6 +68,11 @@ pub struct AggregateStats {
 const NON_STUB_SQL_PREDICATE: &str =
     "kind = 'conversation' AND total_events > 1 AND total_tokens > 0";
 
+/// Just the activity half of `NON_STUB_SQL_PREDICATE`, without the `kind` term. Used where
+/// the kind is already constrained separately and only the events/tokens bar is conditional
+/// (the `include_stubs` path of `list_sessions_filtered`). Keep the two literals in lockstep.
+const NON_STUB_ACTIVITY_PREDICATE: &str = "total_events > 1 AND total_tokens > 0";
+
 /// Why an unchanged source has to be reparsed anyway. See `Storage::needs_backfill`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillReason {
@@ -2032,6 +2037,17 @@ impl Storage {
     /// Upsert an indexed trace into the database atomically, with no verdict, no score, and
     /// no parser version. A row written this way always reads as needing a backfill -- which
     /// is correct: nothing about it came from a scan.
+    /// Every row physically in the `sessions` table -- conversations, conversation stubs and
+    /// fleet snapshots alike. The raw storage-health count behind `archie scan`'s "Total
+    /// Indexed ... in SQLite index" and `archie doctor`'s storage line. Distinct from
+    /// `get_aggregate_stats`, which counts conversations only: a snapshot is indexed (so it
+    /// is counted here) but is not a session (so it is not counted there).
+    pub fn total_row_count(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
+        Ok(n as usize)
+    }
+
     /// Every name ever seen attached to `session_id`, oldest first sighting first. Names are
     /// display; this is the history a rename would otherwise erase.
     pub fn identity_sightings(&self, session_id: &str) -> Result<Vec<IdentitySightingRow>> {
@@ -2082,8 +2098,11 @@ impl Storage {
 
         let mut stats = AggregateStats::default();
 
+        // Conversations only in both modes: a fleet snapshot is not a session and never
+        // belongs in a session aggregate. `include_stubs` relaxes only the events/tokens bar.
+        // The raw "how many rows are in SQLite" count is `total_row_count`, not this.
         let where_clause = if include_stubs {
-            String::new()
+            "WHERE kind = 'conversation'".to_string()
         } else {
             format!("WHERE {NON_STUB_SQL_PREDICATE}")
         };
@@ -2466,11 +2485,13 @@ impl Storage {
                 sql.push_str(" AND sessions.kind = ?");
                 param_values.push(Box::new(kind.as_str()));
             }
+            // Conversations only, always. `include_stubs` relaxes the events/tokens bar, never
+            // the kind -- a fleet snapshot is not a conversation stub, it is a different kind,
+            // and `--all-stubs` must not surface it.
             _ => {
+                sql.push_str(" AND sessions.kind = 'conversation'");
                 if !filter.include_stubs.unwrap_or(false) {
-                    sql.push_str(&format!(" AND ({NON_STUB_SQL_PREDICATE})"));
-                } else if filter.kind.is_some() {
-                    sql.push_str(" AND sessions.kind = 'conversation'");
+                    sql.push_str(&format!(" AND ({NON_STUB_ACTIVITY_PREDICATE})"));
                 }
             }
         }
@@ -7122,8 +7143,28 @@ mod tests {
             .expect("list conversations");
         assert_eq!(conversations.len(), 1);
 
+        // The leak this guards: --all-stubs (kind None, include_stubs) must relax only the
+        // events/tokens bar, never the kind, so it still does not surface the snapshot.
+        let all_stubs = storage
+            .list_sessions_filtered(&SessionFilter {
+                include_stubs: Some(true),
+                ..Default::default()
+            })
+            .expect("list all-stubs");
+        assert_eq!(all_stubs.len(), 1);
+        assert_eq!(all_stubs[0].session_id, "real_1");
+
+        // The session aggregate counts conversations in both modes -- the snapshot is never a
+        // session. include_stubs relaxes only the events/tokens bar.
         assert_eq!(storage.get_aggregate_stats(false).unwrap().total_sessions, 1);
-        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 2);
+        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 1);
+        assert!(!storage
+            .get_aggregate_stats(true)
+            .unwrap()
+            .sessions_by_adapter
+            .contains_key("herdr"));
+        // But storage health counts every physical row, snapshot included.
+        assert_eq!(storage.total_row_count().unwrap(), 2);
         assert!(storage.stub_sessions().unwrap().is_empty(), "a one-event snapshot is not near-empty");
         assert!(!is_near_empty_session(TraceKind::FleetSnapshot, 1));
         assert!(is_near_empty_session(TraceKind::Conversation, 1));
@@ -7252,12 +7293,13 @@ mod tests {
         assert_eq!(stats_excl.sessions_by_adapter.get("claude_code"), Some(&2));
         assert_eq!(stats_excl.sessions_by_adapter.get("codex"), Some(&1));
 
-        // The raw-inventory mode (used by `agentworth scan`'s "Total Indexed" line and
-        // `agentworth doctor`) must still see every row, stubs included.
+        // include_stubs mode counts every conversation, stubs included (these five are all
+        // conversations). The raw all-rows count is `total_row_count`; snapshots, if any,
+        // would show there and not here.
         let stats_incl = storage
             .get_aggregate_stats(true)
             .expect("aggregate stats including stubs");
-        assert_eq!(stats_incl.total_sessions, 5, "all 3 real + 2 stub sessions");
+        assert_eq!(stats_incl.total_sessions, 5, "all 3 real + 2 stub conversations");
         assert_eq!(
             stats_incl.verified_outcomes_count, 2,
             "including stubs, both real_1 and stub_verified count as verified"

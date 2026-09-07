@@ -330,7 +330,8 @@ say '*' installed "$installed in $pretty_dir"
 if [ "$os" = "Darwin" ] && command -v xattr >/dev/null 2>&1; then
   for bin in agentworth archie agwt; do
     if [ -f "$INSTALL_DIR/$bin" ]; then
-      xattr -d com.apple.quarantine "$INSTALL_DIR/$bin" 2>/dev/null || true
+      # -h: act on the file, not a symlink target (belt and braces after the rm -f above).
+      xattr -dh com.apple.quarantine "$INSTALL_DIR/$bin" 2>/dev/null || true
     fi
   done
 fi
