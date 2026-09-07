@@ -94,3 +94,20 @@ does not happen again.
 
 Grok's adapter names sessions after files, so Grok does not join yet. That is an
 adapter fix, not a gateway one.
+
+## Nothing opens on an end state (Saurabh, 2026-09-07, after the first hands-on)
+
+"Why should there be a page that says nothing needs you? A terminal, a chat,
+everything opens blank, an invitation to create something. I'm a new user, I
+ran some npm commands, I bought tokens. Now what do I do?"
+
+Cruise is where you return once directions exist. It is never the first
+screen. The first screen is one blank line with a cursor: what are we
+building? Typing it is the whole setup: the text becomes the first direction,
+the area is the repo in cwd, and if no rider exists the deck offers the
+harnesses found on the machine and starts one in a pane. One command opens it,
+`archie home`, serving the built deck from the binary. No second server, no
+seeding script, no herdr required to reach the first line.
+
+What a new user must never need: a vite dev server, an environment variable,
+a socket script, or a partner's pane.
