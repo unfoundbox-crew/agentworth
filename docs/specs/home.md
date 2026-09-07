@@ -131,3 +131,13 @@ a socket script, or a partner's pane.
 - **A new user's path (Saurabh, 15:34):** "say I get a new laptop tomorrow and
   don't know any of these, what is my step by step." Written as a doc once
   `archie home` exists, and tested on a machine that has none of it.
+
+## First run: five decisions (Saurabh, 2026-09-07 evening, verbatim)
+
+1. The line: keep "What are we building?" It establishes agency and intent without conversational fluff.
+2. Who rides: show detected harnesses with the first pre-focused so Enter is the instant default, but the choice stays visible.
+3. Where it runs: herdr required for v1, a one-line install banner if absent. No internal PTY fallback; a terminal without herdr's idle/working/blocked would be a worse product, not a lighter one.
+4. Area: auto-fill the directory `archie home` was invoked in, editable on the strip. Never ask what the environment already knows.
+5. After the first ride: the blank line shows only when active directions reach zero, or when summoned with the new-direction hotkey.
+
+The paper on the human interface tax waits for this screen to exist.
