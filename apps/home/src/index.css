@@ -1,17 +1,16 @@
+@import '@ui/tokens.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * home wears the same --mv-* token cascade as the rest of the product (see
+ * ~/code/design.md and packages/ui/tokens.css) rather than a hand-written
+ * palette. apps/home/DESIGN.md's own hex table predates the hi-fi design
+ * canvas pass, which used these exact dark values -- so this file treats
+ * the shared tokens as canon and DESIGN.md's table as superseded prose.
+ */
 :root {
-  color-scheme: dark;
-  --ground: #15191f;
-  --panel: #1a1f26;
-  --line: #272f3a;
-  --ink: #cfd4dc;
-  --muted: #8b949e;
-  --dim: #586069;
-  --amber: #d29922;
-  --font-mono: 'PT Mono', 'SF Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --t-in: 120ms;
   --t-out: 80ms;
 }
@@ -19,17 +18,71 @@
 html, body, #root { height: 100%; }
 body {
   margin: 0;
-  background: var(--ground);
-  color: var(--ink);
+  background: var(--mv-ground);
+  color: var(--mv-text);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
-* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--mv-border) transparent; }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .presence-working { animation: pulse 2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
   .presence-working { animation: none; opacity: 0.7; }
+}
+
+@keyframes ambient-flow { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
+.ambient-active { animation: ambient-flow 2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .ambient-active { animation: none; opacity: 0.55; }
+}
+
+.enter { animation: fade-in var(--t-in) ease-out; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .enter { animation: none; }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* packages/ui/ThemeToggle.tsx markup, quiet variant for the deck's corners. */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 0.5px solid var(--mv-border-soft);
+  border-radius: 8px;
+  background: var(--mv-surface);
+  opacity: 0.6;
+}
+.theme-toggle:hover { opacity: 1; }
+.theme-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--mv-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  padding: 4px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.theme-toggle button:hover { color: var(--mv-ink); }
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--mv-surface-3);
+  color: var(--mv-ink);
 }

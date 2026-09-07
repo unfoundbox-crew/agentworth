@@ -13,6 +13,9 @@ export interface State {
   directions: Record<string, Direction>;
   stops: Record<string, Stop[]>;
   selectedDirection: string | null;
+  consoleOpen: boolean;
+  mute: Set<string>;
+  solo: Set<string>;
   messages: Record<string, Message[]>;
   artifacts: Record<string, Artifact>;
   currentSpace: string | null;
@@ -28,6 +31,9 @@ const initial: State = {
   directions: {},
   stops: {},
   selectedDirection: null,
+  consoleOpen: false,
+  mute: new Set(),
+  solo: new Set(),
   messages: {},
   artifacts: {},
   currentSpace: null,
@@ -39,6 +45,10 @@ type Action =
   | { type: 'connection'; connection: Connection }
   | { type: 'select'; spaceId: string }
   | { type: 'select_direction'; directionId: string | null }
+  | { type: 'open_console'; directionId: string }
+  | { type: 'close_console' }
+  | { type: 'toggle_mute'; personaId: string }
+  | { type: 'toggle_solo'; personaId: string }
   | { type: 'theme'; theme: Theme }
   | { type: 'drawer'; open: boolean; artifactId?: string | null }
   | { type: 'local'; message: Message };
@@ -51,6 +61,22 @@ function reduce(s: State, a: Action): State {
       return { ...s, currentSpace: a.spaceId, spaces: { ...s.spaces, [a.spaceId]: { ...s.spaces[a.spaceId], unread: 0 } } };
     case 'select_direction':
       return { ...s, selectedDirection: a.directionId };
+    case 'open_console':
+      return { ...s, selectedDirection: a.directionId, consoleOpen: true };
+    case 'close_console':
+      return { ...s, consoleOpen: false };
+    case 'toggle_mute': {
+      const next = new Set(s.mute);
+      if (next.has(a.personaId)) next.delete(a.personaId);
+      else next.add(a.personaId);
+      return { ...s, mute: next };
+    }
+    case 'toggle_solo': {
+      const next = new Set(s.solo);
+      if (next.has(a.personaId)) next.delete(a.personaId);
+      else next.add(a.personaId);
+      return { ...s, solo: next };
+    }
     case 'theme':
       return { ...s, theme: a.theme };
     case 'drawer':
@@ -126,6 +152,7 @@ export function useHome<T>(select: (s: State) => T): T {
       listeners.add(l);
       return () => listeners.delete(l);
     },
+    () => select(state),
     () => select(state),
   );
 }

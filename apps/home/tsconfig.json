@@ -13,9 +13,15 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ui/*": ["../../packages/ui/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "../../packages/ui"],
   "exclude": ["src/mock"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

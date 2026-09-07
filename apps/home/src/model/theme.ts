@@ -25,12 +25,12 @@ export const plain: Theme = {
   id: 'plain',
   label: 'Plain',
   cast: {
-    chief_of_staff: { name: 'Chief of staff', title: 'triage and routing', badge: '#60a5fa' },
-    senior: { name: 'Senior', title: 'architecture and hard calls', badge: '#c9a227' },
-    associate: { name: 'Associate', title: 'research and audits', badge: '#10b981' },
-    executor: { name: 'Executor', title: 'builds and PRs', badge: '#c084fc' },
-    controller: { name: 'Controller', title: 'tokens and pacing', badge: '#a38241' },
-    guest: { name: 'Guest', title: '', badge: '#8b949e' },
+    chief_of_staff: { name: 'Chief of staff', title: 'triage and routing', badge: 'var(--mv-cat-1)' },
+    senior: { name: 'Senior', title: 'architecture and hard calls', badge: 'var(--mv-cat-3)' },
+    associate: { name: 'Associate', title: 'research and audits', badge: 'var(--mv-cat-2)' },
+    executor: { name: 'Executor', title: 'builds and PRs', badge: 'var(--mv-cat-4)' },
+    controller: { name: 'Controller', title: 'tokens and pacing', badge: 'var(--mv-cat-5)' },
+    guest: { name: 'Guest', title: '', badge: 'var(--mv-faint)' },
   },
   spaces: {
     incidents: 'Incidents',
