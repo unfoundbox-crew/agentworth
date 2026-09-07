@@ -93,21 +93,19 @@ fn is_work_event(payload: &EventPayload) -> bool {
     )
 }
 
+/// `crates/adapters/src/claude.rs` emits a `ToolCall` for every `tool_use` block, and then,
+/// for the tool names it specifically recognizes (Bash-family, Edit/Write-family), an
+/// additional `ShellCommand`/`FileAction` event for the *same* invocation right after it. So a
+/// `ToolCall` only ever counts here as `other_tools` -- counting it toward `commands_run`/
+/// `files_touched` as well as the paired `ShellCommand`/`FileAction` would double-count every
+/// recognized tool call. An unrecognized tool (no paired event) still shows up, just under
+/// "used N tools" rather than a specific verb -- see `WorkRun::summary`.
 fn fold_into_run(run: &mut WorkRun, event: &NormalizedEvent) {
     run.last_timestamp = Some(event.timestamp);
     match &event.payload {
         EventPayload::FileAction { .. } => run.files_touched += 1,
         EventPayload::ShellCommand(_) => run.commands_run += 1,
-        EventPayload::ToolCall(tool) => {
-            let name = tool.name.to_lowercase();
-            if name.contains("bash") || name.contains("shell") || name.contains("exec") {
-                run.commands_run += 1;
-            } else if name.contains("edit") || name.contains("write") || name.contains("patch") {
-                run.files_touched += 1;
-            } else {
-                run.other_tools += 1;
-            }
-        }
+        EventPayload::ToolCall(_) => run.other_tools += 1,
         // ToolResult carries no new information this summary needs -- the matching ToolCall
         // already counted it.
         EventPayload::ToolResult(_) => {}
@@ -229,15 +227,18 @@ mod tests {
             .iter()
             .map(|m| (m.kind, m.text.as_str()))
             .collect();
+        // The adapter emits ToolCall + ShellCommand for the Bash call *before* the line's own
+        // AssistantMessage (text blocks are collected but only turned into an event after the
+        // whole content array is walked -- crates/adapters/src/claude.rs), so the collapsed
+        // work run for that Bash call is flushed right at that AssistantMessage boundary, ahead
+        // of both chat lines in emission order.
         assert_eq!(
             kinds,
             vec![
+                (MessageKind::Work, "ran 1 command"),
                 (MessageKind::Speech, "I will check the file."),
                 (MessageKind::Speech, "All tests pass now!"),
-            ],
-            "assistant text becomes speech; the bash tool call between them has no matching \
-             ToolResult boundary before the second AssistantMessage, so it folds into a work \
-             run flushed at that boundary -- asserted separately below"
+            ]
         );
         assert!(cursor.last_sequence >= 3, "cursor advanced to the last event's sequence");
 
