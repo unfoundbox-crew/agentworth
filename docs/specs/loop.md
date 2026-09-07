@@ -17,15 +17,17 @@ what MotionVector made.
 
 | Fact | Source |
 | :--- | :--- |
-| Herdr's socket is a JSON-lines request/response server. The only observed method is `pane.report_agent_session`, sent by hook scripts on session start. Idle/working is pulled through the `herdr` CLI, not pushed. Herdr's source is not on this machine | `~/.claude/hooks/herdr-agent-state.sh`, `~/.cursor/…`, `~/.codex/…`; `live-show-spike/src/types.ts:64` |
+| Herdr's socket is JSON-lines, and it is not request/response only: it also supports `events.subscribe` (protocol 20), which pushes `pane_agent_status_changed` events without polling. Confirmed live on 2026-09-07 -- `apps/cli/src/server/home/gateway.rs`'s `subscription_loop` holds one such connection open per `archie serve --home` process; the `home-gateway` lane's report has the captured frames. The `pane.report_agent_session` method (sent by hook scripts on session start) still exists alongside it. Idle/working can now be pushed as well as pulled through the `herdr` CLI. Herdr's source is not on this machine | `apps/cli/src/server/home/gateway.rs`; `~/.claude/hooks/herdr-agent-state.sh`, `~/.cursor/…`, `~/.codex/…`; `live-show-spike/src/types.ts:64` |
 | Claude Code fires hooks on `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `SubagentStart/Stop`, `PreCompact/PostCompact`, `CwdChanged`, `SessionEnd`, each with `session_id`, `cwd`, `transcript_path`, and for tool events `tool_name`, `tool_input`, `tool_use_id`, `tool_response`. `async: true` hooks never block the agent | code.claude.com/docs/en/hooks, fetched 2026-09-06 |
 | `Measurement.run_id` is "the join key. One uuid per served call, so a caller that holds an outcome (AgentWorth holds cost per outcome) can find the run that produced it." Machine is `system_id` → `System.host_fingerprint`, a truncated salted hash | `spacepilot/spacepilot/measurements.py:130-194` |
 | `Receipt` v1 has `document.canonical_sha256`, `render.out_sha256`, `machine.{os,arch,target,adapter}`. No id, no time, no session | `runtime-ops/src/receipt.rs:19-108` |
 | AgentWorth has `session_id`, `source_path`, `content_fingerprint`, and since v0.1.19 `metadata.workspace.{cwd,git_branch}`. No machine id anywhere. Its live path is a filesystem-notify tail into SSE; no socket, no daemon | `crates/schema/src/{trace,provenance}.rs`, `apps/cli/src/server/live_tail.rs` |
 
 So: herdr is a source Archie can join to (its hooks put `HERDR_PANE_ID` in the
-environment), not a bus Archie can subscribe to. The bus is the harness's own
-hooks, which is exactly what herdr uses.
+environment) and, since `events.subscribe`, a bus Archie can subscribe to as
+well for presence -- `apps/home`'s gateway does both. The harness's own hooks
+remain the bus for everything herdr itself doesn't push (tool calls, file
+changes, outcomes), which is exactly what herdr uses.
 
 ## 1. The loop
 
