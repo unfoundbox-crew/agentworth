@@ -1,22 +1,54 @@
+//! Herdr adapter.
+//!
+//! Herdr (herdr.dev) is a terminal workspace manager for coding agents, not an agent. It never
+//! writes a transcript; the agents in its panes write their own, which the Claude Code, Codex
+//! and Gemini adapters already index. What Herdr persists is one file,
+//! `~/.config/herdr/session.json` (`"version": 3` as of herdr 0.8.2): the workspaces, tabs and
+//! panes of the running session, and for every pane the agent Herdr recognized inside it plus
+//! that agent's own session id.
+//!
+//! That id is what this adapter is for. `agent_session.value` is the join from a Herdr pane to
+//! the agent session that ran in it, and it is the only stable key: pane labels are renamed
+//! freely (`pane.rename` is among the most frequent calls in `herdr-server.log`), pane numbers
+//! are reused, and the file is rewritten in place on every `persist.save`.
+//!
+//! Shape, read from the real file and cross-checked against `herdr api schema --json`
+//! (protocol 20: `AgentSessionInfo`, `AgentSessionRefKind`):
+//!
+//! ```text
+//! { "version": 3,
+//!   "workspaces": [ { "id": "w9", "custom_name": "fleet", "identity_cwd": "/abs/path",
+//!       "tabs": [ { "custom_name": null, "layout": { ... }, "focused": 25, "root_pane": 12,
+//!           "panes": { "25": { "cwd": "/abs/path", "label": "chief-gemini",
+//!                              "agent_name": "chief", "managed_agent_kind": "agy",
+//!                              "agent_session": { "source": "herdr:antigravity_cli",
+//!                                                 "agent": "agy", "kind": "id",
+//!                                                 "value": "<uuid>" } } } } ],
+//!       "active_tab": 0 } ],
+//!   "active": 0, "selected": 0, "sidebar_width": 26, ... }
+//! ```
+//!
+//! Every field is optional on read and unknown fields are ignored, so a future `version` still
+//! yields what it can and says so in a warning instead of failing the file. One pane that does
+//! not decode is counted as malformed and the rest of the file still lands.
+
+use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use agentworth_adapter_sdk::{
-    AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
+    AdapterCapabilities, AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
-use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
-};
+use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent, Provenance};
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use directories::BaseDirs;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
 use walkdir::WalkDir;
-use crate::exit_status::backfill_shell_exit_codes;
 
-/// Adapter for discovering and normalizing Herdr multi-agent coordination traces.
+/// Adapter for Herdr workspace snapshots: which agent session ran in which pane.
 pub struct HerdrAdapter;
 
 impl Default for HerdrAdapter {
@@ -26,23 +58,33 @@ impl Default for HerdrAdapter {
 }
 
 impl HerdrAdapter {
+    /// 2: reads the real `session.json` v3 shape. Version 1 looked for `coordination_traces`,
+    /// `parent_agent_id` and `delegation_id`, fields no Herdr file has ever carried, and
+    /// produced nothing; the bump makes an incremental scan re-read every file it had already
+    /// fingerprinted.
+    pub const PARSER_VERSION: i64 = 2;
+
+    /// The `session.json` layout this adapter was written against (herdr 0.8.2).
+    pub const SESSION_FILE_VERSION: u64 = 3;
+
+    /// Event kind emitted once per pane.
+    pub const PANE_EVENT_KIND: &'static str = "herdr.pane";
+
     pub fn new() -> Self {
         Self
     }
 
-    /// Candidate directory paths for Herdr on the host machine.
+    /// Candidate directory paths for Herdr on the host machine. `~/.config/herdr` is where
+    /// herdr 0.8 writes; `~/.herdr` is kept for older layouts and hand-set config dirs.
     pub fn candidate_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
             roots.push(home.join(".config").join("herdr"));
-            roots.push(home.join(".config").join("herdr").join("sessions"));
             roots.push(home.join(".herdr"));
-            roots.push(home.join(".herdr").join("sessions"));
         }
         roots.push(PathBuf::from(".config").join("herdr"));
         roots.push(PathBuf::from(".herdr"));
-        roots.push(PathBuf::from(".herdr").join("sessions"));
         roots
     }
 }
@@ -50,6 +92,16 @@ impl HerdrAdapter {
 impl AgentAdapter for HerdrAdapter {
     fn name(&self) -> &'static str {
         "herdr"
+    }
+
+    fn parser_version(&self) -> i64 {
+        Self::PARSER_VERSION
+    }
+
+    /// A snapshot carries no prompts, tokens, tools or outcomes. Claiming any of the seven
+    /// would put a YES on the coverage page that nothing backs.
+    fn capabilities(&self) -> AdapterCapabilities {
+        AdapterCapabilities::default()
     }
 
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult> {
@@ -66,12 +118,12 @@ impl AgentAdapter for HerdrAdapter {
                 continue;
             }
             let s = custom.to_string_lossy().to_lowercase();
-            if s.contains(".herdr") || s.contains("herdr") {
+            if s.contains("herdr") {
                 discovered.push(custom.clone());
             } else if custom.is_dir() {
-                // custom_paths may point at a generic parent directory rather than
-                // the adapter-specific dir itself; look a few levels in before
-                // giving up, matching how `enumerate()` already recurses.
+                // custom_paths may point at a generic parent directory rather than the
+                // adapter-specific dir itself; look a few levels in before giving up,
+                // matching how `enumerate()` already recurses.
                 let mut found_nested = false;
                 for sub in &[custom.join(".herdr"), custom.join(".config").join("herdr")] {
                     if sub.exists() {
@@ -80,10 +132,13 @@ impl AgentAdapter for HerdrAdapter {
                     }
                 }
                 if !found_nested {
-                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .max_depth(4)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
-                        let ps = path.to_string_lossy().to_lowercase();
-                        if ps.contains(".herdr") || ps.contains("herdr") {
+                        if path.to_string_lossy().to_lowercase().contains("herdr") {
                             discovered.push(path.to_path_buf());
                             break;
                         }
@@ -105,41 +160,25 @@ impl AgentAdapter for HerdrAdapter {
 
     fn enumerate(&self, options: &ScanOptions) -> Result<Vec<SessionSource>> {
         let mut sources = Vec::new();
+        let roots: Vec<PathBuf> = if options.custom_paths.is_empty() {
+            self.candidate_roots()
+        } else {
+            options.custom_paths.clone()
+        };
 
-        if !options.custom_paths.is_empty() {
-            for custom in &options.custom_paths {
-                if custom.is_file() {
-                    if is_candidate_herdr_file(custom) {
-                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
-                            sources.push(source);
-                        }
-                    }
-                } else if custom.is_dir() {
-                    for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
-                        let path = entry.path();
-                        if path.is_file() && is_candidate_herdr_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
-                                sources.push(source);
-                            }
-                        }
+        for root in roots {
+            if root.is_file() {
+                if is_candidate_herdr_file(&root) {
+                    if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                        sources.push(source);
                     }
                 }
-            }
-        } else {
-            for root in self.candidate_roots() {
-                if root.is_file() {
-                    if is_candidate_herdr_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
+            } else if root.is_dir() {
+                for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if path.is_file() && is_candidate_herdr_file(path) {
+                        if let Ok(source) = SessionSource::from_path(path, self.name()) {
                             sources.push(source);
-                        }
-                    }
-                } else if root.is_dir() {
-                    for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
-                        let path = entry.path();
-                        if path.is_file() && is_candidate_herdr_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
-                                sources.push(source);
-                            }
                         }
                     }
                 }
@@ -153,127 +192,200 @@ impl AgentAdapter for HerdrAdapter {
     }
 
     fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
+        let display = source.path.to_string_lossy().to_string();
         let session_id = derive_session_id(&source.path);
         let provenance = Provenance::new(
-            source.path.to_string_lossy().to_string(),
+            display.clone(),
             self.name(),
             source.file_size_bytes,
             source.mtime_epoch_secs,
             &source.fingerprint,
         );
 
-        let mut trace = AgentWorthTrace::new(&session_id, self.name(), provenance, Utc::now());
-        let mut malformed_lines = 0;
+        // The file is rewritten whole on every save, so its mtime is the one timestamp it
+        // carries: "the fleet looked like this as of then".
+        let saved_at = epoch_to_datetime(source.mtime_epoch_secs);
+        let mut trace = AgentWorthTrace::new(&session_id, self.name(), provenance, saved_at);
+        trace.ended_at = Some(saved_at);
         let mut warnings = Vec::new();
-        let mut sequence = 0u64;
-        let mut last_model: Option<String> = None;
+        let mut malformed_lines = 0usize;
 
-        let mut earliest_ts: Option<DateTime<Utc>> = None;
-        let mut latest_ts: Option<DateTime<Utc>> = None;
-
-        let file = File::open(&source.path)?;
-        let mut reader = BufReader::new(file);
-
-        let has_content = reader.get_ref().metadata()?.len() > 0;
-
-        if has_content {
-            let mut content_str = String::new();
-            reader.read_to_string(&mut content_str)?;
-
-            let trimmed = content_str.trim();
-            if trimmed.starts_with('[')
-                || (trimmed.starts_with('{') && !trimmed.contains('\n'))
-                || (trimmed.starts_with('{') && serde_json::from_str::<Value>(trimmed).is_ok())
-            {
-                if let Ok(json_val) = serde_json::from_str::<Value>(trimmed) {
-                    let items = if let Some(arr) = json_val.as_array() {
-                        arr.clone()
-                    } else if let Some(traces) = json_val
-                        .get("coordination_traces")
-                        .or_else(|| json_val.get("traces"))
-                        .and_then(|t| t.as_array())
-                    {
-                        traces.clone()
-                    } else if let Some(events) = json_val
-                        .get("events")
-                        .or_else(|| json_val.get("messages"))
-                        .and_then(|e| e.as_array())
-                    {
-                        events.clone()
-                    } else if let Some(turns) = json_val.get("turns").and_then(|t| t.as_array()) {
-                        turns.clone()
-                    } else {
-                        vec![json_val]
-                    };
-
-                    for (idx, item) in items.iter().enumerate() {
-                        let timestamp = parse_timestamp(item).unwrap_or_else(Utc::now);
-                        if earliest_ts.is_none_or(|ts| timestamp < ts) {
-                            earliest_ts = Some(timestamp);
-                        }
-                        if latest_ts.is_none_or(|ts| timestamp > ts) {
-                            latest_ts = Some(timestamp);
-                        }
-
-                        let evts = parse_herdr_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
-                        trace.events.extend(evts);
-                    }
-
-                    if let Some(earliest) = earliest_ts {
-                        trace.started_at = earliest;
-                    }
-                    if let Some(latest) = latest_ts {
-                        trace.ended_at = Some(latest);
-                    }
-
-                    backfill_shell_exit_codes(&mut trace.events);
-                    trace.recalculate_stats();
-
-                    return Ok(ParseResult {
-                        trace,
-                        malformed_lines,
-                        warnings,
-                    });
-                }
+        let raw: Value = match serde_json::from_reader(BufReader::new(File::open(&source.path)?)) {
+            Ok(v) => v,
+            Err(e) => {
+                warnings.push(format!("{display}: not valid JSON: {e}"));
+                return Ok(ParseResult {
+                    trace,
+                    malformed_lines: 1,
+                    warnings,
+                });
             }
+        };
 
-            for (line_idx, line_str) in content_str.lines().enumerate() {
-                let line_num = line_idx + 1;
-                let trimmed_line = line_str.trim();
-                if trimmed_line.is_empty() {
+        let Some(obj) = raw.as_object() else {
+            warnings.push(format!(
+                "{display}: not a Herdr session file (top level is not an object)"
+            ));
+            return Ok(ParseResult {
+                trace,
+                malformed_lines: 0,
+                warnings,
+            });
+        };
+        if !obj.contains_key("workspaces") {
+            warnings.push(format!(
+                "{display}: not a Herdr session file (no `workspaces` key)"
+            ));
+            return Ok(ParseResult {
+                trace,
+                malformed_lines: 0,
+                warnings,
+            });
+        }
+
+        let file: SessionFile = match serde_json::from_value(raw) {
+            Ok(f) => f,
+            Err(e) => {
+                warnings.push(format!("{display}: session file did not decode: {e}"));
+                return Ok(ParseResult {
+                    trace,
+                    malformed_lines: 1,
+                    warnings,
+                });
+            }
+        };
+
+        match file.version {
+            Some(v) if v == Self::SESSION_FILE_VERSION => {}
+            Some(v) => warnings.push(format!(
+                "{display}: session file version {v}; this adapter was written against version {}, reading what it can",
+                Self::SESSION_FILE_VERSION
+            )),
+            None => warnings.push(format!("{display}: session file has no `version`; assuming {}", Self::SESSION_FILE_VERSION)),
+        }
+
+        let mut seq = 0u64;
+        let mut agent_sessions = Vec::new();
+        let mut workspace_summaries = Vec::new();
+        let mut tab_count = 0usize;
+        let mut pane_count = 0usize;
+
+        for (w_idx, ws_raw) in file.workspaces.iter().enumerate() {
+            let ws: Workspace = match serde_json::from_value(ws_raw.clone()) {
+                Ok(w) => w,
+                Err(e) => {
+                    malformed_lines += 1;
+                    warnings.push(format!(
+                        "{display}: workspaces[{w_idx}] did not decode: {e}"
+                    ));
                     continue;
                 }
-
-                let val: Value = match serde_json::from_str(trimmed_line) {
-                    Ok(v) => v,
+            };
+            let mut ws_panes = 0usize;
+            for (t_idx, tab_raw) in ws.tabs.iter().enumerate() {
+                let tab: Tab = match serde_json::from_value(tab_raw.clone()) {
+                    Ok(t) => t,
                     Err(e) => {
                         malformed_lines += 1;
-                        warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
+                        warnings.push(format!(
+                            "{display}: workspaces[{w_idx}].tabs[{t_idx}] did not decode: {e}"
+                        ));
                         continue;
                     }
                 };
+                tab_count += 1;
+                let mut panes: Vec<(&String, &Value)> = tab.panes.iter().collect();
+                panes.sort_by_key(|(number, _)| pane_sort_key(number));
+                for (number, pane_raw) in panes {
+                    let raw_ref = format!("workspaces[{w_idx}].tabs[{t_idx}].panes[{number}]");
+                    let pane: PaneState = match serde_json::from_value(pane_raw.clone()) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            malformed_lines += 1;
+                            warnings.push(format!("{display}: {raw_ref} did not decode: {e}"));
+                            continue;
+                        }
+                    };
+                    pane_count += 1;
+                    ws_panes += 1;
+                    let focused = tab.focused.is_some_and(|f| f.to_string() == *number);
 
-                let timestamp = parse_timestamp(&val).unwrap_or_else(Utc::now);
-                if earliest_ts.is_none_or(|ts| timestamp < ts) {
-                    earliest_ts = Some(timestamp);
-                }
-                if latest_ts.is_none_or(|ts| timestamp > ts) {
-                    latest_ts = Some(timestamp);
-                }
+                    if let Some(agent) = &pane.agent_session {
+                        agent_sessions.push(json!({
+                            "agent": agent.agent,
+                            "source": agent.source,
+                            "kind": agent.kind,
+                            "value": agent.value,
+                            "pane": number,
+                            "workspace_id": ws.id,
+                            "cwd": pane.cwd,
+                            "label": pane.label,
+                        }));
+                    }
 
-                let events = parse_herdr_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
-                trace.events.extend(events);
+                    seq += 1;
+                    trace.events.push(
+                        NormalizedEvent::new(
+                            seq,
+                            saved_at,
+                            EventPayload::Custom {
+                                kind: Self::PANE_EVENT_KIND.to_string(),
+                                data: json!({
+                                    "workspace_id": ws.id,
+                                    "workspace_name": ws.custom_name,
+                                    "workspace_cwd": ws.identity_cwd,
+                                    "tab_index": t_idx,
+                                    "tab_name": tab.custom_name,
+                                    "pane": number,
+                                    "focused": focused,
+                                    "cwd": pane.cwd,
+                                    "label": pane.label,
+                                    "agent_name": pane.agent_name,
+                                    "managed_agent_kind": pane.managed_agent_kind,
+                                    "agent_session": pane.agent_session,
+                                }),
+                            },
+                        )
+                        .with_raw_ref(raw_ref),
+                    );
+                }
             }
+            workspace_summaries.push(json!({
+                "id": ws.id,
+                "name": ws.custom_name,
+                "identity_cwd": ws.identity_cwd,
+                "tab_count": ws.tabs.len(),
+                "pane_count": ws_panes,
+            }));
         }
 
-        if let Some(earliest) = earliest_ts {
-            trace.started_at = earliest;
+        let mut metadata = Map::new();
+        metadata.insert(
+            "herdr".to_string(),
+            json!({
+                "file_version": file.version,
+                "saved_at": saved_at,
+                "workspace_count": workspace_summaries.len(),
+                "tab_count": tab_count,
+                "pane_count": pane_count,
+                "agent_pane_count": agent_sessions.len(),
+                "workspaces": workspace_summaries,
+                "agent_sessions": agent_sessions,
+            }),
+        );
+        // Same key the Claude Code adapter writes, so anything that reads
+        // `metadata.workspace.cwd` sees the active workspace's identity directory.
+        let active_cwd = file
+            .active
+            .and_then(|i| file.workspaces.get(i))
+            .or_else(|| file.workspaces.first())
+            .and_then(|w| w.get("identity_cwd"))
+            .and_then(|v| v.as_str());
+        if let Some(cwd) = active_cwd {
+            metadata.insert("workspace".to_string(), json!({ "cwd": cwd }));
         }
-        if let Some(latest) = latest_ts {
-            trace.ended_at = Some(latest);
-        }
+        trace.metadata = Value::Object(metadata);
 
-        backfill_shell_exit_codes(&mut trace.events);
         trace.recalculate_stats();
 
         Ok(ParseResult {
@@ -284,751 +396,383 @@ impl AgentAdapter for HerdrAdapter {
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct SessionFile {
+    #[serde(default)]
+    version: Option<u64>,
+    #[serde(default)]
+    workspaces: Vec<Value>,
+    #[serde(default)]
+    active: Option<usize>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Workspace {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    custom_name: Option<String>,
+    #[serde(default)]
+    identity_cwd: Option<String>,
+    #[serde(default)]
+    tabs: Vec<Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Tab {
+    #[serde(default)]
+    custom_name: Option<String>,
+    #[serde(default)]
+    panes: BTreeMap<String, Value>,
+    #[serde(default)]
+    focused: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PaneState {
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    agent_name: Option<String>,
+    #[serde(default)]
+    managed_agent_kind: Option<String>,
+    #[serde(default)]
+    agent_session: Option<AgentSessionRef>,
+}
+
+/// `AgentSessionInfo` in Herdr's API schema: how a pane points at the agent session inside it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentSessionRef {
+    /// Which Herdr integration reported it, e.g. `herdr:claude`, `herdr:codex`.
+    pub source: String,
+    /// The agent's short name as Herdr knows it: `claude`, `codex`, `agy`, `grok`, `cursor`, ...
+    pub agent: String,
+    pub kind: AgentSessionRefKind,
+    /// The agent's own session id (or path, per `kind`). The join key to that agent's trace.
+    pub value: String,
+}
+
+/// `AgentSessionRefKind` in Herdr's API schema. `Other` keeps a future kind from failing the pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentSessionRefKind {
+    Id,
+    Path,
+    Other,
+}
+
+impl<'de> Deserialize<'de> for AgentSessionRefKind {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        Ok(match String::deserialize(deserializer)?.as_str() {
+            "id" => Self::Id,
+            "path" => Self::Path,
+            _ => Self::Other,
+        })
+    }
+}
+
+/// `session.json` and any `session*.json` next to it, or any JSON under a `sessions/` directory,
+/// as long as `herdr` is somewhere in the path. Herdr's logs, `config.toml` and lock files sit
+/// in the same directory and are not sessions.
 fn is_candidate_herdr_file(path: &Path) -> bool {
-    let path_str = path.to_string_lossy().to_lowercase();
-    if !path_str.contains("herdr") {
+    if !path.to_string_lossy().to_lowercase().contains("herdr") {
         return false;
     }
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if filename.starts_with('.') && !filename.ends_with(".jsonl") && !filename.ends_with(".json") {
+    if path.extension().is_none_or(|ext| ext != "json") {
         return false;
     }
-    let lower = filename.to_lowercase();
-    if lower == "config.json"
-        || lower == "settings.json"
-        || lower == "credentials.json"
-        || lower == "auth.json"
-        || lower == "package.json"
-    {
-        return false;
-    }
-    path.extension()
-        .is_some_and(|ext| ext == "jsonl" || ext == "json")
-}
-
-fn derive_session_id(path: &Path) -> String {
-    path.file_stem()
+    let stem = path
+        .file_stem()
         .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+    let in_sessions_dir = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("sessions"));
+    stem.starts_with("session") || in_sessions_dir
 }
 
-fn parse_timestamp(val: &Value) -> Option<DateTime<Utc>> {
-    if let Some(ts_str) = val.get("timestamp").and_then(|v| v.as_str()) {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
-            return Some(dt.with_timezone(&Utc));
-        }
-    }
-    if let Some(ts_str) = val.get("created_at").and_then(|v| v.as_str()) {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
-            return Some(dt.with_timezone(&Utc));
-        }
-    }
-    if let Some(millis) = val.get("timestamp").and_then(|v| v.as_i64()) {
-        return DateTime::from_timestamp_millis(millis);
-    }
-    None
-}
-
-fn extract_token_usage(usage_val: &Value) -> TokenUsage {
-    let input_tokens = usage_val
-        .get("input_tokens")
-        .or_else(|| usage_val.get("prompt_tokens"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    let output_tokens = usage_val
-        .get("output_tokens")
-        .or_else(|| usage_val.get("completion_tokens"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    let cache_read_tokens = usage_val
-        .get("cache_read_tokens")
-        .or_else(|| usage_val.get("cached_tokens"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    let cache_creation_tokens = usage_val
-        .get("cache_creation_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    TokenUsage::new(
-        input_tokens,
-        output_tokens,
-        cache_read_tokens,
-        cache_creation_tokens,
+/// Stable across rewrites of the same file (the file is replaced on every save, so neither
+/// size, mtime nor fingerprint can be part of it) and distinct across named sessions that all
+/// call their file `session.json`.
+fn derive_session_id(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("session");
+    format!(
+        "herdr-{stem}-{:08x}",
+        fnv1a_32(path.to_string_lossy().as_bytes())
     )
 }
 
-fn parse_herdr_record(
-    val: &Value,
-    seq: &mut u64,
-    ts: DateTime<Utc>,
-    line_num: usize,
-    last_model: &mut Option<String>,
-) -> Vec<NormalizedEvent> {
-    let mut events = Vec::new();
-    let raw_ref = format!("line:{}", line_num);
-
-    let role = val
-        .get("role")
-        .or_else(|| val.get("agent_role"))
-        .or_else(|| val.get("type"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    // Model invocation / Token extraction
-    if let Some(usage_val) = val
-        .get("usage")
-        .or_else(|| val.get("tokens"))
-        .or_else(|| val.get("token_usage"))
-    {
-        let usage = extract_token_usage(usage_val);
-        if usage.total() > 0 {
-            let model = val
-                .get("model")
-                .or_else(|| val.get("agent_model"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("herdr-agent-model")
-                .to_string();
-
-            if last_model.as_deref() != Some(model.as_str()) {
-                if let Some(prev) = last_model.take() {
-                    *seq += 1;
-                    events.push(
-                        NormalizedEvent::new(
-                            *seq,
-                            ts,
-                            EventPayload::ModelSwitch(ModelSwitch {
-                                from_model: Some(prev),
-                                to_model: model.clone(),
-                                reason: None,
-                            }),
-                        )
-                        .with_raw_ref(&raw_ref),
-                    );
-                }
-                *last_model = Some(model.clone());
-            }
-
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *seq,
-                    ts,
-                    EventPayload::ModelInvocation {
-                        model,
-                        token_usage: usage,
-                        cost_usd: val.get("cost").and_then(|c| c.as_f64()),
-                        latency_ms: val
-                            .get("latency_ms")
-                            .or_else(|| val.get("duration_ms"))
-                            .and_then(|d| d.as_u64()),
-                        effort: None,
-                    },
-                )
-                .with_raw_ref(&raw_ref),
-            );
-        }
-    }
-
-    // Coordination / Agent delegation handling (capturing multi-agent DAG hierarchies)
-    if let Some(delegation_payload) = extract_delegation_payload(val) {
-        *seq += 1;
-        events.push(
-            NormalizedEvent::new(
-                *seq,
-                ts,
-                EventPayload::Custom {
-                    kind: "coordination_delegation".to_string(),
-                    data: delegation_payload,
-                },
-            )
-            .with_raw_ref(&raw_ref),
-        );
-    }
-
-    match role {
-        "user" | "human" | "supervisor" => {
-            let content = extract_herdr_content(val);
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(*seq, ts, EventPayload::UserMessage { content })
-                    .with_raw_ref(&raw_ref),
-            );
-        }
-
-        "assistant" | "worker" | "agent" | "subagent" => {
-            let thinking = val
-                .get("thinking")
-                .or_else(|| val.get("reasoning"))
-                .or_else(|| val.get("plan"))
-                .and_then(|v| v.as_str())
-                .map(String::from);
-
-            let content = extract_herdr_content(val);
-
-            // Extract tool calls
-            if let Some(tools) = val
-                .get("tool_calls")
-                .or_else(|| val.get("actions"))
-                .and_then(|v| v.as_array())
-            {
-                for tc in tools {
-                    let id = tc.get("id").and_then(|v| v.as_str()).map(String::from);
-                    let name = tc
-                        .get("name")
-                        .or_else(|| tc.get("tool"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    let args = tc
-                        .get("arguments")
-                        .or_else(|| tc.get("parameters"))
-                        .cloned()
-                        .unwrap_or(Value::Null);
-
-                    *seq += 1;
-                    events.push(
-                        NormalizedEvent::new(
-                            *seq,
-                            ts,
-                            EventPayload::ToolCall(ToolCall {
-                                id: id.clone(),
-                                name: name.clone(),
-                                arguments: args.clone(),
-                            }),
-                        )
-                        .with_raw_ref(&raw_ref),
-                    );
-
-                    process_specific_herdr_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
-                }
-            }
-
-            if !content.is_empty() || thinking.is_some() {
-                *seq += 1;
-                events.push(
-                    NormalizedEvent::new(
-                        *seq,
-                        ts,
-                        EventPayload::AssistantMessage { content, thinking },
-                    )
-                    .with_raw_ref(&raw_ref),
-                );
-            }
-        }
-
-        "tool_call" | "action" => {
-            let id = val.get("id").and_then(|v| v.as_str()).map(String::from);
-            let name = val
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let args = val.get("arguments").cloned().unwrap_or(Value::Null);
-
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *seq,
-                    ts,
-                    EventPayload::ToolCall(ToolCall {
-                        id,
-                        name: name.clone(),
-                        arguments: args.clone(),
-                    }),
-                )
-                .with_raw_ref(&raw_ref),
-            );
-
-            process_specific_herdr_tool_call(&name, &args, seq, ts, &raw_ref, &mut events);
-        }
-
-        "tool_result" | "action_result" => {
-            let call_id = val
-                .get("tool_call_id")
-                .or_else(|| val.get("call_id"))
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            let is_error = val
-                .get("is_error")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let output = val
-                .get("output")
-                .or_else(|| val.get("content"))
-                .cloned()
-                .unwrap_or(Value::Null);
-
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *seq,
-                    ts,
-                    EventPayload::ToolResult(ToolResult {
-                        call_id,
-                        name: val.get("name").and_then(|v| v.as_str()).map(String::from),
-                        output: output.clone(),
-                        is_error,
-                    }),
-                )
-                .with_raw_ref(&raw_ref),
-            );
-
-            if let Some(out_str) = output.as_str() {
-                if out_str.contains("test result: ok.") || out_str.contains("PASSED") {
-                    *seq += 1;
-                    events.push(
-                        NormalizedEvent::new(
-                            *seq,
-                            ts,
-                            EventPayload::OutcomeEvidence(OutcomeEvidence {
-                                kind: OutcomeKind::TestOrBuildPassed,
-                                summary: "Test suite executed successfully in Herdr agent"
-                                    .to_string(),
-                                confidence: 0.9,
-                            }),
-                        )
-                        .with_raw_ref(&raw_ref),
-                    );
-                }
-            }
-        }
-
-        "error" => {
-            let message = val
-                .get("message")
-                .or_else(|| val.get("error"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("Herdr coordination error")
-                .to_string();
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *seq,
-                    ts,
-                    EventPayload::Error {
-                        message,
-                        is_recovered: false,
-                    },
-                )
-                .with_raw_ref(&raw_ref),
-            );
-        }
-
-        _ => {
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *seq,
-                    ts,
-                    EventPayload::Custom {
-                        kind: role.to_string(),
-                        data: val.clone(),
-                    },
-                )
-                .with_raw_ref(&raw_ref),
-            );
-        }
-    }
-
-    events
+fn fnv1a_32(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0x811c_9dc5u32, |h, b| {
+        (h ^ u32::from(*b)).wrapping_mul(0x0100_0193)
+    })
 }
 
-fn extract_delegation_payload(val: &Value) -> Option<Value> {
-    let delegation_obj = val
-        .get("delegation")
-        .or_else(|| val.get("handoff"))
-        .or_else(|| val.get("subagent_delegation"));
-
-    let parent_id = val
-        .get("parent_agent_id")
-        .or_else(|| val.get("parent_id"))
-        .or_else(|| val.get("parent"))
-        .or_else(|| val.get("caller_id"))
-        .or_else(|| val.get("caller"))
-        .or_else(|| val.get("supervisor_id"))
-        .or_else(|| val.get("from_agent"))
-        .or_else(|| val.get("from"))
-        .or_else(|| {
-            delegation_obj.and_then(|d| {
-                d.get("parent_agent_id")
-                    .or_else(|| d.get("parent_id"))
-                    .or_else(|| d.get("parent"))
-                    .or_else(|| d.get("caller_id"))
-                    .or_else(|| d.get("caller"))
-                    .or_else(|| d.get("from"))
-            })
-        })
-        .and_then(|v| v.as_str());
-
-    let child_id = val
-        .get("child_agent_id")
-        .or_else(|| val.get("subagent_id"))
-        .or_else(|| val.get("child_id"))
-        .or_else(|| val.get("subagent"))
-        .or_else(|| val.get("worker_id"))
-        .or_else(|| val.get("to_agent"))
-        .or_else(|| val.get("to"))
-        .or_else(|| {
-            delegation_obj.and_then(|d| {
-                d.get("child_agent_id")
-                    .or_else(|| d.get("subagent_id"))
-                    .or_else(|| d.get("child_id"))
-                    .or_else(|| d.get("subagent"))
-                    .or_else(|| d.get("to"))
-            })
-        })
-        .and_then(|v| v.as_str());
-
-    let delegation_id = val
-        .get("delegation_id")
-        .or_else(|| val.get("task_id"))
-        .or_else(|| val.get("handoff_id"))
-        .or_else(|| {
-            delegation_obj.and_then(|d| {
-                d.get("delegation_id")
-                    .or_else(|| d.get("task_id"))
-                    .or_else(|| d.get("handoff_id"))
-                    .or_else(|| d.get("id"))
-            })
-        })
-        .and_then(|v| v.as_str());
-
-    let task = val
-        .get("task")
-        .or_else(|| {
-            delegation_obj.and_then(|d| {
-                d.get("task")
-                    .or_else(|| d.get("prompt"))
-                    .or_else(|| d.get("instructions"))
-            })
-        })
-        .and_then(|v| v.as_str());
-
-    let depth = val
-        .get("depth")
-        .or_else(|| val.get("dag_level"))
-        .or_else(|| delegation_obj.and_then(|d| d.get("depth").or_else(|| d.get("level"))))
-        .and_then(|v| v.as_u64());
-
-    if parent_id.is_some()
-        || child_id.is_some()
-        || delegation_id.is_some()
-        || delegation_obj.is_some()
-    {
-        let mut map = serde_json::Map::new();
-        if let Some(p) = parent_id {
-            map.insert("parent_agent_id".to_string(), Value::String(p.to_string()));
-        }
-        if let Some(c) = child_id {
-            map.insert("child_agent_id".to_string(), Value::String(c.to_string()));
-        }
-        if let Some(d) = delegation_id {
-            map.insert("delegation_id".to_string(), Value::String(d.to_string()));
-        }
-        if let Some(t) = task {
-            map.insert("task".to_string(), Value::String(t.to_string()));
-        }
-        if let Some(dp) = depth {
-            map.insert("depth".to_string(), Value::Number(dp.into()));
-        }
-        if let Some(d_val) = delegation_obj {
-            map.insert("details".to_string(), d_val.clone());
-        }
-
-        Some(Value::Object(map))
-    } else {
-        None
+fn pane_sort_key(number: &str) -> (u64, String) {
+    match number.parse::<u64>() {
+        Ok(n) => (n, String::new()),
+        Err(_) => (u64::MAX, number.to_string()),
     }
 }
 
-fn process_specific_herdr_tool_call(
-    name: &str,
-    args: &Value,
-    seq: &mut u64,
-    ts: DateTime<Utc>,
-    raw_ref: &str,
-    events: &mut Vec<NormalizedEvent>,
-) {
-    let lower = name.to_lowercase();
-    if lower.contains("subagent")
-        || lower.contains("delegate")
-        || lower.contains("spawn")
-        || lower.contains("worker")
-    {
-        let parent = args
-            .get("parent_agent_id")
-            .or_else(|| args.get("parent_id"))
-            .or_else(|| args.get("caller_id"))
-            .and_then(|v| v.as_str());
-        let child = args
-            .get("child_agent_id")
-            .or_else(|| args.get("subagent_id"))
-            .or_else(|| args.get("child_id"))
-            .or_else(|| args.get("subagent"))
-            .or_else(|| args.get("role"))
-            .or_else(|| args.get("TypeName"))
-            .and_then(|v| v.as_str());
-        let delegation_id = args
-            .get("delegation_id")
-            .or_else(|| args.get("task_id"))
-            .or_else(|| args.get("id"))
-            .and_then(|v| v.as_str());
-        let task = args
-            .get("task")
-            .or_else(|| args.get("prompt"))
-            .or_else(|| args.get("Prompt"))
-            .and_then(|v| v.as_str());
-
-        let mut d_map = serde_json::Map::new();
-        if let Some(p) = parent {
-            d_map.insert("parent_agent_id".to_string(), Value::String(p.to_string()));
-        }
-        if let Some(c) = child {
-            d_map.insert("child_agent_id".to_string(), Value::String(c.to_string()));
-        }
-        if let Some(d) = delegation_id {
-            d_map.insert("delegation_id".to_string(), Value::String(d.to_string()));
-        }
-        if let Some(t) = task {
-            d_map.insert("task".to_string(), Value::String(t.to_string()));
-        }
-        d_map.insert("tool".to_string(), Value::String(name.to_string()));
-        d_map.insert("arguments".to_string(), args.clone());
-
-        *seq += 1;
-        events.push(
-            NormalizedEvent::new(
-                *seq,
-                ts,
-                EventPayload::Custom {
-                    kind: "coordination_delegation".to_string(),
-                    data: Value::Object(d_map),
-                },
-            )
-            .with_raw_ref(raw_ref),
-        );
-    }
-
-    if lower.contains("shell")
-        || lower.contains("bash")
-        || lower.contains("exec")
-        || lower.contains("cmd")
-    {
-        if let Some(cmd) = args
-            .get("command")
-            .or_else(|| args.get("cmd"))
-            .and_then(|v| v.as_str())
-        {
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *seq,
-                    ts,
-                    EventPayload::ShellCommand(ShellCommand {
-                        command: cmd.to_string(),
-                        cwd: args.get("cwd").and_then(|v| v.as_str()).map(String::from),
-                        exit_code: None,
-                        output: None,
-                    }),
-                )
-                .with_raw_ref(raw_ref),
-            );
-        }
-    } else if lower.contains("file")
-        || lower.contains("edit")
-        || lower.contains("write")
-        || lower.contains("patch")
-    {
-        let path = args
-            .get("path")
-            .or_else(|| args.get("file_path"))
-            .or_else(|| args.get("target_file"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        if !path.is_empty() {
-            *seq += 1;
-            events.push(
-                NormalizedEvent::new(
-                    *seq,
-                    ts,
-                    EventPayload::FileAction {
-                        path,
-                        action: FileActionType::Edit,
-                        diff: args
-                            .get("diff")
-                            .or_else(|| args.get("content"))
-                            .or_else(|| args.get("patch"))
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        lines_changed: None,
-                    },
-                )
-                .with_raw_ref(raw_ref),
-            );
-        }
-    }
-}
-
-fn extract_herdr_content(val: &Value) -> String {
-    if let Some(text) = val.get("content").and_then(|v| v.as_str()) {
-        return text.to_string();
-    }
-    if let Some(text) = val.get("message").and_then(|v| v.as_str()) {
-        return text.to_string();
-    }
-    if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
-        return text.to_string();
-    }
-    if let Some(arr) = val.get("content").and_then(|v| v.as_array()) {
-        let mut texts = Vec::new();
-        for item in arr {
-            if let Some(t) = item.get("text").and_then(|v| v.as_str()) {
-                texts.push(t);
-            } else if let Some(s) = item.as_str() {
-                texts.push(s);
-            }
-        }
-        if !texts.is_empty() {
-            return texts.join("\n");
-        }
-    }
-    String::new()
+fn epoch_to_datetime(secs: i64) -> DateTime<Utc> {
+    Utc.timestamp_opt(secs, 0).single().unwrap_or_else(Utc::now)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::{tempdir, NamedTempFile};
+    use std::fs;
+    use tempfile::TempDir;
 
-    #[test]
-    fn test_detect_and_enumerate_herdr() {
-        let temp = tempdir().unwrap();
-        let herdr_dir = temp.path().join(".config").join("herdr").join("sessions");
-        std::fs::create_dir_all(&herdr_dir).unwrap();
+    /// A redacted copy of a real `~/.config/herdr/session.json` from herdr 0.8.2: one
+    /// workspace, one tab, eight panes, every pane running a different agent.
+    const FIXTURE: &str = include_str!("../tests/fixtures/herdr-session-v3.json");
 
-        let session_file = herdr_dir.join("session_001.jsonl");
-        let mut f = File::create(&session_file).unwrap();
-        writeln!(f, "{{\"role\":\"user\",\"content\":\"Coordinate agents\"}}").unwrap();
+    fn write(root: &Path, rel: &str, body: &str) -> PathBuf {
+        let path = root.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, body).unwrap();
+        path
+    }
 
-        let adapter = HerdrAdapter::new();
-        let options = ScanOptions {
-            custom_paths: vec![temp.path().to_path_buf()],
-            force: false,
-            ..Default::default()
-        };
+    fn parse_body(body: &str) -> ParseResult {
+        let temp = TempDir::new().unwrap();
+        let path = write(temp.path(), ".config/herdr/session.json", body);
+        let source = SessionSource::from_path(&path, "herdr").unwrap();
+        HerdrAdapter::new().parse(&source).unwrap()
+    }
 
-        let detection = adapter.detect(&options).unwrap();
-        assert!(detection.is_present);
-
-        let enumerated = adapter.enumerate(&options).unwrap();
-        assert_eq!(enumerated.len(), 1);
-        assert_eq!(enumerated[0].adapter_name, "herdr");
+    fn pane_data(event: &NormalizedEvent) -> &Value {
+        match &event.payload {
+            EventPayload::Custom { kind, data } => {
+                assert_eq!(kind, HerdrAdapter::PANE_EVENT_KIND);
+                data
+            }
+            other => panic!("expected a herdr.pane event, got {other:?}"),
+        }
     }
 
     #[test]
-    fn test_parse_standard_herdr_jsonl() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = r#"
-{"role":"supervisor","timestamp":"2026-08-29T10:00:00Z","content":"Orchestrate swarm tasks"}
-{"role":"worker","timestamp":"2026-08-29T10:00:03Z","model":"herdr-worker-v1","usage":{"input_tokens":300,"output_tokens":100},"delegation":{"subagent":"code_writer","task":"implement module"},"tool_calls":[{"name":"bash","arguments":{"command":"cargo test"}}]}
-{"type":"tool_result","timestamp":"2026-08-29T10:00:06Z","output":"test result: ok. 12 passed; 0 failed"}
-{"role":"worker","timestamp":"2026-08-29T10:00:08Z","content":"All coordination tasks completed."}
-"#;
-        temp.write_all(sample.as_bytes()).unwrap();
-
-        let adapter = HerdrAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
-
+    fn real_shape_session_file_yields_one_event_per_pane() {
+        let result = parse_body(FIXTURE);
         assert_eq!(result.malformed_lines, 0);
-        let trace = result.trace;
-        assert_eq!(trace.adapter, "herdr");
-        assert_eq!(trace.stats.models_used, vec!["herdr-worker-v1".to_string()]);
-        assert_eq!(trace.stats.token_usage.input_tokens, 300);
-        assert_eq!(trace.stats.token_usage.output_tokens, 100);
-        assert_eq!(trace.stats.tool_calls_count, 1);
-        assert_eq!(trace.stats.user_messages_count, 1);
-        assert_eq!(trace.stats.assistant_messages_count, 1);
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(result.trace.events.len(), 8);
+        assert_eq!(result.trace.stats.total_events, 8);
+        assert_eq!(result.trace.stats.token_usage.total(), 0);
+        assert_eq!(result.trace.adapter, "herdr");
+        assert_eq!(result.trace.ended_at, Some(result.trace.started_at));
     }
 
     #[test]
-    fn test_parse_herdr_session_json() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = r#"{
-  "session_id": "herdr-sess-101",
-  "coordination_traces": [
-    {"role": "user", "content": "Start cluster build"},
-    {"role": "agent", "model": "herdr-swarm", "usage": {"input_tokens": 150, "output_tokens": 60}, "content": "Cluster nodes initialized"}
-  ]
-}"#;
-        temp.write_all(sample.as_bytes()).unwrap();
+    fn the_agent_session_id_is_surfaced_as_the_join_key() {
+        let result = parse_body(FIXTURE);
+        let herdr = &result.trace.metadata["herdr"];
+        assert_eq!(herdr["file_version"], 3);
+        assert_eq!(herdr["workspace_count"], 1);
+        assert_eq!(herdr["tab_count"], 1);
+        assert_eq!(herdr["pane_count"], 8);
+        assert_eq!(herdr["agent_pane_count"], 8);
 
-        let adapter = HerdrAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
+        let sessions = herdr["agent_sessions"].as_array().unwrap();
+        let claude = sessions
+            .iter()
+            .find(|s| s["agent"] == "claude" && s["pane"] == "20")
+            .expect("the claude pane");
+        assert_eq!(claude["source"], "herdr:claude");
+        assert_eq!(claude["kind"], "id");
+        assert_eq!(claude["value"], "adec3bdc-0fad-5212-bd43-efb9ebfa648d");
+        assert_eq!(claude["cwd"], "/home/dev/code/acme/agentworth");
+        assert_eq!(claude["label"], "worker-claude");
 
-        let trace = result.trace;
-        assert_eq!(trace.stats.user_messages_count, 1);
-        assert_eq!(trace.stats.assistant_messages_count, 1);
-        assert_eq!(trace.stats.token_usage.total(), 210);
+        let agents: Vec<&str> = sessions
+            .iter()
+            .map(|s| s["agent"].as_str().unwrap())
+            .collect();
+        for expected in ["claude", "codex", "agy", "grok", "cursor"] {
+            assert!(
+                agents.contains(&expected),
+                "missing {expected} in {agents:?}"
+            );
+        }
+
+        assert_eq!(
+            result.trace.metadata["workspace"]["cwd"],
+            "/home/dev/code/acme/engine/.claude/worktrees/architect"
+        );
     }
 
     #[test]
-    fn test_parse_graceful_on_malformed_lines() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = "{\"role\":\"user\",\"content\":\"hello\"}\n{CORRUPT_HERDR_JSON}\n{\"role\":\"agent\",\"content\":\"hi\"}\n";
-        temp.write_all(sample.as_bytes()).unwrap();
-
-        let adapter = HerdrAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
-
-        assert_eq!(result.malformed_lines, 1);
-        assert_eq!(result.trace.stats.user_messages_count, 1);
-        assert_eq!(result.trace.stats.assistant_messages_count, 1);
-    }
-
-    #[test]
-    fn test_parse_herdr_multi_agent_dag_delegation() {
-        let mut temp = NamedTempFile::new().unwrap();
-        let sample = r#"
-{"role":"supervisor","parent_agent_id":"root_coordinator","child_agent_id":"worker_1","delegation_id":"del_100","depth":1,"task":"Spawn indexing workers"}
-{"role":"worker","parent_agent_id":"worker_1","child_agent_id":"leaf_worker_a","delegation_id":"del_101","depth":2,"task":"Index shard A","tool_calls":[{"name":"invoke_subagent","arguments":{"parent_id":"worker_1","subagent_id":"leaf_worker_a","task":"Process shard"}}]}
-"#;
-        temp.write_all(sample.as_bytes()).unwrap();
-
-        let adapter = HerdrAdapter::new();
-        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
-        let result = adapter.parse(&source).expect("parse failed");
-
-        let trace = result.trace;
-        let delegations: Vec<_> = trace
+    fn panes_are_ordered_numerically_and_carry_their_pane_number() {
+        let result = parse_body(FIXTURE);
+        let numbers: Vec<&str> = result
+            .trace
             .events
             .iter()
-            .filter(|e| match &e.payload {
-                EventPayload::Custom { kind, .. } => kind == "coordination_delegation",
-                _ => false,
-            })
+            .map(|e| pane_data(e)["pane"].as_str().unwrap())
             .collect();
+        assert_eq!(numbers, ["12", "14", "15", "18", "20", "22", "25", "33"]);
 
-        // 2 record delegations + 1 tool call delegation = 3 delegation events
-        assert_eq!(delegations.len(), 3);
+        let first = pane_data(&result.trace.events[0]);
+        assert_eq!(first["label"], "partner-claude");
+        assert_eq!(first["managed_agent_kind"], "claude");
+        assert_eq!(first["agent_session"]["agent"], "claude");
+        assert_eq!(first["workspace_id"], "w9");
+        assert_eq!(first["workspace_name"], "fleet");
+        assert_eq!(first["focused"], false);
 
-        if let EventPayload::Custom { data, .. } = &delegations[0].payload {
-            assert_eq!(data.get("parent_agent_id").unwrap(), "root_coordinator");
-            assert_eq!(data.get("child_agent_id").unwrap(), "worker_1");
-            assert_eq!(data.get("delegation_id").unwrap(), "del_100");
-            assert_eq!(data.get("depth").unwrap(), 1);
-        } else {
-            panic!("Expected custom event payload");
-        }
+        let focused: Vec<&str> = result
+            .trace
+            .events
+            .iter()
+            .filter(|e| pane_data(e)["focused"] == true)
+            .map(|e| pane_data(e)["pane"].as_str().unwrap())
+            .collect();
+        assert_eq!(focused, ["25"]);
+        assert_eq!(
+            result.trace.events[0].raw_ref.as_deref(),
+            Some("workspaces[0].tabs[0].panes[12]")
+        );
+    }
+
+    #[test]
+    fn future_version_and_unknown_fields_still_parse_with_a_warning() {
+        let body = r#"{
+          "version": 4, "theme": "dark",
+          "workspaces": [{"id": "w1", "pinned": true, "identity_cwd": "/w",
+            "tabs": [{"panes": {"3": {"cwd": "/w", "label": "shell", "scrollback": 9},
+                                "1": {"cwd": "/w", "agent_session": {"source": "herdr:codex", "agent": "codex", "kind": "handle", "value": "abc", "extra": 1}}}}]}],
+          "active": 0
+        }"#;
+        let result = parse_body(body);
+        assert_eq!(result.malformed_lines, 0);
+        assert_eq!(result.warnings.len(), 1, "{:?}", result.warnings);
+        assert!(result.warnings[0].contains("version 4"));
+        assert_eq!(result.trace.events.len(), 2);
+        let first = pane_data(&result.trace.events[0]);
+        assert_eq!(first["pane"], "1");
+        assert_eq!(first["agent_session"]["kind"], "other");
+        assert_eq!(result.trace.metadata["herdr"]["agent_pane_count"], 1);
+        assert_eq!(result.trace.metadata["workspace"]["cwd"], "/w");
+    }
+
+    #[test]
+    fn a_pane_that_fails_to_decode_does_not_sink_the_file() {
+        let body = r#"{"version": 3, "workspaces": [{"id": "w1", "tabs": [{"panes": {
+            "1": {"cwd": "/w", "label": "ok"},
+            "2": "not an object",
+            "3": {"cwd": "/w", "agent_session": {"source": "herdr:claude"}}
+        }}]}]}"#;
+        let result = parse_body(body);
+        assert_eq!(result.trace.events.len(), 1);
+        assert_eq!(result.malformed_lines, 2);
+        assert_eq!(result.warnings.len(), 2);
+        assert!(result.warnings[0].contains("panes[2]"));
+        assert!(result.warnings[1].contains("panes[3]"));
+    }
+
+    #[test]
+    fn foreign_json_is_a_warning_not_a_session() {
+        let result = parse_body(r#"{"plugins": [], "version": 3}"#);
+        assert!(result.trace.events.is_empty());
+        assert_eq!(result.malformed_lines, 0);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("workspaces"));
+
+        let result = parse_body(r#"[1, 2, 3]"#);
+        assert!(result.trace.events.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+    }
+
+    #[test]
+    fn invalid_json_counts_as_malformed() {
+        let result = parse_body("{\"version\": 3, \"workspaces\": [");
+        assert!(result.trace.events.is_empty());
+        assert_eq!(result.malformed_lines, 1);
+        assert_eq!(result.warnings.len(), 1);
+    }
+
+    #[test]
+    fn detect_and_enumerate_find_the_session_file_and_skip_logs_and_config() {
+        let temp = TempDir::new().unwrap();
+        let session = write(temp.path(), ".config/herdr/session.json", FIXTURE);
+        write(temp.path(), ".config/herdr/config.toml", "[keys]\n");
+        write(
+            temp.path(),
+            ".config/herdr/herdr-server.log",
+            "2026-09-07T00:00:00Z INFO x\n",
+        );
+        write(temp.path(), ".config/herdr/herdr-client.log", "\n");
+        write(temp.path(), ".config/herdr/.plugins.lock", "");
+        write(temp.path(), ".config/herdr/plugins/registry.json", "{}");
+
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            ..Default::default()
+        };
+        let adapter = HerdrAdapter::new();
+        let detected = adapter.detect(&options).unwrap();
+        assert!(detected.is_present);
+        assert_eq!(detected.adapter_name, "herdr");
+
+        let sources = adapter.enumerate(&options).unwrap();
+        assert_eq!(sources.len(), 1, "{sources:?}");
+        assert_eq!(sources[0].path, session);
+        assert_eq!(sources[0].adapter_name, "herdr");
+    }
+
+    #[test]
+    fn named_sessions_under_a_sessions_dir_are_candidates_too() {
+        assert!(is_candidate_herdr_file(Path::new(
+            "/h/.config/herdr/session.json"
+        )));
+        assert!(is_candidate_herdr_file(Path::new(
+            "/h/.config/herdr/session-lab.json"
+        )));
+        assert!(is_candidate_herdr_file(Path::new(
+            "/h/.config/herdr/sessions/lab.json"
+        )));
+        assert!(!is_candidate_herdr_file(Path::new(
+            "/h/.config/herdr/herdr-server.log"
+        )));
+        assert!(!is_candidate_herdr_file(Path::new(
+            "/h/.config/herdr/config.toml"
+        )));
+        assert!(!is_candidate_herdr_file(Path::new(
+            "/h/.config/herdr/plugins/registry.json"
+        )));
+        assert!(!is_candidate_herdr_file(Path::new(
+            "/h/.config/other/session.json"
+        )));
+    }
+
+    #[test]
+    fn session_id_is_stable_across_rewrites_and_distinct_across_paths() {
+        let temp = TempDir::new().unwrap();
+        let path = write(temp.path(), ".config/herdr/session.json", FIXTURE);
+        let first = SessionSource::from_path(&path, "herdr").unwrap();
+        let first_id = HerdrAdapter::new().parse(&first).unwrap().trace.session_id;
+
+        fs::write(&path, r#"{"version": 3, "workspaces": []}"#).unwrap();
+        let second = SessionSource::from_path(&path, "herdr").unwrap();
+        let second_id = HerdrAdapter::new().parse(&second).unwrap().trace.session_id;
+        assert_eq!(first_id, second_id);
+        assert!(first_id.starts_with("herdr-session-"), "{first_id}");
+
+        let other = write(temp.path(), ".config/herdr/sessions/lab.json", FIXTURE);
+        let other = SessionSource::from_path(&other, "herdr").unwrap();
+        let other_id = HerdrAdapter::new().parse(&other).unwrap().trace.session_id;
+        assert_ne!(first_id, other_id);
     }
 }

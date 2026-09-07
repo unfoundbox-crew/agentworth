@@ -313,6 +313,45 @@ done
 pretty_dir="$(printf '%s' "$INSTALL_DIR" | sed "s|^${HOME}|~|")"
 say '*' installed "$installed in $pretty_dir"
 
+# -----------------------------------------------------------------------------
+# First run
+# -----------------------------------------------------------------------------
+# The release binaries are ad-hoc signed by the linker on the build runner: no Apple Developer
+# ID, no notarization. curl sets no quarantine flag, so a fresh install runs. A copy that did
+# pick the flag up (a browser download, a sync tool, a copy from another Mac) is killed on exec
+# by Gatekeeper with no message at all: `zsh: killed`, exit 137. So: drop the flag from the
+# files this script just wrote, run the binary once, and if it dies say what to do rather than
+# leave the user to decode a SIGKILL.
+
+if [ "$os" = "Darwin" ] && command -v xattr >/dev/null 2>&1; then
+  for bin in agentworth archie agwt; do
+    if [ -f "$INSTALL_DIR/$bin" ]; then
+      xattr -d com.apple.quarantine "$INSTALL_DIR/$bin" 2>/dev/null || true
+    fi
+  done
+fi
+
+if [ -x "$INSTALL_DIR/archie" ]; then
+  first_bin="$INSTALL_DIR/archie"
+else
+  first_bin="$INSTALL_DIR/$(printf '%s' "$installed" | sed 's/,.*//')"
+fi
+run_rc=0
+"$first_bin" --version >/dev/null 2>&1 || run_rc=$?
+if [ "$run_rc" -ne 0 ]; then
+  if [ "$os" = "Darwin" ] && [ "$run_rc" -ge 126 ]; then
+    printf '\n'
+    printf '  macOS would not run %s (exit %s).\n' "$first_bin" "$run_rc"
+    printf '  The binary is ad-hoc signed and not notarized, so Gatekeeper kills it on exec\n'
+    printf '  when the file carries a quarantine flag. Either of these clears it:\n'
+    printf '    xattr -d com.apple.quarantine %s/agentworth %s/archie %s/agwt\n' "$INSTALL_DIR" "$INSTALL_DIR" "$INSTALL_DIR"
+    printf '    System Settings > Privacy & Security > "Open Anyway", then run it again\n'
+    printf '\n'
+    exit 1
+  fi
+  warn "$first_bin --version exited $run_rc"
+fi
+
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *)

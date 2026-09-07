@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The `[spend]` example in `crates/loop/src/policy.rs`'s doc comment dropped its token number** — `[spend]` now ships commented out, pointing at `archie policy init`. A 20M-token example would have halted this machine's own 728M-token primary sessions dozens of times; the rule stands, the number is now yours to set from your own history.
 
+### Fixed
+
+- **The Herdr adapter reads the file Herdr actually writes.** It used to look for `coordination_traces`, `parent_agent_id` and `delegation_id`, fields no Herdr file has ever carried, so the real `~/.config/herdr/session.json` parsed to nothing while five fixture tests stayed green. It now decodes the v3 shape (`workspaces[].tabs[].panes{}`) with typed serde structs: one `herdr.pane` event per pane, with the pane's cwd, label, agent and, the part that matters, `agent_session.value`, the agent's own session id, which is the stable join from a pane to the Claude Code / Codex / Gemini trace that ran in it. Unknown fields are ignored, a newer `version` is a warning, and one bad pane no longer sinks the file. `PARSER_VERSION` 2, so an incremental scan re-reads what it had. Capabilities report none of the seven: a snapshot carries no prompts or tokens.
+- **`install.sh` runs the binary once and explains a Gatekeeper kill.** The macOS binaries are ad-hoc signed and not notarized. A fresh `curl | sh` install runs fine (measured on macOS 27: no quarantine flag, valid signature), but a copy that picks the flag up is killed on exec with nothing but `zsh: killed`. The script now drops the flag from the files it wrote, runs `archie --version`, and on a signal exit prints the `xattr -d` line and the System Settings path instead of ending on "installed". README carries the same note.
+- **`archie doctor` and `agent show` name Herdr's real directory**, `~/.config/herdr/`, not `~/.herdr/`.
+
 ## [0.1.22] - 2026-09-06
 
 ### Added

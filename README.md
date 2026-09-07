@@ -63,6 +63,13 @@ npx -y agentworth@latest scan
 | **NPX (Zero Install)** | `npx -y agentworth@latest scan` | Instant runner that executes the native binary on demand. |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs pre-built native binary to `~/.local/bin`. |
 
+macOS note: the release binaries are ad-hoc signed and not notarized (no Apple Developer
+ID). Installed through the script they run as-is. If a copy ever dies with `zsh: killed`
+(exit 137), the file picked up a quarantine flag on the way in; clear it with
+`xattr -d com.apple.quarantine ~/.local/bin/archie` or approve it once under System
+Settings > Privacy & Security. The script runs the binary once after installing and prints
+exactly that if it happens.
+
 The standalone script draws its own progress, so a 22 MB download over a slow link no
 longer looks like a hang:
 

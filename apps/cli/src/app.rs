@@ -4437,7 +4437,7 @@ fn adapter_source_root(name: &str) -> &'static str {
         "gemini" => "~/.gemini/ / antigravity",
         "goose" => "~/.config/goose/sessions/",
         "grok" => "~/.grok/ / ~/.xai/",
-        "herdr" => "~/.herdr/",
+        "herdr" => "~/.config/herdr/",
         "hermes" => "~/.hermes/",
         "kimi" => "~/.kimi/",
         "manus" => "~/.manus/",
