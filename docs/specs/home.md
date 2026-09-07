@@ -73,3 +73,13 @@ I'm paying it the most"); the ACI thesis and the Unix-shape primitive board
 came the same day; the fleet ran on herdr with a chief of staff relaying, and
 the recurring failure was the relay paraphrasing or forgetting. Home exists so
 the human stops relaying through anyone.
+
+## Testing is cheap, by rule (Saurabh, 2026-09-07)
+
+Never probe, ping, or prompt a partner's pane to test the gateway. A frontier
+session at hundreds of thousands of tokens of context is the most expensive
+thing on the machine to poke, and a ping-pong through it costs cache and
+attention that a test has no right to. Probes use a dedicated herdr workspace
+labelled `probe` with a Haiku pane started for that purpose, and nothing else.
+The first live probe on 2026-09-07 broke this rule once; this section is why it
+does not happen again.
