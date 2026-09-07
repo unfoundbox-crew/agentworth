@@ -108,6 +108,15 @@ jobs:
         working-directory: apps/dashboard
         run: npm ci && npm run build
 
+      # `npm run build` already runs `tsc` (see apps/dashboard/package.json), so this is
+      # redundant with the step above in practice -- it's kept as its own named step so a
+      # Rust/TS API contract drift (apps/dashboard/src/types/contract.test.ts, see
+      # apps/dashboard/README.md) fails CI with an unambiguous label instead of buried inside
+      # a generic "Build dashboard" failure.
+      - name: Dashboard typecheck (Rust/TS API contract)
+        working-directory: apps/dashboard
+        run: npm run typecheck
+
       - name: Assert the dashboard will be embedded
         run: |
           test -f apps/dashboard/dist/index.html \

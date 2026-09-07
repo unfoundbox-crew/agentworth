@@ -1,0 +1,58 @@
+{
+  "longest_recovery_loop": {
+    "adapter": "claude_code",
+    "corrective_actions_count": 6,
+    "duration_seconds": 600.0,
+    "failure_sequence": 12,
+    "failure_summary": "compile error",
+    "recovery_sequence": 40,
+    "recovery_summary": "fixed missing import",
+    "session_id": "sess_fixture_0003",
+    "steps_to_recover": 28
+  },
+  "most_expensive_unsolved": {
+    "adapter": "codex",
+    "duration_seconds": 12400.0,
+    "error_count": 4,
+    "models_used": [
+      "gpt-5-codex"
+    ],
+    "outcome_summary": "unresolved after 3 attempts",
+    "prompt": "Migrate the auth middleware.",
+    "session_id": "sess_fixture_0002",
+    "total_tokens": 900000
+  },
+  "most_frequent_model_switches": {
+    "adapter": "gemini",
+    "models_sequence": [
+      "gemini-3.7-flash",
+      "gemini-3.8-flash-high",
+      "gemini-3.7-flash"
+    ],
+    "session_id": "sess_fixture_0004",
+    "switch_count": 3,
+    "total_tokens": 210000,
+    "unique_models": [
+      "gemini-3.7-flash",
+      "gemini-3.8-flash-high"
+    ]
+  },
+  "token_carbon_dating": {
+    "adapter_tokens": {
+      "claude_code": 9000000,
+      "codex": 3000000
+    },
+    "average_tokens_per_session": 45000,
+    "earliest_session_at": "2026-06-01T00:00:00Z",
+    "latest_session_at": "2026-09-07T00:00:00Z",
+    "timeline": [
+      {
+        "period": "2026-09",
+        "sessions_count": 60,
+        "tokens": 3000000
+      }
+    ],
+    "total_days_active": 61,
+    "total_tokens": 12000000
+  }
+}

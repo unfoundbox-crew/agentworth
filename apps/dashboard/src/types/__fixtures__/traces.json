@@ -1,0 +1,21 @@
+[
+  {
+    "adapter": "claude_code",
+    "compaction_count": 0,
+    "compaction_tokens_dropped": 0,
+    "composite_score": 0.81,
+    "duration_seconds": 482.5,
+    "models_used": [
+      "claude-sonnet-5"
+    ],
+    "primary_outcome": "commit_observed",
+    "prompt_preview": "Fix the dashboard coverage matrix.",
+    "session_id": "sess_fixture_0001",
+    "source_mtime_epoch_secs": 1772000000,
+    "source_path": "/Users/example/.claude/projects/demo/sess_fixture_0001.jsonl",
+    "started_at": "2026-09-01T10:00:00Z",
+    "tool_calls_count": 9,
+    "total_events": 42,
+    "total_tokens": 24600
+  }
+]

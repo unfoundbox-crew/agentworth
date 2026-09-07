@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SessionSummary, UsageRollupResponse } from '../types';
+import type { SessionSummary, UsageResponse } from '../types';
 
 /** How recently a session file must have been written to count as probably running. */
 export const RUNNING_WINDOW_SECS = 5 * 60;
@@ -45,6 +45,12 @@ export interface RunningSession {
   ageSecs: number;
 }
 
+/** The strip's own summary of "today", derived from `UsageResponse.daily`. */
+export interface TodaySpend {
+  total_cost_usd: number;
+  total_tokens: number;
+}
+
 export interface FleetState {
   /** Sessions whose file was written inside the window, newest write first. */
   running: RunningSession[];
@@ -55,10 +61,32 @@ export interface FleetState {
    */
   mtimeAvailable: boolean;
   indexedCount: number;
-  spend: Maybe<UsageRollupResponse>;
+  spend: Maybe<TodaySpend>;
   loading: boolean;
   /** Set when the most recent refresh failed but earlier data is still shown. */
   staleSince: number | null;
+}
+
+/**
+ * `GET /api/usage`'s `daily` rows are grouped by `(period, adapter)`, one row per adapter per
+ * calendar day, ordered most-recent period first (`ORDER BY period DESC`) -- see
+ * `UsagePeriodSummary` in `../types`. "Today" is the most recent period actually present
+ * (there may be no row at all for the literal current date if nothing ran today), summed
+ * across every adapter row that shares it. `null` means the response carried no daily rows
+ * at all, which the caller reports as unavailable rather than as a zero.
+ */
+function summarizeLatestDay(usage: UsageResponse): TodaySpend | null {
+  const daily = usage.daily;
+  if (!Array.isArray(daily) || daily.length === 0) return null;
+  const latestPeriod = daily[0].period;
+  const rows = daily.filter((row) => row.period === latestPeriod);
+  return rows.reduce(
+    (acc, row) => ({
+      total_cost_usd: acc.total_cost_usd + row.estimated_cost_usd,
+      total_tokens: acc.total_tokens + row.total_tokens,
+    }),
+    { total_cost_usd: 0, total_tokens: 0 }
+  );
 }
 
 /**
@@ -82,8 +110,17 @@ export function useFleet(enabled: boolean): FleetState {
   const poll = useCallback(async () => {
     const [traces, usage] = await Promise.all([
       fetchJson<SessionSummary[]>(`/api/traces?limit=${POLL_LIMIT}`),
-      fetchJson<UsageRollupResponse>('/api/usage?period=day'),
+      // The route ignores any `?period=` query string and always returns all three
+      // rollups -- see `UsageResponse` in apps/cli/src/server/routes.rs.
+      fetchJson<UsageResponse>('/api/usage'),
     ]);
+    const spend: Maybe<TodaySpend> =
+      usage.state === 'ok'
+        ? (() => {
+            const today = summarizeLatestDay(usage.value);
+            return today === null ? UNAVAILABLE : { state: 'ok', value: today };
+          })()
+        : UNAVAILABLE;
 
     setState((prev) => {
       if (traces.state !== 'ok') {
@@ -105,7 +142,7 @@ export function useFleet(enabled: boolean): FleetState {
         running,
         mtimeAvailable: withMtime.length > 0,
         indexedCount: rows.length,
-        spend: usage,
+        spend,
         loading: false,
         staleSince: null,
       };

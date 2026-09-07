@@ -1,0 +1,30 @@
+{
+  "aggregate_stats": {
+    "first_session_at": "2026-06-01T00:00:00Z",
+    "last_session_at": "2026-09-07T00:00:00Z",
+    "models_usage_count": {},
+    "sessions_by_adapter": {
+      "claude_code": 400,
+      "codex": 112
+    },
+    "token_usage": {
+      "cache_creation_tokens": 1200,
+      "cache_read_tokens": 8000,
+      "input_tokens": 12000,
+      "output_tokens": 3400
+    },
+    "tools_usage_count": {},
+    "total_events": 18400,
+    "total_sessions": 512,
+    "verified_outcomes_count": 88
+  },
+  "backfilled_sessions": 0,
+  "discovered_sources": 120,
+  "errors_encountered": 0,
+  "reparsed_sessions": 0,
+  "scanned_sessions": 4,
+  "skipped_unchanged": 116,
+  "sources_unavailable": 0,
+  "stub_sessions_removed": 0,
+  "total_indexed_sessions": 512
+}
