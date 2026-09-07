@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentworth_core::Scanner;
+use chrono::{DateTime, Utc};
 use agentworth_storage::Storage;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -96,6 +97,14 @@ struct HomeRuntime {
     /// pane off the last one for every rider after that, so seating five riders on one
     /// direction opens one workspace, not five.
     area_workspaces: HashMap<String, (String, String)>,
+    /// Persona id -> the moment `dispatch_start_rider` seated it (right before its goal prompt
+    /// was sent). Read once, by `transcript_feed_loop`, the first time it sees that persona's
+    /// session: it baselines the feed's cursor to this moment (`transcript_feed::seed_cursor_before`)
+    /// instead of the trace's current end, so a reply already on disk by the time registration
+    /// catches up (PR #159's reported gap) is still treated as new activity rather than
+    /// swallowed by the baseline. Never cleared -- a persona id is seated at most once in this
+    /// runtime's lifetime (a fresh `herdr agent start` name), so there is nothing to evict.
+    seat_times: HashMap<String, DateTime<Utc>>,
 }
 
 impl HomeRuntime {
@@ -126,7 +135,17 @@ impl HomeRuntime {
             source_path_to_pane: HashMap::new(),
             blocked_prompts: HashMap::new(),
             area_workspaces: HashMap::new(),
+            seat_times: HashMap::new(),
         }
+    }
+
+    /// Records the moment `persona_id` was seated -- see `seat_times`'s doc comment.
+    fn record_seat_time(&mut self, persona_id: &str, at: DateTime<Utc>) {
+        self.seat_times.insert(persona_id.to_string(), at);
+    }
+
+    fn seat_time(&self, persona_id: &str) -> Option<DateTime<Utc>> {
+        self.seat_times.get(persona_id).copied()
     }
 
     /// The pane running `session_id` (whose indexed source lives at `source_path`), preferring
@@ -240,14 +259,24 @@ impl HomeRuntime {
         (new_pane_ids, newly_blocked)
     }
 
-    /// Applies an observed `(presence, title)` for `pane_id` and returns the frame to broadcast
-    /// -- or `None` if nothing actually changed. The `None` case matters now that presence can
-    /// arrive from `pane_updated` (fires on every pane change: scroll, tokens, title, agent
-    /// status -- 1,818 of them in 25s in the live probe that found this), not just
+    /// Applies an observed `(presence, title, agent_session)` for `pane_id` and returns the
+    /// frame to broadcast -- or `None` if nothing actually changed. The `None` case matters now
+    /// that presence can arrive from `pane_updated` (fires on every pane change: scroll, tokens,
+    /// title, agent status -- 1,818 of them in 25s in the live probe that found this), not just
     /// `pane_agent_status_changed` (which only ever fires on a real transition): without this
     /// check, every `pane_updated` tick for an unrelated field would still bump `revision` and
     /// broadcast a `presence` frame, and the client would see noise instead of "the client only
     /// sees changes".
+    ///
+    /// `agent_session`, when present, is recorded into `session_id_to_pane`/`source_path_to_pane`
+    /// unconditionally, before the "nothing changed" early return below -- this is what lets a
+    /// freshly-seated `start_rider` pane join to its harness session the moment herdr's own
+    /// `pane_updated` stream reports one, rather than waiting for the next 5s snapshot poll
+    /// (`refresh_from_agents` is the only other writer of these two maps). The transcript feed
+    /// re-resolves a session's pane fresh on every live-tail event (`pane_for_session`), so
+    /// updating the map here is the whole "try the join again" -- there is no separate retry
+    /// loop to drive.
+    ///
     /// Returns the broadcast frame (or `None` if nothing changed, see the doc comment above)
     /// plus, when this call is the transition *into* `blocked`, that persona's `target_ref` --
     /// the caller uses it to spawn a `herdr agent read` fetch for `set_blocked_prompt` without
@@ -258,7 +287,18 @@ impl HomeRuntime {
         pane_id: &str,
         presence: Presence,
         title: Option<String>,
+        agent_session: Option<&AgentSessionInfo>,
     ) -> Option<(ServerFrame, Option<(String, String)>)> {
+        if let Some(session) = agent_session {
+            match session.kind {
+                AgentSessionRefKind::Id => {
+                    self.session_id_to_pane.insert(session.value.clone(), pane_id.to_string());
+                }
+                AgentSessionRefKind::Path => {
+                    self.source_path_to_pane.insert(session.value.clone(), pane_id.to_string());
+                }
+            }
+        }
         let persona_id = self.pane_to_persona.get(pane_id)?.clone();
         let persona = self.personas.get_mut(&persona_id)?;
         let title_changed = title.as_deref().is_some_and(|t| t != persona.title);
@@ -490,15 +530,37 @@ async fn transcript_feed_loop(
             Err(broadcast::error::RecvError::Lagged(_)) => continue,
             Err(broadcast::error::RecvError::Closed) => return,
         };
-        if event.adapter.is_none() {
+        let Some(adapter_name) = event.adapter.as_deref() else {
             continue;
-        }
+        };
         let path_str = event.path.to_string_lossy().to_string();
-        let Ok(Some(session_id)) = storage.session_id_for_source_path(&path_str) else {
-            // Not indexed yet -- a brand-new session file, or one the periodic scanner
-            // hasn't reached. The transcript feed only follows sessions already in the
-            // index; picking up a session on its very first write is left to the scanner.
-            continue;
+        let session_id = match storage.session_id_for_source_path(&path_str) {
+            Ok(Some(session_id)) => session_id,
+            Ok(None) => {
+                // Not indexed yet -- most often a brand-new session file, e.g. the harness a
+                // freshly-seated `start_rider` just started, whose first transcript write can
+                // land before the next periodic `archie scan` reaches it (PR #159's reported
+                // gap: a rider's "pong" never left its pane because of exactly this). Register
+                // just this one source through the adapter that already claimed it, the same
+                // parse/detect/score/upsert sequence a full scan runs, scoped to one file so
+                // this stays off the hot path of a real rescan.
+                match scanner.scan_one_source(adapter_name, &event.path) {
+                    Ok(Some(session_id)) => session_id,
+                    // Adapter doesn't recognize this path, or the file has no real content
+                    // yet (e.g. its first bytes with no completed turn) -- nothing to feed.
+                    Ok(None) => continue,
+                    Err(e) => {
+                        tracing::warn!(
+                            "home gateway: could not register new session at {path_str}: {e:#}"
+                        );
+                        continue;
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("home gateway: session lookup failed for {path_str}: {e:#}");
+                continue;
+            }
         };
 
         let trace = match scanner.load_trace(&session_id) {
@@ -531,12 +593,23 @@ async fn transcript_feed_loop(
         let output = {
             let mut rt = runtime.lock().await;
             let is_first_sighting = !rt.session_cursors.contains_key(&session_id);
+            let seat_time = rt.seat_time(&from_persona);
             let cursor = rt.session_cursors.entry(session_id.clone()).or_default();
             if is_first_sighting {
-                // Baseline to the trace's current end instead of zero, so a session already
-                // hundreds of turns deep doesn't replay its entire history as a burst the
-                // moment the feed starts watching it -- only activity from here on is a frame.
-                transcript_feed::seed_cursor(&trace, cursor);
+                match seat_time {
+                    // A rider `dispatch_start_rider` seated: baseline only against events
+                    // before that moment, so a reply already on disk by the time this feed's
+                    // registration path (`Scanner::scan_one_source`) catches up is still new
+                    // activity rather than swallowed by the baseline -- see `seed_cursor_before`.
+                    Some(seat_time) => transcript_feed::seed_cursor_before(&trace, cursor, seat_time),
+                    // No recorded seat time (a session this runtime did not seat itself, e.g.
+                    // one the human was already running before `archie home` started watching
+                    // it): baseline to the trace's current end instead of zero, so a session
+                    // already hundreds of turns deep doesn't replay its entire history as a
+                    // burst the moment the feed starts watching it -- only activity from here
+                    // on is a frame.
+                    None => transcript_feed::seed_cursor(&trace, cursor),
+                }
             }
             transcript_feed::feed_from_trace(&trace, cursor, &space_id, &from_persona)
         };
@@ -687,7 +760,12 @@ async fn run_subscription(
                     );
                     let outcome = {
                         let mut rt = runtime.lock().await;
-                        rt.apply_status_change(&frame.pane_id, frame.agent_status, frame.title)
+                        rt.apply_status_change(
+                            &frame.pane_id,
+                            frame.agent_status,
+                            frame.title,
+                            frame.agent_session.as_ref(),
+                        )
                     };
                     if let Some((server_frame, fetch)) = outcome {
                         let _ = tx.send(server_frame);
@@ -747,13 +825,17 @@ struct StatusChangedFrame {
     pane_id: String,
     agent_status: Presence,
     title: Option<String>,
+    /// Only ever populated from the `pane_updated` shape -- see the doc comment below. `None`
+    /// does not mean "herdr has no session for this pane," just that this particular event
+    /// didn't carry one (or was the `pane_agent_status_changed` shape, which doesn't).
+    agent_session: Option<AgentSessionInfo>,
 }
 
 /// Parses one line of herdr's `events.subscribe` stream. Handles both event shapes: a
 /// `pane_agent_status_changed` envelope carries its fields flat on `data`; a `pane_updated`
 /// envelope nests the whole `PaneInfo` under `data.pane` (herdr's own JSON schema, `herdr api
-/// schema --json`, `$defs.PaneInfo`) -- this reads `pane_id`, `agent_status`, and
-/// `terminal_title_stripped` off of that nested object instead.
+/// schema --json`, `$defs.PaneInfo`) -- this reads `pane_id`, `agent_status`,
+/// `terminal_title_stripped`, and `agent_session` off of that nested object instead.
 ///
 /// The `event` field's own notation is not consistent between the two: a live capture on
 /// 2026-09-07 against a real fleet found `"event":"pane_updated"` (underscored, matching the
@@ -771,6 +853,7 @@ fn parse_subscription_event(line: &str) -> Option<StatusChangedFrame> {
             pane_id: data.get("pane_id")?.as_str()?.to_string(),
             agent_status: serde_json::from_value(data.get("agent_status")?.clone()).ok()?,
             title: data.get("title").and_then(|v| v.as_str()).map(String::from),
+            agent_session: None,
         }),
         "pane_updated" => {
             let pane = data.get("pane")?;
@@ -781,6 +864,9 @@ fn parse_subscription_event(line: &str) -> Option<StatusChangedFrame> {
                     .get("terminal_title_stripped")
                     .and_then(|v| v.as_str())
                     .map(String::from),
+                agent_session: pane
+                    .get("agent_session")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok()),
             })
         }
         _ => None,
@@ -1408,6 +1494,16 @@ async fn dispatch_start_rider(
         if let Ok(direction) = directions::to_wire(&home.storage, &row) {
             let _ = home.tx.send(ServerFrame::Direction { direction });
         }
+    }
+
+    // Recorded before the goal is sent, not after `herdr agent start` returns above: the seat
+    // time is what `transcript_feed_loop` baselines the feed's cursor to on first sighting of
+    // this rider's session (`seed_cursor_before`), so it must not be later than the goal
+    // prompt itself -- otherwise the rider's very first reply could carry a timestamp before
+    // the recorded seat time and get baselined away, reproducing the exact bug this lane fixes.
+    {
+        let mut rt = home.runtime.lock().await;
+        rt.record_seat_time(&persona_id, Utc::now());
     }
 
     // The goal, verbatim, unprefixed, as the rider's first prompt.
@@ -2052,7 +2148,7 @@ mod tests {
         let mut runtime = HomeRuntime::new(HashMap::new());
         runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("harvey"), Presence::Idle)]);
         let (frame, fetch) = runtime
-            .apply_status_change("w1:pA", Presence::Working, Some("reviewing #196".into()))
+            .apply_status_change("w1:pA", Presence::Working, Some("reviewing #196".into()), None)
             .expect("frame");
         assert!(fetch.is_none(), "idle -> working is not a transition into blocked");
         match frame {
@@ -2071,12 +2167,12 @@ mod tests {
         let mut runtime = HomeRuntime::new(HashMap::new());
         runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("probe-haiku"), Presence::Idle)]);
         let (_, fetch) = runtime
-            .apply_status_change("w1:pA", Presence::Blocked, None)
+            .apply_status_change("w1:pA", Presence::Blocked, None, None)
             .expect("frame");
         assert_eq!(fetch, Some(("probe-haiku".to_string(), "probe-haiku".to_string())));
 
         // Once blocked, a repeat "still blocked" observation is not a fresh transition.
-        let repeat = runtime.apply_status_change("w1:pA", Presence::Blocked, None);
+        let repeat = runtime.apply_status_change("w1:pA", Presence::Blocked, None, None);
         assert!(repeat.is_none(), "same presence, no title change -- nothing to report");
     }
 
@@ -2090,7 +2186,7 @@ mod tests {
             Some("Do you want to proceed?")
         );
 
-        runtime.apply_status_change("w1:pA", Presence::Working, None);
+        runtime.apply_status_change("w1:pA", Presence::Working, None, None);
         assert!(!runtime.blocked_prompts().contains_key("probe-haiku"), "leaving blocked clears the stored prompt");
     }
 
@@ -2101,20 +2197,21 @@ mod tests {
         // most of those calls must produce no frame at all, or "presence" becomes noise.
         let mut runtime = HomeRuntime::new(HashMap::new());
         runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("harvey"), Presence::Idle)]);
-        runtime.apply_status_change("w1:pA", Presence::Working, None).expect("first change: a frame");
+        runtime.apply_status_change("w1:pA", Presence::Working, None, None).expect("first change: a frame");
 
-        let repeat = runtime.apply_status_change("w1:pA", Presence::Working, None);
+        let repeat = runtime.apply_status_change("w1:pA", Presence::Working, None, None);
         assert!(repeat.is_none(), "same presence, no title -- nothing changed, no frame");
 
         let same_title = runtime.apply_status_change(
             "w1:pA",
             Presence::Working,
             Some("doing a thing".into()), // sample_agent's own default title, unchanged
+            None,
         );
         assert!(same_title.is_none(), "same presence and same title -- still nothing changed");
 
         let (title_only, _) = runtime
-            .apply_status_change("w1:pA", Presence::Working, Some("new title".into()))
+            .apply_status_change("w1:pA", Presence::Working, Some("new title".into()), None)
             .expect("title alone changing is still a change");
         match title_only {
             ServerFrame::Presence { title, .. } => assert_eq!(title, "new title"),
@@ -2155,6 +2252,48 @@ mod tests {
         assert_eq!(frame.pane_id, "w1:pA");
         assert_eq!(frame.agent_status, Presence::Working);
         assert_eq!(frame.title.as_deref(), Some("reviewing #196"));
+    }
+
+    #[test]
+    fn parse_subscription_event_reads_agent_session_from_pane_updated() {
+        // The join `HomeRuntime::pane_for_session` prefers: `pane_updated` nests the same
+        // `agent_session` field `herdr agent list` reports, and it needs to reach
+        // `apply_status_change` so a freshly-seated rider joins to its harness session as soon
+        // as herdr reports one, not only on the next 5s snapshot poll.
+        let line = r#"{"event":"pane_updated","data":{"pane":{"pane_id":"w1:pA","terminal_id":"t1","workspace_id":"w1","tab_id":"tab1","focused":true,"agent_status":"working","revision":7,"agent_session":{"agent":"claude_code","kind":"id","source":"herdr","value":"sess-123"}}}}"#;
+        let frame = parse_subscription_event(line).expect("parses");
+        let session = frame.agent_session.expect("agent_session carried through");
+        assert_eq!(session.kind, AgentSessionRefKind::Id);
+        assert_eq!(session.value, "sess-123");
+    }
+
+    #[test]
+    fn apply_status_change_joins_a_freshly_reported_agent_session_before_the_early_return() {
+        // The gap PR #159 reported: a rider seated by `start_rider` has no `agent_session` at
+        // seat time, and the previous behavior only ever wrote `session_id_to_pane` from the
+        // 5s `refresh_from_agents` snapshot poll. This pins down that `apply_status_change`
+        // records the join the moment a `pane_updated` event carries one -- even when nothing
+        // else about the pane changed, so the call still returns `None` for broadcast purposes.
+        let mut runtime = HomeRuntime::new(HashMap::new());
+        runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("probe-haiku"), Presence::Working)]);
+        assert_eq!(runtime.pane_for_session("sess-123", "/no/such/path", None), None);
+
+        let session = AgentSessionInfo {
+            agent: "claude_code".to_string(),
+            kind: AgentSessionRefKind::Id,
+            source: "herdr".to_string(),
+            value: "sess-123".to_string(),
+        };
+        // Same presence and title `sample_agent` already set -- nothing else changed, so this
+        // must still report "no frame to broadcast" even though the join map did get updated.
+        let outcome = runtime.apply_status_change("w1:pA", Presence::Working, None, Some(&session));
+        assert!(outcome.is_none(), "the join update alone is not itself a broadcast-worthy change");
+
+        assert_eq!(
+            runtime.pane_for_session("sess-123", "/no/such/path", None),
+            Some("w1:pA".to_string()),
+            "the session->pane join resolves right after the agent_session was reported"
+        );
     }
 
     #[test]
