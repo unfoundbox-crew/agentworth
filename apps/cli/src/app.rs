@@ -893,6 +893,12 @@ struct ServeArgs {
     /// `archie scan` ingests them (docs/specs/loop.md section 1)
     #[arg(long)]
     no_socket: bool,
+
+    /// Start the gateway behind `apps/home` (a WebSocket at /ws) alongside the HTTP API.
+    /// Unix-only: it dials herdr's own Unix socket for live presence. See
+    /// `apps/cli/src/server/home_gateway.rs`
+    #[arg(long)]
+    home: bool,
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
@@ -1939,6 +1945,7 @@ pub fn run() -> Result<()> {
                 a.open,
                 dist_path,
                 !a.no_socket,
+                a.home,
                 &ui,
             ))?;
         }

@@ -1,6 +1,6 @@
 {
   "version": "0.1.22",
-  "generatedDate": "2026-09-06",
+  "generatedDate": "2026-09-07",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -1544,6 +1544,14 @@
           "positional": false,
           "required": false,
           "help": "Do not listen on the loop's Unix socket. Hook events then take the spool, and `archie scan` ingests them (docs/specs/loop.md section 1)",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--home",
+          "positional": false,
+          "required": false,
+          "help": "Start the gateway behind `apps/home` (a WebSocket at /ws) alongside the HTTP API. Unix-only: it dials herdr's own Unix socket for live presence. See `apps/cli/src/server/home_gateway.rs`",
           "default": "false",
           "possibleValues": []
         }

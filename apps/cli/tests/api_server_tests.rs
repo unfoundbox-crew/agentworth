@@ -44,6 +44,8 @@ fn setup_test_app_with_live_tail(
         scanner: scanner.clone(),
         dist_dir,
         live_tail: live_tail_tx.clone(),
+        #[cfg(unix)]
+        home: None,
     };
     let app = create_router(state);
     (app, storage, scanner, live_tail_tx)
