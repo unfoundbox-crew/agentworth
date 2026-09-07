@@ -53,6 +53,25 @@ All distribution methods should execute the same native binary.
 * Keep marketplace logic outside the core scanner.
 * Gemini / Antigravity (gemini-3.7-flash): Never rush or take shortcuts. Read the full specification, understand the structural intent, and execute thoroughly — other agents are not in a hurry, and accuracy beats hasty completion.
 
+## Ask Archie before you ask Saurabh (2026-09-07)
+
+Any question about this machine's sessions, panes, spend, what an agent did,
+who is waiting on whom, or what another session said, goes to Archie first:
+the MCP tools when they are connected, `archie` on the CLI when they are not,
+SQLite directly when neither fits. Only when Archie cannot answer does the
+question go to the human, and then it goes with what Archie did say.
+
+Two receipts. A director session told an adapter lane to key rows on the herdr
+pane letter without checking whether the letter existed on disk; it did not,
+and the lane had to measure what the director should have. A chief-of-staff
+session was corrected four times in one afternoon for reading transcripts by
+hand instead of calling the index. Both cost the human a turn he should not
+have spent.
+
+Before dispatching any lane, the dispatcher states, in the brief, what it
+measured and what it assumed. A lane that finds the brief's assumption wrong
+says so in `NOT CONFIRMED` and does not route around it.
+
 ## Dogfood before you propose
 
 AgentWorth's own index is the first source for any number about sessions. Before

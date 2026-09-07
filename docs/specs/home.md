@@ -111,3 +111,23 @@ seeding script, no herdr required to reach the first line.
 
 What a new user must never need: a vite dev server, an environment variable,
 a socket script, or a partner's pane.
+
+## Release, branches, standby (from Donna's session, 2026-09-07)
+
+- **Release policy (Saurabh, 11:01 UTC):** everything ships together in v0.1.23,
+  not before. Work in progress lives on a dev branch and is tested locally.
+  On 2026-09-07 the director merged the train to main instead of a dev branch
+  without asking; main is unreleased, so nothing shipped, but the question
+  should have been asked. Recorded so the next merge asks first.
+- **Standby seats (Saurabh, 12:52):** "I don't want to kill them but keep them on
+  standby so my mental load is reduced." A seat can be put on standby: alive,
+  out of the seats column and off the course, one count in the status bar,
+  brought back with one key. Not mute, which hides speech; standby hides the
+  seat. Feature for the deck, not built.
+- **Latency (Saurabh, 15:37, unanswered at the time):** "what is the perf and
+  latency tax of web versus ghostty, don't tell from vibes." Measured, with the
+  method stated, before anyone claims the deck is as fast as a terminal. See
+  `docs/specs/home-latency.md` when it exists.
+- **A new user's path (Saurabh, 15:34):** "say I get a new laptop tomorrow and
+  don't know any of these, what is my step by step." Written as a doc once
+  `archie home` exists, and tested on a machine that has none of it.
