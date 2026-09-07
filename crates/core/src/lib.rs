@@ -88,10 +88,16 @@ impl Scanner {
                 )
             })?;
 
+        // Match on `identity_names()`, not just `name()`: an adapter can file sessions under
+        // more than one product identity (Gemini's "gemini" vs. "antigravity", see
+        // `compute_adapter_matrix`'s doc comment in apps/cli/src/server/routes.rs for the same
+        // join bug found independently in the matrix). A session tagged "antigravity" has no
+        // adapter whose own `name()` equals it, but the Gemini adapter's `identity_names()`
+        // does, and it parses the file the same way.
         let adapter = self
             .adapters
             .iter()
-            .find(|a| a.name() == summary.adapter)
+            .find(|a| a.identity_names().contains(&summary.adapter.as_str()))
             .with_context(|| format!("No adapter registered for '{}'", summary.adapter))?;
 
         // Rebuild the exact `SessionSource` this session was last scanned with, from the
@@ -114,7 +120,12 @@ impl Scanner {
             })?;
         let source = SessionSource {
             path: std::path::PathBuf::from(&summary.source_path),
-            adapter_name: adapter.name().to_string(),
+            // The session's own indexed identity (e.g. "antigravity"), not `adapter.name()`
+            // (e.g. "gemini") -- an adapter that files sessions under more than one identity
+            // re-derives the specific one from the path anyway (see e.g. `GeminiAdapter::parse`'s
+            // `detect_product_identity`), but this keeps the rebuilt `SessionSource` faithful to
+            // what was actually indexed.
+            adapter_name: summary.adapter.clone(),
             file_size_bytes,
             mtime_epoch_secs,
             fingerprint,
@@ -1234,6 +1245,96 @@ mod tests {
             .load_trace("virtual-sess")
             .expect("load_trace must resolve a virtual source via adapter.source_exists, not Path::exists");
         assert_eq!(loaded.events.len(), 2);
+    }
+
+    /// `load_trace` used to look an adapter up by `a.name() == summary.adapter` alone, which
+    /// fails for any session filed under a secondary identity a registered adapter's
+    /// `identity_names()` claims but whose `name()` differs -- exactly the "antigravity" case
+    /// the real gemini adapter has (`GeminiAdapter::identity_names` returns `["gemini",
+    /// "antigravity"]`, but `name()` is only `"gemini"`). A summary row with `adapter =
+    /// "antigravity"` produced "No adapter registered for 'antigravity'" even though the
+    /// session was fully indexed and its source fully present. Modeled with a fake adapter
+    /// (rather than the real Gemini one) to isolate the lookup bug from Gemini's own parsing.
+    #[test]
+    fn test_load_trace_resolves_a_session_filed_under_a_secondary_identity_name() {
+        use agentworth_adapter_sdk::{DetectionResult, ParseResult};
+        use agentworth_schema::{EventPayload, NormalizedEvent, Provenance};
+
+        struct FakeMultiIdentityAdapter;
+
+        impl AgentAdapter for FakeMultiIdentityAdapter {
+            fn name(&self) -> &'static str {
+                "fake_primary"
+            }
+
+            fn identity_names(&self) -> Vec<&'static str> {
+                vec!["fake_primary", "fake_secondary"]
+            }
+
+            fn source_exists(&self, _source: &SessionSource) -> bool {
+                true
+            }
+
+            fn detect(&self, _options: &ScanOptions) -> Result<DetectionResult> {
+                Ok(DetectionResult {
+                    adapter_name: self.name(),
+                    is_present: true,
+                    discovered_roots: vec![],
+                    confidence: 1.0,
+                })
+            }
+
+            fn enumerate(&self, _options: &ScanOptions) -> Result<Vec<SessionSource>> {
+                Ok(vec![])
+            }
+
+            fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
+                let provenance = Provenance::new(
+                    source.path.to_string_lossy().to_string(),
+                    "fake_secondary",
+                    source.file_size_bytes,
+                    source.mtime_epoch_secs,
+                    &source.fingerprint,
+                );
+                let mut trace = AgentWorthTrace::new(
+                    "secondary-identity-sess",
+                    "fake_secondary",
+                    provenance,
+                    Utc::now(),
+                );
+                trace.events.push(NormalizedEvent::new(
+                    1,
+                    Utc::now(),
+                    EventPayload::UserMessage { content: "hi from a secondary identity".to_string() },
+                ));
+                trace.recalculate_stats();
+                Ok(ParseResult { trace, malformed_lines: 0, warnings: vec![] })
+            }
+        }
+
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(FakeMultiIdentityAdapter)], storage.clone());
+
+        let source = SessionSource {
+            path: std::path::PathBuf::from("/repo/.fake/secondary-session.jsonl"),
+            adapter_name: "fake_secondary".to_string(),
+            file_size_bytes: 4096,
+            mtime_epoch_secs: 1_000,
+            fingerprint: "deadbeef".to_string(),
+        };
+        let parse_result = FakeMultiIdentityAdapter.parse(&source).expect("parse fixture");
+        // The summary row is stored under "fake_secondary" -- the identity `parse()` assigned --
+        // not under the adapter's own `name()` ("fake_primary"), matching how the real Gemini
+        // adapter files a subset of its sessions as "antigravity".
+        storage
+            .upsert_session(&parse_result.trace, None, None, 0)
+            .expect("seed secondary-identity session");
+
+        let loaded = scanner
+            .load_trace("secondary-identity-sess")
+            .expect("load_trace must resolve a session via identity_names(), not name() alone");
+        assert_eq!(loaded.events.len(), 1);
     }
 
     /// The stub-pruning pass (`prune_stub_sessions`) decides survival by checking whether

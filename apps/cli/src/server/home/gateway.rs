@@ -9,10 +9,17 @@
 //!
 //! Presence streams over herdr's own `events.subscribe` (protocol 20, confirmed live on
 //! 2026-09-07 -- see the `home-gateway` report for captured frames; docs/specs/loop.md is
-//! fixed as of this lane to no longer say the socket is request/response only). A snapshot
-//! poll every 5s (`herdr agent list`) is the fallback and the only way new agents are
-//! discovered, since subscriptions are per-pane-id and a pane that doesn't exist yet has no
-//! id to subscribe to.
+//! fixed as of this lane to no longer say the socket is request/response only). Two live probes
+//! the same day found: `pane.updated` fires constantly (hundreds of times in tens of seconds)
+//! and each one carries the pane's current `agent_status`, so this module subscribes to it and
+//! derives presence from it, deduped per pane in `apply_status_change` so that volume doesn't
+//! turn into a noisy client; `pane.agent_status_changed` does also arrive, just rarely, and
+//! under a wire spelling ("pane.agent_status_changed", dotted, matching its own subscription
+//! type string) that doesn't match herdr's own `EventKind` enum name -- the first probe's match
+//! against the underscored name alone is why it looked like this event never fired at all (see
+//! `parse_subscription_event`). A snapshot poll every 5s (`herdr agent list`) is the fallback and
+//! the only way new agents are discovered, since subscriptions are per-pane-id and
+//! a pane that doesn't exist yet has no id to subscribe to.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -69,6 +76,14 @@ struct HomeRuntime {
     /// Per-session read position into that session's transcript, owned by the transcript feed
     /// (see `transcript_feed.rs`). Keyed by `sessions.session_id`.
     session_cursors: HashMap<String, SessionCursor>,
+    /// `agent_session.value` -> `pane_id`, for panes whose `agent_session.kind == "id"`.
+    /// Verified live (2026-09-07): this `value` equals this index's `sessions.session_id`
+    /// exactly for claude_code, codex, and antigravity panes -- a more direct rider->session
+    /// join than `agent_state.pane_id`, when it resolves. See `pane_for_session`.
+    session_id_to_pane: HashMap<String, String>,
+    /// `agent_session.value` -> `pane_id`, for panes whose `agent_session.kind == "path"`.
+    /// Matched against a session's own indexed `source_path` instead of its `session_id`.
+    source_path_to_pane: HashMap<String, String>,
 }
 
 impl HomeRuntime {
@@ -95,7 +110,28 @@ impl HomeRuntime {
             messages: HashMap::new(),
             role_map,
             session_cursors: HashMap::new(),
+            session_id_to_pane: HashMap::new(),
+            source_path_to_pane: HashMap::new(),
         }
+    }
+
+    /// The pane running `session_id` (whose indexed source lives at `source_path`), preferring
+    /// herdr's own `agent_session` join over the caller's `agent_state.pane_id` fallback.
+    /// `fallback_pane_id` is `Storage::get_agent_state(session_id)`'s `pane_id` -- the join this
+    /// runtime used exclusively before `agent_session` was modeled -- so a session herdr's own
+    /// join doesn't (yet) resolve, e.g. a Grok session named after a file rather than an id
+    /// herdr recognizes, still finds its pane the old way.
+    fn pane_for_session(
+        &self,
+        session_id: &str,
+        source_path: &str,
+        fallback_pane_id: Option<&str>,
+    ) -> Option<String> {
+        self.session_id_to_pane
+            .get(session_id)
+            .or_else(|| self.source_path_to_pane.get(source_path))
+            .cloned()
+            .or_else(|| fallback_pane_id.map(String::from))
     }
 
     fn snapshot_hello(&self) -> (Vec<Persona>, Vec<Space>) {
@@ -141,6 +177,17 @@ impl HomeRuntime {
                 new_pane_ids.push(agent.pane_id.clone());
             }
             self.pane_to_persona.insert(agent.pane_id.clone(), id.clone());
+            if let Some(session) = &agent.agent_session {
+                match session.kind {
+                    AgentSessionRefKind::Id => {
+                        self.session_id_to_pane.insert(session.value.clone(), agent.pane_id.clone());
+                    }
+                    AgentSessionRefKind::Path => {
+                        self.source_path_to_pane
+                            .insert(session.value.clone(), agent.pane_id.clone());
+                    }
+                }
+            }
             self.personas.insert(id.clone(), persona);
 
             self.spaces
@@ -159,13 +206,21 @@ impl HomeRuntime {
 
         for (_, label) in ROOMS {
             if let Some(room) = self.spaces.values_mut().find(|s| s.label == label) {
-                all_room_members.clone_into(&mut room.members);
+                room.members.clone_from(&all_room_members);
             }
         }
 
         new_pane_ids
     }
 
+    /// Applies an observed `(presence, title)` for `pane_id` and returns the frame to broadcast
+    /// -- or `None` if nothing actually changed. The `None` case matters now that presence can
+    /// arrive from `pane_updated` (fires on every pane change: scroll, tokens, title, agent
+    /// status -- 1,818 of them in 25s in the live probe that found this), not just
+    /// `pane_agent_status_changed` (which only ever fires on a real transition): without this
+    /// check, every `pane_updated` tick for an unrelated field would still bump `revision` and
+    /// broadcast a `presence` frame, and the client would see noise instead of "the client only
+    /// sees changes".
     fn apply_status_change(
         &mut self,
         pane_id: &str,
@@ -174,6 +229,10 @@ impl HomeRuntime {
     ) -> Option<ServerFrame> {
         let persona_id = self.pane_to_persona.get(pane_id)?.clone();
         let persona = self.personas.get_mut(&persona_id)?;
+        let title_changed = title.as_deref().is_some_and(|t| t != persona.title);
+        if persona.presence == presence && !title_changed {
+            return None;
+        }
         persona.presence = presence;
         persona.revision += 1;
         if let Some(t) = title {
@@ -372,10 +431,16 @@ async fn transcript_feed_loop(
         let Some(cwd) = storage.get_agent_state(&session_id).ok().flatten().and_then(|s| s.cwd) else {
             continue;
         };
-        let pane_id = storage.get_agent_state(&session_id).ok().flatten().and_then(|s| s.pane_id);
+        // `agent_state.pane_id` (set by the Claude Code hook loop at session start) is the
+        // fallback join, kept for sessions herdr's own `agent_session` doesn't (yet) resolve --
+        // e.g. Grok, whose adapter names sessions after files rather than an id herdr
+        // recognizes. `pane_for_session` prefers the more direct `agent_session.value` join
+        // when it's available.
+        let fallback_pane_id = storage.get_agent_state(&session_id).ok().flatten().and_then(|s| s.pane_id);
 
         let (space_id, from_persona) = {
             let rt = runtime.lock().await;
+            let pane_id = rt.pane_for_session(&session_id, &path_str, fallback_pane_id.as_deref());
             match pane_id.as_deref().and_then(|p| rt.pane_to_persona.get(p)) {
                 Some(persona_id) => (format!("office-{persona_id}"), persona_id.clone()),
                 None => continue,
@@ -384,7 +449,14 @@ async fn transcript_feed_loop(
 
         let output = {
             let mut rt = runtime.lock().await;
+            let is_first_sighting = !rt.session_cursors.contains_key(&session_id);
             let cursor = rt.session_cursors.entry(session_id.clone()).or_default();
+            if is_first_sighting {
+                // Baseline to the trace's current end instead of zero, so a session already
+                // hundreds of turns deep doesn't replay its entire history as a burst the
+                // moment the feed starts watching it -- only activity from here on is a frame.
+                transcript_feed::seed_cursor(&trace, cursor);
+            }
             transcript_feed::feed_from_trace(&trace, cursor, &space_id, &from_persona)
         };
 
@@ -484,7 +556,12 @@ async fn run_subscription(
                     anyhow::bail!("herdr socket closed");
                 }
                 let text = std::mem::take(&mut line);
+                tracing::debug!("home gateway: herdr socket line: {}", text.trim());
                 if let Some(frame) = parse_subscription_event(&text) {
+                    tracing::debug!(
+                        "home gateway: parsed pane_id={} status={:?}",
+                        frame.pane_id, frame.agent_status
+                    );
                     let mut rt = runtime.lock().await;
                     if let Some(server_frame) =
                         rt.apply_status_change(&frame.pane_id, frame.agent_status, frame.title)
@@ -502,19 +579,31 @@ async fn run_subscription(
     }
 }
 
+/// Subscribes to both `pane.agent_status_changed` and `pane.updated` for every pane in
+/// `pane_ids`. `pane.updated` is the workhorse (hundreds of events in tens of seconds on a real
+/// fleet) and is what `apply_status_change`'s per-pane dedup is built for; `pane.agent_status_changed`
+/// arrives too, just rarely, and its `event` field is spelled with a dot
+/// ("pane.agent_status_changed") rather than herdr's own underscored `EventKind` name -- see
+/// `parse_subscription_event`, which normalizes both.
 async fn subscribe(
     write_half: &mut tokio::net::unix::OwnedWriteHalf,
     pane_ids: &[String],
 ) -> anyhow::Result<()> {
     let subscriptions: Vec<serde_json::Value> = pane_ids
         .iter()
-        .map(|pane_id| serde_json::json!({"type": "pane.agent_status_changed", "pane_id": pane_id}))
+        .flat_map(|pane_id| {
+            [
+                serde_json::json!({"type": "pane.agent_status_changed", "pane_id": pane_id}),
+                serde_json::json!({"type": "pane.updated", "pane_id": pane_id}),
+            ]
+        })
         .collect();
     let request = serde_json::json!({
         "id": format!("home-gateway:{}", new_id()),
         "method": "events.subscribe",
         "params": {"subscriptions": subscriptions},
     });
+    tracing::debug!("home gateway: subscribe request: {}", request);
     let mut line = serde_json::to_vec(&request)?;
     line.push(b'\n');
     write_half.write_all(&line).await?;
@@ -527,17 +616,42 @@ struct StatusChangedFrame {
     title: Option<String>,
 }
 
+/// Parses one line of herdr's `events.subscribe` stream. Handles both event shapes: a
+/// `pane_agent_status_changed` envelope carries its fields flat on `data`; a `pane_updated`
+/// envelope nests the whole `PaneInfo` under `data.pane` (herdr's own JSON schema, `herdr api
+/// schema --json`, `$defs.PaneInfo`) -- this reads `pane_id`, `agent_status`, and
+/// `terminal_title_stripped` off of that nested object instead.
+///
+/// The `event` field's own notation is not consistent between the two: a live capture on
+/// 2026-09-07 against a real fleet found `"event":"pane_updated"` (underscored, matching the
+/// `EventKind` enum name in herdr's schema) but `"event":"pane.agent_status_changed"` (dotted,
+/// matching the *subscription* type string instead) -- so a match against the underscored form
+/// alone silently drops every `pane_agent_status_changed` event, which is why the probe that
+/// found this module's presence bug reported seeing zero of them: they were arriving, just
+/// under the other spelling. Normalizing dots to underscores before matching covers both.
 fn parse_subscription_event(line: &str) -> Option<StatusChangedFrame> {
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
-    if value.get("event")?.as_str()? != "pane_agent_status_changed" {
-        return None;
-    }
+    let event = value.get("event")?.as_str()?.replace('.', "_");
     let data = value.get("data")?;
-    Some(StatusChangedFrame {
-        pane_id: data.get("pane_id")?.as_str()?.to_string(),
-        agent_status: serde_json::from_value(data.get("agent_status")?.clone()).ok()?,
-        title: data.get("title").and_then(|v| v.as_str()).map(String::from),
-    })
+    match event.as_str() {
+        "pane_agent_status_changed" => Some(StatusChangedFrame {
+            pane_id: data.get("pane_id")?.as_str()?.to_string(),
+            agent_status: serde_json::from_value(data.get("agent_status")?.clone()).ok()?,
+            title: data.get("title").and_then(|v| v.as_str()).map(String::from),
+        }),
+        "pane_updated" => {
+            let pane = data.get("pane")?;
+            Some(StatusChangedFrame {
+                pane_id: pane.get("pane_id")?.as_str()?.to_string(),
+                agent_status: serde_json::from_value(pane.get("agent_status")?.clone()).ok()?,
+                title: pane
+                    .get("terminal_title_stripped")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            })
+        }
+        _ => None,
+    }
 }
 
 pub fn router() -> Router<AppState> {
@@ -853,7 +967,18 @@ mod tests {
             agent_status: status,
             terminal_title_stripped: Some("doing a thing".to_string()),
             revision: 1,
+            agent_session: None,
         }
+    }
+
+    fn sample_agent_with_session(
+        pane_id: &str,
+        agent: &str,
+        name: Option<&str>,
+        status: Presence,
+        session: AgentSessionInfo,
+    ) -> HerdrAgent {
+        HerdrAgent { agent_session: Some(session), ..sample_agent(pane_id, agent, name, status) }
     }
 
     #[test]
@@ -1174,6 +1299,67 @@ mod tests {
     }
 
     #[test]
+    fn pane_for_session_prefers_agent_session_id_join_over_fallback() {
+        let mut runtime = HomeRuntime::new(HashMap::new());
+        runtime.refresh_from_agents(&[sample_agent_with_session(
+            "w1:pA",
+            "claude",
+            Some("harvey"),
+            Presence::Idle,
+            AgentSessionInfo {
+                agent: "claude".into(),
+                kind: AgentSessionRefKind::Id,
+                source: "herdr:claude".into(),
+                value: "sess-abc".into(),
+            },
+        )]);
+
+        let resolved = runtime.pane_for_session("sess-abc", "/does/not/matter.jsonl", None);
+        assert_eq!(resolved.as_deref(), Some("w1:pA"));
+
+        // A fallback pane id is ignored once the agent_session join resolves -- it must never
+        // override the more direct join.
+        let still_preferred = runtime.pane_for_session("sess-abc", "/irrelevant", Some("w9:pZ"));
+        assert_eq!(still_preferred.as_deref(), Some("w1:pA"));
+    }
+
+    #[test]
+    fn pane_for_session_matches_path_kind_against_source_path() {
+        let mut runtime = HomeRuntime::new(HashMap::new());
+        runtime.refresh_from_agents(&[sample_agent_with_session(
+            "w1:pB",
+            "opencode",
+            Some("opencode-1"),
+            Presence::Idle,
+            AgentSessionInfo {
+                agent: "opencode".into(),
+                kind: AgentSessionRefKind::Path,
+                source: "herdr:opencode".into(),
+                value: "/repo/.opencode/session-abc.db".into(),
+            },
+        )]);
+
+        let resolved =
+            runtime.pane_for_session("unrelated-session-id", "/repo/.opencode/session-abc.db", None);
+        assert_eq!(resolved.as_deref(), Some("w1:pB"));
+    }
+
+    #[test]
+    fn pane_for_session_falls_back_when_agent_session_does_not_resolve() {
+        // Models Grok: no agent_session join resolves (its adapter names sessions after files
+        // rather than an id/path herdr recognizes), so the caller's own `agent_state.pane_id`
+        // fallback is what finds the pane.
+        let mut runtime = HomeRuntime::new(HashMap::new());
+        runtime.refresh_from_agents(&[sample_agent("w1:pC", "grok", Some("mike"), Presence::Idle)]);
+
+        let resolved = runtime.pane_for_session("chat_history", "/repo/events.jsonl", Some("w1:pC"));
+        assert_eq!(resolved.as_deref(), Some("w1:pC"));
+
+        let unresolved = runtime.pane_for_session("chat_history", "/repo/events.jsonl", None);
+        assert!(unresolved.is_none());
+    }
+
+    #[test]
     fn resolve_targets_office_returns_its_one_member() {
         let mut runtime = HomeRuntime::new(HashMap::new());
         runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("harvey"), Presence::Idle)]);
@@ -1225,6 +1411,75 @@ mod tests {
             }
             _ => panic!("expected Presence frame"),
         }
+    }
+
+    #[test]
+    fn apply_status_change_returns_none_when_nothing_actually_changed() {
+        // The bug this pins down: `pane.updated` fires on every pane change (scroll, tokens,
+        // title, agent status -- 1,818 of them in 25s in the live probe that found this), so
+        // most of those calls must produce no frame at all, or "presence" becomes noise.
+        let mut runtime = HomeRuntime::new(HashMap::new());
+        runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("harvey"), Presence::Idle)]);
+        runtime.apply_status_change("w1:pA", Presence::Working, None).expect("first change: a frame");
+
+        let repeat = runtime.apply_status_change("w1:pA", Presence::Working, None);
+        assert!(repeat.is_none(), "same presence, no title -- nothing changed, no frame");
+
+        let same_title = runtime.apply_status_change(
+            "w1:pA",
+            Presence::Working,
+            Some("doing a thing".into()), // sample_agent's own default title, unchanged
+        );
+        assert!(same_title.is_none(), "same presence and same title -- still nothing changed");
+
+        let title_only = runtime
+            .apply_status_change("w1:pA", Presence::Working, Some("new title".into()))
+            .expect("title alone changing is still a change");
+        match title_only {
+            ServerFrame::Presence { title, .. } => assert_eq!(title, "new title"),
+            _ => panic!("expected Presence frame"),
+        }
+    }
+
+    #[test]
+    fn parse_subscription_event_reads_pane_agent_status_changed_flat_fields() {
+        let line = r#"{"event":"pane_agent_status_changed","data":{"pane_id":"w1:pA","agent_status":"working","title":"reviewing #196"}}"#;
+        let frame = parse_subscription_event(line).expect("parses");
+        assert_eq!(frame.pane_id, "w1:pA");
+        assert_eq!(frame.agent_status, Presence::Working);
+        assert_eq!(frame.title.as_deref(), Some("reviewing #196"));
+    }
+
+    #[test]
+    fn parse_subscription_event_reads_the_dotted_event_spelling_herdr_actually_sends() {
+        // The bug this pins down: a second live probe on 2026-09-07 (after fixing presence to
+        // read `pane_updated`) found herdr spells this event's `event` field
+        // "pane.agent_status_changed" (dotted, matching the *subscription* type string) rather
+        // than the underscored `EventKind` name -- 3 of them arrived in a run where the
+        // underscored-only match silently dropped every one, which is what made the first
+        // probe conclude this event "never fires" at all.
+        let line = r#"{"event":"pane.agent_status_changed","data":{"pane_id":"w1:pA","agent_status":"working"}}"#;
+        let frame = parse_subscription_event(line).expect("parses despite the dotted spelling");
+        assert_eq!(frame.pane_id, "w1:pA");
+        assert_eq!(frame.agent_status, Presence::Working);
+    }
+
+    #[test]
+    fn parse_subscription_event_reads_pane_updated_nested_pane_info() {
+        // Live probe on 2026-09-07: this is the event that actually arrives over herdr's
+        // socket most often. Shape follows `herdr api schema --json`'s `PaneInfo` def: the
+        // whole pane snapshot nested under `data.pane`, not flat on `data`.
+        let line = r#"{"event":"pane_updated","data":{"pane":{"pane_id":"w1:pA","terminal_id":"t1","workspace_id":"w1","tab_id":"tab1","focused":true,"agent_status":"working","revision":7,"terminal_title_stripped":"reviewing #196"}}}"#;
+        let frame = parse_subscription_event(line).expect("parses");
+        assert_eq!(frame.pane_id, "w1:pA");
+        assert_eq!(frame.agent_status, Presence::Working);
+        assert_eq!(frame.title.as_deref(), Some("reviewing #196"));
+    }
+
+    #[test]
+    fn parse_subscription_event_ignores_unrelated_event_types() {
+        let line = r#"{"event":"pane_focused","data":{"pane_id":"w1:pA","workspace_id":"w1"}}"#;
+        assert!(parse_subscription_event(line).is_none());
     }
 
     #[test]
