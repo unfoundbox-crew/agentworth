@@ -435,7 +435,7 @@ impl HomeRuntime {
 
         for (_, label) in ROOMS {
             if let Some(room) = self.spaces.values_mut().find(|s| s.label == label) {
-                room.members = all_room_members.clone();
+                all_room_members.clone_into(&mut room.members);
             }
         }
 
