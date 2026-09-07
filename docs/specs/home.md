@@ -73,3 +73,71 @@ I'm paying it the most"); the ACI thesis and the Unix-shape primitive board
 came the same day; the fleet ran on herdr with a chief of staff relaying, and
 the recurring failure was the relay paraphrasing or forgetting. Home exists so
 the human stops relaying through anyone.
+
+## Testing is cheap, by rule (Saurabh, 2026-09-07)
+
+Never probe, ping, or prompt a partner's pane to test the gateway. A frontier
+session at hundreds of thousands of tokens of context is the most expensive
+thing on the machine to poke, and a ping-pong through it costs cache and
+attention that a test has no right to. Probes use a dedicated herdr workspace
+labelled `probe` with a Haiku pane started for that purpose, and nothing else.
+The first live probe on 2026-09-07 broke this rule once; this section is why it
+does not happen again.
+
+## Identity: three layers, one key (settled 2026-09-07 with the herdr adapter lane)
+
+| layer | example | role |
+| :--- | :--- | :--- |
+| harness session id | `61eef7db…` | the only key. Present in herdr's `session.json` per pane, in `herdr agent list` next to the live pane, and in Archie's `sessions.session_id`. Verified equal for Claude Code, Codex and agy on 2026-09-07 |
+| name | `partner-harvey`, a pane label, a session title | display, mutable. Recorded with the time seen, never overwritten, so a rename does not rewrite history |
+| pane letter | `w9:pA` | live-only address that herdr allocates at runtime. Not on disk anywhere. The gateway adds it for the deck; nothing stores it as identity |
+
+Grok's adapter names sessions after files, so Grok does not join yet. That is an
+adapter fix, not a gateway one.
+
+## Nothing opens on an end state (Saurabh, 2026-09-07, after the first hands-on)
+
+"Why should there be a page that says nothing needs you? A terminal, a chat,
+everything opens blank, an invitation to create something. I'm a new user, I
+ran some npm commands, I bought tokens. Now what do I do?"
+
+Cruise is where you return once directions exist. It is never the first
+screen. The first screen is one blank line with a cursor: what are we
+building? Typing it is the whole setup: the text becomes the first direction,
+the area is the repo in cwd, and if no rider exists the deck offers the
+harnesses found on the machine and starts one in a pane. One command opens it,
+`archie home`, serving the built deck from the binary. No second server, no
+seeding script, no herdr required to reach the first line.
+
+What a new user must never need: a vite dev server, an environment variable,
+a socket script, or a partner's pane.
+
+## Release, branches, standby (from Donna's session, 2026-09-07)
+
+- **Release policy (Saurabh, 11:01 UTC):** everything ships together in v0.1.23,
+  not before. Work in progress lives on a dev branch and is tested locally.
+  On 2026-09-07 the director merged the train to main instead of a dev branch
+  without asking; main is unreleased, so nothing shipped, but the question
+  should have been asked. Recorded so the next merge asks first.
+- **Standby seats (Saurabh, 12:52):** "I don't want to kill them but keep them on
+  standby so my mental load is reduced." A seat can be put on standby: alive,
+  out of the seats column and off the course, one count in the status bar,
+  brought back with one key. Not mute, which hides speech; standby hides the
+  seat. Feature for the deck, not built.
+- **Latency (Saurabh, 15:37, unanswered at the time):** "what is the perf and
+  latency tax of web versus ghostty, don't tell from vibes." Measured, with the
+  method stated, before anyone claims the deck is as fast as a terminal. See
+  `docs/specs/home-latency.md` when it exists.
+- **A new user's path (Saurabh, 15:34):** "say I get a new laptop tomorrow and
+  don't know any of these, what is my step by step." Written as a doc once
+  `archie home` exists, and tested on a machine that has none of it.
+
+## First run: five decisions (Saurabh, 2026-09-07 evening, verbatim)
+
+1. The line: keep "What are we building?" It establishes agency and intent without conversational fluff.
+2. Who rides: show detected harnesses with the first pre-focused so Enter is the instant default, but the choice stays visible.
+3. Where it runs: herdr required for v1, a one-line install banner if absent. No internal PTY fallback; a terminal without herdr's idle/working/blocked would be a worse product, not a lighter one.
+4. Area: auto-fill the directory `archie home` was invoked in, editable on the strip. Never ask what the environment already knows.
+5. After the first ride: the blank line shows only when active directions reach zero, or when summoned with the new-direction hotkey.
+
+The paper on the human interface tax waits for this screen to exist.
