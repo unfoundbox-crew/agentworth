@@ -449,6 +449,15 @@ Start the local API server and interactive explorer UI
 | `--no-socket` | no | Do not listen on the loop's Unix socket. Hook events then take the spool, and `archie scan` ingests them (docs/specs/loop.md section 1) | false | - |
 | `--home` | no | Start the gateway behind `apps/home` (a WebSocket at /ws) alongside the HTTP API. Unix-only: it dials herdr's own Unix socket for live presence. See `apps/cli/src/server/home_gateway.rs` | false | - |
 
+### `archie home`
+
+One command for a new user: serve the built `apps/home` deck and open it. Same as `archie serve --home`, plus: fails loudly if the deck was never built into this binary, opens the browser at `/home/` instead of the API root, and does not treat an already-running `archie serve` holding the loop socket as fatal
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `--port, -p` | no | Port to bind the server to. Reuses `archie serve`'s own default, so `archie home` and `archie serve --home` land on the same URL unless told otherwise | 3000 | - |
+| `--no-open` | no | Do not open the default browser | false | - |
+
 ### `archie mcp`
 
 Start the read-only MCP server over stdio, for a coding agent to query this machine's session index mid-session (see docs/specs/mcp-server.md). Register it once with `claude mcp add agentworth --scope user -- archie mcp`

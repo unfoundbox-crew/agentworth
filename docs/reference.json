@@ -1569,6 +1569,28 @@
       ]
     },
     {
+      "path": "archie home",
+      "about": "One command for a new user: serve the built `apps/home` deck and open it. Same as `archie serve --home`, plus: fails loudly if the deck was never built into this binary, opens the browser at `/home/` instead of the API root, and does not treat an already-running `archie serve` holding the loop socket as fatal",
+      "args": [
+        {
+          "name": "--port, -p",
+          "positional": false,
+          "required": false,
+          "help": "Port to bind the server to. Reuses `archie serve`'s own default, so `archie home` and `archie serve --home` land on the same URL unless told otherwise",
+          "default": "3000",
+          "possibleValues": []
+        },
+        {
+          "name": "--no-open",
+          "positional": false,
+          "required": false,
+          "help": "Do not open the default browser",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "archie mcp",
       "about": "Start the read-only MCP server over stdio, for a coding agent to query this machine's session index mid-session (see docs/specs/mcp-server.md). Register it once with `claude mcp add agentworth --scope user -- archie mcp`",
       "args": []

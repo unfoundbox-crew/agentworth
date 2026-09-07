@@ -49,6 +49,8 @@ mod asks_command;
 // Same collision, same fix again: `commands::wake` would clash with `crate::wake`.
 #[path = "commands/wake.rs"]
 mod wake_command;
+#[path = "commands/home_cmd.rs"]
+mod home_cmd;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -211,6 +213,12 @@ enum Commands {
 
     /// Start the local API server and interactive explorer UI
     Serve(ServeArgs),
+
+    /// One command for a new user: serve the built `apps/home` deck and open it. Same as
+    /// `archie serve --home`, plus: fails loudly if the deck was never built into this
+    /// binary, opens the browser at `/home/` instead of the API root, and does not treat an
+    /// already-running `archie serve` holding the loop socket as fatal
+    Home(HomeArgs),
 
     /// Start the read-only MCP server over stdio, for a coding agent to query this machine's
     /// session index mid-session (see docs/specs/mcp-server.md). Register it once with
@@ -908,6 +916,18 @@ struct ServeArgs {
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
+struct HomeArgs {
+    /// Port to bind the server to. Reuses `archie serve`'s own default, so `archie home`
+    /// and `archie serve --home` land on the same URL unless told otherwise
+    #[arg(short, long, default_value_t = crate::DEFAULT_PORT)]
+    port: u16,
+
+    /// Do not open the default browser
+    #[arg(long)]
+    no_open: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
 struct DoctorArgs {
     /// Output diagnostic report as formatted JSON
     #[arg(long)]
@@ -1448,6 +1468,7 @@ enum Action {
     },
     Scan(ScanArgs),
     Serve(ServeArgs),
+    Home(HomeArgs),
     Mcp,
     Hook(Option<HookCommand>, bool),
     Policy(PolicyCommand),
@@ -1472,6 +1493,7 @@ fn normalize(command: Commands) -> Action {
         Commands::Stats { action, args } => Action::Stats { action, args },
         Commands::Scan(a) => Action::Scan(a),
         Commands::Serve(a) => Action::Serve(a),
+        Commands::Home(a) => Action::Home(a),
         Commands::Mcp => Action::Mcp,
         Commands::Hook { action, gate } => Action::Hook(action, gate),
         Commands::Policy { action } => Action::Policy(action),
@@ -1957,6 +1979,16 @@ pub fn run() -> Result<()> {
                 a.home,
                 &ui,
             ))?;
+        }
+        Action::Home(a) => {
+            home_cmd::run_home_command(
+                home_cmd::HomeCommandArgs {
+                    port: a.port,
+                    no_open: a.no_open,
+                },
+                cli.db_path,
+                &ui,
+            )?;
         }
         Action::Hook(None, true) => {
             crate::commands::run_gate_command(cli.verbose)?;
@@ -4851,8 +4883,8 @@ mod grammar_tests {
             .collect();
 
         for expected in [
-            "session", "agent", "repo", "window", "stats", "scan", "serve", "mcp", "doctor",
-            "docs", "config", "version", "update", "completions", "merge", "tui",
+            "session", "agent", "repo", "window", "stats", "scan", "serve", "home", "mcp",
+            "doctor", "docs", "config", "version", "update", "completions", "merge", "tui",
         ] {
             assert!(
                 visible.iter().any(|n| n == expected),

@@ -124,6 +124,7 @@ pub async fn start_server(
         live_tail: live_tail_tx,
         #[cfg(unix)]
         home: home_handle,
+        home_deck_enabled: home,
     };
 
     let app = create_router(state);

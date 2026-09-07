@@ -52,7 +52,7 @@ console.workspace = true
 # "ws" is not in axum's default feature set; the home gateway (server/home_gateway.rs)
 # needs axum::extract::ws for the /ws route.
 axum = { version = "0.7", features = ["ws"] }
-rust-embed = "8"
+rust-embed = { version = "8", features = ["debug-embed"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tower = { version = "0.4", features = ["util"] }
