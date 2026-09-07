@@ -44,3 +44,32 @@ exceptions only. Per decision: one strip, one evidence rung.
 - Dark ground: the system's zinc black, or the owner's terminal slate as a
   home-only override. Both are on the canvas.
 - Whether a direction maps 1:1 to a worktree. Fleet convention says yes.
+
+## What the four-day ledger adds (read 2026-09-07, 637 prompts, Sept 4–7)
+
+The ledger itself stays out of this public repo: it carries stream keys and an
+auth token. It lives beside the checkout, not in it.
+
+Things Saurabh asked for more than once, each a requirement here:
+
+| Ask, in his words | What home must do |
+| :--- | :--- |
+| "who is waiting on what now? anyone waiting for me?" | the exceptions view answers this with zero clicks |
+| "this agent died and will be reborn at so and so time" | a dead or quota-halted rider is shown as such, with the reset time, never as silence |
+| "once they are done, they report back", "no endless chatter", "I don't like wait/listen/schedule" | riders report on settle; no polling loops in the UI, no chatter surfaced |
+| "can I trust you all or am I needed in the building all the time" | the governor's halts and the evidence rungs are the answer; home shows them, it does not add a babysitting surface |
+| "is this token machine a casino" (quota exhausted mid-task, 200 dollars overnight) | budget per direction, and per subscription window, visible before it is spent |
+| "wake up zombie" (agents that lose context and lecture) | a rider that restarts gets `session_wake`; home shows a restart as a stop on the lane |
+| "send my exact prompts, not your inference" | a steer is delivered verbatim; the chief of staff never paraphrases the human to a rider |
+| "no characters or show references in the soul or the codebase" | roles only in code; themes are data |
+| "reading HTML as images is super dumb" | home never asks a model to read a screenshot of text; text is text |
+| "is that UI for humans or bots?" | home is the human side; the ACI (observe, plan, apply, receipt, interrupt) is the agent side; both read one state |
+| "the Claude Code app is super customisable, complexity grows with your viewport and bandwidth" | elastic: rest state is one line; the human adds lenses (strips, track, map, faders, PTY) as needed; nothing is forced |
+| "UI is cheap, the backend must be solid: latency, perf, quality" | the build order is substrate first; the canvas is where the human picks lenses, and can build their own |
+| "shouldn't it be spaceship, not train?" | open. The shape holds under either name: a course and a heading instead of a track. Naming is a theme decision, not a code one |
+
+Lineage: the Human Interface Tax was named on 2026-09-05 ("HIT is still there and
+I'm paying it the most"); the ACI thesis and the Unix-shape primitive board
+came the same day; the fleet ran on herdr with a chief of staff relaying, and
+the recurring failure was the relay paraphrasing or forgetting. Home exists so
+the human stops relaying through anyone.
