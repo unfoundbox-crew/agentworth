@@ -173,6 +173,46 @@ impl AnswerKey {
     }
 }
 
+/// Whether herdr, required to seat any rider, is usable from here. Distinguishes "not
+/// installed" from "installed but never run" (no socket yet) -- see `home_cmd::herdr_reachable`
+/// for the same check made at `archie home` startup; this is the wire-typed twin used by
+/// `detect_env` for the deck's first-run screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HerdrStatus {
+    Ok,
+    Missing,
+    NoSocket,
+}
+
+/// A harness this machine can seat a rider on -- `id` matches `herdr agent start --kind`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Harness {
+    pub id: String,
+    pub label: String,
+    pub bin: String,
+}
+
+/// What the server already knows about where it runs, detected once at `archie home` startup
+/// (see [`detect_env`]) and handed to every connecting client in `hello`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeEnv {
+    pub cwd: String,
+    pub repo: Option<String>,
+    pub harnesses: Vec<Harness>,
+    pub herdr: HerdrStatus,
+    /// A new direction's starting budget, before the human edits it. The same number
+    /// `archie policy init` writes into its starter `policy.toml` comments --
+    /// `Storage::session_token_percentiles(None)`'s p90 across this machine's own indexed
+    /// sessions (AGENTS.md's "dogfood before you propose": a fleet here has run primary
+    /// sessions past 700M tokens, so a guessed cap is not safe). Falls back to a plain 5,000,000
+    /// when this machine has no indexed sessions yet (`n == 0`) -- set by `gateway::spawn`, not
+    /// [`detect_env`], since it needs `Storage`.
+    pub budget_default_tokens: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DirectionState {
@@ -329,6 +369,7 @@ pub enum ServerFrame {
         personas: Vec<Persona>,
         spaces: Vec<Space>,
         directions: Vec<Direction>,
+        env: HomeEnv,
     },
     #[serde(rename = "direction")]
     Direction {
@@ -344,6 +385,12 @@ pub enum ServerFrame {
         presence: Presence,
         title: String,
         revision: u64,
+    },
+    /// A persona the gateway just discovered off `herdr agent list` -- e.g. a rider
+    /// `start_rider` just seated. Existing clients otherwise only learn personas from `hello`.
+    #[serde(rename = "persona")]
+    Persona {
+        persona: Persona,
     },
     #[serde(rename = "message")]
     Message {
@@ -437,7 +484,127 @@ pub enum ClientFrame {
         #[allow(dead_code)]
         client_id: Option<String>,
     },
+    /// Seats a rider on a direction: a fresh herdr pane, the harness started in it, the
+    /// direction's goal sent as its first prompt. See `dispatch_start_rider` in `gateway.rs`.
+    #[serde(rename = "start_rider", rename_all = "camelCase")]
+    StartRider {
+        direction_id: String,
+        harness: String,
+        /// Passed through to `herdr agent start ... -- <args>` verbatim -- not surfaced in the
+        /// first-run UI, which never picks a harness's own flags for the human; exists for
+        /// scripted/test seating (e.g. `["--model", "haiku"]`).
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        #[allow(dead_code)]
+        client_id: Option<String>,
+    },
 }
+
+/// Candidate harnesses this deck knows how to seat, `(id, label, bin)`. `id` is what
+/// `herdr agent start --kind` and the wire protocol both use; `bin` is the executable actually
+/// looked up on PATH -- `cursor-agent`, not `cursor` (the Cursor.app CLI launcher, a different
+/// binary present on this machine that answers `--version` but is not an agent herdr can seat).
+const HARNESS_CANDIDATES: [(&str, &str, &str); 6] = [
+    ("claude", "Claude", "claude"),
+    ("codex", "Codex", "codex"),
+    ("gemini", "Gemini", "gemini"),
+    ("agy", "Antigravity", "agy"),
+    ("opencode", "opencode", "opencode"),
+    ("cursor", "Cursor", "cursor-agent"),
+];
+
+/// Whether `bin` resolves on `PATH` -- a `which`-style lookup with no subprocess spawn, so
+/// detection never runs an untrusted or slow binary just to see if it exists.
+fn on_path(bin: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let candidate = dir.join(bin);
+        candidate.is_file() && is_executable(&candidate)
+    })
+}
+
+#[cfg(unix)]
+fn is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_path: &std::path::Path) -> bool {
+    true
+}
+
+/// Which harnesses this machine can seat a rider on right now, in `HARNESS_CANDIDATES` order.
+pub fn detect_harnesses() -> Vec<Harness> {
+    HARNESS_CANDIDATES
+        .iter()
+        .filter(|(_, _, bin)| on_path(bin))
+        .map(|(id, label, bin)| Harness { id: id.to_string(), label: label.to_string(), bin: bin.to_string() })
+        .collect()
+}
+
+/// Whether herdr can seat a rider: on PATH at all, and its socket actually present (an
+/// installed-but-never-run herdr looks identical to a missing one otherwise). Mirrors
+/// `home_cmd::herdr_reachable`'s two-step check, kept separate because that one returns a
+/// bool for a println and this one returns the wire-typed three-way status `hello` carries.
+pub fn detect_herdr_status() -> HerdrStatus {
+    if !on_path("herdr") {
+        return HerdrStatus::Missing;
+    }
+    match herdr_socket_path_for_env() {
+        Some(p) if p.exists() => HerdrStatus::Ok,
+        _ => HerdrStatus::NoSocket,
+    }
+}
+
+fn herdr_socket_path_for_env() -> Option<std::path::PathBuf> {
+    let base = directories::BaseDirs::new()?;
+    Some(base.home_dir().join(".config").join("herdr").join("herdr.sock"))
+}
+
+/// The git toplevel of `cwd`, or `None` outside a repo (`git rev-parse --show-toplevel`, run
+/// once at startup -- cheap enough not to need caching beyond the `HomeEnv` it lands in).
+pub fn git_toplevel(cwd: &std::path::Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// Builds the `HomeEnv` `archie home` hands every connecting client, detected once at startup:
+/// where it runs (decision 4, "auto-fill the working directory ... never ask what the
+/// environment already knows"), which harnesses can seat a rider (decision 2), and whether
+/// herdr itself is usable (decision 3, no PTY fallback).
+pub fn detect_env(cwd: std::path::PathBuf) -> HomeEnv {
+    let repo = git_toplevel(&cwd);
+    HomeEnv {
+        cwd: cwd.to_string_lossy().to_string(),
+        repo,
+        harnesses: detect_harnesses(),
+        herdr: detect_herdr_status(),
+        // Filled in by `gateway::spawn`, which has `Storage`; a plain placeholder here so
+        // `detect_env` alone still returns a usable value for tests and callers without one.
+        budget_default_tokens: PLAIN_BUDGET_DEFAULT_TOKENS,
+    }
+}
+
+/// The plain default when this machine has no indexed sessions to draw a percentile from yet.
+pub const PLAIN_BUDGET_DEFAULT_TOKENS: i64 = 5_000_000;
 
 pub fn now_iso() -> String {
     Utc::now().to_rfc3339()

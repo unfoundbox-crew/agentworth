@@ -14,9 +14,22 @@ let seq = 1000;
 const now = () => new Date().toISOString();
 const id = (p) => `${p}-${seq++}`;
 
+// Stand-in for `detect_env` (protocol.rs): fixed rather than probed, since the mock has no
+// real PATH or herdr socket to check.
+const env = {
+  cwd: '/repo',
+  repo: '/repo',
+  harnesses: [
+    { id: 'claude', label: 'Claude', bin: 'claude' },
+    { id: 'codex', label: 'Codex', bin: 'codex' },
+  ],
+  herdr: 'ok',
+  budgetDefaultTokens: 5_000_000,
+};
+
 wss.on('connection', (ws) => {
   const send = (f) => ws.readyState === 1 && ws.send(JSON.stringify(f));
-  send({ t: 'hello', protocol: 2, personas: fixture.personas, spaces: fixture.spaces, directions: fixture.directions });
+  send({ t: 'hello', protocol: 2, personas: fixture.personas, spaces: fixture.spaces, directions: fixture.directions, env });
   for (const stop of fixture.stops) send({ t: 'stop', stop });
 
   ws.on('message', (raw) => {
@@ -53,6 +66,37 @@ wss.on('connection', (ws) => {
     if (f.t === 'fetch') {
       const a = fixture.artifacts.find((x) => x.id === f.artifactId);
       if (a) send({ t: 'artifact', artifact: a });
+    }
+    if (f.t === 'start_rider') {
+      const harness = env.harnesses.find((h) => h.id === f.harness);
+      if (!harness) {
+        send({ t: 'error', code: 'herdr_error', detail: `no such harness: ${f.harness}` });
+        return;
+      }
+      const shortId = f.directionId.replace(/-/g, '').slice(0, 8);
+      const personaId = `${harness.id}-${shortId}`;
+      const persona = {
+        id: personaId,
+        role: 'executor',
+        kind: harness.id,
+        agentName: personaId,
+        paneId: `mock:${personaId}`,
+        workspaceId: 'mock',
+        cwd: env.repo ?? env.cwd,
+        presence: 'idle',
+        title: '',
+        revision: 0,
+      };
+      send({ t: 'persona', persona });
+      const d = fixture.directions.find((x) => x.id === f.directionId) ?? { id: f.directionId, riders: [] };
+      if (!d.riders.includes(personaId)) d.riders.push(personaId);
+      send({ t: 'direction', direction: { ...d, riders: d.riders, updatedAt: now() } });
+      setTimeout(() => {
+        send({
+          t: 'message',
+          message: { id: id('m'), spaceId: `office-${personaId}`, from: personaId, kind: 'speech', text: 'reading the repo now.', at: now() },
+        });
+      }, 400);
     }
     if (f.t === 'answer') {
       const persona = fixture.personas.find((p) => p.id === f.personaId);

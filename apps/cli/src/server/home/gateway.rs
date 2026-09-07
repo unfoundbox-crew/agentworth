@@ -91,6 +91,11 @@ struct HomeRuntime {
     /// reads this to put what a pane is actually asking into `exception.reason`, instead of the
     /// generic "waiting on X".
     blocked_prompts: HashMap<String, String>,
+    /// Area (a direction's `area` field) -> `(workspace_id, most-recently-created pane_id in
+    /// it)`. `start_rider` creates one herdr workspace per area on first use and splits a fresh
+    /// pane off the last one for every rider after that, so seating five riders on one
+    /// direction opens one workspace, not five.
+    area_workspaces: HashMap<String, (String, String)>,
 }
 
 impl HomeRuntime {
@@ -120,6 +125,7 @@ impl HomeRuntime {
             session_id_to_pane: HashMap::new(),
             source_path_to_pane: HashMap::new(),
             blocked_prompts: HashMap::new(),
+            area_workspaces: HashMap::new(),
         }
     }
 
@@ -361,6 +367,12 @@ pub struct HomeHandle {
     runtime: Arc<Mutex<HomeRuntime>>,
     tx: broadcast::Sender<ServerFrame>,
     storage: Arc<Storage>,
+    /// Detected once at startup (decision 4: "auto-fill the working directory ... never ask
+    /// what the environment already knows"). Never changes for the life of the process.
+    env: HomeEnv,
+    /// Forwards a freshly-discovered pane id to `subscription_loop` so `start_rider`'s new
+    /// pane gets live presence events immediately, the same path `snapshot_poll_loop` uses.
+    new_panes_tx: tokio::sync::mpsc::UnboundedSender<Vec<String>>,
 }
 
 const BROADCAST_CAPACITY: usize = 256;
@@ -378,10 +390,24 @@ pub fn spawn(storage: Arc<Storage>, scanner: Arc<Scanner>, live_tail_tx: broadca
     // subscription loop exists to receive from it.
     let (new_panes_tx, new_panes_rx) = tokio::sync::mpsc::unbounded_channel();
 
+    let mut env = std::env::current_dir()
+        .map(detect_env)
+        .unwrap_or_else(|_| detect_env(std::path::PathBuf::from(".")));
+    // The same number `archie policy init` writes into its starter policy.toml (AGENTS.md's
+    // "dogfood before you propose"): this machine's own p90 across indexed primary sessions,
+    // or the plain fallback `detect_env` already filled in when there's nothing indexed yet.
+    if let Ok(percentiles) = storage.session_token_percentiles(None) {
+        if percentiles.n > 0 {
+            env.budget_default_tokens = percentiles.p90 as i64;
+        }
+    }
+
     let handle = HomeHandle {
         runtime: runtime.clone(),
         tx: tx.clone(),
         storage: storage.clone(),
+        env,
+        new_panes_tx: new_panes_tx.clone(),
     };
 
     tokio::spawn(snapshot_poll_loop(runtime.clone(), new_panes_tx));
@@ -790,7 +816,7 @@ async fn handle_socket(mut socket: WebSocket, home: HomeHandle) {
     let directions = directions::list_wire(&home.storage).unwrap_or_default();
     if send_frame(
         &mut socket,
-        &ServerFrame::Hello { protocol: PROTOCOL, personas, spaces, directions },
+        &ServerFrame::Hello { protocol: PROTOCOL, personas, spaces, directions, env: home.env.clone() },
     )
     .await
     .is_err()
@@ -858,6 +884,9 @@ async fn handle_client_frame(home: &HomeHandle, socket: &mut WebSocket, frame: C
         }
         ClientFrame::Answer { direction_id, persona_id, key, .. } => {
             dispatch_answer(home, socket, direction_id, persona_id, key).await
+        }
+        ClientFrame::StartRider { direction_id, harness, args, .. } => {
+            dispatch_start_rider(home, socket, direction_id, harness, args).await
         }
     }
 }
@@ -1184,6 +1213,211 @@ async fn dispatch_answer(
     let _ = direction_id; // carried on the frame for the client's own bookkeeping; not needed here.
 }
 
+/// The label a herdr workspace gets for `area` -- the directory's own name, or `"home"` when
+/// that can't be determined (an empty or root path).
+fn workspace_label_for_area(area: &str) -> String {
+    std::path::Path::new(area)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("home")
+        .to_string()
+}
+
+/// Reserves a herdr pane in `area`'s workspace for a new rider: creates the workspace on first
+/// use for that area (`herdr workspace create --label <dir name> --no-focus --cwd <area>`),
+/// and splits a fresh pane off the last one created there on every call after that, so seating
+/// several riders on one direction opens one workspace, not one per rider. Never focuses the
+/// new pane -- riders are watched, not stared at, per `apps/home/DESIGN.md`.
+async fn reserve_pane_for_area(home: &HomeHandle, area: &str) -> Result<String, String> {
+    let existing = {
+        let rt = home.runtime.lock().await;
+        rt.area_workspaces.get(area).cloned()
+    };
+
+    if let Some((workspace_id, last_pane_id)) = existing {
+        let output = Command::new("herdr")
+            .args(["pane", "split", &last_pane_id, "--direction", "down", "--cwd", area, "--no-focus"])
+            .output()
+            .await
+            .map_err(|e| format!("herdr pane split: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "herdr pane split exited {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|e| format!("herdr pane split: bad JSON: {e}"))?;
+        let pane_id = value
+            .pointer("/result/pane_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "herdr pane split: no result.pane_id in response".to_string())?
+            .to_string();
+        let mut rt = home.runtime.lock().await;
+        rt.area_workspaces.insert(area.to_string(), (workspace_id, pane_id.clone()));
+        return Ok(pane_id);
+    }
+
+    let label = workspace_label_for_area(area);
+    let output = Command::new("herdr")
+        .args(["workspace", "create", "--label", &label, "--no-focus", "--cwd", area])
+        .output()
+        .await
+        .map_err(|e| format!("herdr workspace create: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "herdr workspace create exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("herdr workspace create: bad JSON: {e}"))?;
+    let workspace_id = value
+        .pointer("/result/workspace/workspace_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "herdr workspace create: no result.workspace.workspace_id in response".to_string())?
+        .to_string();
+    let pane_id = value
+        .pointer("/result/root_pane/pane_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "herdr workspace create: no result.root_pane.pane_id in response".to_string())?
+        .to_string();
+    let mut rt = home.runtime.lock().await;
+    rt.area_workspaces.insert(area.to_string(), (workspace_id, pane_id.clone()));
+    Ok(pane_id)
+}
+
+/// Seats a rider on a direction (decisions 2-4 of the first-run brief): reserves a herdr pane
+/// in the direction's area, starts `harness` in it, adds the resulting persona to the
+/// direction's riders, and sends the direction's goal as that rider's first prompt, verbatim
+/// and unprefixed -- "send my exact prompts, not your inference" (docs/specs/home.md). Refuses
+/// with an `error` frame, no process spawned, when herdr is not `ok`.
+async fn dispatch_start_rider(
+    home: &HomeHandle,
+    socket: &mut WebSocket,
+    direction_id: String,
+    harness: String,
+    args: Vec<String>,
+) {
+    if home.env.herdr != HerdrStatus::Ok {
+        let _ = send_frame(
+            socket,
+            &ServerFrame::Error {
+                code: "herdr_unavailable".into(),
+                detail: format!("herdr is not usable here ({:?}); install it to seat riders", home.env.herdr),
+            },
+        )
+        .await;
+        return;
+    }
+
+    let direction_row = match home.storage.get_home_direction(&direction_id) {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            let _ = send_frame(
+                socket,
+                &ServerFrame::Error { code: "no_such_direction".into(), detail: direction_id },
+            )
+            .await;
+            return;
+        }
+        Err(e) => {
+            let _ = send_frame(socket, &ServerFrame::Error { code: "direction_error".into(), detail: e.to_string() }).await;
+            return;
+        }
+    };
+
+    let pane_id = match reserve_pane_for_area(home, &direction_row.area).await {
+        Ok(p) => p,
+        Err(detail) => {
+            let _ = send_frame(socket, &ServerFrame::Error { code: "herdr_error".into(), detail }).await;
+            return;
+        }
+    };
+
+    let short_id: String = direction_id.chars().filter(|c| *c != '-').take(8).collect();
+    let name = format!("{harness}-{short_id}");
+
+    let mut start_args: Vec<&str> = vec!["agent", "start", &name, "--kind", &harness, "--pane", &pane_id];
+    if !args.is_empty() {
+        start_args.push("--");
+        start_args.extend(args.iter().map(String::as_str));
+    }
+    let start = Command::new("herdr").args(&start_args).output().await;
+    match start {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            let _ = send_frame(
+                socket,
+                &ServerFrame::Error {
+                    code: "herdr_error".into(),
+                    detail: format!(
+                        "herdr agent start {name} --kind {harness} exited {}: {}",
+                        o.status,
+                        String::from_utf8_lossy(&o.stderr)
+                    ),
+                },
+            )
+            .await;
+            return;
+        }
+        Err(e) => {
+            let _ = send_frame(
+                socket,
+                &ServerFrame::Error { code: "herdr_error".into(), detail: format!("could not run herdr agent start: {e}") },
+            )
+            .await;
+            return;
+        }
+    }
+
+    // Refresh personas so the new one exists in the runtime, then broadcast it -- new personas
+    // otherwise only reach a client via `hello`, and this one just seated after every connected
+    // client's `hello` already went out.
+    let persona_id = slugify(&name);
+    let new_pane_ids = match herdr_agent_list().await {
+        Ok(agents) => {
+            let mut rt = home.runtime.lock().await;
+            let (new_pane_ids, _) = rt.refresh_from_agents(&agents);
+            new_pane_ids
+        }
+        Err(e) => {
+            tracing::warn!("home gateway: start_rider herdr agent list failed: {e:#}");
+            Vec::new()
+        }
+    };
+    if !new_pane_ids.is_empty() {
+        let _ = home.new_panes_tx.send(new_pane_ids);
+    }
+    let new_persona = {
+        let rt = home.runtime.lock().await;
+        rt.personas.get(&persona_id).cloned()
+    };
+    if let Some(persona) = new_persona {
+        let _ = home.tx.send(ServerFrame::Persona { persona });
+    }
+
+    if let Err(e) = directions::add_rider(&home.storage, &direction_id, &persona_id) {
+        let _ = send_frame(socket, &ServerFrame::Error { code: "direction_error".into(), detail: e.to_string() }).await;
+        return;
+    }
+    if let Ok(Some(row)) = home.storage.get_home_direction(&direction_id) {
+        if let Ok(direction) = directions::to_wire(&home.storage, &row) {
+            let _ = home.tx.send(ServerFrame::Direction { direction });
+        }
+    }
+
+    // The goal, verbatim, unprefixed, as the rider's first prompt.
+    let goal = direction_row.goal.clone();
+    let target = name.clone();
+    tokio::spawn(async move {
+        let _ = Command::new("herdr").args(["agent", "prompt", &target, &goal]).output().await;
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1251,6 +1485,13 @@ mod tests {
                 created_at: "2026-09-07T00:00:00+00:00".into(),
                 updated_at: "2026-09-07T00:00:00+00:00".into(),
             }],
+            env: HomeEnv {
+                cwd: "/repo".into(),
+                repo: Some("/repo".into()),
+                harnesses: vec![Harness { id: "claude".into(), label: "Claude".into(), bin: "claude".into() }],
+                herdr: HerdrStatus::Ok,
+                budget_default_tokens: 5_000_000,
+            },
         };
 
         let expected = serde_json::json!({
@@ -1290,9 +1531,86 @@ mod tests {
                 "exception": null,
                 "createdAt": "2026-09-07T00:00:00+00:00",
                 "updatedAt": "2026-09-07T00:00:00+00:00"
-            }]
+            }],
+            "env": {
+                "cwd": "/repo",
+                "repo": "/repo",
+                "harnesses": [{ "id": "claude", "label": "Claude", "bin": "claude" }],
+                "herdr": "ok",
+                "budgetDefaultTokens": 5000000
+            }
         });
         assert_eq!(serde_json::to_value(&frame).unwrap(), expected);
+    }
+
+    #[test]
+    fn persona_frame_matches_protocol_ts_shape() {
+        let frame = ServerFrame::Persona {
+            persona: Persona {
+                id: "claude-abcd1234".into(),
+                role: Role::Executor,
+                kind: "claude".into(),
+                agent_name: "claude-abcd1234".into(),
+                pane_id: "wC:p2".into(),
+                workspace_id: "wC".into(),
+                cwd: "/repo".into(),
+                presence: Presence::Idle,
+                title: String::new(),
+                revision: 0,
+            },
+        };
+        let expected = serde_json::json!({
+            "t": "persona",
+            "persona": {
+                "id": "claude-abcd1234",
+                "role": "executor",
+                "kind": "claude",
+                "agentName": "claude-abcd1234",
+                "paneId": "wC:p2",
+                "workspaceId": "wC",
+                "cwd": "/repo",
+                "presence": "idle",
+                "title": "",
+                "revision": 0
+            }
+        });
+        assert_eq!(serde_json::to_value(&frame).unwrap(), expected);
+    }
+
+    #[test]
+    fn client_start_rider_frame_parses() {
+        let frame: ClientFrame = serde_json::from_str(
+            r#"{"t":"start_rider","directionId":"d1","harness":"claude","clientId":"c-1"}"#,
+        )
+        .unwrap();
+        match frame {
+            ClientFrame::StartRider { direction_id, harness, args, client_id } => {
+                assert_eq!(direction_id, "d1");
+                assert_eq!(harness, "claude");
+                assert!(args.is_empty(), "args defaults to empty when omitted");
+                assert_eq!(client_id.as_deref(), Some("c-1"));
+            }
+            other => panic!("expected StartRider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn client_start_rider_frame_parses_args() {
+        let frame: ClientFrame = serde_json::from_str(
+            r#"{"t":"start_rider","directionId":"d1","harness":"claude","args":["--model","haiku"]}"#,
+        )
+        .unwrap();
+        match frame {
+            ClientFrame::StartRider { args, .. } => assert_eq!(args, vec!["--model", "haiku"]),
+            other => panic!("expected StartRider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn workspace_label_for_area_uses_dir_name_or_home() {
+        assert_eq!(workspace_label_for_area("/Users/saurabh/code/unfoundbox/agentworth"), "agentworth");
+        assert_eq!(workspace_label_for_area(""), "home");
+        assert_eq!(workspace_label_for_area("/"), "home");
     }
 
     #[test]

@@ -1,12 +1,16 @@
 import { useSyncExternalStore } from 'react';
-import type { Artifact, Direction, Message, Persona, ServerFrame, Space, Stop } from '../protocol';
+import type { Artifact, Direction, HomeEnv, Message, Persona, ServerFrame, Space, Stop } from '../protocol';
 import { plain, type Theme } from './theme';
 
 export type Connection = 'connecting' | 'open' | 'closed';
 
+/** Before `hello` arrives: unknown harnesses, herdr unproven. Overwritten the moment it lands. */
+const UNKNOWN_ENV: HomeEnv = { cwd: '', repo: null, harnesses: [], herdr: 'missing', budgetDefaultTokens: 5_000_000 };
+
 export interface State {
   connection: Connection;
   theme: Theme;
+  env: HomeEnv;
   personas: Record<string, Persona>;
   spaces: Record<string, Space>;
   spaceOrder: string[];
@@ -25,6 +29,7 @@ export interface State {
 const initial: State = {
   connection: 'connecting',
   theme: plain,
+  env: UNKNOWN_ENV,
   personas: {},
   spaces: {},
   spaceOrder: [],
@@ -94,13 +99,18 @@ function applyFrame(s: State, f: ServerFrame): State {
       const personas = Object.fromEntries(f.personas.map((p) => [p.id, p]));
       const spaces = Object.fromEntries(f.spaces.map((sp) => [sp.id, sp]));
       const directions = Object.fromEntries(f.directions.map((d) => [d.id, d]));
-      return { ...s, personas, spaces, directions, spaceOrder: f.spaces.map((sp) => sp.id), currentSpace: s.currentSpace ?? f.spaces[0]?.id ?? null };
+      return { ...s, personas, spaces, directions, env: f.env, spaceOrder: f.spaces.map((sp) => sp.id), currentSpace: s.currentSpace ?? f.spaces[0]?.id ?? null };
     }
     case 'presence': {
       const p = s.personas[f.personaId];
       if (!p) return s;
       return { ...s, personas: { ...s.personas, [p.id]: { ...p, presence: f.presence, title: f.title, revision: f.revision } } };
     }
+    // A persona the gateway just discovered (e.g. `start_rider` just seated one) --
+    // `presence` frames only update a persona already known to this client, so a brand-new
+    // one needs its own frame to reach an already-open deck instead of waiting for `hello`.
+    case 'persona':
+      return { ...s, personas: { ...s.personas, [f.persona.id]: f.persona } };
     case 'message': {
       const m = f.message;
       const list = s.messages[m.spaceId] ?? [];
