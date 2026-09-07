@@ -53,6 +53,7 @@
         "timestamp": "2026-09-01T10:00:05Z"
       }
     ],
+    "kind": "conversation",
     "provenance": {
       "adapter_name": "claude_code",
       "content_fingerprint": "blake3:fixture0001",
