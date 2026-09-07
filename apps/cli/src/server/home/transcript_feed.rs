@@ -159,6 +159,7 @@ pub fn feed_from_trace(
                 .to_rfc3339(),
             artifacts: None,
             mentions: None,
+            client_id: None,
         });
         *run = WorkRun::default();
     };
@@ -178,6 +179,7 @@ pub fn feed_from_trace(
                         at: event.timestamp.to_rfc3339(),
                         artifacts: None,
                         mentions: None,
+                        client_id: None,
                     });
                 }
             }

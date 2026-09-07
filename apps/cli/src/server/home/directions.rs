@@ -91,10 +91,17 @@ pub fn apply_set_direction(storage: &Storage, input: DirectionInput) -> Result<H
 /// `presence_by_persona` is the live presence map from the gateway's `HomeRuntime` -- riders
 /// are persona ids, and presence is not stored in SQLite, so this can't be answered from
 /// `Storage` alone the way `reached`/`spentTokens` can.
+///
+/// `blocked_prompts` maps a blocked rider's persona id to the last ~12 lines the gateway read
+/// off its pane (`herdr agent read`, box-drawing stripped) when it went blocked -- see
+/// `HomeRuntime::set_blocked_prompt` in `gateway.rs`. When present for the first blocked rider,
+/// it replaces the generic "waiting on X" reason with what the pane is actually asking, which is
+/// what the alert plate renders verbatim.
 pub fn recompute_state(
     storage: &Storage,
     row: &HomeDirectionRow,
     presence_by_persona: &HashMap<String, Presence>,
+    blocked_prompts: &HashMap<String, String>,
 ) -> Result<(DirectionState, Option<Exception>)> {
     let done = Rung::parse_wire_str(&row.done_rung).unwrap_or(Rung::Said);
     let reached_name = storage.home_direction_area_reached(&row.area, row.created_at)?;
@@ -124,14 +131,20 @@ pub fn recompute_state(
     };
 
     if !blocked_riders.is_empty() {
-        let reason = format!(
-            "waiting on {}",
-            blocked_riders
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        let reason = blocked_riders
+            .first()
+            .and_then(|id| blocked_prompts.get(id.as_str()))
+            .cloned()
+            .unwrap_or_else(|| {
+                format!(
+                    "waiting on {}",
+                    blocked_riders
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            });
         let since = keep_or_now(row.state == "waiting");
         return Ok((
             DirectionState::Waiting,
@@ -170,10 +183,11 @@ pub fn recompute_state(
 pub fn recompute_all(
     storage: &Storage,
     presence_by_persona: &HashMap<String, Presence>,
+    blocked_prompts: &HashMap<String, String>,
 ) -> Result<Vec<Direction>> {
     let mut changed = Vec::new();
     for row in storage.list_home_directions()? {
-        let (state, exception) = recompute_state(storage, &row, presence_by_persona)?;
+        let (state, exception) = recompute_state(storage, &row, presence_by_persona, blocked_prompts)?;
         let state_str = state.as_wire_str();
         let reason = exception.as_ref().map(|e| e.reason.as_str());
         let since = exception
@@ -345,7 +359,7 @@ mod tests {
         let mut presence = HashMap::new();
         presence.insert("persona-a".to_string(), Presence::Working);
 
-        let (state, exception) = recompute_state(&fx.storage, &row, &presence).expect("recompute");
+        let (state, exception) = recompute_state(&fx.storage, &row, &presence, &HashMap::new()).expect("recompute");
         assert_eq!(state, DirectionState::Riding);
         assert!(exception.is_none());
     }
@@ -357,7 +371,7 @@ mod tests {
         let mut presence = HashMap::new();
         presence.insert("persona-a".to_string(), Presence::Idle);
 
-        let (state, _) = recompute_state(&fx.storage, &row, &presence).expect("recompute");
+        let (state, _) = recompute_state(&fx.storage, &row, &presence, &HashMap::new()).expect("recompute");
         assert_eq!(state, DirectionState::Idle);
     }
 
@@ -368,9 +382,26 @@ mod tests {
         let mut presence = HashMap::new();
         presence.insert("persona-a".to_string(), Presence::Blocked);
 
-        let (state, exception) = recompute_state(&fx.storage, &row, &presence).expect("recompute");
+        let (state, exception) = recompute_state(&fx.storage, &row, &presence, &HashMap::new()).expect("recompute");
         assert_eq!(state, DirectionState::Waiting);
         assert_eq!(exception.unwrap().reason, "waiting on persona-a");
+    }
+
+    #[test]
+    fn recompute_state_prefers_the_blocked_pane_prompt_over_the_generic_reason() {
+        let fx = fixture();
+        let row = make_direction("d1", "ci", 10_000, fx.created_at);
+        let mut presence = HashMap::new();
+        presence.insert("persona-a".to_string(), Presence::Blocked);
+        let mut blocked_prompts = HashMap::new();
+        blocked_prompts.insert(
+            "persona-a".to_string(),
+            "Do you want to proceed?\n1. Yes\n2. Yes, and don't ask again for: archie session *\n3. No".to_string(),
+        );
+
+        let (state, exception) = recompute_state(&fx.storage, &row, &presence, &blocked_prompts).expect("recompute");
+        assert_eq!(state, DirectionState::Waiting);
+        assert!(exception.unwrap().reason.contains("Do you want to proceed?"));
     }
 
     #[test]
@@ -381,7 +412,7 @@ mod tests {
         let mut presence = HashMap::new();
         presence.insert("persona-a".to_string(), Presence::Working);
 
-        let (state, exception) = recompute_state(&fx.storage, &row, &presence).expect("recompute");
+        let (state, exception) = recompute_state(&fx.storage, &row, &presence, &HashMap::new()).expect("recompute");
         assert_eq!(state, DirectionState::Halted);
         assert!(exception.unwrap().reason.contains("over budget"));
     }
@@ -405,7 +436,7 @@ mod tests {
         let mut presence = HashMap::new();
         presence.insert("persona-a".to_string(), Presence::Working);
 
-        let (state, exception) = recompute_state(&fx.storage, &row, &presence).expect("recompute");
+        let (state, exception) = recompute_state(&fx.storage, &row, &presence, &HashMap::new()).expect("recompute");
         assert_eq!(state, DirectionState::Halted);
         assert_eq!(exception.unwrap().reason, "src/lib.rs has been edited 3 times");
     }
@@ -417,7 +448,7 @@ mod tests {
         let mut presence = HashMap::new();
         presence.insert("persona-a".to_string(), Presence::Idle);
 
-        let (state, _) = recompute_state(&fx.storage, &row, &presence).expect("recompute");
+        let (state, _) = recompute_state(&fx.storage, &row, &presence, &HashMap::new()).expect("recompute");
         assert_eq!(state, DirectionState::Done, "artifact_changed reached >= an artifact-rung goal");
     }
 
@@ -429,7 +460,7 @@ mod tests {
         let mut presence = HashMap::new();
         presence.insert("persona-a".to_string(), Presence::Working);
 
-        let changed = recompute_all(&fx.storage, &presence).expect("recompute_all");
+        let changed = recompute_all(&fx.storage, &presence, &HashMap::new()).expect("recompute_all");
         assert_eq!(changed.len(), 1);
         assert_eq!(changed[0].state, DirectionState::Riding);
 
@@ -437,7 +468,7 @@ mod tests {
         assert_eq!(stored.state, "riding");
 
         // A second pass with the same presence sees no change and returns nothing.
-        let again = recompute_all(&fx.storage, &presence).expect("recompute_all again");
+        let again = recompute_all(&fx.storage, &presence, &HashMap::new()).expect("recompute_all again");
         assert!(again.is_empty());
     }
 

@@ -101,6 +101,13 @@ export interface Message {
   artifacts?: string[];
   /** Persona ids addressed with @, when any. */
   mentions?: string[];
+  /**
+   * Set on a `you` message so the deck can dedupe its own optimistic local echo against the
+   * gateway's own record of the same steer: the local copy shows immediately for latency, then
+   * is replaced (not appended to) when a `message` frame with the same `clientId` and
+   * `from: 'you'` arrives.
+   */
+  clientId?: string;
 }
 
 export type ArtifactKind = 'diff' | 'file' | 'command' | 'link' | 'note';
@@ -132,10 +139,19 @@ export type ServerFrame =
 /** Whether a steer interrupts the rider now or lands after its current step. Never ambiguous. */
 export type SteerMode = 'now' | 'after';
 
+/**
+ * A key press for `answer`: the numbered choices a CLI permission prompt offers (`1`/`2`/`3`),
+ * `esc` to cancel, or `y`/`n` for a plain yes/no prompt. Matches what `herdr agent send-keys`
+ * accepts verbatim.
+ */
+export type AnswerKey = '1' | '2' | '3' | 'esc' | 'y' | 'n';
+
 export type ClientFrame =
   | { t: 'open'; spaceId: string }
   | { t: 'set_direction'; direction: Omit<Direction, 'reached' | 'spentTokens' | 'state' | 'exception' | 'createdAt' | 'updatedAt'> }
-  | { t: 'steer'; directionId: string; text: string; mode: SteerMode; mentions: string[] }
+  | { t: 'steer'; directionId: string; text: string; mode: SteerMode; mentions: string[]; clientId?: string }
   | { t: 'prompt'; spaceId: string; text: string; mentions: string[] }
   | { t: 'seen'; spaceId: string; upto: string }
-  | { t: 'fetch'; artifactId: string };
+  | { t: 'fetch'; artifactId: string }
+  /** Answers a blocked pane's prompt from the alert plate. Refused unless `personaId` is presently `blocked`. */
+  | { t: 'answer'; directionId: string; personaId: string; key: AnswerKey; clientId?: string };

@@ -101,7 +101,8 @@ async function run() {
 
   const stopsBefore = frames.filter((f) => f.t === 'stop' && f.stop.directionId === directionId).length;
 
-  ws.send(JSON.stringify({ t: 'steer', directionId, text: 'smoke steer', mode: 'now', mentions: [] }));
+  const clientId = `smoke-${Date.now()}`;
+  ws.send(JSON.stringify({ t: 'steer', directionId, text: 'smoke steer', mode: 'now', mentions: [], clientId }));
   const directionFrame = await waitFor((f) => f.t === 'direction' && f.direction.id === directionId, 'direction (post-steer)');
   assert(directionFrame.direction.state === 'riding', `direction.state is ${directionFrame.direction.state}, want riding`);
   console.log('ok: steer -> direction frame, state riding');
@@ -112,6 +113,20 @@ async function run() {
   );
   assert(typeof stopFrame.stop.rung === 'string', 'stop.rung is not a string');
   console.log(`ok: stop frame, rung ${stopFrame.stop.rung}`);
+
+  // The gateway's own echo of the steer must carry the same clientId the client sent, exactly
+  // once -- the wire-level half of "one echo per steer" (the dedupe-in-place itself is
+  // store.ts's job, which this no-React smoke test can't exercise).
+  const echoFrames = frames.filter((f) => f.t === 'message' && f.message.clientId === clientId);
+  assert(echoFrames.length === 1, `expected exactly one echo message with clientId ${clientId}, saw ${echoFrames.length}`);
+  assert(echoFrames[0].message.from === 'you', 'echo message is not from "you"');
+  console.log(`ok: steer echo carries clientId ${clientId}, exactly once`);
+
+  const idlePersonaId = hello.personas.find((p) => p.presence !== 'blocked')?.id;
+  assert(idlePersonaId, 'fixture has no non-blocked persona to test answer refusal against');
+  ws.send(JSON.stringify({ t: 'answer', directionId, personaId: idlePersonaId, key: '1' }));
+  const answerError = await waitFor((f) => f.t === 'error' && f.code === 'not_blocked', 'error (answer on non-blocked persona)');
+  console.log(`ok: answer on non-blocked persona ${idlePersonaId} refused: ${answerError.detail}`);
 
   ws.close();
   console.log('smoke: all frames matched protocol 2');

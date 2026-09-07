@@ -20,6 +20,7 @@ export const Dock = forwardRef<DockHandle, { direction: Direction | undefined; p
     const [text, setText] = useState('');
     const [mode, setMode] = useState<SteerMode>('now');
     const [showMentions, setShowMentions] = useState(false);
+    const [justSent, setJustSent] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
 
     useImperativeHandle(ref, () => ({
@@ -42,7 +43,10 @@ export const Dock = forwardRef<DockHandle, { direction: Direction | undefined; p
     function send() {
       if (!direction || !text.trim()) return;
       const mentions = mentionsIn(text);
-      gateway.send({ t: 'steer', directionId: direction.id, text, mode, mentions });
+      // `clientId` lets the gateway's own echo of this steer replace this local one in place
+      // (see `store.ts`'s `message` case) instead of showing up twice on the course.
+      const clientId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      gateway.send({ t: 'steer', directionId: direction.id, text, mode, mentions, clientId });
       dispatch({
         type: 'local',
         message: {
@@ -53,10 +57,13 @@ export const Dock = forwardRef<DockHandle, { direction: Direction | undefined; p
           text,
           at: new Date().toISOString(),
           mentions,
+          clientId,
         },
       });
       setText('');
       setShowMentions(false);
+      setJustSent(true);
+      setTimeout(() => setJustSent(false), 1000);
     }
 
     return (
@@ -85,6 +92,7 @@ export const Dock = forwardRef<DockHandle, { direction: Direction | undefined; p
         <input
           ref={inputRef}
           value={text}
+          readOnly={justSent}
           onChange={(e) => {
             setText(e.target.value);
             setShowMentions(e.target.value.endsWith('@'));
@@ -92,8 +100,11 @@ export const Dock = forwardRef<DockHandle, { direction: Direction | undefined; p
           onKeyDown={(e) => {
             if (e.key === 'Enter') send();
           }}
-          placeholder="steer the selected direction, or @ a rider"
-          className="flex-1 bg-transparent outline-none text-[13px] text-text placeholder:text-dim"
+          placeholder={justSent ? 'sent' : 'steer the selected direction, or @ a rider'}
+          className={clsx(
+            'flex-1 bg-transparent outline-none text-[13px] text-text placeholder:text-dim',
+            justSent && 'opacity-60',
+          )}
         />
         <div className="flex border border-line rounded-md overflow-hidden shrink-0">
           <button

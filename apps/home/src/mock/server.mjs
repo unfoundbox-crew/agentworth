@@ -41,6 +41,10 @@ wss.on('connection', (ws) => {
     if (f.t === 'steer') {
       const d = fixture.directions.find((x) => x.id === f.directionId);
       if (!d) return;
+      send({
+        t: 'message',
+        message: { id: id('m'), spaceId: `office-${d.riders[0]}`, from: 'you', kind: 'speech', text: f.text, at: now(), clientId: f.clientId },
+      });
       const next = { ...d, state: 'riding', exception: null, updatedAt: now() };
       Object.assign(d, next);
       send({ t: 'direction', direction: next });
@@ -49,6 +53,24 @@ wss.on('connection', (ws) => {
     if (f.t === 'fetch') {
       const a = fixture.artifacts.find((x) => x.id === f.artifactId);
       if (a) send({ t: 'artifact', artifact: a });
+    }
+    if (f.t === 'answer') {
+      const persona = fixture.personas.find((p) => p.id === f.personaId);
+      if (!persona || persona.presence !== 'blocked') {
+        send({ t: 'error', code: 'not_blocked', detail: `${f.personaId} is not blocked; nothing to answer` });
+        return;
+      }
+      send({
+        t: 'message',
+        message: {
+          id: id('m'),
+          spaceId: `office-${persona.id}`,
+          from: 'you',
+          kind: 'system',
+          text: `you answered ${f.key} on ${persona.agentName}`,
+          at: now(),
+        },
+      });
     }
   });
 

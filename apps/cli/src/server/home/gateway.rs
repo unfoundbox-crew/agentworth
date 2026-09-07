@@ -84,6 +84,13 @@ struct HomeRuntime {
     /// `agent_session.value` -> `pane_id`, for panes whose `agent_session.kind == "path"`.
     /// Matched against a session's own indexed `source_path` instead of its `session_id`.
     source_path_to_pane: HashMap<String, String>,
+    /// Persona id -> the last ~12 non-empty lines read off its pane (`herdr agent read`,
+    /// box-drawing stripped) at the moment it went `blocked`. Populated by
+    /// `run_subscription`'s spawned fetch when `apply_status_change` reports a fresh transition
+    /// into `blocked`; cleared the moment that persona leaves `blocked`. `directions::recompute_state`
+    /// reads this to put what a pane is actually asking into `exception.reason`, instead of the
+    /// generic "waiting on X".
+    blocked_prompts: HashMap<String, String>,
 }
 
 impl HomeRuntime {
@@ -112,6 +119,7 @@ impl HomeRuntime {
             session_cursors: HashMap::new(),
             session_id_to_pane: HashMap::new(),
             source_path_to_pane: HashMap::new(),
+            blocked_prompts: HashMap::new(),
         }
     }
 
@@ -150,8 +158,14 @@ impl HomeRuntime {
     /// that are new since the last refresh, so the caller can subscribe to their status
     /// changes. Existing personas keep their `id` (a slug of their agent name) even if their
     /// pane's other fields (cwd, revision, title) changed underneath them.
-    fn refresh_from_agents(&mut self, agents: &[HerdrAgent]) -> Vec<String> {
+    ///
+    /// Also returns `(persona_id, target_ref)` for every persona this refresh observed
+    /// transitioning into `blocked` -- the snapshot poll is a second path (besides the herdr
+    /// socket subscription in `run_subscription`) that can first notice a block, so it needs the
+    /// same "fetch the pane text" hook `apply_status_change` provides there.
+    fn refresh_from_agents(&mut self, agents: &[HerdrAgent]) -> (Vec<String>, Vec<(String, String)>) {
         let mut new_pane_ids = Vec::new();
+        let mut newly_blocked = Vec::new();
         let all_room_members: Vec<String> = agents
             .iter()
             .map(|a| slugify(a.name.as_deref().unwrap_or(&a.pane_id)))
@@ -161,6 +175,7 @@ impl HomeRuntime {
             let agent_name = agent.name.clone().unwrap_or_else(|| agent.pane_id.clone());
             let id = slugify(&agent_name);
             let role = self.role_map.get(&agent_name).copied().unwrap_or(Role::Guest);
+            let was_blocked = self.personas.get(&id).map(|p| p.presence) == Some(Presence::Blocked);
             let persona = Persona {
                 id: id.clone(),
                 role,
@@ -175,6 +190,12 @@ impl HomeRuntime {
             };
             if !self.pane_to_persona.contains_key(&agent.pane_id) {
                 new_pane_ids.push(agent.pane_id.clone());
+            }
+            if persona.presence == Presence::Blocked && !was_blocked {
+                newly_blocked.push((id.clone(), persona.target_ref().to_string()));
+            }
+            if persona.presence != Presence::Blocked {
+                self.blocked_prompts.remove(&id);
             }
             self.pane_to_persona.insert(agent.pane_id.clone(), id.clone());
             if let Some(session) = &agent.agent_session {
@@ -210,7 +231,7 @@ impl HomeRuntime {
             }
         }
 
-        new_pane_ids
+        (new_pane_ids, newly_blocked)
     }
 
     /// Applies an observed `(presence, title)` for `pane_id` and returns the frame to broadcast
@@ -221,29 +242,54 @@ impl HomeRuntime {
     /// check, every `pane_updated` tick for an unrelated field would still bump `revision` and
     /// broadcast a `presence` frame, and the client would see noise instead of "the client only
     /// sees changes".
+    /// Returns the broadcast frame (or `None` if nothing changed, see the doc comment above)
+    /// plus, when this call is the transition *into* `blocked`, that persona's `target_ref` --
+    /// the caller uses it to spawn a `herdr agent read` fetch for `set_blocked_prompt` without
+    /// holding the runtime lock across the process call. A transition *out of* `blocked` clears
+    /// any stored prompt immediately, inline, since that's just a map removal.
     fn apply_status_change(
         &mut self,
         pane_id: &str,
         presence: Presence,
         title: Option<String>,
-    ) -> Option<ServerFrame> {
+    ) -> Option<(ServerFrame, Option<(String, String)>)> {
         let persona_id = self.pane_to_persona.get(pane_id)?.clone();
         let persona = self.personas.get_mut(&persona_id)?;
         let title_changed = title.as_deref().is_some_and(|t| t != persona.title);
         if persona.presence == presence && !title_changed {
             return None;
         }
+        let became_blocked = presence == Presence::Blocked && persona.presence != Presence::Blocked;
+        let target_ref = persona.target_ref().to_string();
         persona.presence = presence;
         persona.revision += 1;
         if let Some(t) = title {
             persona.title = t;
         }
-        Some(ServerFrame::Presence {
-            persona_id,
+        let frame = ServerFrame::Presence {
+            persona_id: persona_id.clone(),
             presence,
             title: persona.title.clone(),
             revision: persona.revision,
-        })
+        };
+        if presence != Presence::Blocked {
+            self.blocked_prompts.remove(&persona_id);
+        }
+        let fetch = became_blocked.then_some((persona_id, target_ref));
+        Some((frame, fetch))
+    }
+
+    /// Stores the pane text read for a persona that went `blocked` (see `apply_status_change`).
+    /// A no-op if the persona has since left `blocked` -- the fetch that produced `prompt` is a
+    /// background task that can land after the pane already unblocked.
+    fn set_blocked_prompt(&mut self, persona_id: &str, prompt: String) {
+        if self.personas.get(persona_id).map(|p| p.presence) == Some(Presence::Blocked) {
+            self.blocked_prompts.insert(persona_id.to_string(), prompt);
+        }
+    }
+
+    fn blocked_prompts(&self) -> HashMap<String, String> {
+        self.blocked_prompts.clone()
     }
 
     fn push_message(&mut self, message: Message) {
@@ -356,10 +402,19 @@ async fn snapshot_poll_loop(
         match herdr_agent_list().await {
             Ok(agents) => {
                 let mut rt = runtime.lock().await;
-                let new_panes = rt.refresh_from_agents(&agents);
+                let (new_panes, newly_blocked) = rt.refresh_from_agents(&agents);
                 drop(rt);
                 if !new_panes.is_empty() {
                     let _ = new_panes_tx.send(new_panes);
+                }
+                for (persona_id, target_ref) in newly_blocked {
+                    let runtime = runtime.clone();
+                    tokio::spawn(async move {
+                        if let Some(prompt) = fetch_blocked_prompt(&target_ref).await {
+                            let mut rt = runtime.lock().await;
+                            rt.set_blocked_prompt(&persona_id, prompt);
+                        }
+                    });
                 }
             }
             Err(e) => tracing::warn!("home gateway: herdr agent list failed: {e:#}"),
@@ -378,11 +433,11 @@ async fn direction_poll_loop(
     let mut interval = tokio::time::interval(DIRECTION_POLL);
     loop {
         interval.tick().await;
-        let presence = {
+        let (presence, blocked_prompts) = {
             let rt = runtime.lock().await;
-            rt.presence_by_persona()
+            (rt.presence_by_persona(), rt.blocked_prompts())
         };
-        match directions::recompute_all(&storage, &presence) {
+        match directions::recompute_all(&storage, &presence, &blocked_prompts) {
             Ok(changed) => {
                 for direction in changed {
                     let _ = tx.send(ServerFrame::Direction { direction });
@@ -525,6 +580,48 @@ async fn subscription_loop(
     }
 }
 
+/// Unicode box-drawing characters a terminal snapshot uses for borders and separators (the
+/// horizontal/vertical/corner/junction/double-line ranges) -- stripped so `exception.reason`
+/// carries the prompt's actual words, not the rule the CLI drew around them.
+fn strip_box_drawing(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(*c, '\u{2500}'..='\u{257F}'))
+        .collect()
+}
+
+/// The last `n` non-blank lines of `text`, trimmed. `herdr agent read`'s tail is where a live
+/// permission prompt sits; blank lines are dropped so the budget of lines goes to content, not
+/// to the terminal's own spacing.
+fn last_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
+    let start = lines.len().saturating_sub(n);
+    lines[start..].join("\n")
+}
+
+/// Reads `target`'s pane with `herdr agent read` and returns its last ~12 non-blank lines,
+/// box-drawing stripped -- what a blocked pane is actually asking, for `exception.reason`.
+/// `None` on any failure; the caller falls back to the generic "waiting on X" reason, which is
+/// the pre-existing behavior, not a regression.
+async fn fetch_blocked_prompt(target: &str) -> Option<String> {
+    let output = Command::new("herdr").args(["agent", "read", target]).output().await.ok()?;
+    if !output.status.success() {
+        tracing::warn!(
+            "home gateway: herdr agent read {target} exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let stripped = strip_box_drawing(&raw);
+    let text = last_lines(&stripped, 12);
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 fn herdr_socket_path() -> Option<std::path::PathBuf> {
     let base = directories::BaseDirs::new()?;
     Some(base.home_dir().join(".config").join("herdr").join("herdr.sock"))
@@ -562,11 +659,21 @@ async fn run_subscription(
                         "home gateway: parsed pane_id={} status={:?}",
                         frame.pane_id, frame.agent_status
                     );
-                    let mut rt = runtime.lock().await;
-                    if let Some(server_frame) =
+                    let outcome = {
+                        let mut rt = runtime.lock().await;
                         rt.apply_status_change(&frame.pane_id, frame.agent_status, frame.title)
-                    {
+                    };
+                    if let Some((server_frame, fetch)) = outcome {
                         let _ = tx.send(server_frame);
+                        if let Some((persona_id, target_ref)) = fetch {
+                            let runtime = runtime.clone();
+                            tokio::spawn(async move {
+                                if let Some(prompt) = fetch_blocked_prompt(&target_ref).await {
+                                    let mut rt = runtime.lock().await;
+                                    rt.set_blocked_prompt(&persona_id, prompt);
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -746,8 +853,11 @@ async fn handle_client_frame(home: &HomeHandle, socket: &mut WebSocket, frame: C
             dispatch_prompt(home, socket, space_id, text, mentions).await
         }
         ClientFrame::SetDirection { direction } => dispatch_set_direction(home, socket, direction).await,
-        ClientFrame::Steer { direction_id, text, mode, mentions } => {
-            dispatch_steer(home, socket, direction_id, text, mode, mentions).await
+        ClientFrame::Steer { direction_id, text, mode, mentions, client_id } => {
+            dispatch_steer(home, socket, direction_id, text, mode, mentions, client_id).await
+        }
+        ClientFrame::Answer { direction_id, persona_id, key, .. } => {
+            dispatch_answer(home, socket, direction_id, persona_id, key).await
         }
     }
 }
@@ -811,7 +921,7 @@ async fn dispatch_prompt(
         return;
     }
 
-    post_you_message(home, &space_id, &text, &mentions).await;
+    post_you_message(home, &space_id, &text, &mentions, None).await;
 
     for persona in runnable {
         let target = persona.target_ref().to_string();
@@ -832,6 +942,7 @@ async fn dispatch_steer(
     text: String,
     mode: SteerMode,
     mentions: Vec<String>,
+    client_id: Option<String>,
 ) {
     let Ok(Some(direction_row)) = home.storage.get_home_direction(&direction_id) else {
         let _ = send_frame(
@@ -878,7 +989,7 @@ async fn dispatch_steer(
     }
 
     for persona in &targets {
-        post_you_message(home, &format!("office-{}", persona.id), &text, &[]).await;
+        post_you_message(home, &format!("office-{}", persona.id), &text, &[], client_id.clone()).await;
     }
 
     for persona in targets {
@@ -935,7 +1046,16 @@ async fn steer_after_settle(home: HomeHandle, persona_id: String, target: String
     let _ = Command::new("herdr").args(["agent", "prompt", &target, &text]).output().await;
 }
 
-async fn post_you_message(home: &HomeHandle, space_id: &str, text: &str, mentions: &[String]) {
+/// `client_id`, when given, mirrors back the id the deck's own optimistic local echo carried, so
+/// `apps/home/src/model/store.ts` can replace that echo in place instead of appending a second
+/// copy of the same steer -- see `Message.clientId` in `apps/home/src/protocol.ts`.
+async fn post_you_message(
+    home: &HomeHandle,
+    space_id: &str,
+    text: &str,
+    mentions: &[String],
+    client_id: Option<String>,
+) {
     let message = Message {
         id: new_id(),
         space_id: space_id.to_string(),
@@ -945,12 +1065,123 @@ async fn post_you_message(home: &HomeHandle, space_id: &str, text: &str, mention
         at: now_iso(),
         artifacts: None,
         mentions: if mentions.is_empty() { None } else { Some(mentions.to_vec()) },
+        client_id,
     };
     {
         let mut rt = home.runtime.lock().await;
         rt.push_message(message.clone());
     }
     let _ = home.tx.send(ServerFrame::Message { message });
+}
+
+/// Appends a `system` message to a direction's office log -- used to record an `answer` (`"you
+/// answered 1 on probe-haiku"`) so Archie's own transcript of the direction shows who resolved
+/// what, the same way any other stop or steer does.
+async fn post_system_message(home: &HomeHandle, space_id: &str, text: &str) {
+    let message = Message {
+        id: new_id(),
+        space_id: space_id.to_string(),
+        from: "you".to_string(),
+        kind: MessageKind::System,
+        text: text.to_string(),
+        at: now_iso(),
+        artifacts: None,
+        mentions: None,
+        client_id: None,
+    };
+    {
+        let mut rt = home.runtime.lock().await;
+        rt.push_message(message.clone());
+    }
+    let _ = home.tx.send(ServerFrame::Message { message });
+}
+
+/// Whether `presence` is answerable at all -- pulled out of `dispatch_answer` so it has a unit
+/// test independent of the socket/process plumbing around it (the job brief: "a unit test that a
+/// non-blocked target is refused").
+fn validate_answerable(presence: Presence) -> Result<(), String> {
+    if presence == Presence::Blocked {
+        Ok(())
+    } else {
+        Err(format!("persona is {presence:?}, not blocked; nothing to answer"))
+    }
+}
+
+/// Resolves `persona_id`'s herdr agent name and runs `herdr agent send-keys <name> <key>` --
+/// verified working live on 2026-09-07 against `probe-haiku`: `herdr agent send-keys probe-haiku
+/// 1` took it from `blocked` to `working`. Refuses (an `error` frame, no process spawned) unless
+/// the persona is presently `blocked`, per the job brief. `direction_id` is only used to name the
+/// office the system message lands in when the persona can't be resolved to one via `personas`
+/// (which shouldn't happen in practice, but the frame carries it either way).
+async fn dispatch_answer(
+    home: &HomeHandle,
+    socket: &mut WebSocket,
+    direction_id: String,
+    persona_id: String,
+    key: AnswerKey,
+) {
+    let persona = {
+        let rt = home.runtime.lock().await;
+        rt.personas.get(&persona_id).cloned()
+    };
+    let Some(persona) = persona else {
+        let _ = send_frame(
+            socket,
+            &ServerFrame::Error { code: "no_target".into(), detail: format!("no such persona: {persona_id}") },
+        )
+        .await;
+        return;
+    };
+
+    if let Err(detail) = validate_answerable(persona.presence) {
+        let _ = send_frame(socket, &ServerFrame::Error { code: "not_blocked".into(), detail }).await;
+        return;
+    }
+
+    let target = persona.target_ref().to_string();
+    let key_str = key.as_wire_str();
+    let output = Command::new("herdr").args(["agent", "send-keys", &target, key_str]).output().await;
+    match output {
+        Ok(o) if o.status.success() => {
+            // Policy note: key "2" is a standing-permission change ("don't ask again"), which
+            // widens what `target` will do without asking again. This lane only logs it as a
+            // system message so Archie's record shows who widened what; it is not routed through
+            // the governor here.
+            // TODO(archie policy): route "don't ask again" through `archie policy` once that
+            // surface exists, instead of only logging it.
+            let text = if key.is_standing_permission_change() {
+                format!("you answered {key_str} (don't ask again) on {target}")
+            } else {
+                format!("you answered {key_str} on {target}")
+            };
+            post_system_message(home, &format!("office-{}", persona.id), &text).await;
+        }
+        Ok(o) => {
+            let _ = send_frame(
+                socket,
+                &ServerFrame::Error {
+                    code: "send_keys_failed".into(),
+                    detail: format!(
+                        "herdr agent send-keys {target} {key_str} exited {}: {}",
+                        o.status,
+                        String::from_utf8_lossy(&o.stderr)
+                    ),
+                },
+            )
+            .await;
+        }
+        Err(e) => {
+            let _ = send_frame(
+                socket,
+                &ServerFrame::Error {
+                    code: "send_keys_failed".into(),
+                    detail: format!("could not run herdr agent send-keys {target} {key_str}: {e}"),
+                },
+            )
+            .await;
+        }
+    }
+    let _ = direction_id; // carried on the frame for the client's own bookkeeping; not needed here.
 }
 
 #[cfg(test)]
@@ -1164,6 +1395,7 @@ mod tests {
                 at: "2026-09-07T00:00:00+00:00".into(),
                 artifacts: None,
                 mentions: None,
+                client_id: None,
             },
         };
         let expected = serde_json::json!({
@@ -1233,11 +1465,12 @@ mod tests {
         let raw = r#"{"t":"steer","directionId":"d1","text":"ship it now","mode":"now","mentions":["harvey"]}"#;
         let frame: ClientFrame = serde_json::from_str(raw).unwrap();
         match frame {
-            ClientFrame::Steer { direction_id, text, mode, mentions } => {
+            ClientFrame::Steer { direction_id, text, mode, mentions, client_id } => {
                 assert_eq!(direction_id, "d1");
                 assert_eq!(text, "ship it now");
                 assert_eq!(mode, SteerMode::Now);
                 assert_eq!(mentions, vec!["harvey".to_string()]);
+                assert_eq!(client_id, None);
             }
             _ => panic!("expected Steer"),
         }
@@ -1257,6 +1490,91 @@ mod tests {
     }
 
     #[test]
+    fn client_steer_frame_parses_client_id() {
+        let raw = r#"{"t":"steer","directionId":"d1","text":"go","mode":"now","clientId":"c-123"}"#;
+        let frame: ClientFrame = serde_json::from_str(raw).unwrap();
+        match frame {
+            ClientFrame::Steer { client_id, .. } => assert_eq!(client_id.as_deref(), Some("c-123")),
+            _ => panic!("expected Steer"),
+        }
+    }
+
+    #[test]
+    fn message_with_client_id_serializes_it() {
+        let message = Message {
+            id: "m1".into(),
+            space_id: "office-harvey".into(),
+            from: "you".into(),
+            kind: MessageKind::Speech,
+            text: "ship it".into(),
+            at: "2026-09-07T00:00:00+00:00".into(),
+            artifacts: None,
+            mentions: None,
+            client_id: Some("c-123".into()),
+        };
+        let value = serde_json::to_value(&message).unwrap();
+        assert_eq!(value.get("clientId").and_then(|v| v.as_str()), Some("c-123"));
+    }
+
+    #[test]
+    fn client_answer_frame_parses() {
+        let raw = r#"{"t":"answer","directionId":"d1","personaId":"probe-haiku","key":"1"}"#;
+        let frame: ClientFrame = serde_json::from_str(raw).unwrap();
+        match frame {
+            ClientFrame::Answer { direction_id, persona_id, key, client_id } => {
+                assert_eq!(direction_id, "d1");
+                assert_eq!(persona_id, "probe-haiku");
+                assert_eq!(key, AnswerKey::One);
+                assert_eq!(client_id, None);
+            }
+            _ => panic!("expected Answer"),
+        }
+    }
+
+    #[test]
+    fn client_answer_frame_parses_every_key() {
+        for (wire, expected) in [
+            ("1", AnswerKey::One),
+            ("2", AnswerKey::Two),
+            ("3", AnswerKey::Three),
+            ("esc", AnswerKey::Esc),
+            ("y", AnswerKey::Y),
+            ("n", AnswerKey::N),
+        ] {
+            let raw = format!(r#"{{"t":"answer","directionId":"d1","personaId":"p1","key":"{wire}"}}"#);
+            let frame: ClientFrame = serde_json::from_str(&raw).unwrap();
+            match frame {
+                ClientFrame::Answer { key, .. } => assert_eq!(key, expected, "wire key {wire}"),
+                _ => panic!("expected Answer"),
+            }
+        }
+    }
+
+    #[test]
+    fn validate_answerable_accepts_only_blocked() {
+        assert!(validate_answerable(Presence::Blocked).is_ok());
+        assert!(validate_answerable(Presence::Idle).is_err());
+        assert!(validate_answerable(Presence::Working).is_err());
+        assert!(validate_answerable(Presence::Done).is_err());
+        assert!(validate_answerable(Presence::Unknown).is_err());
+    }
+
+    #[test]
+    fn strip_box_drawing_removes_the_rule_but_keeps_the_words() {
+        let raw = "───────\n Do you want to proceed?\n ❯ 1. Yes\n───────";
+        let stripped = strip_box_drawing(raw);
+        assert!(stripped.contains("Do you want to proceed?"));
+        assert!(!stripped.contains('─'));
+    }
+
+    #[test]
+    fn last_lines_drops_blank_lines_and_caps_the_count() {
+        let raw = "a\n\nb\nc\n\n\nd\ne";
+        assert_eq!(last_lines(raw, 2), "d\ne");
+        assert_eq!(last_lines(raw, 10), "a\nb\nc\nd\ne");
+    }
+
+    #[test]
     fn refresh_from_agents_builds_offices_and_rooms_with_roles() {
         let agents = vec![
             sample_agent("w1:pA", "claude", Some("partner-harvey"), Presence::Idle),
@@ -1268,9 +1586,10 @@ mod tests {
         role_map.insert("partner-harvey".to_string(), Role::Senior);
 
         let mut runtime = HomeRuntime::new(role_map);
-        let new_panes = runtime.refresh_from_agents(&agents);
+        let (new_panes, newly_blocked) = runtime.refresh_from_agents(&agents);
 
         assert_eq!(new_panes.len(), 3, "all three panes are new on first refresh");
+        assert!(newly_blocked.is_empty(), "none of these agents start blocked");
 
         let harvey = runtime.personas.get("partner-harvey").expect("harvey persona");
         assert_eq!(harvey.role, Role::Senior);
@@ -1294,8 +1613,23 @@ mod tests {
             assert_eq!(room.members.len(), 3, "every persona is a member of every room");
         }
 
-        let no_new = runtime.refresh_from_agents(&agents);
+        let (no_new, _) = runtime.refresh_from_agents(&agents);
         assert!(no_new.is_empty());
+    }
+
+    #[test]
+    fn refresh_from_agents_reports_a_fresh_transition_into_blocked() {
+        let mut runtime = HomeRuntime::new(HashMap::new());
+        runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("probe-haiku"), Presence::Idle)]);
+
+        let (_, newly_blocked) =
+            runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("probe-haiku"), Presence::Blocked)]);
+        assert_eq!(newly_blocked, vec![("probe-haiku".to_string(), "probe-haiku".to_string())]);
+
+        // Staying blocked on a later poll is not a fresh transition -- no repeat fetch.
+        let (_, again) =
+            runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("probe-haiku"), Presence::Blocked)]);
+        assert!(again.is_empty());
     }
 
     #[test]
@@ -1399,9 +1733,10 @@ mod tests {
     fn apply_status_change_bumps_revision_and_updates_title() {
         let mut runtime = HomeRuntime::new(HashMap::new());
         runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("harvey"), Presence::Idle)]);
-        let frame = runtime
+        let (frame, fetch) = runtime
             .apply_status_change("w1:pA", Presence::Working, Some("reviewing #196".into()))
             .expect("frame");
+        assert!(fetch.is_none(), "idle -> working is not a transition into blocked");
         match frame {
             ServerFrame::Presence { persona_id, presence, title, revision } => {
                 assert_eq!(persona_id, "harvey");
@@ -1411,6 +1746,34 @@ mod tests {
             }
             _ => panic!("expected Presence frame"),
         }
+    }
+
+    #[test]
+    fn apply_status_change_reports_a_fetch_target_on_transition_into_blocked() {
+        let mut runtime = HomeRuntime::new(HashMap::new());
+        runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("probe-haiku"), Presence::Idle)]);
+        let (_, fetch) = runtime
+            .apply_status_change("w1:pA", Presence::Blocked, None)
+            .expect("frame");
+        assert_eq!(fetch, Some(("probe-haiku".to_string(), "probe-haiku".to_string())));
+
+        // Once blocked, a repeat "still blocked" observation is not a fresh transition.
+        let repeat = runtime.apply_status_change("w1:pA", Presence::Blocked, None);
+        assert!(repeat.is_none(), "same presence, no title change -- nothing to report");
+    }
+
+    #[test]
+    fn set_blocked_prompt_and_leaving_blocked_clears_it() {
+        let mut runtime = HomeRuntime::new(HashMap::new());
+        runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("probe-haiku"), Presence::Blocked)]);
+        runtime.set_blocked_prompt("probe-haiku", "Do you want to proceed?".to_string());
+        assert_eq!(
+            runtime.blocked_prompts().get("probe-haiku").map(String::as_str),
+            Some("Do you want to proceed?")
+        );
+
+        runtime.apply_status_change("w1:pA", Presence::Working, None);
+        assert!(!runtime.blocked_prompts().contains_key("probe-haiku"), "leaving blocked clears the stored prompt");
     }
 
     #[test]
@@ -1432,7 +1795,7 @@ mod tests {
         );
         assert!(same_title.is_none(), "same presence and same title -- still nothing changed");
 
-        let title_only = runtime
+        let (title_only, _) = runtime
             .apply_status_change("w1:pA", Presence::Working, Some("new title".into()))
             .expect("title alone changing is still a change");
         match title_only {

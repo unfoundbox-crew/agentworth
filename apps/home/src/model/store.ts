@@ -105,11 +105,16 @@ function applyFrame(s: State, f: ServerFrame): State {
       const m = f.message;
       const list = s.messages[m.spaceId] ?? [];
       if (list.some((x) => x.id === m.id)) return s;
+      // The gateway's own record of a steer carries the same `clientId` the dock's optimistic
+      // local echo used -- replace that echo in place instead of appending a second copy of the
+      // same line (see `dispatch_steer`/`post_you_message` in gateway.rs and `Dock.tsx`'s `send`).
+      const echoIndex = m.clientId && m.from === 'you' ? list.findIndex((x) => x.clientId === m.clientId && x.from === 'you') : -1;
+      const nextList = echoIndex === -1 ? [...list, m] : [...list.slice(0, echoIndex), m, ...list.slice(echoIndex + 1)];
       const sp = s.spaces[m.spaceId];
       const unread = sp && m.spaceId !== s.currentSpace && m.from !== 'you' ? sp.unread + 1 : sp?.unread ?? 0;
       return {
         ...s,
-        messages: { ...s.messages, [m.spaceId]: [...list, m] },
+        messages: { ...s.messages, [m.spaceId]: nextList },
         spaces: sp ? { ...s.spaces, [m.spaceId]: { ...sp, unread, lastActivity: m.at, lastSummary: m.kind === 'speech' ? m.text.slice(0, 120) : sp.lastSummary } } : s.spaces,
       };
     }
