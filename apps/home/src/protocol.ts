@@ -12,6 +12,30 @@ export type Presence = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
 /** Which harness runs behind a persona. Read from herdr, never assumed. */
 export type AgentKind = 'claude' | 'codex' | 'grok' | 'gemini' | 'agy' | 'cursor' | 'opencode' | string;
 
+/** A harness this machine can seat a rider on. `id` matches `herdr agent start --kind`. */
+export type HarnessId = 'claude' | 'codex' | 'gemini' | 'agy' | 'opencode' | 'cursor' | string;
+
+/** One row in the first-run "who rides" chip strip. `bin` is the executable found on PATH. */
+export interface Harness {
+  id: HarnessId;
+  label: string;
+  bin: string;
+}
+
+/** Whether herdr, required to seat any rider, is usable from here. */
+export type HerdrStatus = 'ok' | 'missing' | 'no_socket';
+
+/** What the server already knows about where it runs, detected once at startup. */
+export interface HomeEnv {
+  cwd: string;
+  /** Git toplevel of `cwd`, or null outside a repo. */
+  repo: string | null;
+  harnesses: Harness[];
+  herdr: HerdrStatus;
+  /** A new direction's starting budget: this machine's own p90 token spend, or a plain 5M fallback. */
+  budgetDefaultTokens: number;
+}
+
 /** A seat at the table. `role` is functional; themes map it to a name and face. */
 export type Role = 'chief_of_staff' | 'senior' | 'associate' | 'executor' | 'controller' | 'guest';
 
@@ -126,10 +150,12 @@ export interface Artifact {
 }
 
 export type ServerFrame =
-  | { t: 'hello'; protocol: number; personas: Persona[]; spaces: Space[]; directions: Direction[] }
+  | { t: 'hello'; protocol: number; personas: Persona[]; spaces: Space[]; directions: Direction[]; env: HomeEnv }
   | { t: 'direction'; direction: Direction }
   | { t: 'stop'; stop: Stop }
   | { t: 'presence'; personaId: string; presence: Presence; title: string; revision: number }
+  /** A persona the gateway just discovered off `herdr agent list` -- e.g. a rider `start_rider` just seated. */
+  | { t: 'persona'; persona: Persona }
   | { t: 'message'; message: Message }
   | { t: 'artifact'; artifact: Artifact }
   | { t: 'space'; space: Space }
@@ -154,4 +180,12 @@ export type ClientFrame =
   | { t: 'seen'; spaceId: string; upto: string }
   | { t: 'fetch'; artifactId: string }
   /** Answers a blocked pane's prompt from the alert plate. Refused unless `personaId` is presently `blocked`. */
-  | { t: 'answer'; directionId: string; personaId: string; key: AnswerKey; clientId?: string };
+  | { t: 'answer'; directionId: string; personaId: string; key: AnswerKey; clientId?: string }
+  /**
+   * Seats a rider on a direction: a fresh herdr pane, the harness started in it, the
+   * direction's goal sent as its first prompt. Refused if herdr is not `ok`. `args`, when
+   * given, are passed through to `herdr agent start ... -- <args>` verbatim (e.g. `['--model',
+   * 'haiku']`) -- not surfaced in the first-run UI, which never picks a harness's own flags for
+   * the human; it exists for scripted/test seating.
+   */
+  | { t: 'start_rider'; directionId: string; harness: HarnessId; args?: string[]; clientId?: string };

@@ -206,6 +206,22 @@ pub fn recompute_all(
     Ok(changed)
 }
 
+/// Adds `persona_id` to a direction's riders, idempotently -- used when `start_rider` seats a
+/// new rider on an already-existing direction. A no-op (not an error) if the persona already
+/// rides it.
+pub fn add_rider(storage: &Storage, direction_id: &str, persona_id: &str) -> Result<()> {
+    let Some(mut row) = storage.get_home_direction(direction_id)? else {
+        anyhow::bail!("no such direction: {direction_id}");
+    };
+    if row.riders.iter().any(|r| r == persona_id) {
+        return Ok(());
+    }
+    row.riders.push(persona_id.to_string());
+    row.updated_at = Utc::now();
+    storage.upsert_home_direction(&row)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,5 +521,34 @@ mod tests {
         assert_eq!(updated.budget_tokens, 8_000);
         assert_eq!(updated.created_at, created_at, "created_at is stamped once and kept");
         assert_eq!(updated.state, "riding", "editing fields never resets the materialized state");
+    }
+
+    #[test]
+    fn add_rider_appends_once_and_is_idempotent() {
+        let fx = fixture();
+        let input = DirectionInput {
+            id: "d1".to_string(),
+            goal: "ship it".to_string(),
+            area: "/repo/proj".to_string(),
+            done: Rung::Test,
+            budget_tokens: 5_000,
+            riders: vec!["persona-a".to_string()],
+        };
+        apply_set_direction(&fx.storage, input).expect("create");
+
+        add_rider(&fx.storage, "d1", "persona-b").expect("add new rider");
+        let row = fx.storage.get_home_direction("d1").expect("get").expect("row");
+        assert_eq!(row.riders, vec!["persona-a", "persona-b"]);
+
+        add_rider(&fx.storage, "d1", "persona-b").expect("add again, idempotent");
+        let row = fx.storage.get_home_direction("d1").expect("get").expect("row");
+        assert_eq!(row.riders, vec!["persona-a", "persona-b"], "adding the same rider twice does not duplicate it");
+    }
+
+    #[test]
+    fn add_rider_errors_on_unknown_direction() {
+        let fx = fixture();
+        let err = add_rider(&fx.storage, "no-such-direction", "persona-a").unwrap_err();
+        assert!(err.to_string().contains("no-such-direction"));
     }
 }

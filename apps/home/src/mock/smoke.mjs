@@ -79,6 +79,13 @@ async function run() {
   assert(Array.isArray(hello.directions) && hello.directions.length > 0, 'hello.directions is empty');
   console.log(`ok: hello, protocol ${hello.protocol}, ${hello.personas.length} personas, ${hello.directions.length} directions`);
 
+  assert(hello.env && typeof hello.env === 'object', 'hello.env is missing');
+  assert(typeof hello.env.cwd === 'string', 'hello.env.cwd is not a string');
+  assert(Array.isArray(hello.env.harnesses), 'hello.env.harnesses is not an array');
+  assert(['ok', 'missing', 'no_socket'].includes(hello.env.herdr), `hello.env.herdr is ${hello.env.herdr}`);
+  assert(typeof hello.env.budgetDefaultTokens === 'number', 'hello.env.budgetDefaultTokens is not a number');
+  console.log(`ok: hello.env present, herdr ${hello.env.herdr}, ${hello.env.harnesses.length} harnesses`);
+
   const spaceId = hello.spaces[0].id;
   ws.send(JSON.stringify({ t: 'open', spaceId }));
   const backfill = await waitFor((f) => f.t === 'backfill' && f.spaceId === spaceId, 'backfill');
@@ -127,6 +134,10 @@ async function run() {
   ws.send(JSON.stringify({ t: 'answer', directionId, personaId: idlePersonaId, key: '1' }));
   const answerError = await waitFor((f) => f.t === 'error' && f.code === 'not_blocked', 'error (answer on non-blocked persona)');
   console.log(`ok: answer on non-blocked persona ${idlePersonaId} refused: ${answerError.detail}`);
+
+  ws.send(JSON.stringify({ t: 'start_rider', directionId, harness: 'no-such-harness' }));
+  const startRiderError = await waitFor((f) => f.t === 'error' && f.detail.includes('no-such-harness'), 'error (start_rider, missing harness)');
+  console.log(`ok: start_rider for a missing harness refused: ${startRiderError.detail}`);
 
   ws.close();
   console.log('smoke: all frames matched protocol 2');
