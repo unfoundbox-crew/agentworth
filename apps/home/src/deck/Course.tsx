@@ -52,6 +52,10 @@ export function Course({
   const messagesBySpace = useHome((s) => s.messages);
   const messages = officeId ? messagesBySpace[officeId] ?? [] : [];
 
+  const rider = direction ? personas[direction.riders[0]] : undefined;
+  const riderWorking = rider?.presence === 'working';
+  const riderName = rider ? characterFor(theme, rider.role).name.toLowerCase() : direction?.riders[0];
+
   useEffect(() => {
     if (officeId) gateway.open(officeId);
   }, [officeId]);
@@ -130,7 +134,7 @@ export function Course({
         )}
       </div>
 
-      {visible.length > 0 && (
+      {(visible.length > 0 || riderWorking) && (
         <div className="mt-4 rounded-lg border border-line bg-panel p-3" ref={parentRef} style={{ maxHeight: 220, overflowY: 'auto' }}>
           <div className="text-[10px] text-muted mb-1.5">stream</div>
           {virtualize ? (
@@ -147,6 +151,9 @@ export function Course({
                 <MessageLine key={m.id} m={m} theme={theme} personas={personas} />
               ))}
             </div>
+          )}
+          {riderWorking && (
+            <div className="presence-working text-[11px] italic text-dim">{riderName} is working&hellip;</div>
           )}
         </div>
       )}

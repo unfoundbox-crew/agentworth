@@ -134,6 +134,45 @@ pub enum SteerMode {
     After,
 }
 
+/// A key press for `answer` -- the numbered choices a CLI permission prompt offers, `esc` to
+/// cancel, or a plain yes/no. Wire strings match `herdr agent send-keys` verbatim (including the
+/// bare digits, which is why the variants are spelled out and renamed rather than derived).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnswerKey {
+    #[serde(rename = "1")]
+    One,
+    #[serde(rename = "2")]
+    Two,
+    #[serde(rename = "3")]
+    Three,
+    #[serde(rename = "esc")]
+    Esc,
+    #[serde(rename = "y")]
+    Y,
+    #[serde(rename = "n")]
+    N,
+}
+
+impl AnswerKey {
+    pub fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::One => "1",
+            Self::Two => "2",
+            Self::Three => "3",
+            Self::Esc => "esc",
+            Self::Y => "y",
+            Self::N => "n",
+        }
+    }
+
+    /// Whether this key is the standing-permission ("don't ask again") choice -- widens what a
+    /// pane will do without asking again, so the gateway logs it distinctly. TODO(archie policy):
+    /// route this through `archie policy` once that surface exists; this lane only logs it.
+    pub fn is_standing_permission_change(self) -> bool {
+        matches!(self, Self::Two)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DirectionState {
@@ -251,6 +290,10 @@ pub struct Message {
     pub artifacts: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mentions: Option<Vec<String>>,
+    /// Set on a `you` message so the deck can dedupe its own optimistic local echo against this
+    /// module's own record of the same steer -- see `apps/home/src/protocol.ts`'s `Message.clientId`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -360,6 +403,8 @@ pub enum ClientFrame {
         mode: SteerMode,
         #[serde(default)]
         mentions: Vec<String>,
+        #[serde(default)]
+        client_id: Option<String>,
     },
     #[serde(rename = "prompt", rename_all = "camelCase")]
     Prompt {
@@ -379,6 +424,18 @@ pub enum ClientFrame {
     Fetch {
         #[allow(dead_code)]
         artifact_id: String,
+    },
+    /// Answers a blocked pane's prompt from the alert plate. Refused unless `persona_id` is
+    /// presently `blocked` -- see `dispatch_answer` in `gateway.rs`.
+    #[serde(rename = "answer", rename_all = "camelCase")]
+    Answer {
+        #[allow(dead_code)]
+        direction_id: String,
+        persona_id: String,
+        key: AnswerKey,
+        #[serde(default)]
+        #[allow(dead_code)]
+        client_id: Option<String>,
     },
 }
 

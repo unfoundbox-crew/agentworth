@@ -55,5 +55,10 @@ export class Gateway {
   }
 }
 
-const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-export const gateway = new Gateway(`${proto}://${location.host}/ws`);
+// `location` doesn't exist under vitest's node environment (see wordcount.test.tsx, which
+// renders Alert -- and through it, this module). The gateway singleton still needs to construct
+// there; it's just never connected in a test.
+const hasLocation = typeof location !== 'undefined';
+const proto = hasLocation && location.protocol === 'https:' ? 'wss' : 'ws';
+const host = hasLocation ? location.host : 'localhost';
+export const gateway = new Gateway(`${proto}://${host}/ws`);

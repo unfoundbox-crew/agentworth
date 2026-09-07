@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { ThemeToggle } from '@ui/ThemeToggle';
 import { useHome, orderDirections, dispatch } from '../model/store';
 import { characterFor } from '../model/theme';
-import type { Direction, Persona } from '../protocol';
+import { gateway } from '../ws/client';
+import type { AnswerKey, Direction, Persona } from '../protocol';
 
 function useElapsedMinutes(since: string): number {
   const [now, setNow] = useState(() => Date.now());
@@ -15,6 +16,22 @@ function useElapsedMinutes(since: string): number {
 
 const TIME_RE = /\b\d{1,2}:\d{2}\b/;
 const DEAD_RE = /exhausted|quota/i;
+const DONT_ASK_AGAIN_RE = /don.t ask again/i;
+const YES_NO_RE = /\(y\/n\)|\[y\/n\]|y\/n\?/i;
+
+/**
+ * Buttons the alert plate offers for a blocked pane's prompt: 1/3/esc always (yes / no / cancel,
+ * whatever the pane calls them), "2 -- don't ask again" only when the prompt text actually names
+ * that option (never pre-selected -- it's a standing-permission change), y/n only for a plain
+ * yes/no prompt.
+ */
+function detectAnswerOptions(reason: string): { key: AnswerKey; label: string }[] {
+  const options: { key: AnswerKey; label: string }[] = [{ key: '1', label: '1' }];
+  if (DONT_ASK_AGAIN_RE.test(reason)) options.push({ key: '2', label: "2 · don't ask again" });
+  options.push({ key: '3', label: '3' }, { key: 'esc', label: 'esc' });
+  if (YES_NO_RE.test(reason)) options.push({ key: 'y', label: 'y' }, { key: 'n', label: 'n' });
+  return options;
+}
 
 /** A dead rider line: "<who> · reborn HH:MM" if a time is named, else "<who> · window exhausted". */
 function deadLine(who: string, reasonOrNull: string | null): string {
@@ -59,6 +76,16 @@ export function Alert() {
     dispatch({ type: 'open_console', directionId: current.id });
   }
 
+  function answer(key: AnswerKey) {
+    if (!rider) return;
+    gateway.send({ t: 'answer', directionId: current.id, personaId: rider.id, key });
+  }
+
+  // A blocked pane's prompt is what `fetch_blocked_prompt` in the gateway reads off the pane --
+  // multi-line, verbatim. Other exceptions (halted, over budget) stay a single short line, so
+  // this only offers answer buttons when there's an actual prompt to answer.
+  const isPrompt = current.state === 'waiting' && current.exception.reason.includes('\n');
+
   return (
     <div className="col-start-1 row-span-4 relative">
       <div className="absolute left-6 top-5 font-sans text-sm font-medium text-dim tracking-tight">home</div>
@@ -72,9 +99,28 @@ export function Alert() {
       >
         <div className="text-[13px] text-ink font-medium">{current.goal}</div>
         <div className="mt-2 text-xs text-text">
-          {who} is waiting on you &middot; {elapsed} min &middot; {current.exception.reason}
+          {who} is waiting on you &middot; {elapsed} min{!isPrompt ? ` · ${current.exception.reason}` : ''}
         </div>
-        <div className="mt-4 flex items-center gap-2">
+
+        {isPrompt && (
+          <pre className="mt-2 max-h-[168px] overflow-auto rounded border border-line bg-[var(--mv-ground)] p-2 text-[10px] leading-snug text-muted whitespace-pre-wrap">
+            {current.exception.reason}
+          </pre>
+        )}
+
+        <div className="mt-4 flex items-center gap-2 flex-wrap">
+          {isPrompt &&
+            rider &&
+            detectAnswerOptions(current.exception.reason).map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                onClick={() => answer(o.key)}
+                className="border border-line rounded-md px-2.5 py-1.5 text-xs text-text bg-transparent hover:bg-[var(--mv-surface-2)]"
+              >
+                {o.label}
+              </button>
+            ))}
           <button
             type="button"
             onClick={openPane}
