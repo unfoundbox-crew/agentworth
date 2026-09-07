@@ -256,7 +256,6 @@ pub struct HomeHandle {
     runtime: Arc<Mutex<HomeRuntime>>,
     tx: broadcast::Sender<ServerFrame>,
     storage: Arc<Storage>,
-    scanner: Arc<Scanner>,
 }
 
 const BROADCAST_CAPACITY: usize = 256;
@@ -278,7 +277,6 @@ pub fn spawn(storage: Arc<Storage>, scanner: Arc<Scanner>, live_tail_tx: broadca
         runtime: runtime.clone(),
         tx: tx.clone(),
         storage: storage.clone(),
-        scanner: scanner.clone(),
     };
 
     tokio::spawn(snapshot_poll_loop(runtime.clone(), new_panes_tx));
