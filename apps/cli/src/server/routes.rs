@@ -19,6 +19,7 @@ use anyhow::Result;
 use axum::extract::{Path, Query, State};
 use axum::http::{Request, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::IntoResponse;
 use axum::routing::{get, post, MethodRouter};
 use axum::{body::Body, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -34,7 +35,7 @@ use crate::app::config;
 
 use super::archaeology::{compute_archaeology_highlights, ArchaeologyHighlights};
 use super::live_tail::LiveTailEvent;
-use super::static_files::serve_static_or_spa;
+use super::static_files::{serve_home_deck, serve_static_or_spa};
 
 /// Shared application state across API handlers.
 #[derive(Clone)]
@@ -49,6 +50,10 @@ pub struct AppState {
     /// (`super::home`). `None` makes `/ws` answer 404 instead of upgrading.
     #[cfg(unix)]
     pub home: Option<super::home::HomeHandle>,
+    /// Whether `--home` was passed. Platform-independent, unlike `home` above (the WebSocket
+    /// gateway is unix-only): the deck's static assets under `/home` serve on every platform,
+    /// they just have no live presence to show without the gateway.
+    pub home_deck_enabled: bool,
 }
 
 /// Query parameters for listing and filtering indexed traces.
@@ -405,6 +410,22 @@ fn is_local_origin(origin: &axum::http::HeaderValue) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "[::1]")
 }
 
+/// Answers `/home` and `/home/*` with the embedded deck when `--home` was passed, or 404 with
+/// a one-line explanation otherwise -- same shape as `home::gateway::ws_handler` for `/ws`,
+/// so a request against a plain `archie serve` (no `--home`) gets a clear answer instead of
+/// silently falling through to the dashboard's SPA fallback.
+async fn serve_home_deck_or_404(enabled: bool, req: Request<Body>) -> axum::response::Response {
+    if enabled {
+        serve_home_deck(req).await.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            "the home deck is not enabled; start `archie serve --home` or `archie home`",
+        )
+            .into_response()
+    }
+}
+
 /// Builds the complete Axum router with all API routes, CORS, tracing, and static fallback.
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
@@ -422,6 +443,32 @@ pub fn create_router(state: AppState) -> Router {
     let router = Router::new().nest("/api", api_routes);
     #[cfg(unix)]
     let router = router.merge(super::home::router());
+
+    // Three routes, not two: axum 0.7's `/home/*path` wildcard does not match the bare
+    // `/home/` request a browser actually sends (empty capture after the slash falls through
+    // to `.fallback()` instead of matching) -- measured directly against this router, not
+    // assumed from the docs. `/home` (no trailing slash) and `/home/*path` (an inner SPA
+    // route) both still need their own registrations.
+    let home_deck_enabled = state.home_deck_enabled;
+    let router = router
+        .route(
+            "/home",
+            get(move |req: Request<Body>| async move {
+                serve_home_deck_or_404(home_deck_enabled, req).await
+            }),
+        )
+        .route(
+            "/home/",
+            get(move |req: Request<Body>| async move {
+                serve_home_deck_or_404(home_deck_enabled, req).await
+            }),
+        )
+        .route(
+            "/home/*path",
+            get(move |req: Request<Body>| async move {
+                serve_home_deck_or_404(home_deck_enabled, req).await
+            }),
+        );
 
     router
         .fallback(move |req: Request<Body>| {
@@ -1443,6 +1490,7 @@ mod tests {
             live_tail: live_tail_tx,
             #[cfg(unix)]
             home: None,
+            home_deck_enabled: false,
         };
 
         let response = get_stats_handler(State(state))
@@ -1568,6 +1616,7 @@ mod tests {
             live_tail: live_tail_tx,
             #[cfg(unix)]
             home: None,
+            home_deck_enabled: false,
         };
 
         let response = get_stats_handler(State(state))

@@ -402,6 +402,71 @@ fn embedded_response(path: &str) -> Option<Response<Body>> {
         .ok()
 }
 
+/// The `apps/home` deck, compiled into the binary the same way the dashboard is (see
+/// `DashboardAssets` above). Populated by `npm run build` in apps/home, which emits
+/// `apps/home/dist` with `base: '/home/'` baked into every asset URL
+/// (`apps/home/vite.config.ts`) -- so this is served under the `/home/` prefix, never at
+/// the root the dashboard owns.
+#[derive(RustEmbed)]
+#[folder = "../../apps/home/dist"]
+struct HomeDeckAssets;
+
+/// Whether `npm run build` in apps/home ran before this binary was compiled. `archie home`
+/// checks this before starting the server, since a blank page is a worse failure mode than a
+/// command that refuses to start with an instruction attached.
+pub fn embedded_home_deck_is_built() -> bool {
+    HomeDeckAssets::get("index.html").is_some()
+}
+
+fn home_deck_response(path: &str) -> Option<Response<Body>> {
+    let asset = HomeDeckAssets::get(path)?;
+    let mime = content_type_for(path);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime)
+        .body(Body::from(asset.data.into_owned()))
+        .ok()
+}
+
+/// Serves the embedded `apps/home` deck under `/home` and `/home/*`, with `index.html` as the
+/// SPA history fallback for any client-side route the deck itself owns (the same shape as
+/// `serve_static_or_spa`, minus the on-disk branch -- nothing in `archie home` depends on a
+/// dev server or an on-disk dist directory, see apps/home/README.md).
+///
+/// Called only when `--home` was passed (`AppState::home_deck_enabled`); the caller answers
+/// 404 otherwise, same pattern as `home::gateway::ws_handler` for the WebSocket route.
+pub async fn serve_home_deck(req: Request<Body>) -> impl IntoResponse {
+    let path = req.uri().path();
+    let rel = path
+        .strip_prefix("/home")
+        .unwrap_or("")
+        .trim_start_matches('/');
+    let asset_path = if rel.is_empty() { "index.html" } else { rel };
+
+    if let Some(res) = home_deck_response(asset_path) {
+        return res;
+    }
+    if let Some(res) = home_deck_response("index.html") {
+        return res;
+    }
+
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; charset=utf-8"),
+        )
+        .body(Body::from(
+            "the deck was not built into this binary; run npm run build in apps/home and rebuild",
+        ))
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .unwrap()
+        })
+}
+
 /// Fallback handler when serving SPA static files or embedded fallback.
 pub async fn serve_static_or_spa(
     dist_dir: Option<PathBuf>,

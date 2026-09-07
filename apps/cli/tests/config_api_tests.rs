@@ -30,6 +30,7 @@ fn test_app() -> axum::Router {
         live_tail,
         #[cfg(unix)]
         home: None,
+        home_deck_enabled: false,
     })
 }
 
