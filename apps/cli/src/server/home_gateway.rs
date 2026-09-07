@@ -159,7 +159,7 @@ pub struct Artifact {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "t", rename_all = "camelCase")]
+#[serde(tag = "t", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ServerFrame {
     Hello {
         protocol: u32,
@@ -194,7 +194,7 @@ pub enum ServerFrame {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "t", rename_all = "camelCase")]
+#[serde(tag = "t", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ClientFrame {
     Open {
         space_id: String,
