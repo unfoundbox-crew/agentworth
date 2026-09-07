@@ -900,6 +900,27 @@ pub struct SuspensionRow {
     pub usd_at_lift: Option<f64>,
 }
 
+/// One row of `home_directions` (apps/home/DESIGN.md, "the Train"). `done_rung` and `state`
+/// are stored as their protocol strings ("said".."ci", "riding".."halted") rather than a
+/// storage-side enum -- `apps/cli/src/server/home/protocol.rs` owns the closed set and this
+/// crate never needs to branch on the value, only round-trip it. `riders` is a JSON array of
+/// persona ids. `spent_tokens` and `reached` are deliberately absent: they are derived, never
+/// stored (see `Storage::home_direction_area_spend` and the module doc above `home_directions`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HomeDirectionRow {
+    pub id: String,
+    pub goal: String,
+    pub area: String,
+    pub done_rung: String,
+    pub budget_tokens: i64,
+    pub riders: Vec<String>,
+    pub state: String,
+    pub exception_reason: Option<String>,
+    pub exception_since: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Label for a `FileActionType`, matching its `#[serde(rename_all = "snake_case")]` form.
 fn file_action_label(action: FileActionType) -> &'static str {
     match action {
@@ -1188,6 +1209,28 @@ impl Storage {
                 tokens_at_lift INTEGER,
                 usd_at_lift REAL
             );
+
+            -- A standing intent the human set once (apps/home/DESIGN.md, "the Train"):
+            -- goal, the repo area it owns, the evidence rung that means done, a token
+            -- budget, and the riders (persona ids) subscribed to it. `spent_tokens` and
+            -- `reached` are NEVER stored here -- they are derived on every read from
+            -- `turn_usage`/`sessions` (see apps/cli/src/server/home/directions.rs). `state`,
+            -- `exception_reason` and `exception_since` ARE stored: they are the last
+            -- materialized answer, recomputed on a poll loop and only rewritten (and
+            -- broadcast as a `direction` frame) when they actually change.
+            CREATE TABLE IF NOT EXISTS home_directions (
+                id TEXT PRIMARY KEY,
+                goal TEXT NOT NULL,
+                area TEXT NOT NULL,
+                done_rung TEXT NOT NULL,
+                budget_tokens INTEGER NOT NULL,
+                riders TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'idle',
+                exception_reason TEXT,
+                exception_since TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             "#,
         )?;
 
@@ -1350,6 +1393,8 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_intent_paths_path_seq ON intent_paths(path, seq);
             CREATE INDEX IF NOT EXISTS idx_trace_anchors_kind_value ON trace_anchors(kind, value);
             CREATE INDEX IF NOT EXISTS idx_governor_events_session_at ON governor_events(session_id, at);
+            CREATE INDEX IF NOT EXISTS idx_agent_state_cwd ON agent_state(cwd);
+            CREATE INDEX IF NOT EXISTS idx_agent_state_pane_id ON agent_state(pane_id);
             -- `list_sessions_for_repo` orders by last activity, not start time, so the
             -- bounded newest-first scan needs its own expression index to stay bounded.
             CREATE INDEX IF NOT EXISTS idx_sessions_last_activity
@@ -4722,6 +4767,260 @@ impl Storage {
             Ok(path.map(|p| (p, offset as u64)))
         })?;
         Ok(rows.next().transpose()?.flatten())
+    }
+
+    fn row_to_home_direction(row: &rusqlite::Row) -> rusqlite::Result<HomeDirectionRow> {
+        let riders_json: String = row.get(5)?;
+        let exception_since: Option<String> = row.get(8)?;
+        let created_at: String = row.get(9)?;
+        let updated_at: String = row.get(10)?;
+        Ok(HomeDirectionRow {
+            id: row.get(0)?,
+            goal: row.get(1)?,
+            area: row.get(2)?,
+            done_rung: row.get(3)?,
+            budget_tokens: row.get(4)?,
+            riders: serde_json::from_str(&riders_json).unwrap_or_default(),
+            state: row.get(6)?,
+            exception_reason: row.get(7)?,
+            exception_since: exception_since
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+            created_at: DateTime::parse_from_rfc3339(&created_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            updated_at: DateTime::parse_from_rfc3339(&updated_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+        })
+    }
+
+    const HOME_DIRECTION_SELECT: &'static str = r#"
+        SELECT id, goal, area, done_rung, budget_tokens, riders, state,
+               exception_reason, exception_since, created_at, updated_at
+        FROM home_directions
+    "#;
+
+    /// Creates a direction, or updates its human-editable fields (goal/area/done rung/budget/
+    /// riders) on an existing one. `state`, `exception_reason` and `exception_since` are never
+    /// touched here -- only `set_home_direction_dynamic` (the recompute loop) writes those, so
+    /// a `set_direction` frame can never accidentally clear an in-flight halt. `created_at` is
+    /// stamped once and kept on every later upsert of the same id.
+    pub fn upsert_home_direction(&self, row: &HomeDirectionRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let riders_json = serde_json::to_string(&row.riders)?;
+        conn.execute(
+            r#"
+            INSERT INTO home_directions
+                (id, goal, area, done_rung, budget_tokens, riders, state, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'idle', ?7, ?7)
+            ON CONFLICT(id) DO UPDATE SET
+                goal = excluded.goal,
+                area = excluded.area,
+                done_rung = excluded.done_rung,
+                budget_tokens = excluded.budget_tokens,
+                riders = excluded.riders,
+                updated_at = excluded.updated_at;
+            "#,
+            params![
+                row.id,
+                row.goal,
+                row.area,
+                row.done_rung,
+                row.budget_tokens,
+                riders_json,
+                row.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Rewrites only the derived/materialized fields the recompute loop owns: `state` and the
+    /// exception it carries. Called only when the freshly-computed value differs from what's
+    /// stored, so a caller can broadcast a `direction` frame exactly when this returns changed.
+    pub fn set_home_direction_dynamic(
+        &self,
+        id: &str,
+        state: &str,
+        exception_reason: Option<&str>,
+        exception_since: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            UPDATE home_directions
+            SET state = ?2, exception_reason = ?3, exception_since = ?4, updated_at = ?5
+            WHERE id = ?1
+            "#,
+            params![
+                id,
+                state,
+                exception_reason,
+                exception_since.map(|d| d.to_rfc3339()),
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_home_direction(&self, id: &str) -> Result<Option<HomeDirectionRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = format!("{} WHERE id = ?1", Self::HOME_DIRECTION_SELECT);
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query_map(params![id], Self::row_to_home_direction)?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    /// Every direction on record, oldest first (stable ordering for the strip board).
+    pub fn list_home_directions(&self) -> Result<Vec<HomeDirectionRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = format!("{} ORDER BY created_at ASC", Self::HOME_DIRECTION_SELECT);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], Self::row_to_home_direction)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// A direction's `spentTokens`, derived rather than stored: every `turn_usage` row for a
+    /// session whose `agent_state.cwd` falls under the direction's `area` (exact match, or a
+    /// `/`-bounded prefix so `/repo/foo` is under `/repo` but `/repo-other` is not), priced
+    /// since the direction was created. Joined on `agent_state.session_id = turn_usage.session_id`.
+    pub fn home_direction_area_spend(&self, area: &str, since: DateTime<Utc>) -> Result<SpendRow> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                COALESCE(SUM(COALESCE(tu.input, 0) + COALESCE(tu.output, 0) + COALESCE(tu.cache_read, 0) + COALESCE(tu.cache_creation, 0)), 0) AS tokens,
+                COALESCE(SUM(tu.usd), 0.0) AS usd,
+                COUNT(*) AS turns,
+                COALESCE(SUM(COALESCE(tu.cache_read, 0)), 0) AS cache_read_sum,
+                COALESCE(SUM(COALESCE(tu.input, 0) + COALESCE(tu.cache_read, 0) + COALESCE(tu.cache_creation, 0)), 0) AS denom,
+                MIN(tu.at) AS first_at,
+                MAX(tu.at) AS last_at
+            FROM turn_usage tu
+            JOIN agent_state a ON a.session_id = tu.session_id
+            WHERE a.cwd IS NOT NULL
+              AND (a.cwd = ?1 OR a.cwd LIKE ?1 || '/%')
+              AND tu.at >= ?2
+            "#,
+        )?;
+        let row = stmt.query_row(params![area, since.to_rfc3339()], Self::row_to_spend)?;
+        Ok(row)
+    }
+
+    /// A direction's `reached` rung, derived: the highest `sessions.primary_outcome` among
+    /// sessions whose `agent_state.cwd` falls under `area`, started at or after the direction
+    /// was created. Joined the same way as `home_direction_area_spend`. Returns the outcome's
+    /// own snake_case string (`OutcomeKind`'s serde encoding) or `None` when no matching
+    /// session has any recorded outcome yet.
+    pub fn home_direction_area_reached(
+        &self,
+        area: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT s.primary_outcome
+            FROM sessions s
+            JOIN agent_state a ON a.session_id = s.session_id
+            WHERE a.cwd IS NOT NULL
+              AND (a.cwd = ?1 OR a.cwd LIKE ?1 || '/%')
+              AND s.started_at >= ?2
+              AND s.primary_outcome IS NOT NULL
+            ORDER BY CASE s.primary_outcome
+                WHEN 'ci_or_deployment_verified' THEN 5
+                WHEN 'commit_observed' THEN 4
+                WHEN 'test_or_build_passed' THEN 3
+                WHEN 'artifact_changed' THEN 2
+                WHEN 'done_claimed' THEN 1
+                ELSE 0
+            END DESC
+            LIMIT 1
+            "#,
+        )?;
+        let mut rows = stmt.query_map(params![area, since.to_rfc3339()], |row| row.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Whether a direction should read as `halted`: either an active spend-cap suspension
+    /// (`session_suspensions.lifted_at IS NULL`) or a governor thrash halt (`governor_events`
+    /// with `action = 'halt'`, at or after the direction was created) on any session whose
+    /// `agent_state.cwd` falls under `area`. Checks the suspension first since it is the
+    /// standing state; the governor halt is the point-in-time event. Returns the reason string
+    /// to show as the direction's exception, or `None` if neither applies.
+    pub fn home_direction_area_halt_reason(
+        &self,
+        area: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        {
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT ss.reason
+                FROM session_suspensions ss
+                JOIN agent_state a ON a.session_id = ss.session_id
+                WHERE a.cwd IS NOT NULL
+                  AND (a.cwd = ?1 OR a.cwd LIKE ?1 || '/%')
+                  AND ss.lifted_at IS NULL
+                ORDER BY ss.since DESC
+                LIMIT 1
+                "#,
+            )?;
+            let mut rows = stmt.query_map(params![area], |row| row.get::<_, String>(0))?;
+            if let Some(reason) = rows.next().transpose()? {
+                return Ok(Some(reason));
+            }
+        }
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT ge.reason
+            FROM governor_events ge
+            JOIN agent_state a ON a.session_id = ge.session_id
+            WHERE a.cwd IS NOT NULL
+              AND (a.cwd = ?1 OR a.cwd LIKE ?1 || '/%')
+              AND ge.action = 'halt'
+              AND ge.at >= ?2
+            ORDER BY ge.at DESC
+            LIMIT 1
+            "#,
+        )?;
+        let mut rows = stmt.query_map(params![area, since.to_rfc3339()], |row| row.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Session ids whose `agent_state.cwd` falls under `area` -- the same membership test
+    /// `home_direction_area_spend`/`_reached`/`_halt_reason` apply, exposed directly for
+    /// callers (the `waiting`/`idle` state rules) that need to reason about presence per
+    /// session rather than an aggregate.
+    /// The `sessions.session_id` already indexed for a given `source_path`, if any -- how
+    /// `apps/cli/src/server/home/transcript_feed.rs` turns a live-tail filesystem event (which
+    /// only carries a path) back into a session id. `None` for a source that hasn't been
+    /// scanned yet (a brand-new session file): the transcript feed only follows sessions
+    /// already in the index, and picking one up on its very first write is left to the
+    /// periodic scanner.
+    pub fn session_id_for_source_path(&self, source_path: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt =
+            conn.prepare("SELECT session_id FROM sessions WHERE source_path = ?1 LIMIT 1")?;
+        let mut rows = stmt.query_map(params![source_path], |row| row.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    pub fn home_direction_area_session_ids(&self, area: &str) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT DISTINCT session_id FROM agent_state
+            WHERE cwd IS NOT NULL AND (cwd = ?1 OR cwd LIKE ?1 || '/%')
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![area], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 }
 

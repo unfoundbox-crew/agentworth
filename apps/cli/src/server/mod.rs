@@ -2,7 +2,7 @@
 
 pub mod archaeology;
 #[cfg(unix)]
-pub mod home_gateway;
+pub mod home;
 pub mod live_tail;
 #[cfg(unix)]
 pub mod loop_socket;
@@ -110,18 +110,21 @@ pub async fn start_server(
     #[cfg(not(unix))]
     let _ = home;
 
-    let mut state = AppState {
+    #[cfg(unix)]
+    let home_handle = if home {
+        Some(home::spawn(storage.clone(), scanner.clone(), live_tail_tx.clone()))
+    } else {
+        None
+    };
+
+    let state = AppState {
         storage: storage.clone(),
         scanner,
         dist_dir: dist_dir.clone(),
         live_tail: live_tail_tx,
         #[cfg(unix)]
-        home: None,
+        home: home_handle,
     };
-    #[cfg(unix)]
-    if home {
-        state.home = Some(home_gateway::spawn());
-    }
 
     let app = create_router(state);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
