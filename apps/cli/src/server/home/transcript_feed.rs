@@ -130,6 +130,35 @@ pub fn seed_cursor(trace: &AgentWorthTrace, cursor: &mut SessionCursor) {
         .unwrap_or(0);
 }
 
+/// Baselines `cursor` the same way [`seed_cursor`] does, but only against events strictly
+/// before `seat_time` -- for a session whose persona was just seated (`gateway.rs`'s
+/// `dispatch_start_rider`) at a known moment, so its very first reply after that point is
+/// treated as new activity instead of being swallowed by a full-history baseline. The bug this
+/// fixes: by the time the transcript feed's registration path (`Scanner::scan_one_source`)
+/// first sees a freshly-seated rider's session, its transcript can already contain that first
+/// reply -- `seed_cursor` would then baseline straight past it, and the reply never reaches the
+/// wire. Events at or after `seat_time` are excluded from the *baseline* only; the very next
+/// `feed_from_trace` call still reads them fresh, same as any other new activity.
+///
+/// A rider re-seated after already producing history keeps the same invariant: only events
+/// before its new seat time count toward the baseline (including the outcome-rank baseline, so
+/// a rung the session already reached before this reseat is not re-reported as freshly crossed
+/// the moment the feed starts watching again).
+pub fn seed_cursor_before(trace: &AgentWorthTrace, cursor: &mut SessionCursor, seat_time: DateTime<Utc>) {
+    let prior_events: Vec<NormalizedEvent> =
+        trace.events.iter().filter(|e| e.timestamp < seat_time).cloned().collect();
+    cursor.last_sequence = prior_events.iter().map(|e| e.sequence).max().unwrap_or(0);
+
+    let mut prior_trace = trace.clone();
+    prior_trace.events = prior_events;
+    let detector = OutcomeDetector::new();
+    let outcomes = detector.detect_outcomes(&prior_trace);
+    cursor.last_outcome_rank = detector
+        .strongest_outcome(&outcomes)
+        .map(|evidence| outcome_rank(evidence.kind))
+        .unwrap_or(0);
+}
+
 /// Builds the frames for events newly appended to `trace` since `cursor`, and advances
 /// `cursor` in place. `space_id` and `from_persona` are the rider's own office/space and
 /// persona id -- both resolved by the caller (`gateway.rs`) before calling this, since this
@@ -304,6 +333,56 @@ mod tests {
         // Re-running against the same trace does not re-report the same rung.
         let again = feed_from_trace(&trace, &mut cursor, "office-harvey", "harvey");
         assert!(again.new_outcome.is_none());
+    }
+
+    /// Pins down `seed_cursor_before` against the exact shape of the reported bug: a rider is
+    /// seated, replies once, and by the time the feed's registration path first sees the
+    /// session, the reply is already in the transcript. `seed_cursor` (baseline to trace end)
+    /// would swallow it; `seed_cursor_before(seat_time)` must not, because the reply's
+    /// timestamp is after `seat_time`.
+    #[test]
+    fn seed_cursor_before_seat_time_still_emits_a_reply_already_on_disk_at_first_sighting() {
+        let trace = parse_fixture(&[
+            r#"{"type":"user","timestamp":"2026-09-07T10:00:00Z","content":"say pong and nothing else"}"#,
+            r#"{"type":"assistant","timestamp":"2026-09-07T10:00:02Z","content":[{"type":"text","text":"pong"}]}"#,
+        ]);
+        let seat_time = "2026-09-07T10:00:01Z".parse::<DateTime<Utc>>().expect("valid timestamp");
+
+        let mut cursor = SessionCursor::default();
+        seed_cursor_before(&trace, &mut cursor, seat_time);
+        let out = feed_from_trace(&trace, &mut cursor, "office-probe-haiku", "probe-haiku");
+
+        let speech: Vec<&str> = out
+            .messages
+            .iter()
+            .filter(|m| m.kind == MessageKind::Speech)
+            .map(|m| m.text.as_str())
+            .collect();
+        assert_eq!(speech, vec!["pong"], "the reply after seat time must reach the wire");
+
+        // A second pass with the same (now-advanced) cursor sees nothing new -- the reply is
+        // emitted exactly once, not on every poll.
+        let again = feed_from_trace(&trace, &mut cursor, "office-probe-haiku", "probe-haiku");
+        assert!(again.messages.is_empty(), "the reply is not re-emitted on a later pass");
+    }
+
+    /// Nothing before `seat_time` is replayed, even when it would otherwise look like new
+    /// activity -- the user's own goal prompt (a `user`, not `assistant`, event, so
+    /// `feed_from_trace` never turns it into a `Message` anyway) must not shift the baseline
+    /// forward past events that came before the rider was seated.
+    #[test]
+    fn seed_cursor_before_seat_time_excludes_everything_at_or_after_it_from_the_baseline_only() {
+        let trace = parse_fixture(&[
+            r#"{"type":"assistant","timestamp":"2026-09-07T09:00:00Z","content":[{"type":"text","text":"earlier, unrelated turn"}]}"#,
+        ]);
+        let seat_time = "2026-09-07T10:00:00Z".parse::<DateTime<Utc>>().expect("valid timestamp");
+
+        let mut cursor = SessionCursor::default();
+        seed_cursor_before(&trace, &mut cursor, seat_time);
+        assert!(cursor.last_sequence > 0, "the prior turn is baselined away");
+
+        let out = feed_from_trace(&trace, &mut cursor, "office-probe-haiku", "probe-haiku");
+        assert!(out.messages.is_empty(), "nothing before seat time is replayed");
     }
 
     /// The bug this pins down: the first time the feed sees a session, `SessionCursor::default`

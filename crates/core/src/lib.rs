@@ -143,6 +143,67 @@ impl Scanner {
         Ok(parse_result.trace)
     }
 
+    /// Parses and indexes exactly one source through the adapter named `adapter_name`,
+    /// without enumerating or touching anything else on disk -- the registration path for a
+    /// caller that already knows which file changed and which adapter claims it (e.g.
+    /// `apps/cli/src/server/home/gateway.rs`'s live-tail-driven transcript feed, the moment it
+    /// sees a changed path `Storage::session_id_for_source_path` doesn't know about yet). This
+    /// is the same parse/detect/score/upsert sequence `run_scan` runs per source, just scoped
+    /// to one file instead of a full or even a `--path`-scoped scan, so a freshly-seated rider's
+    /// first transcript write doesn't have to wait for the next periodic `archie scan`.
+    ///
+    /// `Ok(None)` when `adapter_name` doesn't recognize `path` at all (its own `enumerate`
+    /// rejects it, e.g. wrong extension or not a session shape it claims), or the parsed trace
+    /// has no real activity yet -- a session file can exist with its first bytes written and
+    /// nothing else, same near-empty check `run_scan` applies. Never prunes stub sessions or
+    /// touches any source other than `path`; that stays exclusively a full-scan concern.
+    pub fn scan_one_source(&self, adapter_name: &str, path: &std::path::Path) -> Result<Option<String>> {
+        let adapter = self
+            .adapters
+            .iter()
+            .find(|a| a.name() == adapter_name)
+            .with_context(|| format!("no registered adapter named '{adapter_name}'"))?;
+
+        let options = ScanOptions {
+            custom_paths: vec![path.to_path_buf()],
+            force: true,
+            ..Default::default()
+        };
+        let sources = adapter.enumerate(&options)?;
+        let Some(source) = sources.into_iter().find(|s| s.path == path) else {
+            return Ok(None);
+        };
+
+        let parse_result = adapter.parse(&source)?;
+        if parse_result.trace.events.is_empty()
+            || is_near_empty_session(parse_result.trace.kind, parse_result.trace.stats.total_events)
+        {
+            return Ok(None);
+        }
+
+        let outcome_detector = OutcomeHierarchyDetector::new();
+        let (outcomes, verification_notes) =
+            outcome_detector.detect_outcomes_with_verification(&parse_result.trace);
+        let strongest = outcome_detector.strongest_outcome(&outcomes);
+        let primary_outcome_str = strongest.map(|o| outcome_kind_name(o.kind));
+
+        let scorer = TraceScorer::new();
+        let score = scorer.score(&parse_result.trace);
+        let risk = compute_session_risk(&parse_result.trace, &verification_notes);
+
+        let session_id = parse_result.trace.session_id.clone();
+        self.storage.upsert_session(
+            &parse_result.trace,
+            primary_outcome_str.as_deref(),
+            Some(score.composite_score),
+            adapter.parser_version(),
+        )?;
+        if let Err(e) = self.storage.upsert_session_risk(&risk) {
+            warn!("Failed storing session risk for {:?}: {}", path, e);
+        }
+        Ok(Some(session_id))
+    }
+
     /// Deletes indexed sessions with at most one normalized event (see
     /// `agentworth_storage::Storage::stub_sessions`) whose `(adapter, source_path)` is not in
     /// `valid_sources` -- i.e. sessions no adapter's current detection would produce again.
