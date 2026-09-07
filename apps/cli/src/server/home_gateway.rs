@@ -158,35 +158,47 @@ pub struct Artifact {
     pub at: String,
 }
 
+// `rename_all_fields` (the container-level attribute that renames every variant's fields at
+// once) is not applied here on purpose: it did not rename anything in practice against serde
+// 1.0.229 in this workspace when combined with internal tagging (`tag = "t"`) -- caught by the
+// literal-JSON tests below, which is exactly the case they exist for. Each struct variant gets
+// its own `rename_all = "camelCase"` instead, which is unambiguous and is what the tests verify.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "t", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(tag = "t")]
 pub enum ServerFrame {
+    #[serde(rename = "hello")]
     Hello {
         protocol: u32,
         personas: Vec<Persona>,
         spaces: Vec<Space>,
     },
+    #[serde(rename = "presence", rename_all = "camelCase")]
     Presence {
         persona_id: String,
         presence: Presence,
         title: String,
         revision: u64,
     },
+    #[serde(rename = "message")]
     Message {
         message: Message,
     },
+    #[serde(rename = "artifact")]
     #[allow(dead_code)]
     Artifact {
         artifact: Artifact,
     },
+    #[serde(rename = "space")]
     Space {
         space: Space,
     },
+    #[serde(rename = "backfill", rename_all = "camelCase")]
     Backfill {
         space_id: String,
         messages: Vec<Message>,
         artifacts: Vec<Artifact>,
     },
+    #[serde(rename = "error")]
     Error {
         code: String,
         detail: String,
@@ -194,23 +206,27 @@ pub enum ServerFrame {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "t", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(tag = "t")]
 pub enum ClientFrame {
+    #[serde(rename = "open", rename_all = "camelCase")]
     Open {
         space_id: String,
     },
+    #[serde(rename = "prompt", rename_all = "camelCase")]
     Prompt {
         space_id: String,
         text: String,
         #[serde(default)]
         mentions: Vec<String>,
     },
+    #[serde(rename = "seen", rename_all = "camelCase")]
     Seen {
         #[allow(dead_code)]
         space_id: String,
         #[allow(dead_code)]
         upto: String,
     },
+    #[serde(rename = "fetch", rename_all = "camelCase")]
     Fetch {
         #[allow(dead_code)]
         artifact_id: String,
