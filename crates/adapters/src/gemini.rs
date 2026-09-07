@@ -221,7 +221,7 @@ impl AgentAdapter for GeminiAdapter {
             if root.is_file() {
                 if is_candidate_gemini_file(&root) {
                     let adapter_name = detect_product_identity(&root);
-                    if let Ok(source) = SessionSource::from_path(&root, adapter_name) {
+                    if let Ok(source) = SessionSource::from_path_with_known(&root, adapter_name, &options.known_sources) {
                         sources.push(source);
                     }
                 }
@@ -234,7 +234,7 @@ impl AgentAdapter for GeminiAdapter {
                     let path = entry.path();
                     if path.is_file() && is_candidate_gemini_file(path) {
                         let adapter_name = detect_product_identity(path);
-                        if let Ok(source) = SessionSource::from_path(path, adapter_name) {
+                        if let Ok(source) = SessionSource::from_path_with_known(path, adapter_name, &options.known_sources) {
                             sources.push(source);
                         }
                     }

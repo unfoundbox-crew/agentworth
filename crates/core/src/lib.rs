@@ -172,6 +172,23 @@ impl Scanner {
     where
         F: FnMut(usize, usize),
     {
+        // Seed `known_sources` from the index before enumeration, so an adapter can compare a
+        // file's current (size, mtime) against what's already indexed and skip hashing its
+        // content entirely when they match -- see
+        // `agentworth_adapter_sdk::SessionSource::from_path_with_known`. A `--force` scan wants
+        // every file rehashed regardless, so it skips this lookup (and the fingerprint the
+        // adapter computes then is used only to detect *future* changes, not this one).
+        // On failure this degrades to "no cache" rather than failing the scan -- every source
+        // just gets hashed as it always did.
+        let mut options = options.clone();
+        if !options.force {
+            match self.storage.all_source_metadata() {
+                Ok(known) => options.known_sources = Arc::new(known),
+                Err(e) => warn!("Failed loading known-source cache for scan: {}", e),
+            }
+        }
+        let options = &options;
+
         // 1. Enumerate all sources across registered adapters in parallel threads
         let all_sources: Vec<(usize, SessionSource)> = std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(self.adapters.len());
@@ -701,6 +718,7 @@ mod tests {
             custom_paths: vec![one_event_temp.path().to_path_buf()],
             force: true,
             include_stubs: true,
+            ..Default::default()
         };
         let summary2 = scanner
             .run_scan(&include_stubs_options, |_, _| {})

@@ -148,7 +148,7 @@ impl AgentAdapter for GrokAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_grok_file(custom) {
-                        if let Ok(source) = SessionSource::from_path(custom, self.name()) {
+                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -160,7 +160,7 @@ impl AgentAdapter for GrokAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_grok_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -171,7 +171,7 @@ impl AgentAdapter for GrokAdapter {
             for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_grok_file(&root) {
-                        if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -183,7 +183,7 @@ impl AgentAdapter for GrokAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_grok_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
