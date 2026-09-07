@@ -4,7 +4,7 @@ pub mod embedder;
 pub mod pricing;
 pub mod vector;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -1332,6 +1332,12 @@ impl Storage {
 
         conn.execute_batch(
             r#"
+            -- `needs_backfill` and the sources-upsert path both look up a session by its
+            -- source path exactly once per scanned file. Without this index that query is a
+            -- full table scan of `sessions` per file -- on a no-op incremental scan of ~8,800
+            -- sources against ~5,300 indexed sessions that was ~47M btree row visits, over 75%
+            -- of total scan wall time measured with samply (see PR body / scan-fast branch).
+            CREATE INDEX IF NOT EXISTS idx_sessions_source_path ON sessions(source_path);
             CREATE INDEX IF NOT EXISTS idx_sessions_adapter ON sessions(adapter);
             CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
             CREATE INDEX IF NOT EXISTS idx_sessions_tokens ON sessions(total_tokens);
@@ -1449,6 +1455,29 @@ impl Storage {
         }
 
         Ok(true) // New or modified -> needs scan
+    }
+
+    /// Every indexed source's `(file_size, mtime, fingerprint)`, keyed by `source_path`, in one
+    /// query. Used by the scanner to seed each adapter's `ScanOptions::known_sources` before
+    /// enumeration, so a file whose stat already matches what's on record never gets its
+    /// content hashed at all -- see `agentworth_adapter_sdk::SessionSource::from_path_with_known`.
+    pub fn all_source_metadata(&self) -> Result<HashMap<String, (u64, i64, String)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare("SELECT source_path, file_size, mtime, fingerprint FROM sources")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (source_path, file_size, mtime, fingerprint) = row?;
+            out.insert(source_path, (file_size.max(0) as u64, mtime, fingerprint));
+        }
+        Ok(out)
     }
 
     /// Returns the `(file_size, mtime, fingerprint)` recorded for `source_path` in the

@@ -49,6 +49,7 @@ pub fn run_watch_command(
         custom_paths,
         force: false,
         include_stubs: true,
+        ..Default::default()
     };
 
     if !json {

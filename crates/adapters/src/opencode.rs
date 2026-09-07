@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use agentworth_adapter_sdk::{
-    compute_fast_fingerprint, AgentAdapter, DetectionResult, ParseResult, ScanOptions,
-    SessionSource,
+    reuse_or_compute_fingerprint, AgentAdapter, DetectionResult, KnownSourceMap, ParseResult,
+    ScanOptions, SessionSource,
 };
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
@@ -146,7 +146,11 @@ fn decode_opencode_project_directory(path_str: &str) -> Option<String> {
 /// with the resolved repository directory (see [`wrap_with_repo_marker`]) when one can be
 /// decoded from the path. Metadata (size/mtime/fingerprint) is always computed from the real
 /// file on disk -- only the *identity* string embeds the synthetic prefix.
-fn build_opencode_file_source(path: &Path, adapter_name: &str) -> anyhow::Result<SessionSource> {
+fn build_opencode_file_source(
+    path: &Path,
+    adapter_name: &str,
+    known_sources: &KnownSourceMap,
+) -> anyhow::Result<SessionSource> {
     let metadata = std::fs::metadata(path)?;
     let file_size_bytes = metadata.len();
     let mtime_epoch_secs = metadata
@@ -154,11 +158,18 @@ fn build_opencode_file_source(path: &Path, adapter_name: &str) -> anyhow::Result
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let fingerprint = compute_fast_fingerprint(path, file_size_bytes, mtime_epoch_secs)?;
 
     let real_locator = path.to_string_lossy().to_string();
     let repo_dir = decode_opencode_project_directory(&real_locator);
     let identity = wrap_with_repo_marker(repo_dir.as_deref(), ".opencode-project-session", &real_locator);
+
+    let fingerprint = reuse_or_compute_fingerprint(
+        known_sources,
+        &identity,
+        path,
+        file_size_bytes,
+        mtime_epoch_secs,
+    )?;
 
     Ok(SessionSource {
         path: PathBuf::from(identity),
@@ -311,7 +322,7 @@ impl AgentAdapter for OpenCodeAdapter {
                 if root.file_name().and_then(|n| n.to_str()) == Some("opencode.db") {
                     db_paths.push(root);
                 } else if is_candidate_opencode_file(&root) {
-                    if let Ok(source) = build_opencode_file_source(&root, self.name()) {
+                    if let Ok(source) = build_opencode_file_source(&root, self.name(), &options.known_sources) {
                         sources.push(source);
                     }
                 }
@@ -373,7 +384,7 @@ impl AgentAdapter for OpenCodeAdapter {
             {
                 let path = entry.path();
                 if path.is_file() && is_candidate_opencode_file(path) {
-                    if let Ok(source) = build_opencode_file_source(path, self.name()) {
+                    if let Ok(source) = build_opencode_file_source(path, self.name(), &options.known_sources) {
                         sources.push(source);
                     }
                 }
@@ -1874,7 +1885,7 @@ mod tests {
             .unwrap();
 
         let adapter = OpenCodeAdapter::new();
-        let source = build_opencode_file_source(temp.path(), adapter.name()).unwrap();
+        let source = build_opencode_file_source(temp.path(), adapter.name(), &KnownSourceMap::new()).unwrap();
         assert!(adapter.source_exists(&source));
 
         drop(temp);

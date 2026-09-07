@@ -173,7 +173,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
         for root in roots_to_scan {
             if root.is_file() {
                 if is_candidate_claude_file(&root) {
-                    if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                    if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                         sources.push(source);
                     }
                 }
@@ -185,7 +185,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 {
                     let path = entry.path();
                     if path.is_file() && is_candidate_claude_file(path) {
-                        if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                        if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }

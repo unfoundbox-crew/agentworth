@@ -2122,6 +2122,7 @@ fn run_scan_command(
         custom_paths: paths,
         force,
         include_stubs,
+        ..Default::default()
     };
 
     // A stream that cannot move the cursor gets frame 1 once and nothing after it: a
