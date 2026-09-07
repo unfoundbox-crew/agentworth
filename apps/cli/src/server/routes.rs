@@ -46,9 +46,9 @@ pub struct AppState {
     /// `.subscribe()` for its own receiver; cloning the sender itself is cheap.
     pub live_tail: broadcast::Sender<LiveTailEvent>,
     /// `Some` only when `archie serve --home` started the gateway behind `apps/home`
-    /// (`super::home_gateway`). `None` makes `/ws` answer 404 instead of upgrading.
+    /// (`super::home`). `None` makes `/ws` answer 404 instead of upgrading.
     #[cfg(unix)]
-    pub home: Option<super::home_gateway::HomeHandle>,
+    pub home: Option<super::home::HomeHandle>,
 }
 
 /// Query parameters for listing and filtering indexed traces.
@@ -421,7 +421,7 @@ pub fn create_router(state: AppState) -> Router {
 
     let router = Router::new().nest("/api", api_routes);
     #[cfg(unix)]
-    let router = router.merge(super::home_gateway::router());
+    let router = router.merge(super::home::router());
 
     router
         .fallback(move |req: Request<Body>| {

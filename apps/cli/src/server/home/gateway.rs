@@ -1,237 +1,55 @@
-//! The gateway behind `apps/home`: a WebSocket at `/ws` that turns herdr's live pane state
-//! into the persona/space/message wire protocol `apps/home/src/protocol.ts` defines. Rust
-//! mirrors that file's types field for field -- change both together or neither.
+//! The gateway behind `apps/home`: a WebSocket at `/ws` that turns herdr's live pane state,
+//! this index's own directions table, and harness transcripts into the protocol-2 wire types
+//! `protocol.rs` mirrors from `apps/home/src/protocol.ts`.
 //!
 //! herdr is the only source of truth for who is running and what state they are in. This
 //! module never talks to herdr's socket protocol to send a prompt -- it shells out to the
-//! `herdr` CLI (`herdr agent prompt`, `herdr agent read`) the same way a person would, so a
-//! herdr release can change its socket wire format without this module noticing.
+//! `herdr` CLI (`herdr agent prompt`) the same way a person would, so a herdr release can
+//! change its socket wire format without this module noticing.
 //!
 //! Presence streams over herdr's own `events.subscribe` (protocol 20, confirmed live on
-//! 2026-09-07 -- see the report this module shipped with for captured frames; docs/specs/loop.md
-//! is stale on this point, it predates the subscription API). A snapshot poll every 5s
-//! (`herdr agent list`) is the fallback and the only way new agents are discovered, since
-//! subscriptions are per-pane-id and a pane that doesn't exist yet has no id to subscribe to.
+//! 2026-09-07 -- see the `home-gateway` report for captured frames; docs/specs/loop.md is
+//! fixed as of this lane to no longer say the socket is request/response only). A snapshot
+//! poll every 5s (`herdr agent list`) is the fallback and the only way new agents are
+//! discovered, since subscriptions are per-pane-id and a pane that doesn't exist yet has no
+//! id to subscribe to.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
+use agentworth_core::Scanner;
+use agentworth_storage::Storage;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::Command;
 use tokio::sync::{broadcast, Mutex};
 
-use super::routes::AppState;
-
-/// Wire protocol version. Bump alongside `PROTOCOL` in `apps/home/src/protocol.ts`.
-pub const PROTOCOL: u32 = 1;
+use super::directions;
+use super::protocol::*;
+use super::transcript_feed::{self, SessionCursor};
+use super::super::live_tail::LiveTailEvent;
+use super::super::routes::AppState;
 
 /// How many messages a space's in-memory log keeps. Older ones are dropped; there is no
-/// SQLite-backed history for this lane (see the module doc and the report this shipped with).
+/// SQLite-backed history for the office/room chat stream (directions persist in SQLite;
+/// their chat frames are still ephemeral, same tradeoff the first `home-gateway` lane made).
 const RING_CAPACITY: usize = 500;
 
 /// How often the persona/space list is refreshed from `herdr agent list`. This is also the
 /// only path by which a newly-opened pane becomes a persona -- see `refresh_from_agents`.
 const SNAPSHOT_POLL: Duration = Duration::from_secs(5);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Presence {
-    Idle,
-    Working,
-    Blocked,
-    Done,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Role {
-    ChiefOfStaff,
-    Senior,
-    Associate,
-    Executor,
-    Controller,
-    Guest,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SpaceKind {
-    Office,
-    Room,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MessageKind {
-    Speech,
-    Work,
-    System,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Persona {
-    pub id: String,
-    pub role: Role,
-    pub kind: String,
-    pub agent_name: String,
-    pub pane_id: String,
-    pub workspace_id: String,
-    pub cwd: String,
-    pub presence: Presence,
-    pub title: String,
-    pub revision: u64,
-}
-
-impl Persona {
-    /// What gets passed as `<TARGET>` to `herdr agent prompt`/`herdr agent read`. herdr's own
-    /// agent name when herdr assigned one; the pane id is the fallback, since that always
-    /// exists and always resolves (confirmed via `herdr agent list`, see the report).
-    fn target_ref(&self) -> &str {
-        &self.agent_name
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Space {
-    pub id: String,
-    pub kind: SpaceKind,
-    pub label: String,
-    pub members: Vec<String>,
-    pub unread: u32,
-    pub last_summary: Option<String>,
-    pub last_activity: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Message {
-    pub id: String,
-    pub space_id: String,
-    pub from: String,
-    pub kind: MessageKind,
-    pub text: String,
-    pub at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub artifacts: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mentions: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ArtifactKind {
-    Diff,
-    File,
-    Command,
-    Link,
-    Note,
-}
-
-/// `work`/`artifact` frames are out of scope for this lane (see the job brief). This type
-/// exists only so `ServerFrame::Artifact` and the `backfill` frame's `artifacts` field type-check;
-/// nothing in this module ever constructs one. TODO(archie loop): feed these from
-/// `server/loop_socket.rs`'s hook stream once a turn's tool calls are available there.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Artifact {
-    pub id: String,
-    pub space_id: String,
-    pub from: String,
-    pub kind: ArtifactKind,
-    pub title: String,
-    #[serde(rename = "ref")]
-    pub reference: String,
-    pub body: Option<String>,
-    pub at: String,
-}
-
-// `rename_all_fields` (the container-level attribute that renames every variant's fields at
-// once) is not applied here on purpose: it did not rename anything in practice against serde
-// 1.0.229 in this workspace when combined with internal tagging (`tag = "t"`) -- caught by the
-// literal-JSON tests below, which is exactly the case they exist for. Each struct variant gets
-// its own `rename_all = "camelCase"` instead, which is unambiguous and is what the tests verify.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "t")]
-pub enum ServerFrame {
-    #[serde(rename = "hello")]
-    Hello {
-        protocol: u32,
-        personas: Vec<Persona>,
-        spaces: Vec<Space>,
-    },
-    #[serde(rename = "presence", rename_all = "camelCase")]
-    Presence {
-        persona_id: String,
-        presence: Presence,
-        title: String,
-        revision: u64,
-    },
-    #[serde(rename = "message")]
-    Message {
-        message: Message,
-    },
-    #[serde(rename = "artifact")]
-    #[allow(dead_code)]
-    Artifact {
-        artifact: Artifact,
-    },
-    #[serde(rename = "space")]
-    Space {
-        space: Space,
-    },
-    #[serde(rename = "backfill", rename_all = "camelCase")]
-    Backfill {
-        space_id: String,
-        messages: Vec<Message>,
-        artifacts: Vec<Artifact>,
-    },
-    #[serde(rename = "error")]
-    Error {
-        code: String,
-        detail: String,
-    },
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "t")]
-pub enum ClientFrame {
-    #[serde(rename = "open", rename_all = "camelCase")]
-    Open {
-        space_id: String,
-    },
-    #[serde(rename = "prompt", rename_all = "camelCase")]
-    Prompt {
-        space_id: String,
-        text: String,
-        #[serde(default)]
-        mentions: Vec<String>,
-    },
-    #[serde(rename = "seen", rename_all = "camelCase")]
-    Seen {
-        #[allow(dead_code)]
-        space_id: String,
-        #[allow(dead_code)]
-        upto: String,
-    },
-    #[serde(rename = "fetch", rename_all = "camelCase")]
-    Fetch {
-        #[allow(dead_code)]
-        artifact_id: String,
-    },
-}
+/// How often directions are recomputed (`spentTokens`/`reached`/`state`) and, on change,
+/// broadcast. Independent of `SNAPSHOT_POLL` -- direction state can change from a governor
+/// halt or a spend cap crossing with no presence change at all.
+const DIRECTION_POLL: Duration = Duration::from_secs(5);
 
 /// The three standing rooms every persona belongs to, beside each persona's own office.
 const ROOMS: [(&str, &str); 3] = [
@@ -240,109 +58,17 @@ const ROOMS: [(&str, &str); 3] = [
     ("standup", "Standup"),
 ];
 
-fn now_iso() -> String {
-    Utc::now().to_rfc3339()
-}
-
-fn new_id() -> String {
-    uuid::Uuid::new_v4().to_string()
-}
-
-/// Turns an agent name (or any other free-form label) into a stable, URL-safe persona id.
-fn slugify(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    let mut last_was_dash = false;
-    for ch in raw.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_was_dash = false;
-        } else if !last_was_dash {
-            out.push('-');
-            last_was_dash = true;
-        }
-    }
-    let trimmed = out.trim_matches('-');
-    if trimmed.is_empty() {
-        "persona".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-/// `~/.agentworth/home.toml`: `[roles]` maps a herdr agent name to a `Role`. Unmapped agents
-/// get `Role::Guest`.
-#[derive(Debug, Default, Deserialize)]
-struct HomeConfig {
-    #[serde(default)]
-    roles: HashMap<String, Role>,
-}
-
-fn load_role_map() -> HashMap<String, Role> {
-    let path = match agentworth_storage::default_db_dir() {
-        Ok(dir) => dir.join("home.toml"),
-        Err(_) => return HashMap::new(),
-    };
-    match std::fs::read_to_string(&path) {
-        Ok(raw) => toml::from_str::<HomeConfig>(&raw)
-            .map(|c| c.roles)
-            .unwrap_or_default(),
-        Err(_) => HashMap::new(),
-    }
-}
-
-/// One row of `herdr agent list`'s `result.agents` array. Only the fields this module needs;
-/// herdr's own schema (`herdr api schema --json`) has more.
-#[derive(Debug, Clone, Deserialize)]
-struct HerdrAgent {
-    agent: String,
-    #[serde(default)]
-    name: Option<String>,
-    pane_id: String,
-    workspace_id: String,
-    cwd: String,
-    agent_status: Presence,
-    #[serde(default)]
-    terminal_title_stripped: Option<String>,
-    #[serde(default)]
-    revision: u64,
-}
-
-/// herdr's every CLI response is the same envelope: `{"id": ..., "result": {...}}` or
-/// `{"id": ..., "error": {"code", "message"}}`. Parsed as a bare `Value` rather than a generic
-/// `HerdrEnvelope<T>` -- serde's derive adds a `T: Default` bound to any generic field marked
-/// `#[serde(default)]` regardless of nesting, which `Option<T>` doesn't actually need but
-/// which every non-`Default` `T` (this module's response types included) then fails.
-async fn herdr_agent_list() -> anyhow::Result<Vec<HerdrAgent>> {
-    let output = Command::new("herdr")
-        .args(["agent", "list"])
-        .output()
-        .await?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "herdr agent list exited {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    if let Some(message) = envelope.pointer("/error/message").and_then(|v| v.as_str()) {
-        anyhow::bail!("herdr agent list: {message}");
-    }
-    let agents = envelope
-        .pointer("/result/agents")
-        .cloned()
-        .unwrap_or(serde_json::Value::Array(Vec::new()));
-    Ok(serde_json::from_value(agents)?)
-}
-
-/// State one connected client's `hello` and `backfill` frames are built from, and the target
-/// of every `presence`/`message` update this module broadcasts.
+/// State one connected client's `hello`/`backfill` frames are built from, and the target of
+/// every broadcast this module sends.
 struct HomeRuntime {
     personas: HashMap<String, Persona>,
     pane_to_persona: HashMap<String, String>,
     spaces: HashMap<String, Space>,
     messages: HashMap<String, VecDeque<Message>>,
     role_map: HashMap<String, Role>,
+    /// Per-session read position into that session's transcript, owned by the transcript feed
+    /// (see `transcript_feed.rs`). Keyed by `sessions.session_id`.
+    session_cursors: HashMap<String, SessionCursor>,
 }
 
 impl HomeRuntime {
@@ -368,6 +94,7 @@ impl HomeRuntime {
             spaces,
             messages: HashMap::new(),
             role_map,
+            session_cursors: HashMap::new(),
         }
     }
 
@@ -377,6 +104,10 @@ impl HomeRuntime {
         let mut spaces: Vec<Space> = self.spaces.values().cloned().collect();
         spaces.sort_by(|a, b| a.id.cmp(&b.id));
         (personas, spaces)
+    }
+
+    fn presence_by_persona(&self) -> HashMap<String, Presence> {
+        self.personas.iter().map(|(id, p)| (id.clone(), p.presence)).collect()
     }
 
     /// Rebuilds personas and offices from a fresh `herdr agent list`. Returns the pane ids
@@ -391,16 +122,9 @@ impl HomeRuntime {
             .collect();
 
         for agent in agents {
-            let agent_name = agent
-                .name
-                .clone()
-                .unwrap_or_else(|| agent.pane_id.clone());
+            let agent_name = agent.name.clone().unwrap_or_else(|| agent.pane_id.clone());
             let id = slugify(&agent_name);
-            let role = self
-                .role_map
-                .get(&agent_name)
-                .copied()
-                .unwrap_or(Role::Guest);
+            let role = self.role_map.get(&agent_name).copied().unwrap_or(Role::Guest);
             let persona = Persona {
                 id: id.clone(),
                 role,
@@ -475,20 +199,13 @@ impl HomeRuntime {
     }
 
     fn backfill(&self, space_id: &str) -> Vec<Message> {
-        self.messages
-            .get(space_id)
-            .map(|ring| ring.iter().cloned().collect())
-            .unwrap_or_default()
+        self.messages.get(space_id).map(|ring| ring.iter().cloned().collect()).unwrap_or_default()
     }
 
     /// Office -> its one member. Room -> the mentioned personas, or the first idle member
-    /// when no mention was given. Returns an error string (not a `ServerFrame::Error` directly,
-    /// since the caller may want to attach it to a specific client rather than broadcast it).
+    /// when no mention was given.
     fn resolve_targets(&self, space_id: &str, mentions: &[String]) -> Result<Vec<Persona>, String> {
-        let space = self
-            .spaces
-            .get(space_id)
-            .ok_or_else(|| format!("no such space: {space_id}"))?;
+        let space = self.spaces.get(space_id).ok_or_else(|| format!("no such space: {space_id}"))?;
         match space.kind {
             SpaceKind::Office => space
                 .members
@@ -499,21 +216,17 @@ impl HomeRuntime {
                 .ok_or_else(|| format!("office {space_id} has no persona")),
             SpaceKind::Room => {
                 if mentions.is_empty() {
-                    let first_idle = space
+                    space
                         .members
                         .iter()
                         .filter_map(|id| self.personas.get(id))
                         .find(|p| p.presence == Presence::Idle)
-                        .cloned();
-                    first_idle
+                        .cloned()
                         .map(|p| vec![p])
                         .ok_or_else(|| "no idle persona in this room".to_string())
                 } else {
-                    let targets: Vec<Persona> = mentions
-                        .iter()
-                        .filter_map(|id| self.personas.get(id))
-                        .cloned()
-                        .collect();
+                    let targets: Vec<Persona> =
+                        mentions.iter().filter_map(|id| self.personas.get(id)).cloned().collect();
                     if targets.is_empty() {
                         Err("no mentioned persona is a member of this room".to_string())
                     } else {
@@ -523,6 +236,18 @@ impl HomeRuntime {
             }
         }
     }
+
+    /// Riders of a direction, resolved to personas the runtime currently knows about. Ids in
+    /// `riders` that don't (yet) match a known persona are silently dropped -- the caller
+    /// treats an empty result as "no reachable rider" the same way `resolve_targets` does.
+    fn riders_for(&self, rider_ids: &[String], mentions: &[String]) -> Vec<Persona> {
+        let ids: Vec<&String> = if mentions.is_empty() {
+            rider_ids.iter().collect()
+        } else {
+            rider_ids.iter().filter(|id| mentions.contains(id)).collect()
+        };
+        ids.into_iter().filter_map(|id| self.personas.get(id)).cloned().collect()
+    }
 }
 
 /// Shared handle passed into `AppState` and cloned once per connection/spawned prompt task.
@@ -530,14 +255,17 @@ impl HomeRuntime {
 pub struct HomeHandle {
     runtime: Arc<Mutex<HomeRuntime>>,
     tx: broadcast::Sender<ServerFrame>,
+    storage: Arc<Storage>,
+    scanner: Arc<Scanner>,
 }
 
 const BROADCAST_CAPACITY: usize = 256;
 
-/// Starts the herdr snapshot-poll and subscription tasks and returns the handle `start_server`
-/// wires into `AppState`. Never fails: if herdr's CLI or socket is unreachable, the tasks log
-/// a warning and keep retrying, and a connecting client just gets an empty `hello`.
-pub fn spawn() -> HomeHandle {
+/// Starts the herdr snapshot-poll/subscription tasks, the direction recompute loop, and the
+/// transcript feed, and returns the handle `start_server` wires into `AppState`. Never fails:
+/// if herdr's CLI or socket is unreachable, the tasks log a warning and keep retrying, and a
+/// connecting client just gets an empty `hello`.
+pub fn spawn(storage: Arc<Storage>, scanner: Arc<Scanner>, live_tail_tx: broadcast::Sender<LiveTailEvent>) -> HomeHandle {
     let (tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
     let runtime = Arc::new(Mutex::new(HomeRuntime::new(load_role_map())));
     // Carries newly-discovered pane ids from the poll loop to the subscription loop. Built
@@ -549,16 +277,18 @@ pub fn spawn() -> HomeHandle {
     let handle = HomeHandle {
         runtime: runtime.clone(),
         tx: tx.clone(),
+        storage: storage.clone(),
+        scanner: scanner.clone(),
     };
 
     tokio::spawn(snapshot_poll_loop(runtime.clone(), new_panes_tx));
-    tokio::spawn(subscription_loop(runtime, tx, new_panes_rx));
+    tokio::spawn(subscription_loop(runtime.clone(), tx.clone(), new_panes_rx));
+    tokio::spawn(direction_poll_loop(runtime.clone(), storage.clone(), tx.clone()));
+    tokio::spawn(transcript_feed_loop(runtime, storage, scanner, tx, live_tail_tx.subscribe()));
 
     handle
 }
 
-/// Refreshes personas/spaces from `herdr agent list` every `SNAPSHOT_POLL` and hands each new
-/// pane id it discovers to the subscription loop over `new_panes_tx`.
 async fn snapshot_poll_loop(
     runtime: Arc<Mutex<HomeRuntime>>,
     new_panes_tx: tokio::sync::mpsc::UnboundedSender<Vec<String>>,
@@ -575,16 +305,130 @@ async fn snapshot_poll_loop(
                     let _ = new_panes_tx.send(new_panes);
                 }
             }
+            Err(e) => tracing::warn!("home gateway: herdr agent list failed: {e:#}"),
+        }
+    }
+}
+
+/// Recomputes every direction's `state`/`exception` on `DIRECTION_POLL` and broadcasts a
+/// `direction` frame for each one that actually changed (`directions::recompute_all` only
+/// returns changed ones).
+async fn direction_poll_loop(
+    runtime: Arc<Mutex<HomeRuntime>>,
+    storage: Arc<Storage>,
+    tx: broadcast::Sender<ServerFrame>,
+) {
+    let mut interval = tokio::time::interval(DIRECTION_POLL);
+    loop {
+        interval.tick().await;
+        let presence = {
+            let rt = runtime.lock().await;
+            rt.presence_by_persona()
+        };
+        match directions::recompute_all(&storage, &presence) {
+            Ok(changed) => {
+                for direction in changed {
+                    let _ = tx.send(ServerFrame::Direction { direction });
+                }
+            }
+            Err(e) => tracing::warn!("home gateway: direction recompute failed: {e:#}"),
+        }
+    }
+}
+
+/// Consumes the same `live_tail` filesystem-change feed `/api/live-tail` (SSE) reads, and for
+/// every changed session turns newly-appended transcript events into `message`/`stop` frames
+/// (see `transcript_feed.rs`). Replaces the old `herdr agent read` diff heuristic entirely.
+async fn transcript_feed_loop(
+    runtime: Arc<Mutex<HomeRuntime>>,
+    storage: Arc<Storage>,
+    scanner: Arc<Scanner>,
+    tx: broadcast::Sender<ServerFrame>,
+    mut live_tail_rx: broadcast::Receiver<LiveTailEvent>,
+) {
+    loop {
+        let event = match live_tail_rx.recv().await {
+            Ok(event) => event,
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => return,
+        };
+        if event.adapter.is_none() {
+            continue;
+        }
+        let path_str = event.path.to_string_lossy().to_string();
+        let Ok(Some(session_id)) = storage.session_id_for_source_path(&path_str) else {
+            // Not indexed yet -- a brand-new session file, or one the periodic scanner
+            // hasn't reached. The transcript feed only follows sessions already in the
+            // index; picking up a session on its very first write is left to the scanner.
+            continue;
+        };
+
+        let trace = match scanner.load_trace(&session_id) {
+            Ok(trace) => trace,
             Err(e) => {
-                tracing::warn!("home gateway: herdr agent list failed: {e:#}");
+                tracing::warn!("home gateway: could not load trace for {session_id}: {e:#}");
+                continue;
+            }
+        };
+
+        let Some(cwd) = storage.get_agent_state(&session_id).ok().flatten().and_then(|s| s.cwd) else {
+            continue;
+        };
+        let pane_id = storage.get_agent_state(&session_id).ok().flatten().and_then(|s| s.pane_id);
+
+        let (space_id, from_persona) = {
+            let rt = runtime.lock().await;
+            match pane_id.as_deref().and_then(|p| rt.pane_to_persona.get(p)) {
+                Some(persona_id) => (format!("office-{persona_id}"), persona_id.clone()),
+                None => continue,
+            }
+        };
+
+        let output = {
+            let mut rt = runtime.lock().await;
+            let cursor = rt.session_cursors.entry(session_id.clone()).or_default();
+            transcript_feed::feed_from_trace(&trace, cursor, &space_id, &from_persona)
+        };
+
+        for message in output.messages {
+            {
+                let mut rt = runtime.lock().await;
+                rt.push_message(message.clone());
+            }
+            let _ = tx.send(ServerFrame::Message { message });
+        }
+
+        if let Some((rung, _summary)) = output.new_outcome {
+            if let Ok(direction_ids) = directions_matching_area(&storage, &cwd) {
+                for direction_id in direction_ids {
+                    let stop = Stop {
+                        id: new_id(),
+                        direction_id,
+                        from: from_persona.clone(),
+                        rung,
+                        artifact_id: None,
+                        at: now_iso(),
+                    };
+                    let _ = tx.send(ServerFrame::Stop { stop });
+                }
             }
         }
     }
 }
 
-/// Owns the one connection to herdr's socket, subscribes to `pane.agent_status_changed` for
-/// every pane the snapshot loop has found, and turns each event herdr sends into a `presence`
-/// broadcast. Reconnects with a fixed backoff if herdr's socket isn't there yet or drops.
+/// Every stored direction whose `area` contains `cwd` (a session's cwd is a descendant of, or
+/// equal to, the direction's area) -- the same membership test `home_direction_area_spend`
+/// applies, just evaluated in Rust against already-loaded rows instead of round-tripping SQL
+/// per session.
+fn directions_matching_area(storage: &Storage, cwd: &str) -> anyhow::Result<Vec<String>> {
+    Ok(storage
+        .list_home_directions()?
+        .into_iter()
+        .filter(|d| cwd == d.area || cwd.starts_with(&format!("{}/", d.area)))
+        .map(|d| d.id)
+        .collect())
+}
+
 async fn subscription_loop(
     runtime: Arc<Mutex<HomeRuntime>>,
     tx: broadcast::Sender<ServerFrame>,
@@ -594,22 +438,18 @@ async fn subscription_loop(
         match herdr_socket_path() {
             Some(path) => match UnixStream::connect(&path).await {
                 Ok(stream) => {
-                    if let Err(e) =
-                        run_subscription(stream, &runtime, &tx, &mut new_panes_rx).await
-                    {
+                    if let Err(e) = run_subscription(stream, &runtime, &tx, &mut new_panes_rx).await {
                         tracing::warn!("home gateway: herdr subscription ended: {e:#}");
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        "home gateway: could not connect to herdr socket at {}: {e}",
-                        path.display()
-                    );
-                }
+                Err(e) => tracing::warn!(
+                    "home gateway: could not connect to herdr socket at {}: {e}",
+                    path.display()
+                ),
             },
-            None => {
-                tracing::warn!("home gateway: no herdr config dir; presence will only update on the 5s snapshot poll");
-            }
+            None => tracing::warn!(
+                "home gateway: no herdr config dir; presence will only update on the 5s snapshot poll"
+            ),
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
@@ -620,10 +460,6 @@ fn herdr_socket_path() -> Option<std::path::PathBuf> {
     Some(base.home_dir().join(".config").join("herdr").join("herdr.sock"))
 }
 
-/// Runs one herdr socket connection until it errors or closes: subscribes to every pane
-/// already known at connect time, adds newly-discovered panes to the same subscription as
-/// they arrive from the poll loop, and turns each `pane_agent_status_changed` event into a
-/// broadcast `presence` frame.
 async fn run_subscription(
     stream: UnixStream,
     runtime: &Arc<Mutex<HomeRuntime>>,
@@ -674,9 +510,7 @@ async fn subscribe(
 ) -> anyhow::Result<()> {
     let subscriptions: Vec<serde_json::Value> = pane_ids
         .iter()
-        .map(|pane_id| {
-            serde_json::json!({"type": "pane.agent_status_changed", "pane_id": pane_id})
-        })
+        .map(|pane_id| serde_json::json!({"type": "pane.agent_status_changed", "pane_id": pane_id}))
         .collect();
     let request = serde_json::json!({
         "id": format!("home-gateway:{}", new_id()),
@@ -695,9 +529,6 @@ struct StatusChangedFrame {
     title: Option<String>,
 }
 
-/// Parses one JSON line from herdr's socket. Ignores anything that isn't a
-/// `pane_agent_status_changed` subscription event -- the ack for `events.subscribe` itself,
-/// and any other subscription this connection didn't ask for, land here too and are dropped.
 fn parse_subscription_event(line: &str) -> Option<StatusChangedFrame> {
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     if value.get("event")?.as_str()? != "pane_agent_status_changed" {
@@ -737,13 +568,10 @@ async fn handle_socket(mut socket: WebSocket, home: HomeHandle) {
         let rt = home.runtime.lock().await;
         rt.snapshot_hello()
     };
+    let directions = directions::list_wire(&home.storage).unwrap_or_default();
     if send_frame(
         &mut socket,
-        &ServerFrame::Hello {
-            protocol: PROTOCOL,
-            personas,
-            spaces,
-        },
+        &ServerFrame::Hello { protocol: PROTOCOL, personas, spaces, directions },
     )
     .await
     .is_err()
@@ -797,22 +625,42 @@ async fn handle_client_frame(home: &HomeHandle, socket: &mut WebSocket, frame: C
             };
             let _ = send_frame(
                 socket,
-                &ServerFrame::Backfill {
-                    space_id,
-                    messages,
-                    artifacts: Vec::new(),
-                },
+                &ServerFrame::Backfill { space_id, messages, artifacts: Vec::new() },
             )
             .await;
         }
-        // Unread counters and artifact bodies need a store this lane doesn't build (see the
-        // module doc's TODO); nothing to do with either frame yet.
         ClientFrame::Seen { .. } | ClientFrame::Fetch { .. } => {}
-        ClientFrame::Prompt {
-            space_id,
-            text,
-            mentions,
-        } => dispatch_prompt(home, socket, space_id, text, mentions).await,
+        ClientFrame::Prompt { space_id, text, mentions } => {
+            dispatch_prompt(home, socket, space_id, text, mentions).await
+        }
+        ClientFrame::SetDirection { direction } => dispatch_set_direction(home, socket, direction).await,
+        ClientFrame::Steer { direction_id, text, mode, mentions } => {
+            dispatch_steer(home, socket, direction_id, text, mode, mentions).await
+        }
+    }
+}
+
+async fn dispatch_set_direction(home: &HomeHandle, socket: &mut WebSocket, input: DirectionInput) {
+    match directions::apply_set_direction(&home.storage, input) {
+        Ok(row) => match directions::to_wire(&home.storage, &row) {
+            Ok(direction) => {
+                let _ = home.tx.send(ServerFrame::Direction { direction });
+            }
+            Err(e) => {
+                let _ = send_frame(
+                    socket,
+                    &ServerFrame::Error { code: "direction_error".into(), detail: e.to_string() },
+                )
+                .await;
+            }
+        },
+        Err(e) => {
+            let _ = send_frame(
+                socket,
+                &ServerFrame::Error { code: "direction_error".into(), detail: e.to_string() },
+            )
+            .await;
+        }
     }
 }
 
@@ -830,11 +678,7 @@ async fn dispatch_prompt(
     let targets = match targets {
         Ok(t) => t,
         Err(detail) => {
-            let _ = send_frame(
-                socket,
-                &ServerFrame::Error { code: "no_target".into(), detail },
-            )
-            .await;
+            let _ = send_frame(socket, &ServerFrame::Error { code: "no_target".into(), detail }).await;
             return;
         }
     };
@@ -845,148 +689,155 @@ async fn dispatch_prompt(
             socket,
             &ServerFrame::Error {
                 code: "blocked".into(),
-                detail: format!("{} is blocked and can't take a prompt right now", persona.agent_name),
+                detail: format!("{} is blocked and can't take a prompt right now (herdr: agent_blocked)", persona.agent_name),
             },
         )
         .await;
     }
-    let runnable: Vec<Persona> = targets
-        .into_iter()
-        .filter(|p| p.presence != Presence::Blocked)
-        .collect();
+    let runnable: Vec<Persona> = targets.into_iter().filter(|p| p.presence != Presence::Blocked).collect();
     if runnable.is_empty() {
         return;
     }
 
-    let you_message = Message {
-        id: new_id(),
-        space_id: space_id.clone(),
-        from: "you".to_string(),
-        kind: MessageKind::Speech,
-        text: text.clone(),
-        at: now_iso(),
-        artifacts: None,
-        mentions: if mentions.is_empty() { None } else { Some(mentions) },
-    };
-    {
-        let mut rt = home.runtime.lock().await;
-        rt.push_message(you_message.clone());
-    }
-    let _ = home.tx.send(ServerFrame::Message { message: you_message });
+    post_you_message(home, &space_id, &text, &mentions).await;
 
     for persona in runnable {
-        let home = home.clone();
-        let space_id = space_id.clone();
-        let text = text.clone();
+        let target = persona.target_ref().to_string();
         tokio::spawn(async move {
-            run_prompt_and_reply(home, space_id, persona, text).await;
+            let _ = Command::new("herdr").args(["agent", "prompt", &target, &text]).output().await;
         });
     }
 }
 
-/// Sends `text` to `persona` via the `herdr` CLI and waits for it to settle, then makes a
-/// best-effort attempt at recovering the reply text and turns it into a `speech` message.
-///
-/// Reliability of the reply extraction: LOW. `herdr agent read` returns a plain-text terminal
-/// snapshot (box-drawing borders, the input box, a status footer with the model/branch/PR),
-/// not a transcript -- there is no message-boundary marker anywhere in it. This takes a
-/// snapshot immediately before sending the prompt and one immediately after `--wait` settles,
-/// and reports the lines present in the second that weren't in the first. That is enough to
-/// mostly work on a short reply and will visibly mis-extract on anything that scrolls the
-/// pane, redraws its footer, or wraps differently between the two reads. See the report this
-/// module shipped with for the exact captured output `herdr agent read` gave during dev.
-async fn run_prompt_and_reply(home: HomeHandle, space_id: String, persona: Persona, text: String) {
-    let target = persona.target_ref();
-    let before = read_agent_snapshot(target).await.unwrap_or_default();
-
-    let output = Command::new("herdr")
-        .args(["agent", "prompt", target, &text, "--wait"])
-        .output()
+/// Sends `text` verbatim to each of `direction.riders` (or the mentioned subset), honoring
+/// `mode`. Speech is delivered exactly as typed -- never paraphrased -- per
+/// docs/specs/home.md's "send my exact prompts, not your inference".
+async fn dispatch_steer(
+    home: &HomeHandle,
+    socket: &mut WebSocket,
+    direction_id: String,
+    text: String,
+    mode: SteerMode,
+    mentions: Vec<String>,
+) {
+    let Ok(Some(direction_row)) = home.storage.get_home_direction(&direction_id) else {
+        let _ = send_frame(
+            socket,
+            &ServerFrame::Error { code: "no_such_direction".into(), detail: direction_id },
+        )
         .await;
+        return;
+    };
 
-    let output = match output {
-        Ok(o) => o,
-        Err(e) => {
+    let targets = {
+        let rt = home.runtime.lock().await;
+        rt.riders_for(&direction_row.riders, &mentions)
+    };
+    if targets.is_empty() {
+        let _ = send_frame(
+            socket,
+            &ServerFrame::Error {
+                code: "no_target".into(),
+                detail: format!("no reachable rider for direction {direction_id}"),
+            },
+        )
+        .await;
+        return;
+    }
+
+    if mode == SteerMode::Now {
+        let blocked: Vec<&Persona> = targets.iter().filter(|p| p.presence == Presence::Blocked).collect();
+        if !blocked.is_empty() {
+            let names: Vec<&str> = blocked.iter().map(|p| p.agent_name.as_str()).collect();
+            let _ = send_frame(
+                socket,
+                &ServerFrame::Error {
+                    code: "blocked".into(),
+                    detail: format!(
+                        "{} blocked; herdr rejects a prompt to a blocked agent (agent_blocked)",
+                        names.join(", ")
+                    ),
+                },
+            )
+            .await;
+            return;
+        }
+    }
+
+    for persona in &targets {
+        post_you_message(home, &format!("office-{}", persona.id), &text, &[]).await;
+    }
+
+    for persona in targets {
+        let target = persona.target_ref().to_string();
+        let text = text.clone();
+        let home = home.clone();
+        match mode {
+            SteerMode::Now => {
+                tokio::spawn(async move {
+                    let _ = Command::new("herdr").args(["agent", "prompt", &target, &text]).output().await;
+                });
+            }
+            SteerMode::After => {
+                tokio::spawn(async move { steer_after_settle(home, persona.id, target, text).await });
+            }
+        }
+    }
+}
+
+/// Bounded wait for a rider to settle (`docs/specs/home.md`: "once they are done, they report
+/// back", no unbounded polling loops surfaced to the UI). Polls the runtime's own presence
+/// map -- already kept current by the snapshot poll and the herdr subscription -- rather than
+/// shelling out to herdr again.
+async fn steer_after_settle(home: HomeHandle, persona_id: String, target: String, text: String) {
+    const POLL: Duration = Duration::from_secs(2);
+    const MAX_WAIT: Duration = Duration::from_secs(30 * 60);
+    let mut waited = Duration::ZERO;
+    loop {
+        let presence = {
+            let rt = home.runtime.lock().await;
+            rt.personas.get(&persona_id).map(|p| p.presence)
+        };
+        match presence {
+            Some(Presence::Idle) | Some(Presence::Done) | None => break,
+            Some(Presence::Blocked) => {
+                let _ = home.tx.send(ServerFrame::Error {
+                    code: "blocked".into(),
+                    detail: format!("{target} settled blocked; steer not delivered (agent_blocked)"),
+                });
+                return;
+            }
+            _ => {}
+        }
+        if waited >= MAX_WAIT {
             let _ = home.tx.send(ServerFrame::Error {
-                code: "herdr_unavailable".into(),
-                detail: e.to_string(),
+                code: "steer_timeout".into(),
+                detail: format!("{target} never settled within {}s", MAX_WAIT.as_secs()),
             });
             return;
         }
-    };
-
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if detail.is_empty() {
-            String::from_utf8_lossy(&output.stderr).trim().to_string()
-        } else {
-            detail
-        };
-        let _ = home.tx.send(ServerFrame::Error {
-            code: "prompt_failed".into(),
-            detail: if detail.is_empty() {
-                format!("herdr agent prompt {target} failed")
-            } else {
-                detail
-            },
-        });
-        return;
+        tokio::time::sleep(POLL).await;
+        waited += POLL;
     }
+    let _ = Command::new("herdr").args(["agent", "prompt", &target, &text]).output().await;
+}
 
-    let after = read_agent_snapshot(target).await.unwrap_or_default();
-    let reply = diff_new_lines(&before, &after);
-    if reply.trim().is_empty() {
-        return;
-    }
-
+async fn post_you_message(home: &HomeHandle, space_id: &str, text: &str, mentions: &[String]) {
     let message = Message {
         id: new_id(),
-        space_id,
-        from: persona.id.clone(),
+        space_id: space_id.to_string(),
+        from: "you".to_string(),
         kind: MessageKind::Speech,
-        text: reply,
+        text: text.to_string(),
         at: now_iso(),
         artifacts: None,
-        mentions: None,
+        mentions: if mentions.is_empty() { None } else { Some(mentions.to_vec()) },
     };
     {
         let mut rt = home.runtime.lock().await;
         rt.push_message(message.clone());
     }
     let _ = home.tx.send(ServerFrame::Message { message });
-}
-
-async fn read_agent_snapshot(target: &str) -> anyhow::Result<String> {
-    let output = Command::new("herdr")
-        .args(["agent", "read", target, "--source", "recent-unwrapped", "--lines", "60"])
-        .output()
-        .await?;
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-/// Lines in `after` that aren't in `before`, in order, skipping herdr's own box-drawing
-/// borders and the cwd/status footer line -- both constant chrome that would otherwise show
-/// up as "new" on almost every read. Heuristic; see `run_prompt_and_reply`'s doc comment.
-fn diff_new_lines(before: &str, after: &str) -> String {
-    let mut before_counts: HashMap<&str, usize> = HashMap::new();
-    for line in before.lines() {
-        *before_counts.entry(line).or_insert(0) += 1;
-    }
-    let mut out = Vec::new();
-    for line in after.lines() {
-        let trimmed = line.trim();
-        if trimmed.chars().all(|c| c == '─' || c.is_whitespace()) {
-            continue;
-        }
-        if let Some(count) = before_counts.get_mut(line) {
-            if *count > 0 {
-                *count -= 1;
-                continue;
-            }
-        }
-        out.push(line.trim_end());
-    }
-    out.join("\n").trim().to_string()
 }
 
 #[cfg(test)]
@@ -1009,7 +860,7 @@ mod tests {
     #[test]
     fn hello_frame_matches_protocol_ts_shape() {
         let frame = ServerFrame::Hello {
-            protocol: 1,
+            protocol: 2,
             personas: vec![Persona {
                 id: "partner-harvey".into(),
                 role: Role::Senior,
@@ -1031,11 +882,25 @@ mod tests {
                 last_summary: None,
                 last_activity: None,
             }],
+            directions: vec![Direction {
+                id: "d1".into(),
+                goal: "ship the thing".into(),
+                area: "/repo".into(),
+                done: Rung::Test,
+                reached: Some(Rung::Artifact),
+                budget_tokens: 1_000_000,
+                spent_tokens: 42_000,
+                riders: vec!["partner-harvey".into()],
+                state: DirectionState::Riding,
+                exception: None,
+                created_at: "2026-09-07T00:00:00+00:00".into(),
+                updated_at: "2026-09-07T00:00:00+00:00".into(),
+            }],
         };
 
         let expected = serde_json::json!({
             "t": "hello",
-            "protocol": 1,
+            "protocol": 2,
             "personas": [{
                 "id": "partner-harvey",
                 "role": "senior",
@@ -1056,7 +921,91 @@ mod tests {
                 "unread": 0,
                 "lastSummary": null,
                 "lastActivity": null
+            }],
+            "directions": [{
+                "id": "d1",
+                "goal": "ship the thing",
+                "area": "/repo",
+                "done": "test",
+                "reached": "artifact",
+                "budgetTokens": 1000000,
+                "spentTokens": 42000,
+                "riders": ["partner-harvey"],
+                "state": "riding",
+                "exception": null,
+                "createdAt": "2026-09-07T00:00:00+00:00",
+                "updatedAt": "2026-09-07T00:00:00+00:00"
             }]
+        });
+        assert_eq!(serde_json::to_value(&frame).unwrap(), expected);
+    }
+
+    #[test]
+    fn direction_frame_matches_protocol_ts_shape_with_exception() {
+        let frame = ServerFrame::Direction {
+            direction: Direction {
+                id: "d1".into(),
+                goal: "ship it".into(),
+                area: "/repo".into(),
+                done: Rung::Ci,
+                reached: None,
+                budget_tokens: 500_000,
+                spent_tokens: 600_000,
+                riders: vec!["harvey".into()],
+                state: DirectionState::Halted,
+                exception: Some(Exception {
+                    reason: "over budget: spent 600000 tokens against a budget of 500000".into(),
+                    since: "2026-09-07T01:00:00+00:00".into(),
+                }),
+                created_at: "2026-09-07T00:00:00+00:00".into(),
+                updated_at: "2026-09-07T01:00:00+00:00".into(),
+            },
+        };
+        let expected = serde_json::json!({
+            "t": "direction",
+            "direction": {
+                "id": "d1",
+                "goal": "ship it",
+                "area": "/repo",
+                "done": "ci",
+                "reached": null,
+                "budgetTokens": 500000,
+                "spentTokens": 600000,
+                "riders": ["harvey"],
+                "state": "halted",
+                "exception": {
+                    "reason": "over budget: spent 600000 tokens against a budget of 500000",
+                    "since": "2026-09-07T01:00:00+00:00"
+                },
+                "createdAt": "2026-09-07T00:00:00+00:00",
+                "updatedAt": "2026-09-07T01:00:00+00:00"
+            }
+        });
+        assert_eq!(serde_json::to_value(&frame).unwrap(), expected);
+    }
+
+    #[test]
+    fn stop_frame_matches_protocol_ts_shape() {
+        let frame = ServerFrame::Stop {
+            stop: Stop {
+                id: "s1".into(),
+                direction_id: "d1".into(),
+                from: "harvey".into(),
+                rung: Rung::Test,
+                artifact_id: None,
+                at: "2026-09-07T00:00:00+00:00".into(),
+            },
+        };
+        let expected = serde_json::json!({
+            "t": "stop",
+            "stop": {
+                "id": "s1",
+                "directionId": "d1",
+                "from": "harvey",
+                "rung": "test",
+                "artifactId": null,
+                "at": "2026-09-07T00:00:00+00:00"
+            }
         });
         assert_eq!(serde_json::to_value(&frame).unwrap(), expected);
     }
@@ -1116,17 +1065,8 @@ mod tests {
 
     #[test]
     fn backfill_frame_matches_protocol_ts_shape() {
-        let frame = ServerFrame::Backfill {
-            space_id: "lounge".into(),
-            messages: Vec::new(),
-            artifacts: Vec::new(),
-        };
-        let expected = serde_json::json!({
-            "t": "backfill",
-            "spaceId": "lounge",
-            "messages": [],
-            "artifacts": []
-        });
+        let frame = ServerFrame::Backfill { space_id: "lounge".into(), messages: Vec::new(), artifacts: Vec::new() };
+        let expected = serde_json::json!({"t": "backfill", "spaceId": "lounge", "messages": [], "artifacts": []});
         assert_eq!(serde_json::to_value(&frame).unwrap(), expected);
     }
 
@@ -1138,8 +1078,7 @@ mod tests {
 
     #[test]
     fn client_prompt_frame_parses_with_default_mentions() {
-        let frame: ClientFrame =
-            serde_json::from_str(r#"{"t":"prompt","spaceId":"lounge","text":"hi"}"#).unwrap();
+        let frame: ClientFrame = serde_json::from_str(r#"{"t":"prompt","spaceId":"lounge","text":"hi"}"#).unwrap();
         match frame {
             ClientFrame::Prompt { space_id, text, mentions } => {
                 assert_eq!(space_id, "lounge");
@@ -1150,15 +1089,54 @@ mod tests {
         }
     }
 
-    /// Fixture shaped like `herdr agent list`'s real output (captured 2026-09-07, paths and
-    /// pane/workspace ids redacted). Exercises role assignment (mapped vs. unmapped -> guest)
-    /// and the office/room layout `refresh_from_agents` builds.
+    #[test]
+    fn client_set_direction_frame_parses_camel_case() {
+        let raw = r#"{"t":"set_direction","direction":{"id":"d1","goal":"ship it","area":"/repo","done":"test","budgetTokens":1000000,"riders":["harvey"]}}"#;
+        let frame: ClientFrame = serde_json::from_str(raw).unwrap();
+        match frame {
+            ClientFrame::SetDirection { direction } => {
+                assert_eq!(direction.id, "d1");
+                assert_eq!(direction.done, Rung::Test);
+                assert_eq!(direction.budget_tokens, 1_000_000);
+                assert_eq!(direction.riders, vec!["harvey".to_string()]);
+            }
+            _ => panic!("expected SetDirection"),
+        }
+    }
+
+    #[test]
+    fn client_steer_frame_parses_mode_and_mentions() {
+        let raw = r#"{"t":"steer","directionId":"d1","text":"ship it now","mode":"now","mentions":["harvey"]}"#;
+        let frame: ClientFrame = serde_json::from_str(raw).unwrap();
+        match frame {
+            ClientFrame::Steer { direction_id, text, mode, mentions } => {
+                assert_eq!(direction_id, "d1");
+                assert_eq!(text, "ship it now");
+                assert_eq!(mode, SteerMode::Now);
+                assert_eq!(mentions, vec!["harvey".to_string()]);
+            }
+            _ => panic!("expected Steer"),
+        }
+    }
+
+    #[test]
+    fn client_steer_frame_defaults_mentions_to_empty() {
+        let raw = r#"{"t":"steer","directionId":"d1","text":"go","mode":"after"}"#;
+        let frame: ClientFrame = serde_json::from_str(raw).unwrap();
+        match frame {
+            ClientFrame::Steer { mode, mentions, .. } => {
+                assert_eq!(mode, SteerMode::After);
+                assert!(mentions.is_empty());
+            }
+            _ => panic!("expected Steer"),
+        }
+    }
+
     #[test]
     fn refresh_from_agents_builds_offices_and_rooms_with_roles() {
         let agents = vec![
             sample_agent("w1:pA", "claude", Some("partner-harvey"), Presence::Idle),
             sample_agent("w1:pB", "grok", Some("mike2-grok4.6"), Presence::Working),
-            // No `name`: falls back to the pane id for both agentName and the slug.
             sample_agent("w1:pC", "codex", None, Presence::Idle),
         ];
 
@@ -1192,7 +1170,6 @@ mod tests {
             assert_eq!(room.members.len(), 3, "every persona is a member of every room");
         }
 
-        // A second refresh with the same panes reports no new pane ids.
         let no_new = runtime.refresh_from_agents(&agents);
         assert!(no_new.is_empty());
     }
@@ -1219,13 +1196,18 @@ mod tests {
     }
 
     #[test]
-    fn resolve_targets_blocked_persona_is_still_returned_for_dispatch_to_reject() {
-        // resolve_targets itself doesn't filter blocked personas out -- dispatch_prompt does,
-        // so it can send a specific `error` frame naming who's blocked.
+    fn riders_for_filters_to_mentions_when_given() {
         let mut runtime = HomeRuntime::new(HashMap::new());
-        runtime.refresh_from_agents(&[sample_agent("w1:pA", "claude", Some("harvey"), Presence::Blocked)]);
-        let targets = runtime.resolve_targets("office-harvey", &[]).unwrap();
-        assert_eq!(targets[0].presence, Presence::Blocked);
+        runtime.refresh_from_agents(&[
+            sample_agent("w1:pA", "claude", Some("harvey"), Presence::Idle),
+            sample_agent("w1:pB", "grok", Some("mike"), Presence::Idle),
+        ]);
+        let riders = vec!["harvey".to_string(), "mike".to_string()];
+        let all = runtime.riders_for(&riders, &[]);
+        assert_eq!(all.len(), 2);
+        let just_mike = runtime.riders_for(&riders, &["mike".to_string()]);
+        assert_eq!(just_mike.len(), 1);
+        assert_eq!(just_mike[0].id, "mike");
     }
 
     #[test]
@@ -1244,13 +1226,6 @@ mod tests {
             }
             _ => panic!("expected Presence frame"),
         }
-    }
-
-    #[test]
-    fn diff_new_lines_drops_borders_and_repeated_lines() {
-        let before = "line one\n───────\nfooter";
-        let after = "line one\n───────\nfooter\nnew reply text";
-        assert_eq!(diff_new_lines(before, after), "new reply text");
     }
 
     #[test]
