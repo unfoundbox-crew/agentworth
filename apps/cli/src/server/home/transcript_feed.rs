@@ -9,15 +9,17 @@
 //! report this lane shipped with for the accepted cost/latency tradeoff) and diffs the new
 //! trace's events against a per-session cursor to find what's new since the last read.
 //!
-//! Mapping a session to a rider: see `gateway.rs`'s `pane_for_session` -- the actual join used
-//! is `agent_state.pane_id` (set by the Claude Code hook loop at session start,
-//! `apps/cli/src/loop_runtime.rs`), matched against `herdr agent list`'s own `pane_id` field.
-//! NOT CONFIRMED: the brief for this lane named `agent_session.value` as the field to join on;
-//! no such field exists anywhere in this codebase or in the herdr CLI output this module reads
-//! (`HerdrAgent`, `apps/cli/src/server/home/protocol.rs`), and there is no live herdr instance
-//! in this sandbox to check its actual JSON shape against. `agent_state.pane_id` is the closest
-//! verified join this codebase already relies on for the same purpose (`trace_anchors`'
-//! `pane_id` anchor kind, `docs/specs/loop.md` section 2).
+//! Mapping a session to a rider: see `gateway.rs`'s `HomeRuntime::pane_for_session`. Confirmed
+//! live on 2026-09-07 against a real 8-pane herdr fleet: `herdr agent list`'s
+//! `agent_session.value` (a field the previous lane could not confirm existed -- it does,
+//! `HerdrAgent.agent_session` in `apps/cli/src/server/home/protocol.rs`) matches this index's
+//! `sessions.session_id` exactly for claude_code, codex, and antigravity panes, and is now the
+//! preferred join. `agent_state.pane_id` (set by the Claude Code hook loop at session start,
+//! `apps/cli/src/loop_runtime.rs`, matched against `herdr agent list`'s own `pane_id` field) is
+//! the fallback for sessions `agent_session` doesn't resolve -- Grok's adapter names sessions
+//! after files ("events", "chat_history") rather than an id herdr recognizes, so a Grok pane's
+//! `agent_session.value` never matches either way; that's a gap in Grok's own adapter, not
+//! something routed around here.
 
 use agentworth_outcomes::{outcome_rank, OutcomeDetector};
 use agentworth_schema::{AgentWorthTrace, EventPayload, EventType, NormalizedEvent};
@@ -111,6 +113,21 @@ fn fold_into_run(run: &mut WorkRun, event: &NormalizedEvent) {
         EventPayload::ToolResult(_) => {}
         _ => {}
     }
+}
+
+/// Baselines `cursor` to `trace`'s current end -- its highest event sequence and its strongest
+/// outcome rank so far -- without producing any frames. Call this the first time the feed sees
+/// a session, so a session that is already hundreds of turns deep doesn't replay its whole
+/// history as a live burst the moment the feed starts watching it; only activity after this
+/// point turns into a frame.
+pub fn seed_cursor(trace: &AgentWorthTrace, cursor: &mut SessionCursor) {
+    cursor.last_sequence = trace.events.iter().map(|e| e.sequence).max().unwrap_or(0);
+    let detector = OutcomeDetector::new();
+    let outcomes = detector.detect_outcomes(trace);
+    cursor.last_outcome_rank = detector
+        .strongest_outcome(&outcomes)
+        .map(|evidence| outcome_rank(evidence.kind))
+        .unwrap_or(0);
 }
 
 /// Builds the frames for events newly appended to `trace` since `cursor`, and advances
@@ -285,5 +302,28 @@ mod tests {
         // Re-running against the same trace does not re-report the same rung.
         let again = feed_from_trace(&trace, &mut cursor, "office-harvey", "harvey");
         assert!(again.new_outcome.is_none());
+    }
+
+    /// The bug this pins down: the first time the feed sees a session, `SessionCursor::default`
+    /// starts at zero, so every event already in a transcript that's hundreds of turns deep gets
+    /// replayed as speech/work frames in one burst. `seed_cursor` should baseline the cursor to
+    /// the trace's current end instead, so a subsequent `feed_from_trace` call sees only what's
+    /// genuinely new -- exactly like `gateway.rs`'s `transcript_feed_loop` now does on first
+    /// sighting of a session.
+    #[test]
+    fn seed_cursor_baselines_existing_history_so_it_never_replays_as_frames() {
+        let trace = parse_fixture(&[
+            r#"{"type":"user","timestamp":"2026-09-07T10:00:00Z","content":"do the thing"}"#,
+            r#"{"type":"assistant","timestamp":"2026-09-07T10:00:05Z","content":[{"type":"text","text":"working on it"}]}"#,
+            r#"{"type":"assistant","timestamp":"2026-09-07T10:00:10Z","content":[{"type":"text","text":"done"}]}"#,
+        ]);
+
+        let mut cursor = SessionCursor::default();
+        seed_cursor(&trace, &mut cursor);
+        assert!(cursor.last_sequence > 0, "cursor baselined past the fixture's existing events");
+
+        let out = feed_from_trace(&trace, &mut cursor, "office-harvey", "harvey");
+        assert!(out.messages.is_empty(), "seeded cursor must not replay pre-existing history");
+        assert!(out.new_outcome.is_none(), "seeded cursor must not re-report a pre-existing outcome");
     }
 }

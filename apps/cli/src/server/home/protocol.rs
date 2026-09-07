@@ -312,6 +312,7 @@ pub enum ServerFrame {
         artifact: Artifact,
     },
     #[serde(rename = "space")]
+    #[allow(dead_code)]
     Space {
         space: Space,
     },
@@ -431,6 +432,34 @@ pub fn slugify(raw: &str) -> String {
     }
 }
 
+/// Whether `AgentSessionInfo::value` is the harness's own session id, or a path to one.
+/// herdr's `AgentSessionRefKind` (`herdr api schema --json`, `$defs.AgentSessionRefKind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSessionRefKind {
+    Id,
+    Path,
+}
+
+/// herdr's own idea of which harness session a pane is running, straight off `herdr agent
+/// list`/`herdr api schema --json`'s `AgentSessionInfo`. Verified live on 2026-09-07: `value`
+/// matches this index's `sessions.session_id` exactly for claude_code, codex and antigravity
+/// panes when `kind == "id"` (e.g. claude `61eef7db-...`, codex `01a07081-...`, agy
+/// `219114fe-...`) -- so it's a more direct rider->session join than going through
+/// `agent_state.pane_id`, when it resolves. Grok's adapter names sessions after files
+/// ("events", "chat_history") rather than an id herdr would recognize, so a Grok pane's
+/// `agent_session.value` does not resolve against this index either way; that's a gap in
+/// Grok's own adapter, not something to route around here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentSessionInfo {
+    #[allow(dead_code)]
+    pub agent: String,
+    pub kind: AgentSessionRefKind,
+    #[allow(dead_code)]
+    pub source: String,
+    pub value: String,
+}
+
 /// One row of `herdr agent list`'s `result.agents` array. Only the fields this module needs;
 /// herdr's own schema (`herdr api schema --json`) has more.
 #[derive(Debug, Clone, Deserialize)]
@@ -446,6 +475,8 @@ pub struct HerdrAgent {
     pub terminal_title_stripped: Option<String>,
     #[serde(default)]
     pub revision: u64,
+    #[serde(default)]
+    pub agent_session: Option<AgentSessionInfo>,
 }
 
 /// herdr's every CLI response is the same envelope: `{"id": ..., "result": {...}}` or
