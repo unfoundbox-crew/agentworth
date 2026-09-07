@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --ground: #15191f;
+  --panel: #1a1f26;
+  --line: #272f3a;
+  --ink: #cfd4dc;
+  --muted: #8b949e;
+  --dim: #586069;
+  --amber: #d29922;
+  --font-mono: 'PT Mono', 'SF Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --t-in: 120ms;
+  --t-out: 80ms;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.presence-working { animation: pulse 2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .presence-working { animation: none; opacity: 0.7; }
+}

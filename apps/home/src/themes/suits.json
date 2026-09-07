@@ -1,0 +1,17 @@
+{
+  "id": "suits",
+  "label": "Suits",
+  "cast": {
+    "chief_of_staff": { "name": "Donna", "title": "Chief of Staff", "badge": "#60a5fa", "soul": "donna.md" },
+    "senior": { "name": "Harvey", "title": "Senior Partner", "badge": "#c9a227", "soul": "harvey.md" },
+    "associate": { "name": "Mike", "title": "Associate", "badge": "#10b981", "soul": "mike.md" },
+    "executor": { "name": "Rachel", "title": "Paralegal", "badge": "#c084fc", "soul": "rachel.md" },
+    "controller": { "name": "Louis", "title": "Managing Partner", "badge": "#a38241", "soul": "louis.md" },
+    "guest": { "name": "Of counsel", "title": "", "badge": "#8b949e" }
+  },
+  "spaces": {
+    "incidents": "War Room",
+    "lounge": "Coffee Lounge",
+    "standup": "Morning Standup"
+  }
+}

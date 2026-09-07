@@ -1,0 +1,34 @@
+{
+  "personas": [
+    { "id": "cos", "role": "chief_of_staff", "kind": "agy", "agentName": "gemini-cos", "paneId": "w9:pE", "workspaceId": "w9", "cwd": "/repo", "presence": "idle", "title": "fleet triage", "revision": 1 },
+    { "id": "sen", "role": "senior", "kind": "claude", "agentName": "partner-senior", "paneId": "w9:pA", "workspaceId": "w9", "cwd": "/repo/.claude/worktrees/arch", "presence": "working", "title": "mission director handoff", "revision": 10 },
+    { "id": "asc", "role": "associate", "kind": "grok", "agentName": "grok-lead", "paneId": "w9:pC", "workspaceId": "w9", "cwd": "/repo", "presence": "idle", "title": "roundtable stream ids", "revision": 1005 },
+    { "id": "exe", "role": "executor", "kind": "codex", "agentName": "codex-build", "paneId": "w9:pD", "workspaceId": "w9", "cwd": "/repo", "presence": "blocked", "title": "waiting on approval", "revision": 15 },
+    { "id": "ctl", "role": "controller", "kind": "claude", "agentName": "controller", "paneId": "w9:pF", "workspaceId": "w9", "cwd": "/repo", "presence": "done", "title": "pacing audit", "revision": 3 }
+  ],
+  "spaces": [
+    { "id": "incidents", "kind": "room", "label": "Incidents", "members": ["cos", "sen", "asc", "exe"], "unread": 2, "lastSummary": "Native OCR binary compiled; fallback tiers under review.", "lastActivity": "2026-09-07T10:12:00Z" },
+    { "id": "lounge", "kind": "room", "label": "Lounge", "members": ["cos", "sen", "asc", "exe", "ctl"], "unread": 0, "lastSummary": null, "lastActivity": null },
+    { "id": "standup", "kind": "room", "label": "Standup", "members": ["cos", "sen", "asc", "exe", "ctl"], "unread": 0, "lastSummary": "4 shipped, 1 blocked.", "lastActivity": "2026-09-07T08:00:00Z" },
+    { "id": "office-cos", "kind": "office", "label": "Chief of staff", "members": ["cos"], "unread": 0, "lastSummary": null, "lastActivity": null },
+    { "id": "office-sen", "kind": "office", "label": "Senior", "members": ["sen"], "unread": 1, "lastSummary": "Handoff written, waiting on your read.", "lastActivity": "2026-09-07T11:40:00Z" },
+    { "id": "office-asc", "kind": "office", "label": "Associate", "members": ["asc"], "unread": 0, "lastSummary": null, "lastActivity": null },
+    { "id": "office-exe", "kind": "office", "label": "Executor", "members": ["exe"], "unread": 0, "lastSummary": "Blocked: permission prompt on cargo test.", "lastActivity": "2026-09-07T11:55:00Z" },
+    { "id": "office-ctl", "kind": "office", "label": "Controller", "members": ["ctl"], "unread": 0, "lastSummary": null, "lastActivity": null }
+  ],
+  "messages": [
+    { "id": "m1", "spaceId": "incidents", "from": "you", "kind": "speech", "text": "OCR fallback is flaky on the ANE path. Who owns this?", "at": "2026-09-07T10:00:00Z" },
+    { "id": "m2", "spaceId": "incidents", "from": "cos", "kind": "speech", "text": "Senior reviews the tiers, Associate benchmarks cold start. Executor waits.", "at": "2026-09-07T10:01:00Z" },
+    { "id": "m3", "spaceId": "incidents", "from": "asc", "kind": "work", "text": "ran 3 benchmarks, wrote 1 note", "at": "2026-09-07T10:08:00Z", "artifacts": ["a1", "a2"] },
+    { "id": "m4", "spaceId": "incidents", "from": "asc", "kind": "speech", "text": "18ms on ANE cold, 0 tokens. The flake is the CPU fallback tier, not ANE.", "at": "2026-09-07T10:09:00Z" },
+    { "id": "m5", "spaceId": "incidents", "from": "sen", "kind": "speech", "text": "Then drop tier two. Two tiers, ANE or refuse, and the refusal is loud. Executor, one PR.", "at": "2026-09-07T10:12:00Z", "mentions": ["exe"] },
+    { "id": "m6", "spaceId": "office-sen", "from": "sen", "kind": "work", "text": "wrote handoff, 1 file", "at": "2026-09-07T11:40:00Z", "artifacts": ["a3"] },
+    { "id": "m7", "spaceId": "office-sen", "from": "sen", "kind": "speech", "text": "Handoff is written. One decision left in it for you: keep the graphics stack in the doc lane or split it.", "at": "2026-09-07T11:40:10Z" },
+    { "id": "m8", "spaceId": "office-exe", "from": "exe", "kind": "system", "text": "Blocked on an approval prompt.", "at": "2026-09-07T11:55:00Z" }
+  ],
+  "artifacts": [
+    { "id": "a1", "spaceId": "incidents", "from": "asc", "kind": "command", "title": "bench cold start", "ref": "cargo run --release --bin ocr-bench -- --cold", "body": "ane cold: 18.2ms\nane warm: 6.1ms\ncpu fallback: 412ms (2/10 timeouts)\n", "at": "2026-09-07T10:05:00Z" },
+    { "id": "a2", "spaceId": "incidents", "from": "asc", "kind": "note", "title": "ocr-tiers.md", "ref": "docs/ocr-tiers.md", "body": "# OCR tiers\n\nTier 1 ANE: stable.\nTier 2 CPU: flaky under load.\n", "at": "2026-09-07T10:08:00Z" },
+    { "id": "a3", "spaceId": "office-sen", "from": "sen", "kind": "file", "title": "handoff.md", "ref": "handoffs/2026-09-07-director.md", "body": null, "at": "2026-09-07T11:40:00Z" }
+  ]
+}
