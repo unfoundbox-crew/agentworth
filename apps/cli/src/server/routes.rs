@@ -45,6 +45,10 @@ pub struct AppState {
     /// Sender side of the live-tail filesystem-event broadcast. Each SSE connection calls
     /// `.subscribe()` for its own receiver; cloning the sender itself is cheap.
     pub live_tail: broadcast::Sender<LiveTailEvent>,
+    /// `Some` only when `archie serve --home` started the gateway behind `apps/home`
+    /// (`super::home_gateway`). `None` makes `/ws` answer 404 instead of upgrading.
+    #[cfg(unix)]
+    pub home: Option<super::home_gateway::HomeHandle>,
 }
 
 /// Query parameters for listing and filtering indexed traces.
@@ -415,8 +419,11 @@ pub fn create_router(state: AppState) -> Router {
 
     let dist_dir_for_fallback = state.dist_dir.clone();
 
-    Router::new()
-        .nest("/api", api_routes)
+    let router = Router::new().nest("/api", api_routes);
+    #[cfg(unix)]
+    let router = router.merge(super::home_gateway::router());
+
+    router
         .fallback(move |req: Request<Body>| {
             let dist_clone = dist_dir_for_fallback.clone();
             async move { serve_static_or_spa(dist_clone, req).await }
