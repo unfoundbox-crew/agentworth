@@ -9,29 +9,47 @@ One window to run a fleet of coding agents for a whole day without a terminal
 grid. It replaces reading panes, not the agents. Every choice below is judged
 by one test: is this easier on the eyes and the hands at hour six.
 
-## Surfaces
+## The shape: the Train (locked 2026-09-07)
+
+The primary unit is a **direction**, not a message. A direction is a standing
+intent the human set once: goal in one line, the area of the repo it owns, the
+evidence rung that means done, a token budget, and the personas riding it.
+Riders inherit it. Editing it steers every rider. Prior art is the RTS rally
+point; no agent tool has built one. Research behind this lives in
+`docs/specs/home.md`.
 
 ```
-┌──────────┬────────────────────────────────────┬──────────────┐
-│ spaces   │ floor                              │ drawer       │
-│          │                                    │              │
-│ rooms    │ speech only. one bubble per turn.  │ artifacts:   │
-│ offices  │ a persona's work collapses to one  │ diff, file,  │
-│          │ line that opens the drawer.        │ command,     │
-│          │                                    │ note, link.  │
-│          ├────────────────────────────────────┤              │
-│          │ dock: prompt, @mentions            │              │
-└──────────┴────────────────────────────────────┴──────────────┘
+┌ strips ──────────────────────────────────────────────────────────┬─┐
+│ [waiting on you · 14 min] [over budget · halted]  ░ ░ ░ ░ ░      │a│
+├ standup · GO GO GO NO-GO GO GO GO ────────────────────────────────┤m│
+├ track ────────────────────────────────────────────────────── now ┤b│
+│ lane per direction · riders as initials · stops at the rung     │i│
+│ earned · handoff arrows · fork on retry · scrubber rewinds       │e│
+├ dock ────────────────────────────────────────────────────────────┤n│
+│ steer the selected direction   [now | after this step]  1–9 0   │t│
+└──────────────────────────────────────────────────────────────────┴─┘
 ```
 
-- **Spaces**: rooms first, then offices. An office is one persona. A room is a
-  cast. Each row: presence dot, name, one-line summary, unread count.
-- **Floor**: the stream. Speech renders. Work renders as one line. Raw tool
-  output never renders here. Nothing scrolls the user; new messages append
-  below and a "new below" pill appears if they have scrolled up.
-- **Drawer**: slides in from the right, never inline. Diffs live here.
-- **Dock**: floats over the floor bottom. Enter sends, Shift+Enter newline,
-  `@` completes persona names from the active theme.
+- **Strip board**: one compact strip per direction, fixed fields, freely
+  arrangeable, like an air-traffic flight strip. Default view is exceptions
+  only: strips that are fine are dim and small; strips waiting on you or
+  halted are large, first, and sorted by how long they have waited.
+- **Track**: time left to right, one lane per direction. Riders are small
+  markers. Stops are evidence at the rung it earned: diff, test, commit, CI.
+  A stop opens the evidence, never a transcript. A scrubber rewinds.
+- **Dock**: one input. Steering is explicit about timing: now, or after the
+  rider's current step. Number keys select directions; zero selects all.
+- **Ambient strip**: the right edge hums with fleet activity and burn. It is
+  the only thing that moves when nothing needs you.
+- **Standup**: a go/no-go poll across directions, one word each.
+- **Quiet state**: when nothing needs you, the middle of the screen is one
+  line. That is the interface tax at rest.
+
+What you read per decision: one strip and one evidence rung.
+
+Personas are riders. Solo or mute a persona to focus or silence it. The
+codebase Map is a lens on the same data. Rooms from earlier sketches survive
+only as theme-pack vocabulary.
 
 ## Personas and themes
 

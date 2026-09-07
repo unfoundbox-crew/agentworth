@@ -4,7 +4,7 @@
  * apps/cli/src/server/home_gateway.rs; change both or neither.
  */
 
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 
 /** Agent lifecycle as herdr reports it. Same five words herdr uses. */
 export type Presence = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
@@ -28,6 +28,44 @@ export interface Persona {
   /** herdr terminal title, the agent's own one-line "what I'm on". */
   title: string;
   revision: number;
+}
+
+/** Archie's evidence ladder, lowest rung first. A direction is done when it reaches its rung. */
+export type Rung = 'said' | 'artifact' | 'test' | 'commit' | 'ci';
+
+/**
+ * A direction is a standing intent the human set once. Riders subscribe to it and inherit it;
+ * editing it steers every rider. This is the primary unit of the home, not the message.
+ */
+export interface Direction {
+  id: string;
+  /** One line. */
+  goal: string;
+  /** Repo path or worktree the direction owns. */
+  area: string;
+  /** Done means this rung reached, with evidence. */
+  done: Rung;
+  /** Highest rung any rider has earned so far, null before any evidence. */
+  reached: Rung | null;
+  budgetTokens: number;
+  spentTokens: number;
+  /** Persona ids riding this direction. */
+  riders: string[];
+  state: 'riding' | 'idle' | 'done' | 'waiting' | 'halted';
+  /** Set when state is waiting or halted: why, and since when. */
+  exception: { reason: string; since: string } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A stop on the track: evidence a rider produced, at the rung it earned. */
+export interface Stop {
+  id: string;
+  directionId: string;
+  from: string;
+  rung: Rung;
+  artifactId: string | null;
+  at: string;
 }
 
 export type SpaceKind = 'office' | 'room';
@@ -81,7 +119,9 @@ export interface Artifact {
 }
 
 export type ServerFrame =
-  | { t: 'hello'; protocol: number; personas: Persona[]; spaces: Space[] }
+  | { t: 'hello'; protocol: number; personas: Persona[]; spaces: Space[]; directions: Direction[] }
+  | { t: 'direction'; direction: Direction }
+  | { t: 'stop'; stop: Stop }
   | { t: 'presence'; personaId: string; presence: Presence; title: string; revision: number }
   | { t: 'message'; message: Message }
   | { t: 'artifact'; artifact: Artifact }
@@ -89,8 +129,13 @@ export type ServerFrame =
   | { t: 'backfill'; spaceId: string; messages: Message[]; artifacts: Artifact[] }
   | { t: 'error'; code: string; detail: string };
 
+/** Whether a steer interrupts the rider now or lands after its current step. Never ambiguous. */
+export type SteerMode = 'now' | 'after';
+
 export type ClientFrame =
   | { t: 'open'; spaceId: string }
+  | { t: 'set_direction'; direction: Omit<Direction, 'reached' | 'spentTokens' | 'state' | 'exception' | 'createdAt' | 'updatedAt'> }
+  | { t: 'steer'; directionId: string; text: string; mode: SteerMode; mentions: string[] }
   | { t: 'prompt'; spaceId: string; text: string; mentions: string[] }
   | { t: 'seen'; spaceId: string; upto: string }
   | { t: 'fetch'; artifactId: string };
