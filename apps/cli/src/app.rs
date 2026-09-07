@@ -618,6 +618,12 @@ struct SessionListArgs {
     #[arg(long)]
     all_stubs: bool,
 
+    /// Which kind of row to list: `conversation` (the default) or `fleet_snapshot` (a
+    /// multi-agent workspace as of one moment, e.g. Herdr). `--adapter` on a snapshot
+    /// adapter implies it.
+    #[arg(long, value_parser = ["conversation", "fleet_snapshot"])]
+    kind: Option<String>,
+
     /// Only sessions whose completion claims were never independently corroborated by
     /// tests or CI -- the blind spots
     #[arg(long, conflicts_with_all = ["adapter", "model", "all_stubs"])]
@@ -1695,9 +1701,12 @@ pub fn run() -> Result<()> {
             } else {
                 run_traces_command(
                     limit,
-                    a.adapter,
-                    a.model,
-                    a.all_stubs,
+                    TraceListQuery {
+                        adapter: a.adapter,
+                        model: a.model,
+                        kind: a.kind.as_deref().and_then(agentworth_schema::TraceKind::parse),
+                        all_stubs: a.all_stubs,
+                    },
                     resolve_json(a.json),
                     cli.db_path,
                     &ui,
@@ -2113,8 +2122,8 @@ fn run_scan_command(
     // still been scanned once, and a second introduction is a lie about which run this is.
     if !json
         && storage
-            .get_aggregate_stats(true)
-            .map(|s| s.total_sessions == 0)
+            .total_row_count()
+            .map(|n| n == 0)
             .unwrap_or(false)
     {
         let index = storage
@@ -2450,20 +2459,39 @@ fn build_trace_rows(
         .collect()
 }
 
-fn run_traces_command(
-    limit: usize,
+/// The filters `session list` collects: adapter, model, kind, and whether one-event stubs
+/// are kept. Bundled so `run_traces_command` stays under the argument limit.
+struct TraceListQuery {
     adapter: Option<String>,
     model: Option<String>,
+    kind: Option<agentworth_schema::TraceKind>,
     all_stubs: bool,
+}
+
+fn run_traces_command(
+    limit: usize,
+    query: TraceListQuery,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
+    let TraceListQuery { adapter, model, kind, all_stubs } = query;
+
+    // `--adapter herdr` is asking for snapshots; nobody should have to know the word.
+    let kind = kind.or_else(|| {
+        let name = adapter.as_deref()?;
+        agentworth_adapters::all_adapters()
+            .iter()
+            .find(|a| a.name() == name)
+            .map(|a| a.trace_kind())
+            .filter(|k| *k != agentworth_schema::TraceKind::Conversation)
+    });
 
     let filter = SessionFilter {
         adapter,
         model,
+        kind,
         limit: None,
         include_stubs: if all_stubs { Some(true) } else { None },
         order_by: Some(SessionOrderBy::StartedAtDesc),
@@ -2473,7 +2501,9 @@ fn run_traces_command(
     let all_sessions = storage.list_sessions_filtered(&filter)?;
     let filtered_sessions: Vec<_> = all_sessions
         .into_iter()
-        .filter(|s| all_stubs || s.total_events > 1)
+        .filter(|s| {
+            all_stubs || s.kind != agentworth_schema::TraceKind::Conversation || s.total_events > 1
+        })
         .take(limit)
         .collect();
 
@@ -2504,6 +2534,7 @@ fn run_traces_command(
                 json!({
                     "session_id": s.session_id,
                     "adapter": s.adapter,
+                    "kind": s.kind.as_str(),
                     "source_path": s.source_path,
                     "started_at": s.started_at,
                     "duration_seconds": s.duration_seconds,
@@ -3011,11 +3042,11 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>, ui: &c
 
     if let Ok(st) = &storage_res {
         storage_healthy = true;
-        // true: this is a raw index-health count ("total_indexed_sessions" under "storage"),
-        // matching `archie scan`'s own "Total Indexed... in SQLite index" promise -- not a
-        // "real activity" metric.
-        if let Ok(stats) = st.get_aggregate_stats(true) {
-            total_indexed = stats.total_sessions;
+        // Raw index-health count ("total_indexed_sessions" under "storage"), matching
+        // `archie scan`'s own "Total Indexed... in SQLite index" promise -- every row,
+        // snapshots included -- not a "real activity" metric (that is get_aggregate_stats).
+        if let Ok(n) = st.total_row_count() {
+            total_indexed = n;
         }
         let actual_path = PathBuf::from(&db_path_display);
         if let Ok(meta) = std::fs::metadata(&actual_path) {
@@ -4437,7 +4468,7 @@ fn adapter_source_root(name: &str) -> &'static str {
         "gemini" => "~/.gemini/ / antigravity",
         "goose" => "~/.config/goose/sessions/",
         "grok" => "~/.grok/ / ~/.xai/",
-        "herdr" => "~/.herdr/",
+        "herdr" => "~/.config/herdr/",
         "hermes" => "~/.hermes/",
         "kimi" => "~/.kimi/",
         "manus" => "~/.manus/",
@@ -4471,8 +4502,8 @@ fn run_cockpit_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui)
     let (storage, missing) = match open_storage(db_path) {
         Ok(s) => {
             let empty = s
-                .get_aggregate_stats(true)
-                .map(|a| a.total_sessions == 0)
+                .total_row_count()
+                .map(|n| n == 0)
                 .unwrap_or(true);
             (Some(s), if empty { Some(String::new()) } else { None })
         }

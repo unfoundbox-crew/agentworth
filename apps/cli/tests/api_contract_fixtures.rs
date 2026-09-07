@@ -101,6 +101,7 @@ fn sample_session_summary() -> SessionSummary {
     SessionSummary {
         session_id: "sess_fixture_0001".to_string(),
         adapter: "claude_code".to_string(),
+        kind: agentworth_schema::TraceKind::Conversation,
         source_path: "/Users/example/.claude/projects/demo/sess_fixture_0001.jsonl".to_string(),
         started_at: ts("2026-09-01T10:00:00Z"),
         duration_seconds: Some(482.5),
@@ -127,6 +128,7 @@ fn sample_trace() -> AgentWorthTrace {
     AgentWorthTrace {
         session_id: "sess_fixture_0001".to_string(),
         adapter: "claude_code".to_string(),
+        kind: agentworth_schema::TraceKind::Conversation,
         provenance: Provenance::new(
             "/Users/example/.claude/projects/demo/sess_fixture_0001.jsonl",
             "claude_code",
@@ -177,6 +179,7 @@ fn sample_trace() -> AgentWorthTrace {
             },
         ],
         metadata: serde_json::Value::Null,
+        identities: Vec::new(),
     }
 }
 

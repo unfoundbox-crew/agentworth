@@ -126,8 +126,8 @@ fn test_cli_matrix_command_table_and_json() {
         .stdout(predicate::str::contains("manus"))
         // fix/matrix-coverage replaced the old hardcoded "100% extraction parity" claim
         // with a real per-adapter capability score; see the --json assertion below for
-        // the exact computed rate (27.1%, fixed given the current 4 real + 16 default
-        // capability profiles). The table view (feat/cli-followups) folded that score
+        // the exact computed rate (26.4%, fixed given the current 4 real + 15 default
+        // + 1 empty capability profiles). The table view (feat/cli-followups) folded that score
         // into the header instead of a closing sentence.
         .stdout(predicate::str::contains("grounded coverage"));
 
@@ -140,10 +140,11 @@ fn test_cli_matrix_command_table_and_json() {
         .success()
         .stdout(predicate::str::contains("\"total_adapters\": 20"))
         // Real computed rate: 4 adapters have full/partial hand-written capability
-        // profiles (claude_code 7/7, codex 6/7, cursor 2/7, gemini 7/7 = 22 of 28); the
-        // other 16 fall back to the trait default (prompts only = 1/7 = 16). Total
-        // 38 / 140 = 27.1%, fixed regardless of what's actually detected on this machine.
-        .stdout(predicate::str::contains("\"coverage_rate\": \"27.1%\""))
+        // profiles (claude_code 7/7, codex 6/7, cursor 2/7, gemini 7/7 = 22 of 28); herdr
+        // reports 0/7 (a workspace snapshot has no prompts); the other 15 fall back to the
+        // trait default (prompts only = 1/7 = 15). Total 37 / 140 = 26.4%, fixed
+        // regardless of what's actually detected on this machine.
+        .stdout(predicate::str::contains("\"coverage_rate\": \"26.4%\""))
         .stdout(predicate::str::contains("\"adapter\": \"claude_code\""))
         .stdout(predicate::str::contains("\"prompts\": true"))
         .stdout(predicate::str::contains("\"tokens\": true"))
@@ -151,6 +152,61 @@ fn test_cli_matrix_command_table_and_json() {
         .stdout(predicate::str::contains("\"shell\": true"))
         .stdout(predicate::str::contains("\"diffs\": true"))
         .stdout(predicate::str::contains("\"outcomes\": true"));
+}
+
+/// A Herdr `session.json` indexes as a `fleet_snapshot`: absent from the default listing
+/// (it is not a conversation and has no tokens), present when asked for by kind or by adapter.
+#[test]
+fn fleet_snapshots_are_listed_only_when_asked() {
+    let temp = tempdir().unwrap();
+    let (_session_file, session_id) = setup_sample_claude_session(temp.path());
+    let herdr_dir = temp.path().join(".config").join("herdr");
+    fs::create_dir_all(&herdr_dir).unwrap();
+    fs::write(
+        herdr_dir.join("session.json"),
+        r#"{"version":3,"active":0,"workspaces":[{"id":"w1","custom_name":"fleet","identity_cwd":"/tmp/repo","public_pane_numbers":{"7":3},"active_tab":0,"tabs":[{"focused":7,"panes":{"7":{"cwd":"/tmp/repo","label":"lead-claude","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"sample_session_123"}}}}]}]}"#,
+    )
+    .unwrap();
+    let db_path = temp.path().join("kind.db");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"))
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    let list = |extra: &[&str]| {
+        let mut cmd = Command::cargo_bin("agentworth").unwrap();
+        cmd.arg("--db-path")
+            .arg(&db_path)
+            .env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"))
+            .arg("session")
+            .arg("list")
+            .arg("--json");
+        for e in extra {
+            cmd.arg(e);
+        }
+        String::from_utf8(cmd.assert().success().get_output().stdout.clone()).unwrap()
+    };
+
+    let default_list = list(&[]);
+    assert!(default_list.contains(&session_id), "{default_list}");
+    assert!(!default_list.contains("herdr"), "{default_list}");
+
+    let by_kind = list(&["--kind", "fleet_snapshot"]);
+    assert!(by_kind.contains("herdr-session-"), "{by_kind}");
+    assert!(!by_kind.contains(&session_id), "{by_kind}");
+
+    let by_adapter = list(&["--adapter", "herdr"]);
+    assert!(by_adapter.contains("herdr-session-"), "{by_adapter}");
+
+    let conversations = list(&["--kind", "conversation"]);
+    assert!(conversations.contains(&session_id), "{conversations}");
+    assert!(!conversations.contains("herdr"), "{conversations}");
 }
 
 #[test]

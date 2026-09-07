@@ -345,6 +345,17 @@
           "possibleValues": []
         },
         {
+          "name": "--kind",
+          "positional": false,
+          "required": false,
+          "help": "Which kind of row to list: `conversation` (the default) or `fleet_snapshot` (a multi-agent workspace as of one moment, e.g. Herdr). `--adapter` on a snapshot adapter implies it",
+          "default": null,
+          "possibleValues": [
+            "conversation",
+            "fleet_snapshot"
+          ]
+        },
+        {
           "name": "--unproven",
           "positional": false,
           "required": false,

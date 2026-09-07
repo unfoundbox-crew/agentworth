@@ -314,7 +314,9 @@ impl Scanner {
                     // cleanup of rows already indexed under looser past filtering.
                     // `ScanOptions::include_stubs` is the explicit opt-out for callers that
                     // want even one-event rows kept.
-                    if !options.include_stubs && is_near_empty_session(parse_result.trace.stats.total_events) {
+                    if !options.include_stubs
+                        && is_near_empty_session(parse_result.trace.kind, parse_result.trace.stats.total_events)
+                    {
                         continue;
                     }
 
@@ -394,11 +396,13 @@ impl Scanner {
             0
         };
 
-        // `true`: this summary's own "Total Indexed" / "N total in index" labels (main.rs,
-        // static_files.rs) promise a raw count of everything in the SQLite index, stubs
-        // included -- not a "real activity" count. See get_aggregate_stats's doc comment.
+        // This summary's own "Total Indexed" / "N total in index" labels (main.rs,
+        // static_files.rs) promise a raw count of everything in the SQLite index -- every row,
+        // conversation stubs and fleet snapshots included. `aggregate_stats` is the
+        // conversation aggregate (snapshots excluded), used for the token/model/by-adapter
+        // breakdown; the two legitimately differ when the index holds any snapshot.
         let aggregate_stats = self.storage.get_aggregate_stats(true)?;
-        let total_indexed_sessions = aggregate_stats.total_sessions;
+        let total_indexed_sessions = self.storage.total_row_count()?;
 
         Ok(ScanSummary {
             discovered_sources: total,

@@ -18,7 +18,7 @@
  *
  * A JSON import always types a string leaf as plain `string`, never as the literal it actually
  * holds — so `satisfies` alone fails on any field typed as a literal union on the TS side
- * (`OutcomeKind`, `EventPayload`'s `type` tag, `FileActionType`), independent of whether the
+ * (`OutcomeKind`, `TraceKind`, `EventPayload`'s `type` tag, `FileActionType`), independent of whether the
  * shape is actually right. A blanket `as Type` "fixes" that but is too permissive the other
  * way: verified below (temporarily renaming a required field on a fixture and re-running
  * `npm run typecheck` still passed under a top-level `as` cast) — TypeScript's assertion
@@ -50,6 +50,7 @@ import type {
   ScanSummary,
   OutcomeKind,
   EventPayload,
+  TraceKind,
 } from './index';
 
 // No literal-union leaves in these three — a plain `satisfies` already does the full, strict
@@ -65,6 +66,7 @@ scanFixture satisfies ScanSummary;
 tracesFixture.map((s) => ({
   ...s,
   primary_outcome: s.primary_outcome as OutcomeKind | undefined,
+  kind: s.kind as TraceKind | undefined,
 })) satisfies SessionSummary[];
 
 // `BlameMatch.action` is the one literal-union leaf here (`FileActionType`, a plain string
@@ -93,6 +95,7 @@ traceDetailFixture satisfies { events_total: number; events_offset: number };
   ...traceDetailFixture,
   trace: {
     ...traceDetailFixture.trace,
+    kind: traceDetailFixture.trace.kind as TraceKind | undefined,
     events: narrowEvents(traceDetailFixture.trace.events),
   },
   outcomes: traceDetailFixture.outcomes.map((o) => ({ ...o, kind: o.kind as OutcomeKind })),

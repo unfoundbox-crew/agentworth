@@ -366,7 +366,10 @@ visible from reading the source.
    `limit` the UI shows the newest 50 of thousands, and any client-side filter
    or sort then operates on that slice while looking entirely normal. It also
    excludes `total_events <= 1 OR total_tokens = 0`, so `/api/stats` reports
-   10,188 where `/api/traces` returns 2,903. Same word, two meanings.
+   10,188 where `/api/traces` returns 2,903. Same word, two meanings. Since PR
+   #149 that filter applies to `kind = 'conversation'` rows only; a
+   `fleet_snapshot` (Herdr's `session.json`) is outside it, never listed by
+   default, and shown by `session list --kind fleet_snapshot` or `--adapter herdr`.
 
 4. **`OutcomeKind` has no failure state.** All six values are degrees of
    evidence or its absence; none means the work went wrong. So a low rung is

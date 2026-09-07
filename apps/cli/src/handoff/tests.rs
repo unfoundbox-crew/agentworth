@@ -146,6 +146,7 @@ pub(crate) fn fixture_summary(prompt_preview: Option<&str>) -> SessionSummary {
     SessionSummary {
         session_id: "452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd".to_string(),
         adapter: "claude_code".to_string(),
+        kind: agentworth_schema::TraceKind::Conversation,
         source_path: "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/fixture.jsonl"
             .to_string(),
         started_at: Utc::now(),

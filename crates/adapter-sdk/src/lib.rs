@@ -1,6 +1,6 @@
 //! Common SDK and trait abstractions for AgentWorth source discovery and trace adapters.
 
-use agentworth_schema::AgentWorthTrace;
+use agentworth_schema::{AgentWorthTrace, TraceKind};
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -214,6 +214,13 @@ pub trait AgentAdapter: Send + Sync {
     /// what a seen file yields) or for pure refactors.
     fn parser_version(&self) -> i64 {
         1
+    }
+
+    /// What this adapter's traces are records of. Almost always a conversation; an adapter
+    /// that reads a workspace snapshot says so here, so a caller can ask for that population
+    /// without parsing anything.
+    fn trace_kind(&self) -> TraceKind {
+        TraceKind::Conversation
     }
 
     /// Every distinct `adapter` name this adapter's parsed sessions can be stored under.

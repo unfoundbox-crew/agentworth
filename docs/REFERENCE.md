@@ -94,6 +94,7 @@ List indexed sessions with optional filtering
 | `--adapter, -a` | no | Filter by adapter name (e.g. claude_code, codex, gemini, opencode) | - | - |
 | `--model, -m` | no | Filter by model substring (e.g. sonnet, gpt-4o, gemini-2.5) | - | - |
 | `--all-stubs` | no | Include 1-event session stubs in the listing | false | - |
+| `--kind` | no | Which kind of row to list: `conversation` (the default) or `fleet_snapshot` (a multi-agent workspace as of one moment, e.g. Herdr). `--adapter` on a snapshot adapter implies it | - | conversation, fleet_snapshot |
 | `--unproven` | no | Only sessions whose completion claims were never independently corroborated by tests or CI -- the blind spots | false | - |
 | `--json` | no | Output as formatted JSON | false | - |
 

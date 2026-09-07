@@ -166,6 +166,17 @@ One line each, from what the index shows, not from what the adapter claims.
 | cursor | **Detects the directory.** 707 rows, 62 with more than one event, average 5.8 — the shallowest thing here that still counts as an adapter. |
 | aider, cline, deepseek, goose, herdr, kimi, manus, minimax, openclaw, qwen, windsurf, zhipu | **Unproven.** Zero rows on this machine, so nothing about them is verified beyond a path existing. |
 
+Update 2026-09-07 (PR #149): `herdr` moved out of the last group, in a way the
+table above cannot express. Herdr is a terminal workspace manager and writes no
+transcript; its one file, `~/.config/herdr/session.json`, is a snapshot of panes
+and the agent session id running in each. The adapter now reads that file (it
+used to look for fields no Herdr file has). Measured through the CLI on the
+redacted fixture: 1 session, 8 events (one per pane), 0 tokens, 0 tools, 0
+outcomes, stored as a `fleet_snapshot`, so it never counts as a session. What it yields is the join key
+`agent_session.value` from a pane to the Claude Code / Codex / Gemini session
+that ran in it, nothing a depth rating measures. Its capability profile claims
+0 of 7 on purpose.
+
 Three of these — `hermes`, `cursor`, and every row in the last group — belong
 under the same honest label: **detects the directory**. The adapter finds files
 where they are supposed to be and gets almost nothing out of them. That is a

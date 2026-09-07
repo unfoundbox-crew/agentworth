@@ -12,7 +12,7 @@ use agentworth_adapter_sdk::SessionSource;
 use agentworth_outcomes::outcome_rank;
 use agentworth_schema::{
     compaction_rounds, is_subagent_transcript, AgentWorthTrace, CompactionRound, EventPayload,
-    FileActionType, OutcomeKind, TokenUsage,
+    FileActionType, OutcomeKind, TokenUsage, TraceKind,
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -60,7 +60,18 @@ pub struct AggregateStats {
 /// needs to be findable by `agentworth audit`/`autopsy`/`blind-spots`, which query with
 /// `include_stubs: true` specifically to see this population. Only `total_tokens` (not
 /// `total_events`) is allowed to make that call.
-const NON_STUB_SQL_PREDICATE: &str = "total_events > 1 AND total_tokens > 0";
+///
+/// Conversations only. A `fleet_snapshot` row (`TraceKind::FleetSnapshot`: Herdr's workspace
+/// file) has no tokens by construction and is not a session at all, so it is neither a stub
+/// nor a non-stub; it is outside this population entirely and shows up only when a caller
+/// asks for that kind (`SessionFilter::kind`).
+const NON_STUB_SQL_PREDICATE: &str =
+    "kind = 'conversation' AND total_events > 1 AND total_tokens > 0";
+
+/// Just the activity half of `NON_STUB_SQL_PREDICATE`, without the `kind` term. Used where
+/// the kind is already constrained separately and only the events/tokens bar is conditional
+/// (the `include_stubs` path of `list_sessions_filtered`). Keep the two literals in lockstep.
+const NON_STUB_ACTIVITY_PREDICATE: &str = "total_events > 1 AND total_tokens > 0";
 
 /// Why an unchanged source has to be reparsed anyway. See `Storage::needs_backfill`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,14 +96,15 @@ pub enum BackfillReason {
 /// `Scanner::run_scan`), separate from `NON_STUB_SQL_PREDICATE`'s broader aggregate-reporting
 /// definition. The real-world shape this targets: a non-session file (config, cache, telemetry
 /// dump) or a truly-abandoned session with at most one normalized event -- not a genuine
-/// conversation that simply lacks captured usage numbers.
-const NEAR_EMPTY_EVENTS_SQL_PREDICATE: &str = "total_events <= 1";
+/// conversation that simply lacks captured usage numbers. Conversations only: a one-pane
+/// fleet snapshot is one event and is exactly as real as an eight-pane one.
+const NEAR_EMPTY_EVENTS_SQL_PREDICATE: &str = "kind = 'conversation' AND total_events <= 1";
 
 /// Rust-side mirror of `NEAR_EMPTY_EVENTS_SQL_PREDICATE`, for the scanner to apply the same
 /// "too thin to index" test to an in-memory trace before it ever reaches a row in `sessions`.
 /// Keep this in lockstep with the SQL string above.
-pub fn is_near_empty_session(total_events: usize) -> bool {
-    total_events <= 1
+pub fn is_near_empty_session(kind: TraceKind, total_events: usize) -> bool {
+    kind == TraceKind::Conversation && total_events <= 1
 }
 
 /// Ordering options when querying session traces.
@@ -127,6 +139,29 @@ pub struct SessionFilter {
     pub order_by: Option<SessionOrderBy>,
     pub include_stubs: Option<bool>,
     pub outcome: Option<String>,
+    /// `None` lists conversations (the stub predicate applies unless `include_stubs`).
+    /// `Some(FleetSnapshot)` lists snapshots, to which no stub predicate applies.
+    pub kind: Option<TraceKind>,
+}
+
+/// One row of `identity_sightings`: a name attached to a harness session id, with the window
+/// it was seen in. See `agentworth_schema::IdentitySighting`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentitySightingRow {
+    pub session_id: String,
+    pub name: String,
+    pub via: String,
+    pub agent: Option<String>,
+    /// The trace that reported it (for a Herdr snapshot, the snapshot's own session id).
+    pub observed_by: String,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+}
+
+fn parse_rfc3339(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
 }
 
 /// Lightweight summary of a stored session.
@@ -134,6 +169,8 @@ pub struct SessionFilter {
 pub struct SessionSummary {
     pub session_id: String,
     pub adapter: String,
+    #[serde(default)]
+    pub kind: TraceKind,
     pub source_path: String,
     pub started_at: DateTime<Utc>,
     pub duration_seconds: Option<f64>,
@@ -1021,8 +1058,26 @@ impl Storage {
                 -- invocations (see `agentworth_schema::TraceStats::effort`). NULL means the
                 -- harness never declared one, which is every adapter except Codex today.
                 effort TEXT,
+                -- `TraceKind`: 'conversation' or 'fleet_snapshot'. The stub predicates apply
+                -- to conversations only.
+                kind TEXT NOT NULL DEFAULT 'conversation',
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
+
+            -- Append-only. A name seen attached to a harness session id, by one observer, at
+            -- one moment (`agentworth_schema::IdentitySighting`). Keyed on (session, name, via)
+            -- so a rename adds a row and a repeat sighting only moves `last_seen_at`.
+            CREATE TABLE IF NOT EXISTS identity_sightings (
+                session_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                via TEXT NOT NULL,
+                agent TEXT,
+                observed_by TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                PRIMARY KEY (session_id, name, via)
+            );
+            CREATE INDEX IF NOT EXISTS idx_identity_sightings_session ON identity_sightings(session_id);
 
             CREATE TABLE IF NOT EXISTS file_modifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1266,6 +1321,14 @@ impl Storage {
             if !columns.contains(&"host_fingerprint".to_string()) {
                 let _ =
                     conn.execute("ALTER TABLE sessions ADD COLUMN host_fingerprint TEXT", []);
+            }
+            // Every row written before this column existed was a conversation: the only
+            // adapter that produces another kind (herdr) produced nothing indexable before.
+            if !columns.contains(&"kind".to_string()) {
+                let _ = conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'conversation'",
+                    [],
+                );
             }
         }
 
@@ -1758,9 +1821,9 @@ impl Storage {
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata, scanned_at,
                 primary_outcome, composite_score, prompt_preview,
                 compaction_count, compaction_tokens_dropped, parser_version, backfilled_version,
-                effort
+                effort, kind
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
             ON CONFLICT(session_id) DO UPDATE SET
                 adapter = excluded.adapter,
                 source_path = excluded.source_path,
@@ -1788,7 +1851,8 @@ impl Storage {
                 compaction_tokens_dropped = excluded.compaction_tokens_dropped,
                 parser_version = excluded.parser_version,
                 backfilled_version = excluded.backfilled_version,
-                effort = excluded.effort;
+                effort = excluded.effort,
+                kind = excluded.kind;
             "#,
             params![
                 trace.session_id,
@@ -1821,8 +1885,32 @@ impl Storage {
                 // proof that a backfill pass ran at that version -- see `needs_backfill`.
                 parser_version,
                 trace.stats.effort,
+                trace.kind.as_str(),
             ],
         )?;
+
+        for sighting in &trace.identities {
+            tx.execute(
+                r#"
+                INSERT INTO identity_sightings
+                    (session_id, name, via, agent, observed_by, first_seen_at, last_seen_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+                ON CONFLICT(session_id, name, via) DO UPDATE SET
+                    agent = COALESCE(excluded.agent, identity_sightings.agent),
+                    observed_by = excluded.observed_by,
+                    first_seen_at = MIN(identity_sightings.first_seen_at, excluded.first_seen_at),
+                    last_seen_at = MAX(identity_sightings.last_seen_at, excluded.last_seen_at);
+                "#,
+                params![
+                    sighting.session_id,
+                    sighting.name,
+                    sighting.via,
+                    sighting.agent,
+                    trace.session_id,
+                    sighting.seen_at.to_rfc3339(),
+                ],
+            )?;
+        }
 
         // 3. Replace this session's file-modification records. A full trace is re-parsed from
         // disk on every scan (see Scanner::run_scan), so events are rewritten wholesale rather
@@ -1949,6 +2037,44 @@ impl Storage {
     /// Upsert an indexed trace into the database atomically, with no verdict, no score, and
     /// no parser version. A row written this way always reads as needing a backfill -- which
     /// is correct: nothing about it came from a scan.
+    /// Every row physically in the `sessions` table -- conversations, conversation stubs and
+    /// fleet snapshots alike. The raw storage-health count behind `archie scan`'s "Total
+    /// Indexed ... in SQLite index" and `archie doctor`'s storage line. Distinct from
+    /// `get_aggregate_stats`, which counts conversations only: a snapshot is indexed (so it
+    /// is counted here) but is not a session (so it is not counted there).
+    pub fn total_row_count(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
+        Ok(n as usize)
+    }
+
+    /// Every name ever seen attached to `session_id`, oldest first sighting first. Names are
+    /// display; this is the history a rename would otherwise erase.
+    pub fn identity_sightings(&self, session_id: &str) -> Result<Vec<IdentitySightingRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT name, via, agent, observed_by, first_seen_at, last_seen_at
+             FROM identity_sightings WHERE session_id = ?1
+             ORDER BY first_seen_at ASC, name ASC",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(IdentitySightingRow {
+                session_id: session_id.to_string(),
+                name: row.get(0)?,
+                via: row.get(1)?,
+                agent: row.get(2)?,
+                observed_by: row.get(3)?,
+                first_seen_at: parse_rfc3339(&row.get::<_, String>(4)?),
+                last_seen_at: parse_rfc3339(&row.get::<_, String>(5)?),
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     pub fn upsert_trace(&self, trace: &AgentWorthTrace) -> Result<()> {
         self.upsert_session(trace, None, None, 0)
     }
@@ -1972,8 +2098,11 @@ impl Storage {
 
         let mut stats = AggregateStats::default();
 
+        // Conversations only in both modes: a fleet snapshot is not a session and never
+        // belongs in a session aggregate. `include_stubs` relaxes only the events/tokens bar.
+        // The raw "how many rows are in SQLite" count is `total_row_count`, not this.
         let where_clause = if include_stubs {
-            String::new()
+            "WHERE kind = 'conversation'".to_string()
         } else {
             format!("WHERE {NON_STUB_SQL_PREDICATE}")
         };
@@ -2229,7 +2358,7 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE sessions.session_id = ?1
@@ -2258,7 +2387,7 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE sessions.session_id LIKE ?1 ESCAPE '\'
@@ -2341,7 +2470,7 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE 1=1
@@ -2350,8 +2479,21 @@ impl Storage {
 
         let mut param_values: Vec<Box<dyn ToSql>> = Vec::new();
 
-        if !filter.include_stubs.unwrap_or(false) {
-            sql.push_str(&format!(" AND ({NON_STUB_SQL_PREDICATE})"));
+        match filter.kind {
+            // Snapshots are outside the stub population: asked for by kind, shown whole.
+            Some(kind) if kind != TraceKind::Conversation => {
+                sql.push_str(" AND sessions.kind = ?");
+                param_values.push(Box::new(kind.as_str()));
+            }
+            // Conversations only, always. `include_stubs` relaxes the events/tokens bar, never
+            // the kind -- a fleet snapshot is not a conversation stub, it is a different kind,
+            // and `--all-stubs` must not surface it.
+            _ => {
+                sql.push_str(" AND sessions.kind = 'conversation'");
+                if !filter.include_stubs.unwrap_or(false) {
+                    sql.push_str(&format!(" AND ({NON_STUB_ACTIVITY_PREDICATE})"));
+                }
+            }
         }
 
         if let Some(ref adapter) = filter.adapter {
@@ -3738,7 +3880,7 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE ({NON_STUB_SQL_PREDICATE})
@@ -4876,6 +5018,11 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
     let compaction_count: i64 = row.get(12).unwrap_or(0);
     let compaction_tokens_dropped: i64 = row.get(13).unwrap_or(0);
     let source_mtime_epoch_secs: Option<i64> = row.get(14).ok();
+    let kind = row
+        .get::<_, String>(15)
+        .ok()
+        .and_then(|k| TraceKind::parse(&k))
+        .unwrap_or_default();
 
     let started_at = DateTime::parse_from_rfc3339(&started_str)
         .map(|dt| dt.with_timezone(&Utc))
@@ -4886,6 +5033,7 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
     Ok(SessionSummary {
         session_id,
         adapter,
+        kind,
         source_path,
         started_at,
         duration_seconds,
@@ -6951,6 +7099,114 @@ mod tests {
         assert_eq!(all_list.len(), 3);
     }
 
+    /// A fleet snapshot (Herdr's `session.json`) has no tokens and may have one event. It is
+    /// not a stub and not a conversation: hidden from the default list and from the
+    /// aggregate, never pruned as near-empty, shown whole when asked for by kind.
+    #[test]
+    fn fleet_snapshots_are_outside_the_stub_population_and_listed_by_kind() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::open_path(&temp.path().join("t.db")).unwrap();
+
+        let prov = Provenance::new("/h/.config/herdr/session.json", "herdr", 100, 100, "fp_snap");
+        let mut snap = AgentWorthTrace::new("herdr-session-1", "herdr", prov, Utc::now());
+        snap.kind = TraceKind::FleetSnapshot;
+        snap.stats.total_events = 1;
+        storage.upsert_trace(&snap).expect("upsert snapshot");
+
+        let prov = Provenance::new("/path/real.jsonl", "claude_code", 100, 100, "fp_real");
+        let mut real = AgentWorthTrace::new("real_1", "claude_code", prov, Utc::now());
+        real.stats.total_events = 10;
+        real.stats.token_usage = TokenUsage::new(500, 100, 0, 0);
+        storage.upsert_trace(&real).expect("upsert real");
+
+        let default_list = storage.list_sessions(50).expect("list default");
+        assert_eq!(default_list.len(), 1);
+        assert_eq!(default_list[0].session_id, "real_1");
+        assert_eq!(default_list[0].kind, TraceKind::Conversation);
+
+        let snapshots = storage
+            .list_sessions_filtered(&SessionFilter {
+                kind: Some(TraceKind::FleetSnapshot),
+                ..Default::default()
+            })
+            .expect("list snapshots");
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].session_id, "herdr-session-1");
+        assert_eq!(snapshots[0].kind, TraceKind::FleetSnapshot);
+
+        let conversations = storage
+            .list_sessions_filtered(&SessionFilter {
+                kind: Some(TraceKind::Conversation),
+                include_stubs: Some(true),
+                ..Default::default()
+            })
+            .expect("list conversations");
+        assert_eq!(conversations.len(), 1);
+
+        // The leak this guards: --all-stubs (kind None, include_stubs) must relax only the
+        // events/tokens bar, never the kind, so it still does not surface the snapshot.
+        let all_stubs = storage
+            .list_sessions_filtered(&SessionFilter {
+                include_stubs: Some(true),
+                ..Default::default()
+            })
+            .expect("list all-stubs");
+        assert_eq!(all_stubs.len(), 1);
+        assert_eq!(all_stubs[0].session_id, "real_1");
+
+        // The session aggregate counts conversations in both modes -- the snapshot is never a
+        // session. include_stubs relaxes only the events/tokens bar.
+        assert_eq!(storage.get_aggregate_stats(false).unwrap().total_sessions, 1);
+        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 1);
+        assert!(!storage
+            .get_aggregate_stats(true)
+            .unwrap()
+            .sessions_by_adapter
+            .contains_key("herdr"));
+        // But storage health counts every physical row, snapshot included.
+        assert_eq!(storage.total_row_count().unwrap(), 2);
+        assert!(storage.stub_sessions().unwrap().is_empty(), "a one-event snapshot is not near-empty");
+        assert!(!is_near_empty_session(TraceKind::FleetSnapshot, 1));
+        assert!(is_near_empty_session(TraceKind::Conversation, 1));
+    }
+
+    /// A rename adds a sighting; it never rewrites one.
+    #[test]
+    fn identity_sightings_append_and_a_rename_keeps_the_old_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::open_path(&temp.path().join("t.db")).unwrap();
+        let t0 = Utc::now();
+        let t1 = t0 + chrono::Duration::hours(1);
+
+        let sighting = |name: &str, at| agentworth_schema::IdentitySighting {
+            session_id: "abc".to_string(),
+            agent: Some("claude".to_string()),
+            name: name.to_string(),
+            seen_at: at,
+            via: "herdr:w9:pane 18".to_string(),
+        };
+        let prov = Provenance::new("/h/.config/herdr/session.json", "herdr", 100, 100, "fp1");
+        let mut snap = AgentWorthTrace::new("herdr-session-1", "herdr", prov, t0);
+        snap.kind = TraceKind::FleetSnapshot;
+        snap.identities = vec![sighting("louis", t0)];
+        storage.upsert_trace(&snap).unwrap();
+
+        // The file was saved again with the pane renamed; the row is replaced, the name is not.
+        snap.identities = vec![sighting("louis-fable", t1)];
+        storage.upsert_trace(&snap).unwrap();
+        // And seen once more under the new name.
+        snap.identities = vec![sighting("louis-fable", t1 + chrono::Duration::hours(1))];
+        storage.upsert_trace(&snap).unwrap();
+
+        let rows = storage.identity_sightings("abc").unwrap();
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["louis", "louis-fable"]);
+        assert_eq!(rows[0].observed_by, "herdr-session-1");
+        assert_eq!(rows[0].agent.as_deref(), Some("claude"));
+        assert!(rows[1].last_seen_at > rows[1].first_seen_at);
+        assert!(storage.identity_sightings("nobody").unwrap().is_empty());
+    }
+
     /// Regression test for the `get_aggregate_stats`/`list_sessions_filtered` stub-count
     /// mismatch (docs/DECISION-INBOX.md): `get_aggregate_stats` used to run an unconditional
     /// `COUNT(*)`/`SUM(...)` over every row, including stubs, while `list_sessions_filtered`
@@ -7037,12 +7293,13 @@ mod tests {
         assert_eq!(stats_excl.sessions_by_adapter.get("claude_code"), Some(&2));
         assert_eq!(stats_excl.sessions_by_adapter.get("codex"), Some(&1));
 
-        // The raw-inventory mode (used by `agentworth scan`'s "Total Indexed" line and
-        // `agentworth doctor`) must still see every row, stubs included.
+        // include_stubs mode counts every conversation, stubs included (these five are all
+        // conversations). The raw all-rows count is `total_row_count`; snapshots, if any,
+        // would show there and not here.
         let stats_incl = storage
             .get_aggregate_stats(true)
             .expect("aggregate stats including stubs");
-        assert_eq!(stats_incl.total_sessions, 5, "all 3 real + 2 stub sessions");
+        assert_eq!(stats_incl.total_sessions, 5, "all 3 real + 2 stub conversations");
         assert_eq!(
             stats_incl.verified_outcomes_count, 2,
             "including stubs, both real_1 and stub_verified count as verified"

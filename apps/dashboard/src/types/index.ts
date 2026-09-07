@@ -144,9 +144,19 @@ export interface RecoverySignal {
   corrective_actions_count: number;
 }
 
+/**
+ * What a trace records. Conversations are the norm; a `fleet_snapshot` is the
+ * state of a multi-agent workspace (e.g. Herdr's session.json) at one moment,
+ * carried in the index but never counted as a session. Mirrors
+ * `agentworth_schema::TraceKind`.
+ */
+export type TraceKind = 'conversation' | 'fleet_snapshot';
+
 export interface AgentWorthTrace {
   session_id: string;
   adapter: string;
+  /** conversation unless stated. Omitted-as-conversation on older servers. */
+  kind?: TraceKind;
   provenance: Provenance;
   started_at: string;
   ended_at?: string;
@@ -156,6 +166,18 @@ export interface AgentWorthTrace {
   score?: TraceScore;
   outcomes?: OutcomeEvidence[];
   recoveries?: RecoverySignal[];
+  /** Names seen attached to harness session ids; omitted when none. */
+  identities?: IdentitySighting[];
+}
+
+/** A name seen attached to a harness session id at one moment. Mirrors
+ * `agentworth_schema::IdentitySighting`. Names are display; the id is the key. */
+export interface IdentitySighting {
+  session_id: string;
+  agent?: string;
+  name: string;
+  seen_at: string;
+  via: string;
 }
 
 /**
@@ -199,6 +221,8 @@ export interface EventsPageResponse {
 export interface SessionSummary {
   session_id: string;
   adapter: string;
+  /** conversation unless stated. Omitted-as-conversation on older servers. */
+  kind?: TraceKind;
   source_path: string;
   started_at: string;
   duration_seconds?: number;
