@@ -1,0 +1,35 @@
+{
+  "cost_basis": "api_list_price",
+  "daily": [
+    {
+      "adapter": "claude_code",
+      "cache_creation_tokens": 5000,
+      "cache_hit_ratio": 0.62,
+      "cache_read_tokens": 90000,
+      "estimated_cost_usd": 2.15,
+      "input_tokens": 40000,
+      "output_tokens": 12000,
+      "period": "2026-09-07",
+      "session_count": 3,
+      "total_duration_seconds": 5400.0,
+      "total_events": 210,
+      "total_tokens": 147000
+    },
+    {
+      "adapter": "codex",
+      "cache_creation_tokens": 0,
+      "cache_hit_ratio": 0.0,
+      "cache_read_tokens": 0,
+      "estimated_cost_usd": 0.3,
+      "input_tokens": 8000,
+      "output_tokens": 2000,
+      "period": "2026-09-06",
+      "session_count": 1,
+      "total_duration_seconds": 900.0,
+      "total_events": 40,
+      "total_tokens": 10000
+    }
+  ],
+  "monthly": [],
+  "weekly": []
+}

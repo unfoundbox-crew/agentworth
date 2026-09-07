@@ -173,6 +173,22 @@ export interface TraceDetailResponse extends AgentWorthTrace {
   events_offset?: number;
 }
 
+/**
+ * The real wire shape of `GET /api/traces/:id`, mirroring `TraceDetailResponse` in
+ * `apps/cli/src/server/routes.rs` field-for-field: a nested `trace`, not the flattened
+ * shape above. `fetchTraceDetail` in `../services/api.ts` does the flattening itself after
+ * fetching — this type exists so the contract test (`contract.test.ts`) can check the
+ * actual bytes the server sends, independent of that client-side reshaping.
+ */
+export interface TraceDetailWireResponse {
+  trace: AgentWorthTrace;
+  score: TraceScore;
+  outcomes: OutcomeEvidence[];
+  recoveries: RecoverySignal[];
+  events_total: number;
+  events_offset: number;
+}
+
 /** `GET /api/traces/:id/events` — one page of a trace's events, for lazy loading. */
 export interface EventsPageResponse {
   events: NormalizedEvent[];
@@ -280,59 +296,120 @@ export interface DailyUsageEntry {
   sessions_count: number;
 }
 
-export interface UsageRollupResponse {
-  period: 'day' | 'week' | 'month' | string;
-  entries: DailyUsageEntry[];
-  total_cost_usd: number;
+/**
+ * One row of `GET /api/usage`'s `daily`/`weekly`/`monthly` arrays, mirroring
+ * `UsagePeriodSummary` in `crates/storage/src/lib.rs` field-for-field. `period` is a real
+ * date-shaped string, not the literal `"day"|"week"|"month"` — `"2026-09-07"` for daily rows,
+ * `"2026-W36"` for weekly, `"2026-09"` for monthly (see `v_daily_usage`/`v_weekly_usage`/
+ * `v_monthly_usage` in `crates/storage/src/lib.rs`). Each period can carry more than one row —
+ * one per `adapter` — since the view groups by `(period, adapter)`.
+ */
+export interface UsagePeriodSummary {
+  period: string;
+  adapter: string;
+  session_count: number;
+  total_events: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
+  total_duration_seconds: number;
+  estimated_cost_usd: number;
+  cache_hit_ratio: number;
 }
 
+/**
+ * `GET /api/usage`'s real response shape, mirroring `UsageResponse` in
+ * `apps/cli/src/server/routes.rs`. The route ignores any `?period=` query string — it always
+ * returns all three rollups at once, most-recent period first in each array (`ORDER BY period
+ * DESC`). `cost_basis`/`subscription_tier` label every `estimated_cost_usd` as an API
+ * list-price equivalent, not what the account actually paid.
+ */
+export interface UsageResponse {
+  daily: UsagePeriodSummary[];
+  weekly: UsagePeriodSummary[];
+  monthly: UsagePeriodSummary[];
+  cost_basis: string;
+  subscription_tier?: string;
+}
+
+/**
+ * `GET /api/pacing`'s real response shape, mirroring `PacingSummary` in
+ * `crates/storage/src/lib.rs` field-for-field. The previous version of this type used
+ * different field names entirely (`tokens_in_window`, `cache_hit_percent`,
+ * `estimated_cost_in_window_usd`, `active_sessions_count`) that the server never sent.
+ */
 export interface PacingResponse {
   window_hours: number;
-  tokens_in_window: number;
+  started_at: string;
+  ended_at: string;
+  session_count: number;
+  total_events: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
   burn_rate_tokens_per_hour: number;
-  cache_hit_percent: number;
-  estimated_cost_in_window_usd: number;
-  active_sessions_count: number;
-  recent_switches_cost_usd?: number;
+  estimated_cost_usd: number;
+  cache_hit_ratio: number;
+  active_adapters: string[];
+  active_models: string[];
 }
 
-export interface BlameEditEntry {
+/**
+ * One entry of `GET /api/blame`'s response, mirroring `BlameMatch` in
+ * `crates/storage/src/lib.rs` field-for-field. The route itself returns a bare JSON array
+ * of these -- there is no wrapper object with `file_path`/`total_edits`/`edits` on the wire.
+ */
+export interface BlameMatch {
   session_id: string;
   adapter: string;
-  model: string;
-  timestamp: string;
-  prompt_preview?: string;
-  diff_snippet?: string;
-  lines_added?: number;
-  lines_deleted?: number;
-  outcome?: OutcomeKind;
-}
-
-export interface BlameResponse {
+  source_path: string;
+  started_at: string;
+  models_used: string[];
+  total_tokens: number;
+  tool_calls_count: number;
   file_path: string;
-  total_edits: number;
-  edits: BlameEditEntry[];
+  action: FileActionType;
+  modified_at: string;
+  model?: string;
 }
 
+/** `GET /api/blame`'s real response shape: a bare array, not an object. */
+export type BlameResponse = BlameMatch[];
+
+/**
+ * One row of `GET /api/matrix`'s `adapters` array, mirroring `AdapterMatrixItem` in
+ * `apps/cli/src/server/routes.rs` field-for-field. Every capability column is a plain
+ * boolean measured against the fixture suite — there is no `'partial'` rung on the wire.
+ */
 export interface AdapterCapability {
-  id: string;
+  adapter: string;
   name: string;
-  sessions: 'yes' | 'no' | 'partial';
-  tokens: 'yes' | 'no' | 'partial';
-  cache_split: 'yes' | 'no' | 'partial';
-  models: 'yes' | 'no' | 'partial';
-  file_edits: 'yes' | 'no' | 'partial';
-  shell_exit: 'yes' | 'no' | 'partial';
-  outcomes: string;
-  notes?: string;
-  sessions_count?: number;
-  tokens_count?: number;
+  detected: boolean;
+  sessions_count: number;
+  identities: string[];
+  formats: string[];
+  token_accounting: boolean;
+  cache_breakdown: boolean;
+  tool_calls: boolean;
+  file_actions: boolean;
+  shell_commands: boolean;
+  model_switches: boolean;
+  thinking_blocks: boolean;
+  error_recovery: boolean;
 }
 
+/**
+ * `GET /api/matrix`'s real response shape, mirroring `AdapterMatrixResponse` in
+ * `apps/cli/src/server/routes.rs`. There is no `generated_at` field on the wire.
+ */
 export interface CoverageMatrixResponse {
+  total_adapters: number;
+  detected_adapters: number;
   adapters: AdapterCapability[];
-  generated_at: string;
 }
 
 export interface AggregateStats {

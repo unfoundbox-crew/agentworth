@@ -1,0 +1,45 @@
+{
+  "adapters": [
+    {
+      "adapter": "claude_code",
+      "cache_breakdown": true,
+      "detected": true,
+      "error_recovery": true,
+      "file_actions": true,
+      "formats": [
+        "jsonl",
+        "json"
+      ],
+      "identities": [
+        "claude_code"
+      ],
+      "model_switches": true,
+      "name": "Claude Code",
+      "sessions_count": 512,
+      "shell_commands": true,
+      "thinking_blocks": true,
+      "token_accounting": true,
+      "tool_calls": true
+    },
+    {
+      "adapter": "hermes",
+      "cache_breakdown": false,
+      "detected": false,
+      "error_recovery": false,
+      "file_actions": false,
+      "formats": [],
+      "identities": [
+        "hermes"
+      ],
+      "model_switches": false,
+      "name": "Nous Hermes",
+      "sessions_count": 0,
+      "shell_commands": false,
+      "thinking_blocks": false,
+      "token_accounting": false,
+      "tool_calls": true
+    }
+  ],
+  "detected_adapters": 1,
+  "total_adapters": 2
+}

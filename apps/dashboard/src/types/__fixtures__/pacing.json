@@ -1,0 +1,21 @@
+{
+  "active_adapters": [
+    "claude_code"
+  ],
+  "active_models": [
+    "claude-sonnet-5"
+  ],
+  "burn_rate_tokens_per_hour": 36200.0,
+  "cache_creation_tokens": 6000,
+  "cache_hit_ratio": 0.55,
+  "cache_read_tokens": 100000,
+  "ended_at": "2026-09-07T12:00:00Z",
+  "estimated_cost_usd": 3.4,
+  "input_tokens": 60000,
+  "output_tokens": 15000,
+  "session_count": 4,
+  "started_at": "2026-09-07T07:00:00Z",
+  "total_events": 320,
+  "total_tokens": 181000,
+  "window_hours": 5
+}
