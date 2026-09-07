@@ -83,3 +83,14 @@ attention that a test has no right to. Probes use a dedicated herdr workspace
 labelled `probe` with a Haiku pane started for that purpose, and nothing else.
 The first live probe on 2026-09-07 broke this rule once; this section is why it
 does not happen again.
+
+## Identity: three layers, one key (settled 2026-09-07 with the herdr adapter lane)
+
+| layer | example | role |
+| :--- | :--- | :--- |
+| harness session id | `61eef7db…` | the only key. Present in herdr's `session.json` per pane, in `herdr agent list` next to the live pane, and in Archie's `sessions.session_id`. Verified equal for Claude Code, Codex and agy on 2026-09-07 |
+| name | `partner-harvey`, a pane label, a session title | display, mutable. Recorded with the time seen, never overwritten, so a rename does not rewrite history |
+| pane letter | `w9:pA` | live-only address that herdr allocates at runtime. Not on disk anywhere. The gateway adds it for the deck; nothing stores it as identity |
+
+Grok's adapter names sessions after files, so Grok does not join yet. That is an
+adapter fix, not a gateway one.
