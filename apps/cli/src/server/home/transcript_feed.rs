@@ -128,7 +128,7 @@ pub fn feed_from_trace(
     let mut messages = Vec::new();
     let mut run = WorkRun::default();
 
-    let mut flush_run = |run: &mut WorkRun, messages: &mut Vec<Message>| {
+    let flush_run = |run: &mut WorkRun, messages: &mut Vec<Message>| {
         if run.is_empty() {
             return;
         }
@@ -148,7 +148,8 @@ pub fn feed_from_trace(
         *run = WorkRun::default();
     };
 
-    for event in trace.events.iter().filter(|e| e.sequence > cursor.last_sequence) {
+    let start_sequence = cursor.last_sequence;
+    for event in trace.events.iter().filter(|e| e.sequence > start_sequence) {
         match &event.payload {
             EventPayload::AssistantMessage { content, .. } => {
                 flush_run(&mut run, &mut messages);

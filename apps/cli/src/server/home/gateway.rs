@@ -703,6 +703,7 @@ async fn dispatch_prompt(
 
     for persona in runnable {
         let target = persona.target_ref().to_string();
+        let text = text.clone();
         tokio::spawn(async move {
             let _ = Command::new("herdr").args(["agent", "prompt", &target, &text]).output().await;
         });
