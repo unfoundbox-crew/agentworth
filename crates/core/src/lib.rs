@@ -314,7 +314,9 @@ impl Scanner {
                     // cleanup of rows already indexed under looser past filtering.
                     // `ScanOptions::include_stubs` is the explicit opt-out for callers that
                     // want even one-event rows kept.
-                    if !options.include_stubs && is_near_empty_session(parse_result.trace.stats.total_events) {
+                    if !options.include_stubs
+                        && is_near_empty_session(parse_result.trace.kind, parse_result.trace.stats.total_events)
+                    {
                         continue;
                     }
 

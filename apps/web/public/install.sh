@@ -300,6 +300,9 @@ for bin in agentworth archie agwt; do
     found="$(find "$tmpdir" -type f -name "$bin" | head -n1)"
   fi
   if [ -n "$found" ]; then
+    # Remove first: `cp` writes through a symlink, and on a machine where `agentworth` is the
+    # npm wrapper's symlink that would overwrite the wrapper's JavaScript with this binary.
+    rm -f "$INSTALL_DIR/$bin"
     cp "$found" "$INSTALL_DIR/$bin"
     chmod +x "$INSTALL_DIR/$bin"
     if [ -z "$installed" ]; then installed="$bin"; else installed="$installed, $bin"; fi
@@ -317,11 +320,12 @@ say '*' installed "$installed in $pretty_dir"
 # First run
 # -----------------------------------------------------------------------------
 # The release binaries are ad-hoc signed by the linker on the build runner: no Apple Developer
-# ID, no notarization. curl sets no quarantine flag, so a fresh install runs. A copy that did
-# pick the flag up (a browser download, a sync tool, a copy from another Mac) is killed on exec
-# by Gatekeeper with no message at all: `zsh: killed`, exit 137. So: drop the flag from the
-# files this script just wrote, run the binary once, and if it dies say what to do rather than
-# leave the user to decode a SIGKILL.
+# ID, no notarization. curl sets no quarantine flag, so a fresh install runs (measured, macOS
+# 27). A copy that carries the flag is killed on exec with no message at all: `zsh: killed`,
+# exit 137 (measured: adding the flag to a good binary reproduces it, removing it clears it).
+# So: drop the flag from the files this script just wrote, run the binary once, and on exactly
+# that exit code say what to do rather than leave the user to decode a SIGKILL. Any other
+# failure is reported as what it is, with no theory attached.
 
 if [ "$os" = "Darwin" ] && command -v xattr >/dev/null 2>&1; then
   for bin in agentworth archie agwt; do
@@ -339,13 +343,17 @@ fi
 run_rc=0
 "$first_bin" --version >/dev/null 2>&1 || run_rc=$?
 if [ "$run_rc" -ne 0 ]; then
-  if [ "$os" = "Darwin" ] && [ "$run_rc" -ge 126 ]; then
+  if [ "$os" = "Darwin" ] && [ "$run_rc" -eq 137 ]; then
+    installed_paths=""
+    for bin in agentworth archie agwt; do
+      [ -f "$INSTALL_DIR/$bin" ] && installed_paths="$installed_paths $INSTALL_DIR/$bin"
+    done
     printf '\n'
-    printf '  macOS would not run %s (exit %s).\n' "$first_bin" "$run_rc"
-    printf '  The binary is ad-hoc signed and not notarized, so Gatekeeper kills it on exec\n'
-    printf '  when the file carries a quarantine flag. Either of these clears it:\n'
-    printf '    xattr -d com.apple.quarantine %s/agentworth %s/archie %s/agwt\n' "$INSTALL_DIR" "$INSTALL_DIR" "$INSTALL_DIR"
-    printf '    System Settings > Privacy & Security > "Open Anyway", then run it again\n'
+    printf '  macOS killed %s on exec (exit 137).\n' "$first_bin"
+    printf '  The binary is ad-hoc signed and not notarized. If the file carries a quarantine\n'
+    printf '  flag, this clears it:\n'
+    printf '    xattr -d com.apple.quarantine%s\n' "$installed_paths"
+    printf '  If it carries none, the signature itself is being rejected: run this script again.\n'
     printf '\n'
     exit 1
   fi

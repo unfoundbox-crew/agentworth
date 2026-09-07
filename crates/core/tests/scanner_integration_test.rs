@@ -281,14 +281,15 @@ fn test_scanner_with_all_11_adapters_end_to_end() {
     writeln!(f, r#"{{"type":"user","text":"Hi Cursor"}}"#).unwrap();
     writeln!(f, r#"{{"type":"ai","model":"cursor-fast","tokens":{{"promptTokens":100,"completionTokens":50}},"text":"Hi"}}"#).unwrap();
 
-    // 8. Herdr: a workspace snapshot, not a transcript. One event per pane, no tokens.
+    // 8. Herdr: a workspace snapshot, not a transcript. One pane, so one event and no tokens;
+    // indexed anyway because a `fleet_snapshot` is outside the near-empty rule.
     let herdr_dir = temp.path().join(".config").join("herdr");
     fs::create_dir_all(&herdr_dir).unwrap();
     let f_herdr = herdr_dir.join("session.json");
     let mut f = File::create(&f_herdr).unwrap();
     write!(
         f,
-        r#"{{"version":3,"workspaces":[{{"id":"w1","custom_name":"fleet","identity_cwd":"/tmp/repo","tabs":[{{"custom_name":null,"panes":{{"1":{{"cwd":"/tmp/repo","label":"lead","agent_session":{{"source":"herdr:claude","agent":"claude","kind":"id","value":"00000000-0000-4000-8000-000000000001"}}}},"2":{{"cwd":"/tmp/repo","label":"shell"}}}},"focused":1,"root_pane":1}}],"active_tab":0}}],"active":0}}"#
+        r#"{{"version":3,"workspaces":[{{"id":"w1","custom_name":"fleet","identity_cwd":"/tmp/repo","public_pane_numbers":{{"1":1}},"tabs":[{{"custom_name":null,"panes":{{"1":{{"cwd":"/tmp/repo","label":"lead","agent_session":{{"source":"herdr:claude","agent":"claude","kind":"id","value":"00000000-0000-4000-8000-000000000001"}}}}}},"focused":1,"root_pane":1}}],"active_tab":0}}],"active":0}}"#
     )
     .unwrap();
 

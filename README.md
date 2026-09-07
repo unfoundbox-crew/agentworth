@@ -66,9 +66,9 @@ npx -y agentworth@latest scan
 macOS note: the release binaries are ad-hoc signed and not notarized (no Apple Developer
 ID). Installed through the script they run as-is. If a copy ever dies with `zsh: killed`
 (exit 137), the file picked up a quarantine flag on the way in; clear it with
-`xattr -d com.apple.quarantine ~/.local/bin/archie` or approve it once under System
-Settings > Privacy & Security. The script runs the binary once after installing and prints
-exactly that if it happens.
+`xattr -d com.apple.quarantine ~/.local/bin/archie`. If there is no flag to clear, the
+signature itself is being rejected: re-run the install script. The script runs the binary
+once after installing and prints exactly that if it happens.
 
 The standalone script draws its own progress, so a 22 MB download over a slow link no
 longer looks like a hang:
@@ -507,7 +507,7 @@ AgentWorth isolates proprietary log formats inside native streaming adapters. In
 | **OpenAI Codex** | `codex` | `~/.codex/sessions/` |
 | **Block Goose** | `goose` | `~/.config/goose/`, `~/.local/share/goose/sessions/` |
 | **Pi** | `pi` | `~/.pi/`, `~/.pi/tasks/` |
-| **Herdr** | `herdr` | `~/.config/herdr/` (Multi-agent orchestration DAGs) |
+| **Herdr** | `herdr` | `~/.config/herdr/` (workspace snapshot: which agent session ran in which pane) |
 | **Nous Hermes** | `hermes` | `~/.hermes/sessions/` |
 | **OpenClaw** | `openclaw` | `~/.openclaw/` |
 | **xAI Grok** | `grok` | `~/.grok/sessions/` |

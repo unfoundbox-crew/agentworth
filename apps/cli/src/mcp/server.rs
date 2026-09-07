@@ -240,6 +240,7 @@ impl AgentWorthMcpServer {
             order_by: Some(params.order_by.map(Into::into).unwrap_or_default()),
             include_stubs: params.include_stubs,
             outcome: params.outcome.clone(),
+            kind: None,
         };
 
         let storage = self.storage.clone();

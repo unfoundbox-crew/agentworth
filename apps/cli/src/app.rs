@@ -618,6 +618,12 @@ struct SessionListArgs {
     #[arg(long)]
     all_stubs: bool,
 
+    /// Which kind of row to list: `conversation` (the default) or `fleet_snapshot` (a
+    /// multi-agent workspace as of one moment, e.g. Herdr). `--adapter` on a snapshot
+    /// adapter implies it.
+    #[arg(long, value_parser = ["conversation", "fleet_snapshot"])]
+    kind: Option<String>,
+
     /// Only sessions whose completion claims were never independently corroborated by
     /// tests or CI -- the blind spots
     #[arg(long, conflicts_with_all = ["adapter", "model", "all_stubs"])]
@@ -1695,9 +1701,12 @@ pub fn run() -> Result<()> {
             } else {
                 run_traces_command(
                     limit,
-                    a.adapter,
-                    a.model,
-                    a.all_stubs,
+                    TraceListQuery {
+                        adapter: a.adapter,
+                        model: a.model,
+                        kind: a.kind.as_deref().and_then(agentworth_schema::TraceKind::parse),
+                        all_stubs: a.all_stubs,
+                    },
                     resolve_json(a.json),
                     cli.db_path,
                     &ui,
@@ -2450,20 +2459,39 @@ fn build_trace_rows(
         .collect()
 }
 
-fn run_traces_command(
-    limit: usize,
+/// The filters `session list` collects: adapter, model, kind, and whether one-event stubs
+/// are kept. Bundled so `run_traces_command` stays under the argument limit.
+struct TraceListQuery {
     adapter: Option<String>,
     model: Option<String>,
+    kind: Option<agentworth_schema::TraceKind>,
     all_stubs: bool,
+}
+
+fn run_traces_command(
+    limit: usize,
+    query: TraceListQuery,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
+    let TraceListQuery { adapter, model, kind, all_stubs } = query;
+
+    // `--adapter herdr` is asking for snapshots; nobody should have to know the word.
+    let kind = kind.or_else(|| {
+        let name = adapter.as_deref()?;
+        agentworth_adapters::all_adapters()
+            .iter()
+            .find(|a| a.name() == name)
+            .map(|a| a.trace_kind())
+            .filter(|k| *k != agentworth_schema::TraceKind::Conversation)
+    });
 
     let filter = SessionFilter {
         adapter,
         model,
+        kind,
         limit: None,
         include_stubs: if all_stubs { Some(true) } else { None },
         order_by: Some(SessionOrderBy::StartedAtDesc),
@@ -2473,7 +2501,9 @@ fn run_traces_command(
     let all_sessions = storage.list_sessions_filtered(&filter)?;
     let filtered_sessions: Vec<_> = all_sessions
         .into_iter()
-        .filter(|s| all_stubs || s.total_events > 1)
+        .filter(|s| {
+            all_stubs || s.kind != agentworth_schema::TraceKind::Conversation || s.total_events > 1
+        })
         .take(limit)
         .collect();
 
@@ -2504,6 +2534,7 @@ fn run_traces_command(
                 json!({
                     "session_id": s.session_id,
                     "adapter": s.adapter,
+                    "kind": s.kind.as_str(),
                     "source_path": s.source_path,
                     "started_at": s.started_at,
                     "duration_seconds": s.duration_seconds,

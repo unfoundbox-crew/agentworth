@@ -23,5 +23,5 @@ pub use machine::{
 pub use provenance::{extract_repository_or_workspace, is_subagent_transcript, Provenance};
 pub use text::{preview, tail_chars, truncate_chars};
 pub use tokens::TokenUsage;
-pub use trace::{AgentWorthTrace, TraceStats};
+pub use trace::{AgentWorthTrace, IdentitySighting, TraceKind, TraceStats};
 pub use vector::{ChunkKind, TrajectoryChunk, VectorSearchResult, VectorStats};

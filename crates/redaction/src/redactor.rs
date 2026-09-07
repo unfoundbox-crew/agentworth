@@ -287,15 +287,31 @@ impl Redactor {
             .map(|e| augmented.redact_event_internal(e, report))
             .collect();
 
+        // Names are free text a person typed (a pane label, an agent name): same rules as
+        // any other string. The session id is a harness id, not personal, and stays.
+        let sanitized_identities = trace
+            .identities
+            .iter()
+            .map(|s| agentworth_schema::IdentitySighting {
+                session_id: s.session_id.clone(),
+                agent: s.agent.clone(),
+                name: augmented.redact_text_internal(&s.name, report),
+                seen_at: s.seen_at,
+                via: augmented.redact_text_internal(&s.via, report),
+            })
+            .collect();
+
         AgentWorthTrace {
             session_id: trace.session_id.clone(),
             adapter: trace.adapter.clone(),
+            kind: trace.kind,
             provenance: sanitized_provenance,
             started_at: trace.started_at,
             ended_at: trace.ended_at,
             stats: trace.stats.clone(),
             events: sanitized_events,
             metadata: sanitized_metadata,
+            identities: sanitized_identities,
         }
     }
 

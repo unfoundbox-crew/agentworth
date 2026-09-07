@@ -84,6 +84,18 @@ const SESSION_CHILD_TABLES: &[ChildTable] = &[
             "cache_creation_tokens",
         ],
     },
+    ChildTable {
+        name: "identity_sightings",
+        columns: &[
+            "session_id",
+            "name",
+            "via",
+            "agent",
+            "observed_by",
+            "first_seen_at",
+            "last_seen_at",
+        ],
+    },
     // `trajectory_chunks.session_id` has no `FOREIGN KEY` constraint -- SQLite can't add one to
     // a table that already exists on every user's local index without a full table rebuild, and
     // this table's rows predate that constraint. That means
@@ -720,7 +732,8 @@ mod tests {
             let storage2 = agentworth_storage::Storage::open_path(db2.path()).unwrap();
 
             use agentworth_schema::{
-                AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, Provenance,
+                AgentWorthTrace, EventPayload, FileActionType, IdentitySighting, NormalizedEvent,
+                Provenance,
             };
             use chrono::Utc;
 
@@ -747,6 +760,15 @@ mod tests {
                     lines_changed: Some(4),
                 },
             ));
+            // identity_sightings: a name seen attached to a harness session id, carried by
+            // upsert_trace like the other trace-borne child rows.
+            trace.identities.push(IdentitySighting {
+                session_id: "sess-child".to_string(),
+                agent: Some("claude".to_string()),
+                name: "worker-claude".to_string(),
+                seen_at: now,
+                via: "herdr:w9:pane 18".to_string(),
+            });
             trace.recalculate_stats();
             storage2.upsert_trace(&trace).unwrap();
 

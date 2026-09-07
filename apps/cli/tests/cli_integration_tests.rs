@@ -154,6 +154,61 @@ fn test_cli_matrix_command_table_and_json() {
         .stdout(predicate::str::contains("\"outcomes\": true"));
 }
 
+/// A Herdr `session.json` indexes as a `fleet_snapshot`: absent from the default listing
+/// (it is not a conversation and has no tokens), present when asked for by kind or by adapter.
+#[test]
+fn fleet_snapshots_are_listed_only_when_asked() {
+    let temp = tempdir().unwrap();
+    let (_session_file, session_id) = setup_sample_claude_session(temp.path());
+    let herdr_dir = temp.path().join(".config").join("herdr");
+    fs::create_dir_all(&herdr_dir).unwrap();
+    fs::write(
+        herdr_dir.join("session.json"),
+        r#"{"version":3,"active":0,"workspaces":[{"id":"w1","custom_name":"fleet","identity_cwd":"/tmp/repo","public_pane_numbers":{"7":3},"active_tab":0,"tabs":[{"focused":7,"panes":{"7":{"cwd":"/tmp/repo","label":"lead-claude","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"sample_session_123"}}}}]}]}"#,
+    )
+    .unwrap();
+    let db_path = temp.path().join("kind.db");
+
+    Command::cargo_bin("agentworth")
+        .unwrap()
+        .arg("--db-path")
+        .arg(&db_path)
+        .env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"))
+        .arg("scan")
+        .arg(temp.path())
+        .assert()
+        .success();
+
+    let list = |extra: &[&str]| {
+        let mut cmd = Command::cargo_bin("agentworth").unwrap();
+        cmd.arg("--db-path")
+            .arg(&db_path)
+            .env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"))
+            .arg("session")
+            .arg("list")
+            .arg("--json");
+        for e in extra {
+            cmd.arg(e);
+        }
+        String::from_utf8(cmd.assert().success().get_output().stdout.clone()).unwrap()
+    };
+
+    let default_list = list(&[]);
+    assert!(default_list.contains(&session_id), "{default_list}");
+    assert!(!default_list.contains("herdr"), "{default_list}");
+
+    let by_kind = list(&["--kind", "fleet_snapshot"]);
+    assert!(by_kind.contains("herdr-session-"), "{by_kind}");
+    assert!(!by_kind.contains(&session_id), "{by_kind}");
+
+    let by_adapter = list(&["--adapter", "herdr"]);
+    assert!(by_adapter.contains("herdr-session-"), "{by_adapter}");
+
+    let conversations = list(&["--kind", "conversation"]);
+    assert!(conversations.contains(&session_id), "{conversations}");
+    assert!(!conversations.contains("herdr"), "{conversations}");
+}
+
 #[test]
 fn test_cli_traces_list_and_filters() {
     let temp = tempdir().unwrap();
