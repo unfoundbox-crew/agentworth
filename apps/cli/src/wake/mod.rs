@@ -627,24 +627,11 @@ fn last_user_message(events: &[&NormalizedEvent]) -> Option<String> {
     })
 }
 
-/// False for a user-role message the harness injected rather than the person typed: a
-/// cross-session relay, a system notification, a compaction summary continuation, or any of the
-/// other machine-generated envelopes that arrive on the `UserMessage` role. `wake` wants the
-/// last thing a human asked for, not the last event on that role.
+/// False for a user-role message the harness injected rather than the person typed. `wake`
+/// wants the last thing a human asked for, not the last event on that role. The list is
+/// `agentworth_schema::is_human_prompt`, shared with the chunker and the autopsy.
 fn is_human_prompt(content: &str) -> bool {
-    const INJECTED_PREFIXES: &[&str] = &[
-        "Another Claude session sent a message",
-        "<cross-session-message",
-        "[SYSTEM NOTIFICATION",
-        "<task-notification",
-        "<system-reminder",
-        "<command-name>",
-        "<local-command",
-        "This session is being continued",
-    ];
-    !INJECTED_PREFIXES
-        .iter()
-        .any(|prefix| content.starts_with(prefix))
+    agentworth_schema::is_human_prompt(content)
 }
 
 /// The `cwd` and branch the adapter recorded from the transcript's own records. Absent for every

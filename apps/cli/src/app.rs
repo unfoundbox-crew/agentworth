@@ -765,7 +765,7 @@ struct SearchArgs {
     #[arg(long, default_value_t = 0.0)]
     min_score: f32,
 
-    /// Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)
+    /// Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage, user_turn)
     #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(crate::completions::chunk_kind_candidates))]
     kind: Option<String>,
 

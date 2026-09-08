@@ -2,6 +2,7 @@
 
 mod compaction;
 mod event;
+mod human;
 mod machine;
 mod provenance;
 pub mod text;
@@ -12,6 +13,7 @@ pub mod vector;
 pub use compaction::{
     compact_summary_text, compaction_rounds, CompactionRound, COMPACT_SUMMARY_KIND,
 };
+pub use human::{human_prompt_text, is_human_prompt};
 pub use event::{
     CompactionEvent, EventPayload, EventType, FileActionType, HumanIntervention, ModelSwitch,
     NormalizedEvent, OutcomeEvidence, OutcomeKind, ShellCommand, ToolCall, ToolResult,

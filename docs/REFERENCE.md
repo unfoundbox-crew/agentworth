@@ -232,7 +232,7 @@ Semantic vector search across indexed trajectory turns with ASCII thermal receip
 | `QUERY` | yes | Search query (natural language or code snippet) | - | - |
 | `--limit, -l` | no | Maximum number of results to return (default 10, or persisted `config limit`) | - | - |
 | `--min-score` | no | Minimum similarity score threshold (0.0 to 1.0) | 0 | - |
-| `--kind, -k` | no | Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage) | - | - |
+| `--kind, -k` | no | Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage, user_turn) | - | - |
 | `--json` | no | Output results as JSON | false | - |
 
 ### `archie session recall`
