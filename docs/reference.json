@@ -918,7 +918,7 @@
           "name": "--kind, -k",
           "positional": false,
           "required": false,
-          "help": "Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)",
+          "help": "Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage, user_turn)",
           "default": null,
           "possibleValues": []
         },

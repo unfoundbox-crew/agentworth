@@ -383,33 +383,53 @@ fn collect_unfinished_calls(val: &Value, out: &mut HashSet<String>) {
     }
 }
 
+/// Directory or file names that belong to another harness. A path is rejected when one of
+/// its components *is* one of these (with or without a leading dot, or followed by `-`, `_`
+/// or `.`), never when the name merely appears inside a longer component. The earlier
+/// substring check over the whole path rejected a Claude session whose project slug
+/// mentioned another tool (`-Users-me-code-codex-review`), and, once in a few thousand
+/// runs, a `tempfile` whose six random characters happened to spell `xai` -- which is how
+/// `test_scanner_end_to_end_with_in_memory_storage` failed on CI with 0 discovered sources.
+const OTHER_HARNESS_NAMES: &[&str] = &[
+    "codex",
+    "gemini",
+    "antigravity",
+    "opencode",
+    "goose",
+    "cursor",
+    "composer",
+    "herdr",
+    "hermes",
+    "openclaw",
+    "grok",
+    "xai",
+    "pi",
+    "deepseek",
+    "kimi",
+    "minimax",
+    "qwen",
+    "zhipu",
+    "codegeex",
+    "manus",
+    "aider",
+    "cline",
+    "windsurf",
+];
+
+fn component_names_other_harness(component: &str) -> bool {
+    let name = component.trim_start_matches('.').to_ascii_lowercase();
+    OTHER_HARNESS_NAMES.iter().any(|token| {
+        name == *token
+            || name
+                .strip_prefix(token)
+                .is_some_and(|rest| rest.starts_with(['-', '_', '.']))
+    })
+}
+
 fn is_candidate_claude_file(path: &Path) -> bool {
-    let path_str = path.to_string_lossy().to_lowercase();
-    if path_str.contains("codex")
-        || path_str.contains("gemini")
-        || path_str.contains("antigravity")
-        || path_str.contains("opencode")
-        || path_str.contains("goose")
-        || path_str.contains("cursor")
-        || path_str.contains("composer")
-        || path_str.contains("herdr")
-        || path_str.contains("hermes")
-        || path_str.contains("openclaw")
-        || path_str.contains("grok")
-        || path_str.contains("xai")
-        || path_str.contains("/.pi/")
-        || path_str.contains("/pi/")
-        || path_str.contains(".pi")
-        || path_str.contains("deepseek")
-        || path_str.contains("kimi")
-        || path_str.contains("minimax")
-        || path_str.contains("qwen")
-        || path_str.contains("zhipu")
-        || path_str.contains("codegeex")
-        || path_str.contains("manus")
-        || path_str.contains("aider")
-        || path_str.contains("cline")
-        || path_str.contains("windsurf")
+    if path
+        .components()
+        .any(|c| component_names_other_harness(&c.as_os_str().to_string_lossy()))
     {
         return false;
     }
@@ -1059,6 +1079,38 @@ fn parse_claude_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidate_filter_rejects_other_harness_directories_by_component() {
+        for rejected in [
+            "/home/u/.codex/sessions/2026/09/rollout.jsonl",
+            "/home/u/.pi/agent/sessions/abc.jsonl",
+            "/home/u/.local/share/goose/sessions/abc.jsonl",
+            "/home/u/.deepseek-coder/history/abc.jsonl",
+            "/Users/u/Library/Application Support/Cursor/User/abc.jsonl",
+            "/home/u/.gemini/tmp/abc.jsonl",
+            "/home/u/.claude/projects/-Users-u-code-x/settings.json",
+            "/home/u/.claude/projects/-Users-u-code-x/notes.json",
+        ] {
+            assert!(!is_candidate_claude_file(Path::new(rejected)), "{rejected}");
+        }
+    }
+
+    #[test]
+    fn candidate_filter_accepts_claude_paths_that_merely_mention_another_tool() {
+        for accepted in [
+            // A Claude Code project slug names the repo, and the repo may be about another tool.
+            "/home/u/.claude/projects/-Users-u-code-codex-review/8f1c.jsonl",
+            "/home/u/.claude/projects/-Users-u-code-gemini-eval/8f1c.jsonl",
+            "/home/u/.claude/projects/-Users-u-code-my-cursor-clone/8f1c.jsonl",
+            // tempfile's six random characters: the CI failure was a name like this.
+            "/tmp/.tmpXaIq9Z.jsonl",
+            "/tmp/.tmpgROKa1.jsonl",
+            "/tmp/.tmpQwEn00.jsonl",
+        ] {
+            assert!(is_candidate_claude_file(Path::new(accepted)), "{accepted}");
+        }
+    }
     use std::io::Write;
     use tempfile::{tempdir, NamedTempFile};
 

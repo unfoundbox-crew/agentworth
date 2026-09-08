@@ -6,7 +6,9 @@
 //! 3. `ToolInvocation`: Destructive or critical operations (`rm -rf`, `git reset`, `DROP TABLE`, etc.).
 //! 4. `ApologyPanic`: Assistant retreat, panic, apology, and confusion turns.
 //! 5. `CodeLineage`: Significant code modifications and diff lineage.
+//! 6. `UserTurn`: Every prompt the person typed, harness envelopes stripped.
 
+use agentworth_schema::human_prompt_text;
 use agentworth_schema::vector::{ChunkKind, TrajectoryChunk};
 use agentworth_schema::{AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent};
 use serde_json::json;
@@ -49,6 +51,10 @@ impl TrajectoryChunker {
         // 2. Scan events for ErrorRecovery, ToolInvocation, ApologyPanic, and CodeLineage
         let events = &trace.events;
         for (idx, event) in events.iter().enumerate() {
+            if let Some(user_chunk) = self.extract_user_turn(trace, event, idx) {
+                chunks.push(user_chunk);
+            }
+
             // Check for ApologyPanic in AssistantMessage
             if let Some(panic_chunk) = self.extract_apology_panic(trace, event, idx) {
                 chunks.push(panic_chunk);
@@ -147,6 +153,40 @@ impl TrajectoryChunker {
             0,
             trace.started_at.to_rfc3339(),
             truncate_text(&text_content, self.max_chunk_chars),
+            metadata.to_string(),
+        ))
+    }
+
+    /// One chunk per prompt the person typed. The text is the prompt itself with no header,
+    /// so the vector is of what was said rather than of a label; sequence and size live in
+    /// metadata. Harness envelopes on the user role are not the person and are skipped.
+    fn extract_user_turn(
+        &self,
+        trace: &AgentWorthTrace,
+        event: &NormalizedEvent,
+        idx: usize,
+    ) -> Option<TrajectoryChunk> {
+        let EventPayload::UserMessage { content } = &event.payload else {
+            return None;
+        };
+        let text = human_prompt_text(content)?;
+        let char_count = text.chars().count();
+        if char_count < MIN_USER_TURN_CHARS {
+            return None;
+        }
+        let metadata = json!({
+            "sequence": event.sequence,
+            "event_index": idx,
+            "word_count": text.split_whitespace().count(),
+            "char_count": char_count,
+        });
+        Some(TrajectoryChunk::new(
+            &trace.session_id,
+            &trace.adapter,
+            ChunkKind::UserTurn,
+            event.sequence as usize,
+            event.timestamp.to_rfc3339(),
+            truncate_text(&text, self.max_chunk_chars),
             metadata.to_string(),
         ))
     }
@@ -468,6 +508,9 @@ impl TrajectoryChunker {
     }
 }
 
+/// "ok" and "no" are real prompts; a lone character is a slip.
+const MIN_USER_TURN_CHARS: usize = 2;
+
 const APOLOGY_PANIC_PATTERNS: &[&str] = &[
     "my mistake",
     "i apologize",
@@ -780,6 +823,18 @@ mod tests {
         assert!(chunks.iter().any(|c| c.kind == ChunkKind::ErrorRecovery));
         assert!(chunks.iter().any(|c| c.kind == ChunkKind::CodeLineage));
 
+        // Verify the typed prompt is its own chunk, text only
+        let user_chunk = chunks
+            .iter()
+            .find(|c| c.kind == ChunkKind::UserTurn)
+            .unwrap();
+        assert_eq!(
+            user_chunk.text_content,
+            "Please clean up the stale worktrees and run tests"
+        );
+        assert_eq!(user_chunk.turn_index, 1);
+        assert!(user_chunk.metadata_json.contains("\"word_count\":9"));
+
         // Verify session summary contents
         let summary = chunks
             .iter()
@@ -869,6 +924,37 @@ mod tests {
         assert!(tool_chunks[0].text_content.contains("git reset --hard"));
         assert!(tool_chunks[1].text_content.contains("DROP TABLE"));
         assert!(tool_chunks[2].text_content.contains("secret.key"));
+    }
+
+    #[test]
+    fn test_user_turn_skips_harness_envelopes_and_strips_reminders() {
+        let start = Utc::now();
+        let prov = Provenance::new("/test/path.jsonl", "claude_code", 100, 12345, "fp123");
+        let mut trace = AgentWorthTrace::new("sess-human", "claude_code", prov, start);
+        let user = |seq: u64, text: &str| {
+            NormalizedEvent::new(
+                seq,
+                start,
+                EventPayload::UserMessage {
+                    content: text.to_string(),
+                },
+            )
+        };
+        trace.events.push(user(1, "<task-notification>agent done</task-notification>"));
+        trace.events.push(user(2, "Another Claude session sent a message: ship it"));
+        trace.events.push(user(3, "You are agent x (CEO). Continue your Paperclip work."));
+        trace.events.push(user(4, "Base directory for this skill: /tmp/s\n# Skill body"));
+        trace.events.push(user(5, "make it blue<system-reminder>\nharness\n</system-reminder>"));
+        trace.events.push(user(6, "k"));
+
+        let chunks = TrajectoryChunker::extract_chunks(&trace);
+        let user_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| c.kind == ChunkKind::UserTurn)
+            .collect();
+        assert_eq!(user_chunks.len(), 1);
+        assert_eq!(user_chunks[0].text_content, "make it blue");
+        assert_eq!(user_chunks[0].turn_index, 5);
     }
 
     #[test]

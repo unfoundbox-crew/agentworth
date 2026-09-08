@@ -119,8 +119,13 @@ pub fn perform_prompt_autopsy(
 
         for event in &trace.events {
             if let EventPayload::UserMessage { content } = &event.payload {
+                // A wake payload or a relayed message can carry "stop" too; only what the
+                // person typed is a correction.
+                let Some(content) = agentworth_schema::human_prompt_text(content) else {
+                    continue;
+                };
                 total_user_msgs += 1;
-                let norm = normalize_prompt_phrase(content);
+                let norm = normalize_prompt_phrase(&content);
                 if is_correction_intent(&norm) && norm.len() >= 5 {
                     let entry = phrase_map
                         .entry(norm.clone())
