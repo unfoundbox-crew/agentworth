@@ -179,6 +179,40 @@ harness and must be verified on a real turn before anything builds on it.
 Latency target: under 1 ms per query in process on the open connection,
 measured, not assumed. Over the socket, one round trip more.
 
+## Where the field is, and how a harness plugs in
+
+Surveyed 2026-09-08, nineteen harnesses, the MCP changelog, eight memory
+servers, the benchmarks. The record with sources is
+`docs/research/memory-landscape-2026-09.md`. What it settles:
+
+| Finding | Consequence here |
+| :--- | :--- |
+| MCP tools reach 17 of 19 harnesses; the 2026-07-28 spec removed sessions and deprecated sampling | memory is a tool that returns rows, never a resource; the server cannot ask a model anything |
+| stdout-injecting hooks exist in 3 harnesses, compaction events in 2 | session-start injection is per harness; `session_wake` is the universal pull |
+| the largest neighbour, claude-mem, injects at `SessionStart` and compresses observations with a model | same hook, opposite representation; the receipt is the difference |
+| the one independent ablation: verbatim beats extracted by 16 to 22 points | facts point at receipts and load the words; no model writes a fact |
+| Anthropic's memory tool and Letta both converged on files with history | the rules-file projection is not optional; facts must be diffable on disk |
+| no memory server publishes a token number for its payload | the 542 against 1,552 measurement stands alone and says so |
+
+The plugin surface, in order of reach:
+
+1. Transcript adapters on disk, 22 today. The only path that reaches every
+   harness. Nothing to add.
+2. One MCP stdio server with `memory_query`, deterministic tool order, `ttlMs`
+   on lists, rows under 4 KB. Well inside the 25k-token output cap one client
+   reports.
+3. `SKILL.md`, 100 tokens at start, the body says which tool to call. A skill
+   cannot carry a server, so it points at the MCP tool and the CLI.
+4. One line in each indexed repo's `AGENTS.md`, written by `archie init` on
+   request, never silently. The file every harness reads.
+5. Hook shims for Claude Code (built), Codex (built, flagged) and Copilot CLI
+   (new, `sessionStart` and `events.jsonl`). Stop there.
+6. ATIF export (built) as the interchange format; NVIDIA and Arize already
+   read it.
+
+Not bet on: compaction hooks beyond the two that exist, native memory features
+(all closed), ACP as a capture path (a client integration, not a plugin).
+
 ## Rules files become views
 
 A rules file today mixes facts, which go stale, with judgment, which does
