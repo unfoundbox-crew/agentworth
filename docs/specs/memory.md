@@ -167,14 +167,19 @@ session. Deterministic extractors and the hook loop write everything else.
 | Moment | Query | Budget |
 | :--- | :--- | :--- |
 | `SessionStart`, `session_wake` | this repo: open `promised`, current `decided` and `rejected`, `corrected` since the last session | 4 KB |
-| `PostCompact`, through `UserPromptSubmit` stdout | this session's own `decided`, `rejected`, `because`, `promised`, stale rows flagged | 4 KB |
+| `SessionStart` matcher `compact` (Claude Code); the harness's own post-compaction-equivalent event otherwise | this session's own `decided`, `rejected`, `because`, `promised`, stale rows flagged | 4 KB |
 | before asserting | `claim_check`: `asserted` and `corrected` on the claim's anchors | 1 KB |
 | never | everything else stays in the store until asked | 0 |
 
 The second row is the re-injection `compaction-diff.md` declined. It is
 allowed now because a row is verbatim by construction and carries its
-receipt; nothing is paraphrased. The injection path is documented for one
-harness and must be verified on a real turn before anything builds on it.
+receipt; nothing is paraphrased. Verified live, 2026-09-09, on a real turn
+in each of six harnesses (table below) — not assumed. Claude Code's own
+docs name `UserPromptSubmit` as the only reliable post-compaction path;
+that undersells it. `SessionStart` fires with `matcher: compact` — a
+dedicated event for exactly this moment, confirmed in the current hooks
+reference, and the one this design should target instead of piggybacking
+re-derivation onto the next user prompt.
 
 Latency target: under 1 ms per query in process on the open connection,
 measured, not assumed. Over the socket, one round trip more.
@@ -184,6 +189,37 @@ measured, not assumed. Over the socket, one round trip more.
 Surveyed 2026-09-08, nineteen harnesses, the MCP changelog, eight memory
 servers, the benchmarks. The record with sources is
 `docs/research/memory-landscape-2026-09.md`. What it settles:
+
+### Six harnesses, tested live, 2026-09-09
+
+Not surveyed — run. A unique marker planted through each harness's own
+injection point, one live turn, checked against the raw response (or the
+session log directly where the model itself declined to repeat it back —
+see the Codex row). This is the ping-pong self-check `archie init` should
+run automatically, not a one-time manual pass.
+
+| Harness | Result | Injection point | Shape |
+| :--- | :--- | :--- | :--- |
+| Claude Code | pass | `SessionStart` hook | dynamic — arbitrary command, `additionalContext` |
+| Codex CLI | pass | `SessionStart` hook, `.codex/hooks.json` | dynamic — stable, not "flagged" as first assumed; injected as a `developer`-role message |
+| Gemini/Antigravity (`agy`) | pass | `PreInvocation` hook | dynamic — fires before every model call, so it covers session-start and post-compaction as the same event |
+| Goose | pass | `.goosehints` file | static — loaded into the system prompt at session start; a real `Hooks` system exists but does not reach context |
+| OpenCode | pass | `opencode.json` `instructions` array | static — a plugin-hook equivalent was proposed upstream and closed as not planned |
+| Cursor Agent CLI | **fail** | `sessionStart` hook, `additional_context` | documented, but the hook process does not fire at all in non-interactive `-p` mode; matches two open upstream reports |
+
+Two things this changes from the survey's guess:
+
+- **Not one shape.** Claude Code and Codex take live command output. Goose
+  and OpenCode take a file that has to be *rewritten* before each run —
+  `archie` regenerating a file is the hook there, not a callback it
+  registers. Cursor gets neither until the upstream bug closes; fall back
+  to a static rules file for it.
+- **Self-report is not proof.** Codex's model declined to repeat the
+  injected marker back — read as a "hidden instruction" it wouldn't
+  parrot, a policy behaviour, not an injection failure. Confirmed only by
+  reading the raw session rollout log and finding the marker landed as a
+  `developer`-role message. Verification has to check the wire, not ask
+  the model to confess.
 
 | Finding | Consequence here |
 | :--- | :--- |
@@ -213,6 +249,27 @@ The plugin surface, in order of reach:
 Not bet on: compaction hooks beyond the two that exist, native memory features
 (all closed), ACP as a capture path (a client integration, not a plugin).
 
+## Setup is one command, and it does not trust itself
+
+A dev asking their agent to "set this up" today means six different
+hand-wired dances, one per harness, each with its own file and its own
+silent-failure shape — Cursor's is the proof: the documented mechanism
+looks configured and does nothing. `archie init` (extending `archie hook
+print`, which today only prints a snippet for a human to paste) should:
+
+1. Detect the harness it is running under.
+2. Write the right thing for that harness's actual shape — a hook
+   registration for Claude Code, Codex, `agy`; a generated (and
+   re-generated on each run, for the static harnesses) `.goosehints` or
+   `opencode.json` `instructions` file for Goose and OpenCode; a clear
+   refusal, naming the tracked upstream bug, for Cursor, rather than
+   writing a config that will not fire.
+3. Run the same ping-pong probe used above — plant a marker through the
+   path it just wrote, one live turn, check the wire (session log or
+   response) rather than the model's word for it — and report pass or
+   fail for real. Setup that does not end in a live check is a guess
+   wearing a config file.
+
 ## Rules files become views
 
 A rules file today mixes facts, which go stale, with judgment, which does
@@ -239,9 +296,10 @@ superseded row and every projection re-renders.
 | 1 | `entities`, `facts`, predicates, `memory_query` rows, backfill from the eight tables above | 250k |
 | 2 | decision, commitment, question and correction facts written at scan time from the three shipped extractors, receipts only | 150k |
 | 3 | wake and handoff as `π` over rows; bytes and tokens measured against 542 and 481 | 150k |
-| 4 | `PostCompact` re-hydration through the hook, verified on a real turn | 150k |
+| 4 | Post-compaction re-hydration through `SessionStart` matcher `compact` (Claude Code) and each harness's own equivalent — verified live 2026-09-09, see the six-harness table above | 150k |
 | 5 | `claim_check` on `asserted` and `corrected` | 100k |
 | 6 | the generated rules-file section | 100k |
+| 7 | `archie init`: per-harness setup, one command, ending in a live ping-pong self-check, not a written-and-hoped config | 100k |
 
 ## Open questions
 
