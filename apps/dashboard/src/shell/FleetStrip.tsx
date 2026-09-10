@@ -89,13 +89,24 @@ export function FleetStrip({ onOpenSession }: FleetStripProps) {
       )}
 
       {/* Spend is omitted rather than shown as zero when the route is absent —
-          "$0.00 today" would be a measurement this build never made. */}
+          "$0.00 today" would be a measurement this build never made. total_tokens is context
+          volume (cache reads count at face value); total_weighted_tokens is closer to spend —
+          both are shown so a cache-heavy day doesn't read as a big-spend day. */}
       {fleet.spend.state === 'ok' && (
-        <p className="fleet-spend">
+        <p
+          className="fleet-spend"
+          title={`${fleet.spend.value.total_tokens.toLocaleString()} tokens of context volume today (raw sum, cache reads at face value); ${Math.round(
+            fleet.spend.value.total_weighted_tokens
+          ).toLocaleString()} weighted — closer to spend (input + output + 1.25× cache writes + 0.1× cache reads)`}
+        >
           <span className="fleet-spend-label">Today</span>
           <span className="fleet-spend-value">{formatUSD(fleet.spend.value.total_cost_usd)}</span>
           <span className="fleet-spend-sep">·</span>
-          <span className="fleet-spend-value">{formatTokens(fleet.spend.value.total_tokens)} tokens</span>
+          <span className="fleet-spend-value">{formatTokens(fleet.spend.value.total_tokens)} ctx</span>
+          <span className="fleet-spend-sep">·</span>
+          <span className="fleet-spend-value">
+            {formatTokens(fleet.spend.value.total_weighted_tokens)} weighted
+          </span>
         </p>
       )}
     </section>

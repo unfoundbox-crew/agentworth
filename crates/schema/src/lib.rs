@@ -8,6 +8,7 @@ mod provenance;
 pub mod text;
 mod tokens;
 mod trace;
+pub mod fixtures;
 pub mod vector;
 
 pub use compaction::{

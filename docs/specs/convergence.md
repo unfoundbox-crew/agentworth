@@ -112,23 +112,25 @@ dropped:
 | apps/vibelaunch | 441 | 35.4% | 64.6% |
 | motionvector/motionvector | 51 | 35.3% | 64.7% |
 | upscaler/free | 23 | 34.8% | 65.2% |
-| saurabh/code | 123 | 34.1% | 65.9% |
-| katana/video | 43 | 30.2% | 69.8% |
+| dev/code | 123 | 34.1% | 65.9% |
+| example-repo/video | 43 | 30.2% | 69.8% |
 | motionvector/studio | 179 | 30.2% | 69.8% |
 | unfoundbox/memes | 46 | 28.3% | 71.7% |
 | a second client repo | 11 | 27.3% | 72.7% |
 | motionvector/spacepilot | 144 | 25.0% | 75.0% |
 | motionvector/pluto | 178 | 20.2% | 79.8% |
 | upscaler/backend | 421 | 18.3% | 81.7% |
-| Users/saurabh | 32 | 15.6% | 84.4% |
+| Users/dev | 32 | 15.6% | 84.4% |
 | resolution/lab | 28 | 7.1% | 92.9% |
 | tinkers/blog | 45 | 4.4% | 95.6% |
 | apps/learn | 21 | 0.0% | 100.0% |
 | apps/studio | 49 | 0.0% | 100.0% |
 
-Fifteen more groups fell under the floor. `Users/saurabh` is not a repo — it is
+Fifteen more groups fell under the floor. `Users/dev` is not a repo — it is
 what `extract_repository_or_workspace` returns for a session started outside
 one, and it is in the table because hiding it would flatter the spread.
+(`dev` is an anonymized bucket name standing in for the real username; the
+counts and rates are unchanged.)
 
 `apps/studio` and `apps/learn` are at zero, which is the honest reading of a
 frontend repo where the loop is a browser and not a command. The gate exists;
@@ -175,8 +177,8 @@ floor of 10:
 | mvec/engine | 69 | 13.8% | 51.4% | 10.5% | 11.5% |
 | motionvector/pluto | 36 | 13.1% | 35.5% | 10.2% | 2.7% |
 | motionvector/motionvector | 18 | 13.0% | 37.8% | 8.8% | 3.0% |
-| saurabh/code | 42 | 12.5% | 30.9% | 9.3% | 12.8% |
-| katana/video | 12 | 12.4% | 52.4% | 9.1% | 17.7% |
+| dev/code | 42 | 12.5% | 30.9% | 9.3% | 12.8% |
+| example-repo/video | 12 | 12.4% | 52.4% | 9.1% | 17.7% |
 | video/frontend | 35 | 12.4% | 74.0% | 10.1% | 4.0% |
 | upscaler/backend | 88 | 10.3% | 69.0% | 7.4% | 39.2% |
 | upscaler/frontend | 110 | 8.5% | 33.6% | 5.9% | 3.5% |

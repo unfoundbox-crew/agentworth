@@ -168,6 +168,13 @@ parse — new or corrected fields, different normalization, changed token accoun
 incremental scan skips unchanged bytes, so without the bump the index keeps serving what the
 old parser produced until someone runs `--force`.
 
+Fixture paths come from `agentworth_schema::fixtures`, never from a literal. This is a public
+repo, and on 2026-09-10 it was found carrying the maintainer's real system username in 101
+places plus a third party's project name inside shipped fixtures and user-facing copy -- all of
+it typed by agents building fixtures from whatever was on screen. Build paths with
+`fixtures::claude_transcript(fixtures::REPO, uuid)` and the convenient option is also the safe
+one. Need a name the module lacks? Add it there, not at the call site.
+
 Every PR that touches an adapter or a CLI command adds a fixture shaped like the data it
 handles. Every bug that came from real data ships with a redacted fixture that reproduces
 it (see `apps/cli/tests/doctor_self_test.rs` for the pattern: a small synthetic index built

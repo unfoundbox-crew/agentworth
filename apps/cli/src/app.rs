@@ -813,6 +813,11 @@ struct BlunderArgs {
     #[arg(short, long)]
     submit: bool,
 
+    /// Print the exact redacted payload a submission would POST, and send nothing.
+    /// Read this before you ever pass --submit.
+    #[arg(long)]
+    dry_run: bool,
+
     /// Output blunder exhibits as formatted JSON
     #[arg(long)]
     json: bool,
@@ -1778,7 +1783,7 @@ pub fn run() -> Result<()> {
             crate::run_audit_command(a.safety, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Session(SessionCommand::Blunder(a)) => {
-            crate::run_blunder_command(a.top, a.submit, resolve_json(a.json), cli.db_path, &ui)?;
+            crate::run_blunder_command(a.top, a.submit, a.dry_run, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Session(SessionCommand::Handoff(a)) => {
             handoff_command::run_handoff_command(

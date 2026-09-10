@@ -16,14 +16,14 @@ fn test_vector_engine_end_to_end_indexing_and_semantic_retrieval() {
     let vector_store = storage.vector_store().expect("vector store");
     let embedder = LocalEmbedder::new_deterministic();
 
-    // 2. Build a realistic catastrophic session trace (Claude Opus accidentally deleted Katana repo)
+    // 2. Build a realistic catastrophic session trace (Claude Opus accidentally deleted example-repo)
     let start_time = Utc::now();
     let prov1 = Provenance::new(
-        "/Users/saurabh/.claude/projects/-Users-saurabh-code-katana/trace.jsonl",
+        "/Users/dev/.claude/projects/-Users-dev-code-example-repo/trace.jsonl",
         "claude_code",
         2048,
         1700000000,
-        "fp_katana",
+        "fp_example",
     );
     let mut trace1 = AgentWorthTrace::new("sess-opus-catastrophe", "claude_code", prov1, start_time);
     trace1.stats.models_used = vec!["claude-opus-5".to_string()];
@@ -41,8 +41,8 @@ fn test_vector_engine_end_to_end_indexing_and_semantic_retrieval() {
         2,
         start_time,
         EventPayload::ShellCommand(ShellCommand {
-            command: "rm -rf /Users/saurabh/code/katana".to_string(),
-            cwd: Some("/Users/saurabh/code".to_string()),
+            command: "rm -rf /Users/dev/code/example-repo".to_string(),
+            cwd: Some("/Users/dev/code".to_string()),
             exit_code: Some(0),
             output: None,
         }),
@@ -51,8 +51,8 @@ fn test_vector_engine_end_to_end_indexing_and_semantic_retrieval() {
         3,
         start_time,
         EventPayload::AssistantMessage {
-            content: "STOP. The trace shows rm -rf /Users/saurabh/code/katana — my own code, executing against the path that was supposed to be protected. Killing it now. Katana was 30 GB; it is now 2.9 GB. A missing local turned my safety mechanism into a weapon.".to_string(),
-            thinking: Some("Emergency stop: I deleted the katana repository by mistake.".to_string()),
+            content: "STOP. The trace shows rm -rf /Users/dev/code/example-repo — my own code, executing against the path that was supposed to be protected. Killing it now. example-repo was 30 GB; it is now 2.9 GB. A missing local turned my safety mechanism into a weapon.".to_string(),
+            thinking: Some("Emergency stop: I deleted the example-repo repository by mistake.".to_string()),
         },
     ));
 
@@ -60,7 +60,7 @@ fn test_vector_engine_end_to_end_indexing_and_semantic_retrieval() {
 
     // 3. Build a second session (Codex building frontend components cleanly)
     let prov2 = Provenance::new(
-        "/Users/saurabh/code/vibelaunch/session.jsonl",
+        "/Users/dev/code/example-app/session.jsonl",
         "codex",
         1024,
         1700005000,

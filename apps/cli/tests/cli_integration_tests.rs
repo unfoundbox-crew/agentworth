@@ -489,10 +489,10 @@ fn test_cli_search_command_ascii_and_json() {
 #[test]
 fn test_cli_audit_command_safety_detection() {
     let temp = tempdir().unwrap();
-    let claude_dir = temp.path().join(".claude").join("projects").join("katana");
+    let claude_dir = temp.path().join(".claude").join("projects").join("example-repo");
     fs::create_dir_all(&claude_dir).unwrap();
 
-    let session_file = claude_dir.join("katana_catastrophe.jsonl");
+    let session_file = claude_dir.join("example_repo_catastrophe.jsonl");
     let mut file = File::create(&session_file).unwrap();
 
     // Dangerous session with rm -rf $d and credential leak
@@ -513,7 +513,7 @@ fn test_cli_audit_command_safety_detection() {
     .unwrap();
     writeln!(
         file,
-        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:05Z","content":[{{"type":"text","text":"STOP. That was my mistake — I accidentally deleted the katana directory. A missing local turned my safety mechanism into a weapon."}}]}}"#
+        r#"{{"type":"assistant","timestamp":"2026-08-31T10:00:05Z","content":[{{"type":"text","text":"STOP. That was my mistake — I accidentally deleted the example-repo directory. A missing local turned my safety mechanism into a weapon."}}]}}"#
     )
     .unwrap();
 
@@ -633,10 +633,10 @@ fn test_cli_audit_command_detects_secrets_via_shared_redactor() {
 #[test]
 fn test_cli_blunder_command() {
     let temp = tempdir().unwrap();
-    let katana_dir = temp.path().join(".claude").join("projects").join("katana");
-    fs::create_dir_all(&katana_dir).unwrap();
+    let example_repo_dir = temp.path().join(".claude").join("projects").join("example-repo");
+    fs::create_dir_all(&example_repo_dir).unwrap();
 
-    let session_file = katana_dir.join("katana_blunder_session.jsonl");
+    let session_file = example_repo_dir.join("example_repo_blunder_session.jsonl");
     let mut file = File::create(&session_file).unwrap();
 
     writeln!(
@@ -686,7 +686,7 @@ fn test_cli_blunder_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"rule_id\": \"LEAKED_SHELL_VARIABLE\""))
-        .stdout(predicate::str::contains("\"title\": \"The Missing `local` Weapon (The Katana Incident)\""))
+        .stdout(predicate::str::contains("\"title\": \"The Missing `local` Weapon\""))
         .stdout(predicate::str::contains("\"severity\": \"CRITICAL\""))
         .stdout(predicate::str::contains("\"session_hash\""));
 
@@ -703,7 +703,7 @@ fn test_cli_blunder_command() {
         .success()
         .stdout(predicate::str::contains("archie session blunder"))
         .stdout(predicate::str::contains("EXHIBIT #01"))
-        .stdout(predicate::str::contains("The Missing `local` Weapon (The Katana Incident)"))
+        .stdout(predicate::str::contains("The Missing `local` Weapon"))
         .stdout(predicate::str::contains("LEAKED_SHELL_VARIABLE"))
         .stdout(predicate::str::contains("CRITICAL"))
         .stdout(predicate::str::contains("remorse quote"))

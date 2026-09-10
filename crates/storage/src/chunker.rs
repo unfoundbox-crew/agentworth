@@ -758,8 +758,8 @@ mod tests {
             2,
             start,
             EventPayload::ShellCommand(ShellCommand {
-                command: "rm -rf /Users/saurabh/code/katana".to_string(),
-                cwd: Some("/Users/saurabh/code".to_string()),
+                command: "rm -rf /Users/dev/code/example-repo".to_string(),
+                cwd: Some("/Users/dev/code".to_string()),
                 exit_code: Some(0),
                 output: None,
             }),
@@ -770,7 +770,7 @@ mod tests {
             3,
             start,
             EventPayload::AssistantMessage {
-                content: "STOP. That was my mistake — I accidentally deleted the katana directory. A missing local turned my safety mechanism into a weapon.".to_string(),
+                content: "STOP. That was my mistake — I accidentally deleted the example-repo directory. A missing local turned my safety mechanism into a weapon.".to_string(),
                 thinking: Some("Panic: I deleted the wrong repo!".to_string()),
             },
         ));
