@@ -21,6 +21,7 @@ use walkdir::WalkDir;
 
 use crate::exit_status::backfill_shell_exit_codes;
 use crate::normalize_mcp_tool_name;
+use crate::usage_ledger::UsageLedger;
 
 /// Adapter for discovering and normalizing OpenCode agent session histories.
 pub struct OpenCodeAdapter;
@@ -32,6 +33,12 @@ impl Default for OpenCodeAdapter {
 }
 
 impl OpenCodeAdapter {
+    /// 2: the legacy file-based path credits token usage once per message id rather than
+    /// once per record, matching what the SQLite path's one-row-per-message shape already
+    /// gives. No session on this machine uses that path, so for most indexes this bump only
+    /// costs one reparse.
+    pub const PARSER_VERSION: i64 = 2;
+
     pub fn new() -> Self {
         Self
     }
@@ -213,6 +220,10 @@ fn query_opencode_sessions(conn: &Connection) -> Vec<(String, i64, i64, Option<S
 impl AgentAdapter for OpenCodeAdapter {
     fn name(&self) -> &'static str {
         "opencode"
+    }
+
+    fn parser_version(&self) -> i64 {
+        Self::PARSER_VERSION
     }
 
     /// `source.path` may be a synthetic identity string (see [`OPENCODE_REPO_MARKER`]) wrapping
@@ -437,6 +448,7 @@ impl AgentAdapter for OpenCodeAdapter {
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
         let mut last_model: Option<String> = None;
+        let mut usage_ledger = UsageLedger::default();
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -485,7 +497,7 @@ impl AgentAdapter for OpenCodeAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_opencode_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
+                        let evts = parse_opencode_record(item, &mut sequence, timestamp, idx + 1, &mut last_model, &mut usage_ledger);
                         trace.events.extend(evts);
                     }
 
@@ -531,7 +543,7 @@ impl AgentAdapter for OpenCodeAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num, &mut last_model, &mut usage_ledger);
                 trace.events.extend(events);
             }
         }
@@ -977,6 +989,7 @@ fn parse_opencode_record(
     ts: DateTime<Utc>,
     line_num: usize,
     last_model: &mut Option<String>,
+    usage_ledger: &mut UsageLedger,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -990,7 +1003,19 @@ fn parse_opencode_record(
         .or_else(|| val.get("tokens"))
         .or_else(|| val.get("token_usage"))
     {
-        let usage = extract_token_usage(usage_val);
+        // The SQLite path this adapter normally reads gets one row per message for free
+        // (`message.id` is the primary key -- 8,538 rows, 8,538 distinct ids on this machine's
+        // 276 MB `opencode.db`, measured 2026-09-10). This legacy file path has no such
+        // guarantee: it is an append-only log, so a streamed message repeating its usage block
+        // would be summed once per record. No install on this machine still uses it, so this
+        // guard is written from the shape rather than from a measurement -- see
+        // `crate::usage_ledger::UsageLedger` for the two harnesses where it WAS measured.
+        let message_id = val
+            .get("id")
+            .or_else(|| val.get("message_id"))
+            .or_else(|| val.get("messageID"))
+            .and_then(|v| v.as_str());
+        let usage = usage_ledger.credit_delta(message_id, extract_token_usage(usage_val));
         if usage.total() > 0 {
             let model = val
                 .get("model")

@@ -106,6 +106,12 @@ fn sample_session_summary() -> SessionSummary {
         started_at: ts("2026-09-01T10:00:00Z"),
         duration_seconds: Some(482.5),
         total_tokens: 24_600,
+        // 12_000 + 3_400 + 1.25 * 1_200 + 0.1 * 8_000
+        cost_weighted_tokens: 17_700,
+        input_tokens: 12_000,
+        output_tokens: 3_400,
+        cache_read_tokens: 8_000,
+        cache_creation_tokens: 1_200,
         total_events: 42,
         tool_calls_count: 9,
         models_used: vec!["claude-sonnet-5".to_string()],

@@ -226,7 +226,22 @@ export interface SessionSummary {
   source_path: string;
   started_at: string;
   duration_seconds?: number;
+  /**
+   * The raw sum of the four counters below, cache reads at face value -- so on a long session
+   * this tracks how big the context grew, not what the session spent. Rank spend by
+   * `cost_weighted_tokens`.
+   */
   total_tokens: number;
+  /**
+   * `total_tokens` with the cache counters weighted by what they cost relative to a base input
+   * token: input + output + 1.25 x cache_creation + 0.1 x cache_read (Anthropic's published
+   * prompt-caching ratios). Not dollars. Absent on servers older than the field.
+   */
+  cost_weighted_tokens?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
   total_events: number;
   tool_calls_count: number;
   models_used: string[];

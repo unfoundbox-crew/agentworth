@@ -174,7 +174,26 @@ pub struct SessionSummary {
     pub source_path: String,
     pub started_at: DateTime<Utc>,
     pub duration_seconds: Option<f64>,
+    /// The raw sum of all four counters below. Kept as-is for compatibility, but note what
+    /// it means: `cache_read_tokens` enters at face value, so on a long session this number
+    /// tracks how large the context grew, not what the session spent. A real subagent
+    /// transcript measured 2026-09-10 was 98.7% cache reads. Rank spend by
+    /// `cost_weighted_tokens`; read `total_tokens` as context volume.
     pub total_tokens: u64,
+    /// `total_tokens` with each counter weighted by what it costs relative to a base input
+    /// token: input + output + 1.25 x cache_creation + 0.1 x cache_read. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total` for the source of the weights and
+    /// for what this deliberately is not (it is not dollars).
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_tokens: u64,
     pub total_events: usize,
     pub tool_calls_count: usize,
     pub models_used: Vec<String>,
@@ -482,7 +501,13 @@ pub struct LadderSessionRow {
     pub repo: String,
     pub rung: u8,
     pub model: String,
+    /// The raw sum, cache reads at face value. See `SessionSummary::total_tokens`.
     pub total_tokens: u64,
+    /// `total_tokens` with the cache counters weighted by what they cost. Rank spend by this
+    /// one; a session can top the raw list purely by re-reading a large cached prompt. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`.
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
     pub cost_usd: f64,
 }
 
@@ -618,7 +643,14 @@ pub struct UsageReportRow {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
+    /// The raw sum of the four counters above -- cache reads at face value. See
+    /// `SessionSummary::total_tokens` for why that is context volume, not spend.
     pub total_tokens: u64,
+    /// `total_tokens` with the cache counters weighted by what they cost:
+    /// input + output + 1.25 x cache_creation + 0.1 x cache_read. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`.
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
     pub estimated_cost_usd: f64,
     pub cache_hit_ratio: f64,
 }
@@ -2403,7 +2435,9 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE sessions.session_id = ?1
@@ -2432,7 +2466,9 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE sessions.session_id LIKE ?1 ESCAPE '\'
@@ -2515,7 +2551,9 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE 1=1
@@ -2928,6 +2966,7 @@ impl Storage {
             models: Vec<String>,
             effort: Option<String>,
             tokens: u64,
+            cost_weighted_tokens: u64,
             steps: u64,
             cost_usd: f64,
         }
@@ -2990,6 +3029,13 @@ impl Storage {
                     models,
                     effort: row.get(6)?,
                     tokens: row.get::<_, i64>(7)? as u64,
+                    cost_weighted_tokens: TokenUsage::new(
+                        input as u64,
+                        output as u64,
+                        cache_read as u64,
+                        cache_creation as u64,
+                    )
+                    .cost_weighted_total(),
                     steps: row.get::<_, i64>(8)? as u64,
                 });
             }
@@ -3200,6 +3246,7 @@ impl Storage {
                 rung: f.rung,
                 model: f.models.first().cloned().unwrap_or_default(),
                 total_tokens: f.tokens,
+                cost_weighted_tokens: f.cost_weighted_tokens,
                 cost_usd: f.cost_usd,
             })
             .collect();
@@ -3652,6 +3699,13 @@ impl Storage {
                     cache_read_tokens: a.cache_read,
                     cache_creation_tokens: a.cache_creation,
                     total_tokens: a.total,
+                    cost_weighted_tokens: TokenUsage::new(
+                        a.input,
+                        a.output,
+                        a.cache_read,
+                        a.cache_creation,
+                    )
+                    .cost_weighted_total(),
                     estimated_cost_usd,
                     cache_hit_ratio,
                 }
@@ -3925,7 +3979,9 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE ({NON_STUB_SQL_PREDICATE})
@@ -5322,6 +5378,12 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
         .ok()
         .and_then(|k| TraceKind::parse(&k))
         .unwrap_or_default();
+    let usage = TokenUsage::new(
+        row.get::<_, i64>(16).unwrap_or(0) as u64,
+        row.get::<_, i64>(17).unwrap_or(0) as u64,
+        row.get::<_, i64>(18).unwrap_or(0) as u64,
+        row.get::<_, i64>(19).unwrap_or(0) as u64,
+    );
 
     let started_at = DateTime::parse_from_rfc3339(&started_str)
         .map(|dt| dt.with_timezone(&Utc))
@@ -5337,6 +5399,11 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
         started_at,
         duration_seconds,
         total_tokens: total_tokens as u64,
+        cost_weighted_tokens: usage.cost_weighted_total(),
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cache_read_tokens: usage.cache_read_tokens,
+        cache_creation_tokens: usage.cache_creation_tokens,
         total_events: total_events as usize,
         tool_calls_count: tool_calls_count as usize,
         models_used,

@@ -3390,6 +3390,8 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
             input: r.input_tokens,
             output: r.output_tokens,
             cache_read: r.cache_read_tokens,
+            cache_creation: r.cache_creation_tokens,
+            cost_weighted: r.cost_weighted_tokens,
             cost_usd: r.estimated_cost_usd,
             measured: r.total_tokens > 0,
         })

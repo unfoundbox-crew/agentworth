@@ -1,3 +1,4 @@
+use crate::usage_ledger::UsageLedger;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -33,7 +34,12 @@ impl ClaudeCodeAdapter {
     /// shape. Before that every session's tool results, shell exit codes, user-message count
     /// and prompt preview were parsed from a shape the files don't use -- so every row indexed
     /// by version 1 is wrong and has to be reparsed once, even though its bytes never changed.
-    pub const PARSER_VERSION: i64 = 2;
+    ///
+    /// 3: token usage is now credited once per `message.id` rather than once per record (see
+    /// `UsageLedger`). Every session indexed by version 2 that contains a multi-block assistant
+    /// message has an inflated token total -- 1.75x on the transcript this was measured on --
+    /// so those rows need a reparse even though their bytes never changed.
+    pub const PARSER_VERSION: i64 = 3;
 
     pub fn new() -> Self {
         Self
@@ -215,6 +221,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
         let mut last_model: Option<String> = None;
+        let mut usage_ledger = UsageLedger::default();
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -271,7 +278,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
 
                         collect_unfinished_calls(item, &mut unfinished_calls);
                         track_workspace_fields(item, &mut last_cwd, &mut last_git_branch);
-                        let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
+                        let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1, &mut last_model, &mut usage_ledger);
                         trace.events.extend(evts);
                     }
 
@@ -321,7 +328,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
 
                 collect_unfinished_calls(&val, &mut unfinished_calls);
                 track_workspace_fields(&val, &mut last_cwd, &mut last_git_branch);
-                let events = parse_claude_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_claude_record(&val, &mut sequence, timestamp, line_num, &mut last_model, &mut usage_ledger);
                 trace.events.extend(events);
             }
 
@@ -553,6 +560,7 @@ fn parse_claude_record(
     ts: DateTime<Utc>,
     line_num: usize,
     last_model: &mut Option<String>,
+    usage_ledger: &mut UsageLedger,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -564,7 +572,11 @@ fn parse_claude_record(
         .get("usage")
         .or_else(|| val.get("message").and_then(|m| m.get("usage")))
     {
-        let usage = extract_token_usage(usage_val);
+        let message_id = val
+            .get("message")
+            .and_then(|m| m.get("id"))
+            .and_then(|v| v.as_str());
+        let usage = usage_ledger.credit_delta(message_id, extract_token_usage(usage_val));
         if usage.total() > 0 {
             let model = val
                 .get("model")

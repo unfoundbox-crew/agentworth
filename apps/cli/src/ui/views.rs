@@ -663,6 +663,11 @@ pub struct UsageRow {
     pub input: u64,
     pub output: u64,
     pub cache_read: u64,
+    pub cache_creation: u64,
+    /// input + output + 1.25 x cache_creation + 0.1 x cache_read -- what these tokens cost
+    /// relative to a base input token, so a row is not ranked by how much cache it re-read.
+    /// See `agentworth_schema::TokenUsage::cost_weighted_total`.
+    pub cost_weighted: u64,
     pub cost_usd: f64,
     /// False when the adapter keeps no token counts at all. A dash says not measured; a
     /// zero would assert something false.
@@ -716,19 +721,37 @@ fn wrap_note(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// The four measured-value cells for one row, or four dashes when the adapter keeps no
-/// token counts at all -- a dash says not measured, a zero would assert something false.
-fn usage_measured_cells(ui: &Ui, r: &UsageRow) -> (String, String, String, String) {
+/// The measured-value cells for one row, or dashes when the adapter keeps no token counts at
+/// all -- a dash says not measured, a zero would assert something false.
+struct UsageCells {
+    input: String,
+    output: String,
+    cache_read: String,
+    cache_write: String,
+    weighted: String,
+    cost: String,
+}
+
+fn usage_measured_cells(ui: &Ui, r: &UsageRow) -> UsageCells {
     if r.measured {
-        (
-            compact(r.input),
-            compact(r.output),
-            compact(r.cache_read),
-            format!("${:.2}", r.cost_usd),
-        )
+        UsageCells {
+            input: compact(r.input),
+            output: compact(r.output),
+            cache_read: compact(r.cache_read),
+            cache_write: compact(r.cache_creation),
+            weighted: compact(r.cost_weighted),
+            cost: format!("${:.2}", r.cost_usd),
+        }
     } else {
         let d = ui.dash().to_string();
-        (d.clone(), d.clone(), d.clone(), d)
+        UsageCells {
+            input: d.clone(),
+            output: d.clone(),
+            cache_read: d.clone(),
+            cache_write: d.clone(),
+            weighted: d.clone(),
+            cost: d,
+        }
     }
 }
 
@@ -783,29 +806,33 @@ pub fn usage(ui: &Ui, v: &UsageView) -> String {
     // Exactly `crate::cost_basis::CostBasis::label_short()`'s width, so the column head and
     // every value beneath it line up without truncation.
     const C: usize = 13;
-    let fixed = if v.show_period { P + S + N * 3 + C + 12 } else { S + N * 3 + C + 10 };
+    let fixed = if v.show_period { P + S + N * 5 + C + 16 } else { S + N * 5 + C + 14 };
     let who = i.saturating_sub(fixed).max(6);
     let cost_head = crate::cost_basis::CostBasis::label_short();
 
     let header_cells = if v.show_period {
         format!(
-            "{}  {}  {}  {}  {}  {}  {}",
+            "{}  {}  {}  {}  {}  {}  {}  {}  {}",
             lpad("PERIOD", P),
             lpad(v.who_head, who),
             rpad("SESSIONS", S),
             rpad("INPUT", N),
             rpad("OUTPUT", N),
             rpad("CACHE RD", N),
+            rpad("CACHE WR", N),
+            rpad("WEIGHTED", N),
             rpad(cost_head, C),
         )
     } else {
         format!(
-            "{}  {}  {}  {}  {}  {}",
+            "{}  {}  {}  {}  {}  {}  {}  {}",
             lpad(v.who_head, who),
             rpad("SESSIONS", S),
             rpad("INPUT", N),
             rpad("OUTPUT", N),
             rpad("CACHE RD", N),
+            rpad("CACHE WR", N),
+            rpad("WEIGHTED", N),
             rpad(cost_head, C),
         )
     };
@@ -826,38 +853,42 @@ pub fn usage(ui: &Ui, v: &UsageView) -> String {
             last_period = Some(r.period.as_str());
             total_cost += r.cost_usd;
             any_dash |= !r.measured;
-            let (input, output, cache, cost) = usage_measured_cells(ui, r);
+            let c = usage_measured_cells(ui, r);
 
             push(
                 &mut out,
                 ui,
                 format!(
-                    "  {}  {}  {}  {}  {}  {}  {}",
+                    "  {}  {}  {}  {}  {}  {}  {}  {}  {}",
                     ui.paint(Role::Label, &lpad(shown_period, P)),
                     ui.paint(Role::Value, &lpad(&truncate(&r.who, who), who)),
                     ui.paint(Role::Value, &rpad(&thousands(r.sessions as u64), S)),
-                    ui.paint(Role::Value, &rpad(&input, N)),
-                    ui.paint(Role::Value, &rpad(&output, N)),
-                    ui.paint(Role::Value, &rpad(&cache, N)),
-                    ui.paint(Role::Value, &rpad(&cost, C)),
+                    ui.paint(Role::Value, &rpad(&c.input, N)),
+                    ui.paint(Role::Value, &rpad(&c.output, N)),
+                    ui.paint(Role::Value, &rpad(&c.cache_read, N)),
+                    ui.paint(Role::Value, &rpad(&c.cache_write, N)),
+                    ui.paint(Role::Emphasis, &rpad(&c.weighted, N)),
+                    ui.paint(Role::Value, &rpad(&c.cost, C)),
                 ),
             );
         } else {
             total_cost += r.cost_usd;
             any_dash |= !r.measured;
-            let (input, output, cache, cost) = usage_measured_cells(ui, r);
+            let c = usage_measured_cells(ui, r);
 
             push(
                 &mut out,
                 ui,
                 format!(
-                    "  {}  {}  {}  {}  {}  {}",
+                    "  {}  {}  {}  {}  {}  {}  {}  {}",
                     ui.paint(Role::Value, &lpad(&truncate(&r.who, who), who)),
                     ui.paint(Role::Value, &rpad(&thousands(r.sessions as u64), S)),
-                    ui.paint(Role::Value, &rpad(&input, N)),
-                    ui.paint(Role::Value, &rpad(&output, N)),
-                    ui.paint(Role::Value, &rpad(&cache, N)),
-                    ui.paint(Role::Value, &rpad(&cost, C)),
+                    ui.paint(Role::Value, &rpad(&c.input, N)),
+                    ui.paint(Role::Value, &rpad(&c.output, N)),
+                    ui.paint(Role::Value, &rpad(&c.cache_read, N)),
+                    ui.paint(Role::Value, &rpad(&c.cache_write, N)),
+                    ui.paint(Role::Emphasis, &rpad(&c.weighted, N)),
+                    ui.paint(Role::Value, &rpad(&c.cost, C)),
                 ),
             );
         }
@@ -4170,7 +4201,14 @@ pub struct LadderSessionRowView<'a> {
     pub repo: &'a str,
     pub rung: usize,
     pub model: &'a str,
+    /// The raw token sum -- cache reads at face value, so this is how much context the
+    /// session moved through.
     pub tokens: u64,
+    /// The same tokens weighted by what they cost (see
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`). Shown beside `tokens` because
+    /// the gap between the two columns IS the finding: a session can top the raw list purely
+    /// by re-reading a big cached prompt.
+    pub weighted_tokens: u64,
     pub cost_usd: f64,
 }
 
@@ -4442,8 +4480,10 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
         const WHEN: usize = 12;
         const EV: usize = 9;
         const RTOK: usize = 8;
+        // WEIGHTED needs the header itself to fit, and it sits next to TOKENS.
+        const RWTOK: usize = 9;
         const RCOST: usize = 9;
-        let rest = i.saturating_sub(WHEN + EV + RTOK + RCOST);
+        let rest = i.saturating_sub(WHEN + EV + RTOK + RWTOK + RCOST);
         let repo = (rest * 3 / 5).max(6);
         let model = rest.saturating_sub(repo);
         push(
@@ -4454,12 +4494,13 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
                 ui.paint(
                     Role::Label,
                     &format!(
-                        "{}{}{}{}{}{}",
+                        "{}{}{}{}{}{}{}",
                         lpad("WHEN", WHEN),
                         lpad("REPO", repo),
                         lpad("MODEL", model),
                         rpad("EVIDENCE", EV),
                         rpad("TOKENS", RTOK),
+                        rpad("WEIGHTED", RWTOK),
                         rpad("COST", RCOST),
                     )
                 )
@@ -4471,7 +4512,7 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
                 &mut out,
                 ui,
                 format!(
-                    "  {}{}{}{}{}{}",
+                    "  {}{}{}{}{}{}{}",
                     ui.paint(Role::Label, &lpad(&truncate(r.when, WHEN), WHEN)),
                     ui.paint(Role::Value, &lpad(&truncate(r.repo, repo.saturating_sub(1)), repo)),
                     ui.paint(
@@ -4480,6 +4521,7 @@ pub fn ladder(ui: &Ui, v: &LadderView<'_>) -> String {
                     ),
                     ui.paint(rung_role(r.rung), &rpad(&ui.meter(r.rung), EV)),
                     ui.paint(Role::Value, &rpad(&compact(r.tokens), RTOK)),
+                    ui.paint(Role::Value, &rpad(&compact(r.weighted_tokens), RWTOK)),
                     ui.paint(Role::Value, &rpad(&money(r.cost_usd), RCOST)),
                 ),
             );

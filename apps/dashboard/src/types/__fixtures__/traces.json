@@ -1,14 +1,19 @@
 [
   {
     "adapter": "claude_code",
+    "cache_creation_tokens": 1200,
+    "cache_read_tokens": 8000,
     "compaction_count": 0,
     "compaction_tokens_dropped": 0,
     "composite_score": 0.81,
+    "cost_weighted_tokens": 17700,
     "duration_seconds": 482.5,
+    "input_tokens": 12000,
     "kind": "conversation",
     "models_used": [
       "claude-sonnet-5"
     ],
+    "output_tokens": 3400,
     "primary_outcome": "commit_observed",
     "prompt_preview": "Fix the dashboard coverage matrix.",
     "session_id": "sess_fixture_0001",
