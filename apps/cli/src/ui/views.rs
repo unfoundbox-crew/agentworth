@@ -755,6 +755,20 @@ fn usage_measured_cells(ui: &Ui, r: &UsageRow) -> UsageCells {
     }
 }
 
+/// The CACHE WR and WEIGHTED cells with their trailing separators, or nothing when the
+/// terminal is too narrow to hold them. Returning the separators too keeps the caller's format
+/// string free of a conditional gap.
+fn wide_cells(ui: &Ui, c: &UsageCells, wide: bool, n: usize) -> String {
+    if !wide {
+        return String::new();
+    }
+    format!(
+        "{}  {}  ",
+        ui.paint(Role::Value, &rpad(&c.cache_write, n)),
+        ui.paint(Role::Emphasis, &rpad(&c.weighted, n)),
+    )
+}
+
 pub fn usage(ui: &Ui, v: &UsageView) -> String {
     let mut out = String::new();
     let i = ui.inner();
@@ -806,33 +820,46 @@ pub fn usage(ui: &Ui, v: &UsageView) -> String {
     // Exactly `crate::cost_basis::CostBasis::label_short()`'s width, so the column head and
     // every value beneath it line up without truncation.
     const C: usize = 13;
-    let fixed = if v.show_period { P + S + N * 5 + C + 16 } else { S + N * 5 + C + 14 };
-    let who = i.saturating_sub(fixed).max(6);
+    // CACHE WR and WEIGHTED are the two columns this table gained; at 80 columns there is no
+    // room for them beside PERIOD/ADAPTER/SESSIONS/INPUT/OUTPUT/CACHE RD/COST, and forcing
+    // them in truncates the row mid-cell -- at a different offset with colour than without,
+    // which is exactly what `output_snapshots` audits. So they appear only when the terminal
+    // can hold them, and the narrow table is byte-for-byte what it always was.
+    const MIN_WHO: usize = 6;
+    let fixed_wide = if v.show_period { P + S + N * 5 + C + 16 } else { S + N * 5 + C + 14 };
+    let fixed_narrow = if v.show_period { P + S + N * 3 + C + 12 } else { S + N * 3 + C + 10 };
+    let wide = i >= fixed_wide + MIN_WHO;
+    let fixed = if wide { fixed_wide } else { fixed_narrow };
+    let who = i.saturating_sub(fixed).max(MIN_WHO);
     let cost_head = crate::cost_basis::CostBasis::label_short();
 
+    // The two width-gated heads, already padded, or nothing at all on a narrow terminal.
+    let wide_heads = if wide {
+        format!("{}  {}  ", rpad("CACHE WR", N), rpad("WEIGHTED", N))
+    } else {
+        String::new()
+    };
     let header_cells = if v.show_period {
         format!(
-            "{}  {}  {}  {}  {}  {}  {}  {}  {}",
+            "{}  {}  {}  {}  {}  {}  {}{}",
             lpad("PERIOD", P),
             lpad(v.who_head, who),
             rpad("SESSIONS", S),
             rpad("INPUT", N),
             rpad("OUTPUT", N),
             rpad("CACHE RD", N),
-            rpad("CACHE WR", N),
-            rpad("WEIGHTED", N),
+            wide_heads,
             rpad(cost_head, C),
         )
     } else {
         format!(
-            "{}  {}  {}  {}  {}  {}  {}  {}",
+            "{}  {}  {}  {}  {}  {}{}",
             lpad(v.who_head, who),
             rpad("SESSIONS", S),
             rpad("INPUT", N),
             rpad("OUTPUT", N),
             rpad("CACHE RD", N),
-            rpad("CACHE WR", N),
-            rpad("WEIGHTED", N),
+            wide_heads,
             rpad(cost_head, C),
         )
     };
@@ -859,15 +886,14 @@ pub fn usage(ui: &Ui, v: &UsageView) -> String {
                 &mut out,
                 ui,
                 format!(
-                    "  {}  {}  {}  {}  {}  {}  {}  {}  {}",
+                    "  {}  {}  {}  {}  {}  {}  {}{}",
                     ui.paint(Role::Label, &lpad(shown_period, P)),
                     ui.paint(Role::Value, &lpad(&truncate(&r.who, who), who)),
                     ui.paint(Role::Value, &rpad(&thousands(r.sessions as u64), S)),
                     ui.paint(Role::Value, &rpad(&c.input, N)),
                     ui.paint(Role::Value, &rpad(&c.output, N)),
                     ui.paint(Role::Value, &rpad(&c.cache_read, N)),
-                    ui.paint(Role::Value, &rpad(&c.cache_write, N)),
-                    ui.paint(Role::Emphasis, &rpad(&c.weighted, N)),
+                    wide_cells(ui, &c, wide, N),
                     ui.paint(Role::Value, &rpad(&c.cost, C)),
                 ),
             );
@@ -880,14 +906,13 @@ pub fn usage(ui: &Ui, v: &UsageView) -> String {
                 &mut out,
                 ui,
                 format!(
-                    "  {}  {}  {}  {}  {}  {}  {}  {}",
+                    "  {}  {}  {}  {}  {}  {}{}",
                     ui.paint(Role::Value, &lpad(&truncate(&r.who, who), who)),
                     ui.paint(Role::Value, &rpad(&thousands(r.sessions as u64), S)),
                     ui.paint(Role::Value, &rpad(&c.input, N)),
                     ui.paint(Role::Value, &rpad(&c.output, N)),
                     ui.paint(Role::Value, &rpad(&c.cache_read, N)),
-                    ui.paint(Role::Value, &rpad(&c.cache_write, N)),
-                    ui.paint(Role::Emphasis, &rpad(&c.weighted, N)),
+                    wide_cells(ui, &c, wide, N),
                     ui.paint(Role::Value, &rpad(&c.cost, C)),
                 ),
             );
@@ -3509,7 +3534,12 @@ pub struct SessionShowView<'a> {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    /// The raw sum, cache reads at face value.
     pub total_tokens: u64,
+    /// The same tokens weighted by what they cost. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`.
+    pub cost_weighted_tokens: u64,
     pub models_used: Vec<String>,
     pub tools_used: Vec<(String, usize)>,
     pub source_path: &'a str,
@@ -3543,13 +3573,26 @@ pub fn session_show(ui: &Ui, v: &SessionShowView<'_>) -> String {
         &mut out,
         ui,
         ui.leaders(
-            "    in / out / cache",
+            "    in / out / cache rd / cache wr",
             &format!(
-                "{} / {} / {}",
+                "{} / {} / {} / {}",
                 compact(v.input_tokens),
                 compact(v.output_tokens),
-                compact(v.cache_read_tokens)
+                compact(v.cache_read_tokens),
+                compact(v.cache_creation_tokens)
             ),
+            w,
+            Role::Label,
+        ),
+    );
+    // The raw total counts a cache read like a fresh input token, so a long session's headline
+    // is mostly re-reads of a prompt already paid for. This line is what it cost.
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "    cost-weighted",
+            &compact(v.cost_weighted_tokens),
             w,
             Role::Label,
         ),
