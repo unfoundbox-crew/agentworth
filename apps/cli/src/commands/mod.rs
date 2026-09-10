@@ -92,8 +92,10 @@ pub fn is_high_risk_rm_path(cmd: &str) -> bool {
     false
 }
 
-/// Checks if a destructive command uses a bare/unscoped loop variable (the Katana disaster signature).
-pub fn is_leaked_katana_var(cmd: &str) -> bool {
+/// Checks if a destructive command uses a bare/unscoped loop variable (the leaked-shell-variable
+/// disaster signature). Function name kept as `is_leaked_loop_var` because `blunder.rs` (out of
+/// scope for this rename pass) imports it by that exact name.
+pub fn is_leaked_loop_var(cmd: &str) -> bool {
     let lower = cmd.to_lowercase();
     if !lower.contains("rm -rf") && !lower.contains("rm -fr") && !lower.contains("rm -r -f") {
         return false;

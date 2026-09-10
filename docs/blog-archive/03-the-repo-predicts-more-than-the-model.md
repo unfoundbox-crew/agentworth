@@ -47,7 +47,7 @@ Top to bottom: 32 points.
 | apps/vibelaunch | 239 | 178 | 74.5% |
 | code/motionvector | 251 | 164 | 65.3% |
 | upscaler/backend | 211 | 98 | 46.4% |
-| katana/video | 30 | 12 | 40.0% |
+| example-repo/video | 30 | 12 | 40.0% |
 | tinkers/blog | 20 | 5 | 25.0% |
 
 Top to bottom: 75 points, at the same floor.

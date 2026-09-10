@@ -1646,13 +1646,13 @@ mod tests {
         .unwrap();
 
         conn.execute(
-            "INSERT INTO project (id, worktree) VALUES ('proj-1', '/Users/saurabh/code/unfoundbox/agentworth')",
+            "INSERT INTO project (id, worktree) VALUES ('proj-1', '/Users/dev/code/unfoundbox/agentworth')",
             [],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO session (id, project_id, directory, time_created, time_updated) \
-             VALUES ('sess-1', 'proj-1', '/Users/saurabh/code/unfoundbox/agentworth', 1716000000, 1716000020)",
+             VALUES ('sess-1', 'proj-1', '/Users/dev/code/unfoundbox/agentworth', 1716000000, 1716000020)",
             [],
         )
         .unwrap();

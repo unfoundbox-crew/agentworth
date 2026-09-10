@@ -1,6 +1,6 @@
 //! CI coverage for `agentworth doctor --self-test` (apps/cli/src/commands/self_test.rs).
 //!
-//! This runs the real self-test routine -- the same one Saurabh runs by hand after every
+//! This runs the real self-test routine -- the same one the maintainer runs by hand after every
 //! release -- against a small synthetic multilingual index built here, so a regression in
 //! its own JSON contract, session resolution, or MCP round trip fails CI on any Rust
 //! change, not only when someone happens to run `doctor --self-test` on a real machine.

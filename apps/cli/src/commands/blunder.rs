@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::commands::{is_high_risk_rm_path, is_leaked_katana_var, APOLOGY_PATTERNS};
+use crate::commands::{is_high_risk_rm_path, is_leaked_loop_var, APOLOGY_PATTERNS};
 use agentworth_core::Scanner;
 use agentworth_redaction::Redactor;
 use agentworth_schema::{AgentWorthTrace, EventPayload};
@@ -71,6 +71,7 @@ pub struct SubmissionResponse {
 pub fn run_blunder_command(
     top: usize,
     submit: bool,
+    dry_run: bool,
     json_output: bool,
     db_path: Option<PathBuf>,
     ui: &crate::ui::Ui,
@@ -119,6 +120,30 @@ pub fn run_blunder_command(
     }
 
     print!("{}", render_blunder_exhibits(ui, &exhibits));
+
+    // `--dry-run` answers the only question that matters before publishing: what actually
+    // leaves this machine? The exhibit rendered above is the LOCAL view, with full absolute
+    // paths; what a POST carries is `redacted_payload`. Printing that, and posting nothing, is
+    // how an operator checks the difference without a packet capture.
+    if dry_run {
+        println!(
+            "\n{}",
+            ui.paint(
+                crate::ui::Role::Label,
+                "--dry-run: the exact payload a submission would POST. Nothing was sent."
+            )
+        );
+        println!("{}", serde_json::to_string_pretty(&redacted_payload(&exhibits[0]))?);
+        println!(
+            "{}",
+            ui.paint(
+                crate::ui::Role::Label,
+                "Redaction raises the floor; it cannot prove a payload is clean. A project name \
+                 inside a relative path survives. Read the bytes above before you pass --submit."
+            )
+        );
+        return Ok(());
+    }
 
     // Interactive or flag-driven submission
     if submit {
@@ -232,12 +257,12 @@ pub fn evaluate_trace_for_blunder(
                     }
                 }
 
-                // 1. Critical: Leaked shell variable in destructive rm -rf (Katana Incident)
-                if is_leaked_katana_var(&lower) {
+                // 1. Critical: Leaked shell variable in destructive rm -rf (leaked shell variable)
+                if is_leaked_loop_var(&lower) {
                     critical_rule_id = Some("LEAKED_SHELL_VARIABLE");
                     fatal_command = Some(cmd_str.clone());
                     title_override =
-                        Some("The Missing `local` Weapon (The Katana Incident)".to_string());
+                        Some("The Missing `local` Weapon".to_string());
                 } else if lower.contains("rmdir /s /q c:\\") || lower.contains("rmdir /s /q c:") {
                     // Windows System Wipe
                     critical_rule_id = Some("WINDOWS_DRIVE_WIPE");
@@ -355,7 +380,7 @@ pub fn evaluate_trace_for_blunder(
     };
 
     let title = title_override.unwrap_or_else(|| match rule_id.as_str() {
-        "LEAKED_SHELL_VARIABLE" => "The Missing `local` Weapon (The Katana Incident)".to_string(),
+        "LEAKED_SHELL_VARIABLE" => "The Missing `local` Weapon".to_string(),
         "WINDOWS_DRIVE_WIPE" => "The 2TB Windows C:\\ Wipe".to_string(),
         "FORBIDDEN_RM_RF" => "Unconstrained Recursive Directory Deletion".to_string(),
         "UNCONSTRAINED_SWEEP" => "Unconstrained Destructive System Sweep".to_string(),
@@ -426,27 +451,42 @@ pub fn evaluate_trace_for_blunder(
     })
 }
 
-/// Redact and submit an exhibit to the Hall of Blunders API.
-pub fn submit_exhibit_sync(exhibit: &BlunderExhibit) -> Result<SubmissionResponse> {
-    let redactor = Redactor::new();
-
-    // Redact all text fields
-    let clean_title = redactor.redact_text(&exhibit.title);
-    let clean_quote = redactor.redact_text(&exhibit.apology_quote);
-    let clean_snippet = redactor.redact_text(&exhibit.code_snippet);
-    let clean_model = redactor.redact_text(&exhibit.model);
-
-    let payload = BlunderSubmissionPayload {
-        title: clean_title,
-        model: clean_model,
+/// Exactly what a submission would POST, redacted.
+///
+/// One function, called by both the preview and the POST, so what an operator approves and what
+/// leaves the machine cannot drift apart. Before this existed, `archie blunder` printed the
+/// LOCAL render (full absolute paths) and then asked "publish? [y/N]" about a different,
+/// redacted string the operator never saw.
+///
+/// Redaction here uses [`Redactor::for_publication`], which raises the floor but does not make a
+/// payload provably clean -- a project name inside a RELATIVE path survives, because no rule
+/// removes that and leaves ordinary prose intact. That is precisely why the operator gets to
+/// read this before it goes anywhere.
+pub fn redacted_payload(exhibit: &BlunderExhibit) -> BlunderSubmissionPayload {
+    let redactor = Redactor::for_publication();
+    BlunderSubmissionPayload {
+        title: redactor.redact_text(&exhibit.title),
+        model: redactor.redact_text(&exhibit.model),
         spend_usd: exhibit.spend_usd,
         tokens: exhibit.tokens,
         turns: exhibit.turns,
-        apology_quote: clean_quote,
-        code_snippet: clean_snippet,
+        apology_quote: redactor.redact_text(&exhibit.apology_quote),
+        code_snippet: redactor.redact_text(&exhibit.code_snippet),
         rule_id: exhibit.rule_id.clone(),
         session_hash: exhibit.session_hash.clone(),
-    };
+    }
+}
+
+/// Redact and submit an exhibit to the Hall of Blunders API.
+pub fn submit_exhibit_sync(exhibit: &BlunderExhibit) -> Result<SubmissionResponse> {
+    // `for_publication`, not `new`. This is the one path in the product where text leaves the
+    // machine, and it redacts loose strings rather than a whole trace -- so unlike
+    // `redact_trace`, it never picks up the per-trace `repository_identity_rule` that
+    // `Redactor::redact_trace` derives from a source path. Measured 2026-09-10 by pointing
+    // STFUOPUS_API_URL at a local listener: the payload that would have been posted publicly
+    // still carried `~/code/<org>/<repo>` for three different repositories after full default
+    // redaction. See `agentworth_redaction::rules::publication_rules`.
+    let payload = redacted_payload(exhibit);
 
     let endpoint = std::env::var("STFUOPUS_API_URL")
         .unwrap_or_else(|_| "https://stfuopus.lol/api/blunders/submit".to_string());
@@ -676,12 +716,12 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_katana_blunder() {
+    fn test_evaluate_loop_var_blunder() {
         let mut trace = AgentWorthTrace::new(
-            "sess-katana-1",
+            "sess-loopvar-1",
             "claude_code",
             Provenance::new(
-                "/Users/saurabh/code/katana/.claude.json",
+                "/Users/dev/code/example-repo/.claude.json",
                 "claude_code",
                 1024,
                 1720000000,
@@ -710,7 +750,7 @@ mod tests {
             timestamp: Utc::now(),
             payload: EventPayload::ShellCommand(ShellCommand {
                 command: "for d in \"${PROTECTED_PATHS[@]}\"; do rm -rf \"$d\"; done".to_string(),
-                cwd: Some("/Users/saurabh/code/katana".to_string()),
+                cwd: Some("/Users/dev/code/example-repo".to_string()),
                 exit_code: Some(0),
                 output: None,
             }),
@@ -728,7 +768,7 @@ mod tests {
             raw_ref: None,
         });
 
-        let exhibit = evaluate_trace_for_blunder(&trace, "katana").expect("Must detect blunder");
+        let exhibit = evaluate_trace_for_blunder(&trace, "example-repo").expect("Must detect blunder");
         assert_eq!(exhibit.rule_id, "LEAKED_SHELL_VARIABLE");
         assert_eq!(exhibit.severity, "CRITICAL");
         assert!(exhibit.blunder_score >= 100_000.0);
@@ -820,16 +860,16 @@ mod tests {
     #[test]
     fn test_redaction_before_submission() {
         let redactor = Redactor::new();
-        let sensitive_quote = "I apologize, I accidentally leaked sk-ant-api03-123456789012345678901234567890 in /Users/saurabh/secret.txt";
+        let sensitive_quote = "I apologize, I accidentally leaked sk-ant-api03-123456789012345678901234567890 in /Users/dev/secret.txt";
         let redacted = redactor.redact_text(sensitive_quote);
         assert!(!redacted.contains("sk-ant-api03-"));
-        assert!(!redacted.contains("/Users/saurabh/"));
+        assert!(!redacted.contains("/Users/dev/"));
     }
 
     #[test]
     fn test_high_risk_rm_path_precision() {
         // Safe user-space nested paths should NOT be flagged as high-risk root/home deletion
-        assert!(!is_high_risk_rm_path("rm -rf /Users/saurabh/code/agentworth/target"));
+        assert!(!is_high_risk_rm_path("rm -rf /Users/dev/code/example-repo/target"));
         assert!(!is_high_risk_rm_path("rm -rf ~/code/my-app/node_modules"));
         assert!(!is_high_risk_rm_path("rm -rf ./projects/foo/dist"));
 
@@ -845,18 +885,18 @@ mod tests {
     }
 
     #[test]
-    fn test_leaked_katana_var_precision() {
+    fn test_leaked_loop_var_precision() {
         // Normal words starting with $d should NOT be flagged
-        assert!(!is_leaked_katana_var("rm -rf $dist"));
-        assert!(!is_leaked_katana_var("rm -rf $data"));
-        assert!(!is_leaked_katana_var("rm -rf $destination/tmp"));
+        assert!(!is_leaked_loop_var("rm -rf $dist"));
+        assert!(!is_leaked_loop_var("rm -rf $data"));
+        assert!(!is_leaked_loop_var("rm -rf $destination/tmp"));
 
-        // Unscoped Katana loop variable $d or ${d} MUST be flagged
-        assert!(is_leaked_katana_var("rm -rf $d"));
-        assert!(is_leaked_katana_var("rm -rf \"$d\""));
-        assert!(is_leaked_katana_var("rm -rf ${d}"));
-        assert!(is_leaked_katana_var("rm -rf \"${d}\""));
-        assert!(is_leaked_katana_var("rm -rf $d/protected"));
+        // Unscoped unscoped loop variable $d or ${d} MUST be flagged
+        assert!(is_leaked_loop_var("rm -rf $d"));
+        assert!(is_leaked_loop_var("rm -rf \"$d\""));
+        assert!(is_leaked_loop_var("rm -rf ${d}"));
+        assert!(is_leaked_loop_var("rm -rf \"${d}\""));
+        assert!(is_leaked_loop_var("rm -rf $d/protected"));
     }
 
     #[test]
@@ -922,7 +962,7 @@ mod tests {
     /// fast (a `Path::exists()` check) and they contribute no exhibits -- only their
     /// *rows* matter, to exercise the cap/order-by at realistic scale. The old session
     /// gets a real, on-disk, adapter-parseable fixture carrying the same leaked-shell-
-    /// variable pattern `test_evaluate_katana_blunder` above already proves triggers a
+    /// variable pattern `test_evaluate_loop_var_blunder` above already proves triggers a
     /// CRITICAL/LEAKED_SHELL_VARIABLE exhibit.
     ///
     /// Under the old `Some(5000)` cap, this session is never in `all_sessions` at all,

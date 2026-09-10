@@ -191,6 +191,31 @@
   white-space: nowrap;
 }
 
+/* Marks a row whose weighted (spend-shaped) figure sits well under its raw total_tokens --
+   most of the number is cheap cache reads, not new work. Hover for the actual split. */
+.shell-root .shell-row-tokens--cache {
+  color: var(--mv-warn);
+}
+
+.shell-root .shell-row-preview-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The weighted (spend-shaped) figure, shown next to the prompt preview only when it diverges
+   meaningfully from the raw context-volume number in the tokens column — the gap is the
+   finding, so it earns a second visible number rather than only a tooltip. */
+.shell-root .shell-row-weighted {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mv-warn);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .shell-root .shell-row-score {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -205,6 +230,7 @@
 .shell-root .shell-row-preview {
   font-size: 10.5px;
   color: var(--mv-muted);
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

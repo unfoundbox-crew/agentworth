@@ -353,6 +353,11 @@ export interface UsagePeriodSummary {
   cache_read_tokens: number;
   cache_creation_tokens: number;
   total_tokens: number;
+  /**
+   * Server-computed weighted total. Optional because a server older than the field will not
+   * send it — treat absent as unknown, never as zero spend.
+   */
+  cost_weighted_tokens?: number;
   total_duration_seconds: number;
   estimated_cost_usd: number;
   cache_hit_ratio: number;

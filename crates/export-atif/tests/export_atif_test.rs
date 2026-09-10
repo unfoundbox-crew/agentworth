@@ -10,7 +10,7 @@ use serde_json::json;
 fn sample_trace() -> AgentWorthTrace {
     let start = Utc::now();
     let prov = Provenance::new(
-        "/Users/saurabh/projects/app/trace.jsonl",
+        "/Users/dev/projects/app/trace.jsonl",
         "claude_code",
         1024,
         123456,
@@ -20,14 +20,14 @@ fn sample_trace() -> AgentWorthTrace {
 
     trace.metadata = json!({
         "git_branch": "main",
-        "user_email": "saurabh@example.com"
+        "user_email": "dev@example.com"
     });
 
     trace.events.push(NormalizedEvent::new(
         1,
         start,
         EventPayload::UserMessage {
-            content: "Fix bug in /Users/saurabh/projects/app/server.ts with token sk-abcdef1234567890abcdef1234567890".to_string(),
+            content: "Fix bug in /Users/dev/projects/app/server.ts with token sk-abcdef1234567890abcdef1234567890".to_string(),
         },
     ));
 
@@ -78,7 +78,7 @@ fn sample_trace() -> AgentWorthTrace {
         start + Duration::seconds(5),
         EventPayload::ShellCommand(ShellCommand {
             command: "npm test".to_string(),
-            cwd: Some("/Users/saurabh/projects/app".to_string()),
+            cwd: Some("/Users/dev/projects/app".to_string()),
             exit_code: Some(0),
             output: Some("PASS 5 tests".to_string()),
         }),
@@ -88,7 +88,7 @@ fn sample_trace() -> AgentWorthTrace {
         7,
         start + Duration::seconds(6),
         EventPayload::FileAction {
-            path: "/Users/saurabh/projects/app/server.ts".to_string(),
+            path: "/Users/dev/projects/app/server.ts".to_string(),
             action: FileActionType::Edit,
             diff: Some("--- a/server.ts\n+++ b/server.ts\n@@ -1 +1 @@\n-old\n+new".to_string()),
             lines_changed: Some(2),
@@ -131,7 +131,7 @@ fn test_export_to_atif_valid_json_and_fields() {
     assert_eq!(val["environment"]["adapter"], "claude_code");
     assert_eq!(
         val["environment"]["source_path"],
-        "/Users/saurabh/projects/app/trace.jsonl"
+        "/Users/dev/projects/app/trace.jsonl"
     );
 
     // Steps
@@ -195,8 +195,8 @@ fn test_export_redacted_atif() {
 
     let json_str = export_redacted_atif(&trace, &redactor, false).expect("export redacted atif");
     assert!(!json_str.contains("sk-abcdef1234567890abcdef1234567890"));
-    assert!(!json_str.contains("/Users/saurabh"));
-    assert!(!json_str.contains("saurabh@example.com"));
+    assert!(!json_str.contains("/Users/dev"));
+    assert!(!json_str.contains("dev@example.com"));
 
     let val: serde_json::Value = serde_json::from_str(&json_str).expect("valid JSON");
     // "projects/app" is this trace's own repository/workspace identity (derived from

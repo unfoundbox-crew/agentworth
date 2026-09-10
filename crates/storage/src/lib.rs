@@ -546,6 +546,12 @@ pub struct UsagePeriodSummary {
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
     pub total_tokens: u64,
+    /// `total_tokens` weighted by what each counter costs relative to a base input token. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`. Present on every token-bearing
+    /// rollup so no client has to re-derive the multipliers -- a second copy of the formula in
+    /// TypeScript is exactly how the Rust/TS drift in this codebase starts.
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
     pub total_duration_seconds: f64,
     pub estimated_cost_usd: f64,
     pub cache_hit_ratio: f64,
@@ -563,6 +569,12 @@ pub struct ModelUsagePeriodSummary {
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
     pub total_tokens: u64,
+    /// `total_tokens` weighted by what each counter costs relative to a base input token. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`. Present on every token-bearing
+    /// rollup so no client has to re-derive the multipliers -- a second copy of the formula in
+    /// TypeScript is exactly how the Rust/TS drift in this codebase starts.
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
     pub estimated_cost_usd: f64,
     pub cache_hit_ratio: f64,
 }
@@ -3421,6 +3433,13 @@ impl Storage {
                 cache_read_tokens: cache_read as u64,
                 cache_creation_tokens: cache_creation as u64,
                 total_tokens: total as u64,
+                cost_weighted_tokens: TokenUsage::new(
+                    input as u64,
+                    output as u64,
+                    cache_read as u64,
+                    cache_creation as u64,
+                )
+                .cost_weighted_total(),
                 total_duration_seconds: duration,
                 estimated_cost_usd,
                 cache_hit_ratio,
@@ -3496,6 +3515,13 @@ impl Storage {
                 cache_read_tokens: cache_read as u64,
                 cache_creation_tokens: cache_creation as u64,
                 total_tokens: total as u64,
+                cost_weighted_tokens: TokenUsage::new(
+                    input as u64,
+                    output as u64,
+                    cache_read as u64,
+                    cache_creation as u64,
+                )
+                .cost_weighted_total(),
                 estimated_cost_usd,
                 cache_hit_ratio,
             });
@@ -5741,10 +5767,10 @@ mod tests {
         let storage = Storage::open_in_memory().expect("open storage");
 
         let paths = [
-            "/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/uuid1.jsonl",
-            "/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/uuid2.jsonl",
-            "/Users/saurabh/.claude/projects/-Users-saurabh-code-motionvector-fleet/uuid3.jsonl",
-            "/Users/saurabh/code/standalone-repo/.claude/session.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/uuid1.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/uuid2.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-example-fleet/uuid3.jsonl",
+            "/Users/dev/code/standalone-repo/.claude/session.jsonl",
         ];
 
         for (i, p) in paths.iter().enumerate() {
@@ -5767,7 +5793,7 @@ mod tests {
         // Primary sessions in one repo: 100, 200, 300, ..., 1000 tokens.
         for i in 1..=10u64 {
             let path = format!(
-                "/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/sess{i}.jsonl"
+                "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/sess{i}.jsonl"
             );
             let prov = Provenance::new(path, "claude_code", 100, 100, format!("fp{i}"));
             let mut trace =
@@ -5779,7 +5805,7 @@ mod tests {
 
         // A subagent transcript with a huge token count that must not skew the percentiles.
         let sub_prov = Provenance::new(
-            "/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/uuid1234/subagents/agent-abc123.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/uuid1234/subagents/agent-abc123.jsonl",
             "claude_code",
             100,
             100,
@@ -5793,7 +5819,7 @@ mod tests {
 
         // A primary session in a different repo, to prove repo narrowing.
         let other_prov = Provenance::new(
-            "/Users/saurabh/.claude/projects/-Users-saurabh-code-motionvector-fleet/sess_other.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-example-fleet/sess_other.jsonl",
             "claude_code",
             100,
             100,
