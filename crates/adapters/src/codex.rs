@@ -1403,7 +1403,7 @@ mod tests {
             .join(".codex")
             .join("worktrees")
             .join("7bc9")
-            .join("vibelaunch")
+            .join("example-app")
             .join("node_modules")
             .join("protobufjs");
         std::fs::create_dir_all(&worktree_dir).unwrap();

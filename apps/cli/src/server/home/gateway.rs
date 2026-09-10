@@ -1704,7 +1704,7 @@ mod tests {
 
     #[test]
     fn workspace_label_for_area_uses_dir_name_or_home() {
-        assert_eq!(workspace_label_for_area("/Users/saurabh/code/unfoundbox/agentworth"), "agentworth");
+        assert_eq!(workspace_label_for_area("/Users/dev/code/unfoundbox/agentworth"), "agentworth");
         assert_eq!(workspace_label_for_area(""), "home");
         assert_eq!(workspace_label_for_area("/"), "home");
     }

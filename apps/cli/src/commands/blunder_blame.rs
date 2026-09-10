@@ -291,7 +291,7 @@ mod tests {
             start,
             EventPayload::ShellCommand(ShellCommand {
                 command: "for d in \"${PROTECTED_PATHS[@]}\"; do rm -rf \"$d\"; done".to_string(),
-                cwd: Some("/Users/saurabh/code/katana".to_string()),
+                cwd: Some("/Users/dev/code/example-repo".to_string()),
                 exit_code: Some(0),
                 output: None,
             }),
