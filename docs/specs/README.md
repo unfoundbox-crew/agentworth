@@ -2,6 +2,8 @@
 
 ## Where this stands, 2026-09-12
 
+What is left and in what order, with the lane spec for building it: `docs/ROADMAP.md` (2026-09-12).
+
 | Spec | Status | PR |
 | :--- | :--- | :--- |
 | `agent-bus.md` | proposed 2026-09-07, not built | — |
