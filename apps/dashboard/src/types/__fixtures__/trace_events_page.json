@@ -1,0 +1,32 @@
+{
+  "events": [
+    {
+      "id": "evt-fixture-0",
+      "payload": {
+        "data": {
+          "content": "Fix the dashboard coverage matrix."
+        },
+        "type": "user_message"
+      },
+      "sequence": 0,
+      "timestamp": "2026-09-01T10:00:00Z"
+    },
+    {
+      "id": "evt-fixture-1",
+      "payload": {
+        "data": {
+          "action": "edit",
+          "diff": "- item.tokens === \"yes\"\n+ item.token_accounting",
+          "lines_changed": 6,
+          "path": "apps/dashboard/src/components/CoverageMatrix.tsx"
+        },
+        "type": "file_action"
+      },
+      "raw_ref": "L145",
+      "sequence": 1,
+      "timestamp": "2026-09-01T10:00:05Z"
+    }
+  ],
+  "events_offset": 0,
+  "events_total": 2
+}

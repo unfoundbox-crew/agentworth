@@ -1,7 +1,7 @@
 {
   "name": "agentworth",
   "displayName": "AgentWorth",
-  "version": "0.1.18",
+  "version": "0.1.23",
   "description": "Your agents left receipts. Local-first forensics for the AI-agent histories already on your machine: token spend and cost, verified outcomes vs claims, blunders, handoffs, AI code blame. 20+ adapters (Claude Code, Codex, Gemini CLI, Cursor, OpenCode, Aider...). Native Rust, SQLite index, zero telemetry.",
   "author": {
     "name": "unfoundbox",
@@ -28,7 +28,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "agentworth@0.1.18",
+        "agentworth@0.1.23",
         "mcp"
       ]
     }

@@ -37,6 +37,7 @@ agentworth-redaction.workspace = true
 agentworth-export-atif.workspace = true
 agentworth-outcomes.workspace = true
 agentworth-scoring.workspace = true
+agentworth-loop.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 serde.workspace = true
@@ -48,8 +49,10 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 console.workspace = true
-axum = "0.7"
-rust-embed = "8"
+# "ws" is not in axum's default feature set; the home gateway (server/home_gateway.rs)
+# needs axum::extract::ws for the /ws route.
+axum = { version = "0.7", features = ["ws"] }
+rust-embed = { version = "8", features = ["debug-embed"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tower = { version = "0.4", features = ["util"] }
@@ -62,6 +65,7 @@ sha2.workspace = true
 hex.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite.workspace = true
+uuid.workspace = true
 # The official Rust MCP SDK (modelcontextprotocol/rust-sdk), backing `agentworth mcp`
 # (docs/specs/mcp-server.md). Pinned to an exact version since it's still pre-1.0 (3.x line,
 # 2026-07-28 spec). Default features already include "server" and "macros"; "transport-io"

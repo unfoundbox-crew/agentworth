@@ -40,10 +40,60 @@ pub struct TraceStats {
 }
 
 /// The canonical top-level representation of an AI agent session trace.
+/// What a trace is a record of. Almost everything is a `Conversation`: one agent, one
+/// history, prompts and answers. A `FleetSnapshot` is the state of a multi-agent workspace as
+/// of one moment (Herdr's `session.json`): no prompts, no tokens, rewritten in place, so none
+/// of the "is this a real session" arithmetic applies to it. Stored as its own column so the
+/// stub predicates can say "conversations only" instead of guessing from token counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceKind {
+    #[default]
+    Conversation,
+    FleetSnapshot,
+}
+
+impl TraceKind {
+    pub const ALL: [TraceKind; 2] = [TraceKind::Conversation, TraceKind::FleetSnapshot];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TraceKind::Conversation => "conversation",
+            TraceKind::FleetSnapshot => "fleet_snapshot",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+}
+
+/// A name seen attached to a harness session id at one moment, by one observer. Names are
+/// display and mutable: a Herdr pane label, a Herdr agent name, a Claude Code session title
+/// can all be renamed. The session id is the only key; a sighting records what the session was
+/// called when this trace was written, so a rename adds a sighting and never rewrites one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentitySighting {
+    /// The harness session id the name was attached to (a Claude Code / Codex / Gemini
+    /// `session_id`), not this trace's own id unless they coincide.
+    pub session_id: String,
+    /// The agent's short name as the observer knew it (`claude`, `codex`, `agy`...), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    pub name: String,
+    pub seen_at: DateTime<Utc>,
+    /// Where the name was seen, e.g. `herdr:w9:pane 18`. Part of the identity of a sighting,
+    /// so the same name seen from two places is two rows.
+    pub via: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentWorthTrace {
     pub session_id: String,
     pub adapter: String,
+    /// `#[serde(default)]`: every trace stored before this field existed is a conversation.
+    #[serde(default)]
+    pub kind: TraceKind,
     pub provenance: Provenance,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
@@ -60,6 +110,10 @@ pub struct AgentWorthTrace {
     pub events: Vec<NormalizedEvent>,
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub metadata: serde_json::Value,
+    /// Names this trace saw attached to harness session ids (its own or others'). Stored
+    /// append-only by `Storage`; see `IdentitySighting`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identities: Vec<IdentitySighting>,
 }
 
 impl AgentWorthTrace {
@@ -72,12 +126,14 @@ impl AgentWorthTrace {
         Self {
             session_id: session_id.into(),
             adapter: adapter.into(),
+            kind: TraceKind::Conversation,
             provenance,
             started_at,
             ended_at: None,
             stats: TraceStats::default(),
             events: Vec::new(),
             metadata: serde_json::Value::Null,
+            identities: Vec::new(),
         }
     }
 

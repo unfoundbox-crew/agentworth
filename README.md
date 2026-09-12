@@ -64,14 +64,21 @@ npx -y agentworth@latest scan
 | **NPX (Zero Install)** | `npx -y agentworth@latest scan` | Instant runner that executes the native binary on demand. |
 | **Standalone Script** | `curl -fsSL https://agentworth.dev/install.sh \| sh` | Installs pre-built native binary to `~/.local/bin`. |
 
+macOS note: the release binaries are ad-hoc signed and not notarized (no Apple Developer
+ID). Installed through the script they run as-is. If a copy ever dies with `zsh: killed`
+(exit 137), the file picked up a quarantine flag on the way in; clear it with
+`xattr -d com.apple.quarantine ~/.local/bin/archie`. If there is no flag to clear, the
+signature itself is being rejected: re-run the install script. The script runs the binary
+once after installing and prints exactly that if it happens.
+
 The standalone script draws its own progress, so a 22 MB download over a slow link no
 longer looks like a hang:
 
 ```
- (*) archie  resolving    v0.1.18  aarch64-apple-darwin
+ (*) archie  resolving    v0.1.22  aarch64-apple-darwin
  (o) archie  downloading  ─────────────────────·······   75%  16.7 / 22.2 MB
  (*) archie  verifying    sha256 matches
- (*) archie  extracting   agentworth-v0.1.18-aarch64-apple-darwin.tar.gz
+ (*) archie  extracting   agentworth-v0.1.22-aarch64-apple-darwin.tar.gz
  (*) archie  installed    agentworth, archie, agwt in ~/.local/bin
 
   Next  archie --version   confirm the install
@@ -374,18 +381,76 @@ claude mcp add agentworth --scope user -- archie mcp
 
 `--scope user` matters here: the point is asking about *any* repo's history from *any* other repo, so a project-scoped entry would only be live in one checkout at a time.
 
-13 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, plus the two handoff tools, `session_forgotten`, `session_asks`, and `repo_suspect` below. A client's `tools/list` shows 23: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.20. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`.
+17 read-only tools: `session_list`, `session_show`, `repo_blame`, `stats_usage`, `window_show`, `agent_list`, `stats_outcomes`, `stats_ladder`, `session_wake`, plus the two handoff tools, `session_forgotten`, `session_asks`, `repo_suspect`, `agent_status`, `session_drift`, and `session_burn` below. A client's `tools/list` shows 27: the 10 pre-0.1.16 names are still registered as deprecated aliases of these, forwarding to the same handlers, and are removed in v0.1.22. Redacted output is the default everywhere event or file content is returned; `include_raw` is the only opt-in to raw content, and it's per-call, never global. No tool scans or writes anything -- run `archie scan` first if the index looks stale. Full design: `docs/specs/mcp-server.md`, `docs/specs/verified-outcome-rate.md`, `docs/specs/loop.md`, `docs/specs/governor.md`.
 
 ### The handoff, over MCP
 
 | Tool | What it answers |
 | :--- | :--- |
+| `session_wake(workspace?, repo?, include_raw?)` | "What was I doing?" in 30 lines: the checkout, the newest primary session's task, proof, loose ends, and the next step. The first call of a cold or just-compacted session. |
 | `session_handoff(session_id?, max_lines?, include_loose_ends?, include_raw?)` | "What did this session actually do?" — what it said it would do and never did, what it said it decided, which files changed, which commands ran and how they ended, the outcome rung reached, and how often the context was compacted. Returns markdown under a line budget (default 60, ceiling 120), the receipt every claim traces back to, and `gaps`. Defaults to the newest session for the repo the server runs in. |
 | `session_carry_forward(repo, n?, since?, max_lines?, include_raw?)` | "What happened in this repo recently?" — the last `n` handoffs (default 3, ceiling 10), newest first, so a session's *first* tool call can be the catch-up. A repo's worktrees all answer to one `repo` key. |
 
 Two things these deliberately do not do. They never write a file — where a handoff lands is the caller's business. And they never summarise: every line is a fact from a row, quoted verbatim with a sequence number or a timestamp, because the moment a model writes the prose the receipt stops meaning anything.
 
 What they cannot answer is stated in the output rather than filled in: open decisions, PR and CI state, and environment traps are not in the index. The machine owns the inventory; the judgment is still yours. Full design: `docs/specs/handoff.md`.
+
+### The loop
+
+`session_wake` answers "what was I doing." It reads a closed tape. The loop
+answers two live questions instead: what state is each agent in right now,
+and what moved under me while I wasn't looking, and who moved it.
+
+A harness hook posts each `PreToolUse`/`PostToolUse`/`Stop` event to
+`archie hook`, which forwards it to `archie serve`'s loopback socket (or the
+spool, when serve is down) and always exits 0 -- the agent is never slowed
+and never sees an error. Install it in three lines:
+
+```bash
+archie hook print claude   # prints the settings.json snippet
+# paste it into ~/.claude/settings.json under "hooks"
+# restart the session
+```
+
+| Tool | What it answers |
+| :--- | :--- |
+| `agent_status` | Which sessions are `registered`, `working`, `idle`, or `ended`, right now. |
+| `session_drift(session_id?)` | Did the files this session read change since it last checked, and which session (or nobody on this machine) changed them. |
+
+On the CLI: `archie agent status`, `archie session drift [id]`, and
+`archie session anchors [id]` for the join keys (`run_id`, file hashes, pane
+id) a session's own tool results carried.
+
+What the loop never does: it never uploads anything, never blocks or slows
+the agent, and never calls a model. Full design: `docs/specs/loop.md`.
+
+### The brake
+
+Watching a session burn is not enough — by the time a person reads the
+report, the money is spent. `~/.agentworth/policy.toml` (or a repo's own
+`.agentworth/policy.toml`) turns on two rules. No file, nothing is governed.
+
+- **Thrash halt.** The same file edited three times with no passing
+  verification in between stops the batch before the next model call, with
+  the file, the edit count, and the last failing command attached.
+- **Session spend cap.** Tokens or dollars over the line in `policy.toml`
+  stops the batch, then blocks every prompt after it until
+  `archie policy lift <session>` or a higher cap.
+
+| Tool | What it answers |
+| :--- | :--- |
+| `session_burn(session_id?)` | Live tokens, dollars, turns, cache-read share, and burn rate for a session. |
+
+Both rules run through `archie hook --gate`, a synchronous round trip with a
+50ms budget that **fails open**: `archie serve` down, or a miss, and the
+hook exits 0 and writes one spool line rather than blocking the agent. One
+command turns it on:
+
+```bash
+archie hook print claude --govern   # prints both the async recorders and the sync gates
+```
+
+Full design: `docs/specs/governor.md`.
 
 ### What compaction dropped
 
@@ -450,7 +515,7 @@ AgentWorth isolates proprietary log formats inside native streaming adapters. In
 | **OpenAI Codex** | `codex` | `~/.codex/sessions/` |
 | **Block Goose** | `goose` | `~/.config/goose/`, `~/.local/share/goose/sessions/` |
 | **Pi** | `pi` | `~/.pi/`, `~/.pi/tasks/` |
-| **Herdr** | `herdr` | `~/.config/herdr/` (Multi-agent orchestration DAGs) |
+| **Herdr** | `herdr` | `~/.config/herdr/` (workspace snapshot: which agent session ran in which pane) |
 | **Nous Hermes** | `hermes` | `~/.hermes/sessions/` |
 | **OpenClaw** | `openclaw` | `~/.openclaw/` |
 | **xAI Grok** | `grok` | `~/.grok/sessions/` |

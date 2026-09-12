@@ -56,15 +56,15 @@ pub fn extract_repository_or_workspace(source_path: &str) -> String {
     }
 
     // 1. Check if path has a Claude Code project slug format:
-    // e.g. ~/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/uuid.jsonl
-    // e.g. ~/.claude/projects/-Users-saurabh-code-motionvector-pluto--claude-worktrees-repo-branches-inventory-108a70/...
+    // e.g. ~/.claude/projects/-Users-dev-code-unfoundbox-agentworth/uuid.jsonl
+    // e.g. ~/.claude/projects/-Users-dev-code-example-project--claude-worktrees-repo-branches-inventory-108a70/...
     if let Some(idx) = path_str.find("/projects/-") {
         let after = &path_str[idx + "/projects/-".len()..];
         let full_slug = after.split('/').next().unwrap_or(after);
         // Prune worktree / sub-branch suffix starting at '--'
         let base_slug = full_slug.split("--").next().unwrap_or(full_slug);
 
-        // Decode -Users-saurabh-code-foo-bar -> /Users/saurabh/code/foo/bar
+        // Decode -Users-dev-code-foo-bar -> /Users/dev/code/foo/bar
         let decoded = format!("/{}", base_slug.replace('-', "/"));
         let parts: Vec<&str> = decoded.split('/').filter(|s| !s.is_empty()).collect();
         if parts.len() >= 2 {
@@ -111,9 +111,54 @@ pub fn extract_repository_or_workspace(source_path: &str) -> String {
     "unknown".to_string()
 }
 
+/// True when `source_path` is a subagent transcript rather than a primary session.
+///
+/// Lives beside [`extract_repository_or_workspace`] because it already knows the same path
+/// shape. The only known shape today: Claude Code writes subagent transcripts to
+/// `<project>/<session-uuid>/subagents/agent-<hex>.jsonl`, a `/subagents/` directory component
+/// holding files named `agent-*.jsonl`.
+pub fn is_subagent_transcript(source_path: &str) -> bool {
+    let path_str = source_path.replace('\\', "/");
+    let Some(file_name) = path_str.rsplit('/').next() else {
+        return false;
+    };
+    if !(file_name.starts_with("agent-") && file_name.ends_with(".jsonl")) {
+        return false;
+    }
+    path_str.split('/').any(|component| component == "subagents")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_subagent_transcript_true_for_claude_subagent_path() {
+        assert!(is_subagent_transcript(
+            "/Users/dev/.claude/projects/-Users-dev-code-foo/uuid1234/subagents/agent-abc123.jsonl"
+        ));
+    }
+
+    #[test]
+    fn test_is_subagent_transcript_false_for_parent_session() {
+        assert!(!is_subagent_transcript(
+            "/Users/dev/.claude/projects/-Users-dev-code-foo/uuid1234.jsonl"
+        ));
+    }
+
+    #[test]
+    fn test_is_subagent_transcript_false_for_codex_rollout() {
+        assert!(!is_subagent_transcript(
+            "/Users/dev/.codex/sessions/2026/09/05/rollout-2026-09-05T12-00-00-uuid.jsonl"
+        ));
+    }
+
+    #[test]
+    fn test_is_subagent_transcript_true_for_windows_separators() {
+        assert!(is_subagent_transcript(
+            r"C:\Users\dev\.claude\projects\-Users-foo\uuid1234\subagents\agent-abc123.jsonl"
+        ));
+    }
 
     #[test]
     fn test_provenance_serde() {

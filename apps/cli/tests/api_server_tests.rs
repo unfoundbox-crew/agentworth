@@ -44,6 +44,9 @@ fn setup_test_app_with_live_tail(
         scanner: scanner.clone(),
         dist_dir,
         live_tail: live_tail_tx.clone(),
+        #[cfg(unix)]
+        home: None,
+        home_deck_enabled: false,
     };
     let app = create_router(state);
     (app, storage, scanner, live_tail_tx)
@@ -618,7 +621,7 @@ async fn test_api_post_export_json_and_atif_and_redact() {
         .unwrap();
     let sample_with_secret = r#"
 {"type":"user","timestamp":"2026-08-29T10:00:00Z","content":"Here is my API key sk-ant-api03-abcdef1234567890abcdef1234567890"}
-{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Saved to /Users/saurabh/secret.pem and sent to admin@company.com"}]}
+{"type":"assistant","timestamp":"2026-08-29T10:00:05Z","model":"claude-3-5-sonnet","usage":{"input_tokens":200,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Saved to /Users/dev/secret.pem and sent to admin@company.com"}]}
 "#;
     temp_file.write_all(sample_with_secret.as_bytes()).unwrap();
 

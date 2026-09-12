@@ -51,6 +51,10 @@ pub trait VectorStore: Send + Sync {
     /// that never revisits sessions added (or left uncapped) after the first run.
     fn indexed_session_ids(&self) -> Result<HashSet<String>>;
 
+    /// Session IDs that hold at least one stored chunk of `kind`. Lets a kind added after a
+    /// session was embedded be backfilled into it without re-embedding what it already holds.
+    fn session_ids_with_kind(&self, kind: ChunkKind) -> Result<HashSet<String>>;
+
     /// Return total vector count and index statistics.
     fn stats(&self) -> Result<VectorStats>;
 }

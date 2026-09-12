@@ -29,16 +29,20 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler
 use serde_json::json;
 
 use super::params::{
-    parse_rfc3339_opt, BlameFindParams, CarryForwardParams, CoverageStatsParams,
+    parse_rfc3339_opt, AgentStatusParams, BlameFindParams, CarryForwardParams, CoverageStatsParams,
     ForgottenContextParams, LadderParams, OutcomeRateParams, PacingWindowParams, SessionAsksParams,
-    SessionGetParams, SessionHandoffParams, SessionsFindParams, SuspectCommitsParams,
-    UsagePeriodParam, UsageSummaryParams,
+    SessionBurnParams, SessionDriftParams, SessionGetParams, SessionHandoffParams,
+    SessionsFindParams,
+    SuspectCommitsParams,
+    UsagePeriodParam, UsageSummaryParams, WakeParams,
 };
 use crate::asks::{self, AsksOptions, AsksReport};
 use crate::forgotten::{self, ForgottenOptions, ForgottenReport};
 use crate::handoff::{
     self, render_markdown, HandoffOptions, HandoffReport, DEFAULT_MAX_LINES, MAX_LINES_CEILING,
 };
+use crate::wake::{self, WakeOptions, WakeReport};
+use crate::wake::render_markdown as render_wake_markdown;
 
 /// Hard ceiling on `session_list`'s `limit`, so a remote model is forced to state how much
 /// it's asking for instead of getting a silently truncated "complete-looking" answer -- the
@@ -168,7 +172,7 @@ impl AgentWorthMcpServer {
             )
         })?;
         storage
-            .list_sessions_for_repo(&repo, 1)?
+            .list_sessions_for_repo(&repo, 1, false)?
             .sessions
             .into_iter()
             .next()
@@ -236,6 +240,7 @@ impl AgentWorthMcpServer {
             order_by: Some(params.order_by.map(Into::into).unwrap_or_default()),
             include_stubs: params.include_stubs,
             outcome: params.outcome.clone(),
+            kind: None,
         };
 
         let storage = self.storage.clone();
@@ -598,7 +603,8 @@ impl AgentWorthMcpServer {
                         `unfoundbox/agentworth`); a repo's worktrees all answer to one value. \
                         n defaults to 3, ceiling 10. Handoffs are listed, never merged -- \
                         merging two contradictory facts needs judgment about which is current, \
-                        and that is not in the index. Redacted by default."
+                        and that is not in the index. Subagent transcripts are excluded unless \
+                        include_subagents is true. Redacted by default."
     )]
     pub(crate) async fn session_carry_forward(
         &self,
@@ -619,9 +625,10 @@ impl AgentWorthMcpServer {
         let scanner = self.scanner.clone();
         let repo = params.repo.clone();
         let include_raw = params.include_raw;
+        let include_subagents = params.include_subagents;
 
         let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
-            let page = storage.list_sessions_for_repo(&repo, n)?;
+            let page = storage.list_sessions_for_repo(&repo, n, include_subagents)?;
             let mut handoffs = Vec::new();
             let mut unreadable = Vec::new();
 
@@ -658,6 +665,140 @@ impl AgentWorthMcpServer {
         .await
         .map_err(Self::join_error)?
         .map_err(|e| McpError::internal_error(format!("session_carry_forward failed: {e:#}"), None))?;
+
+        Self::json_result(&value)
+    }
+
+    #[tool(
+        description = "Where every agent on this machine is right now: one row per session \
+                        the loop has seen, with its state (registered / working / idle / \
+                        ended), when it entered that state, the repository it is working in, \
+                        its terminal pane when herdr exported one, and its event sequence. \
+                        Fed by the harness's own hooks (`archie hook`), not by a scan, so it \
+                        is current rather than as-of-last-scan. An empty list means no hook \
+                        is registered -- `archie hook print claude` prints the snippet."
+    )]
+    pub(crate) async fn agent_status(
+        &self,
+        Parameters(_params): Parameters<AgentStatusParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let value = tokio::task::spawn_blocking(move || {
+            crate::commands::loop_cmds::agent_status_json(&storage)
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("agent_status failed: {e:#}"), None))?;
+        Self::json_result(&value)
+    }
+
+    #[tool(
+        description = "What moved under a session since it read it. The support set U is the \
+                        paths the session actually read, hashed at the time; this re-hashes \
+                        them and returns the ones that differ, each with the session that \
+                        predicted a write to that path afterwards, or nothing when no agent \
+                        on this machine did (someone edited it by hand, or another tool did). \
+                        The answer to \"did my ground move because of me or someone else\", \
+                        which no harness summary can give. Reads files and rows; never scans, \
+                        never writes. Files over 4 MB were not hashed and are counted as \
+                        unhashed rather than reported as unchanged."
+    )]
+    pub(crate) async fn session_drift(
+        &self,
+        Parameters(params): Parameters<SessionDriftParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+            let session = crate::commands::loop_cmds::resolve_loop_session(
+                &storage,
+                params.session_id.as_deref(),
+            )?;
+            crate::commands::loop_cmds::session_drift_json(&storage, &session)
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("session_drift failed: {e:#}"), None))?;
+        Self::json_result(&value)
+    }
+
+    #[tool(
+        description = "What one session has spent so far, metered from its own transcript: \
+                        tokens, dollars at the pricing table's rates, turns, the cache read \
+                        share, and the rate over the last ten minutes. This is AgentWorth's \
+                        own count, not the provider's accounting -- it never reports a \
+                        'remaining'. When the harness writes its own rate-limit line (Codex \
+                        does; Claude Code does not) that line is returned verbatim under \
+                        `provider_limit`, labelled as the provider's. Numbers are as of the \
+                        last update `archie serve` wrote, and are zero on a machine with no \
+                        `policy.toml`, since nothing is metered until something is governed."
+    )]
+    pub(crate) async fn session_burn(
+        &self,
+        Parameters(params): Parameters<SessionBurnParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let storage = self.storage.clone();
+        let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+            let session = crate::commands::loop_cmds::resolve_loop_session(
+                &storage,
+                params.session_id.as_deref(),
+            )?;
+            crate::commands::governor_cmds::session_burn_json(&storage, &session)
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("session_burn failed: {e:#}"), None))?;
+        Self::json_result(&value)
+    }
+
+    #[tool(
+        description = "One call for a cold or just-compacted agent: the checkout it stands in \
+                        (branch, HEAD, dirty, ahead), the newest primary session for the repo \
+                        (task, last prompt, outcome rung, last passed and last failed \
+                        verification command and whether the failure was re-run, files \
+                        changed, loose ends, what it said it decided, what compaction \
+                        dropped), the two sessions before it one line each, and a Next block: \
+                        blocker and next step. At most 30 lines of markdown. Subagent \
+                        transcripts never answer for their parent. Every line is a row, a git \
+                        read, or a stat; missing facts are named in gaps, never padded. PR and \
+                        CI state are not in the index and the output says so. Redacted by \
+                        default; include_raw opts out per call. Does not scan."
+    )]
+    pub(crate) async fn session_wake(
+        &self,
+        Parameters(params): Parameters<WakeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let workspace = match params.workspace {
+            Some(w) => std::path::PathBuf::from(w),
+            None => std::env::current_dir().map_err(|e| {
+                McpError::invalid_params(
+                    format!("workspace not given and the server's working directory could not \
+                              be read: {e:#}"),
+                    None,
+                )
+            })?,
+        };
+        let repo = params
+            .repo
+            .unwrap_or_else(|| extract_repository_or_workspace(&workspace.to_string_lossy()));
+        let include_raw = params.include_raw;
+
+        let storage = self.storage.clone();
+        let scanner = self.scanner.clone();
+
+        let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+            let options = WakeOptions { include_raw };
+            let report: WakeReport =
+                wake::load_wake(&storage, &scanner, &repo, &workspace, options)?;
+
+            Ok(json!({
+                "markdown": render_wake_markdown(&report),
+                "report": report,
+                "gaps": report.gaps,
+            }))
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("session_wake failed: {e:#}"), None))?;
 
         Self::json_result(&value)
     }
@@ -1005,14 +1146,20 @@ impl ServerHandler for AgentWorthMcpServer {
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  session_list, session_show, repo_blame, stats_usage, window_show, \
                  agent_list, stats_outcomes, stats_ladder, session_handoff, session_carry_forward, \
-                 session_forgotten, session_asks, repo_suspect. Start a \
-                 session in a repo with session_carry_forward to read what recent sessions there \
-                 actually did; end one with session_handoff. If a session has compacted, \
+                 session_wake, session_forgotten, session_asks, repo_suspect, agent_status, \
+                 session_drift, session_burn. Start a \
+                 session with session_wake; session_carry_forward lists the last few handoffs \
+                 in full. End a session with session_handoff. If a session has compacted, \
                  session_forgotten returns the decisions its own summaries dropped. \
                  session_asks finds where a question's answer already landed, so it never \
                  needs re-asking. Before \
                  pushing, repo_suspect names the commits whose authoring session never \
-                 proved anything -- a list and a prompt, never a patch. Redacted \
+                 proved anything -- a list and a prompt, never a patch. agent_status says \
+                 where every agent on this machine is right now, and session_drift says what \
+                 moved under you since you read it and who moved it -- both fed by the \
+                 harness's own hooks rather than by a scan. session_burn says what the \
+                 session has cost so far, AgentWorth's own count and never a remaining. \
+                 Redacted \
                  output is the default \
                  everywhere event or file content is returned; include_raw is the only opt-in \
                  to raw content, and it is per-call, never global. Run `archie scan` first \

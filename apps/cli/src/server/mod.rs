@@ -1,7 +1,11 @@
 //! AgentWorth local API and web server module.
 
 pub mod archaeology;
+#[cfg(unix)]
+pub mod home;
 pub mod live_tail;
+#[cfg(unix)]
+pub mod loop_socket;
 pub mod routes;
 pub mod static_files;
 
@@ -73,11 +77,14 @@ pub fn resolve_dist_dir(explicit: Option<PathBuf>) -> Result<Option<PathBuf>> {
 }
 
 /// Starts the AgentWorth local API and dashboard server.
+#[allow(clippy::too_many_arguments)]
 pub async fn start_server(
     storage: Arc<Storage>,
     port: u16,
     open_browser: bool,
     dist_dir: Option<PathBuf>,
+    loop_socket: bool,
+    home: bool,
     ui: &Ui,
 ) -> Result<()> {
     let scanner = Arc::new(Scanner::new(storage.clone()));
@@ -94,11 +101,30 @@ pub async fn start_server(
         }
     };
 
+    // The gateway behind `apps/home` (docs: apps/home/DESIGN.md). Unix-only, same as the loop
+    // socket, since both dial a Unix socket (herdr's, in this case) directly.
+    #[cfg(not(unix))]
+    if home {
+        tracing::warn!("--home is unix-only; the /ws route will not be started");
+    }
+    #[cfg(not(unix))]
+    let _ = home;
+
+    #[cfg(unix)]
+    let home_handle = if home {
+        Some(home::spawn(storage.clone(), scanner.clone(), live_tail_tx.clone()))
+    } else {
+        None
+    };
+
     let state = AppState {
         storage: storage.clone(),
         scanner,
         dist_dir: dist_dir.clone(),
         live_tail: live_tail_tx,
+        #[cfg(unix)]
+        home: home_handle,
+        home_deck_enabled: home,
     };
 
     let app = create_router(state);
@@ -121,6 +147,26 @@ pub async fn start_server(
             }
         )
     );
+
+    // The loop's own listener, beside axum rather than inside it: hook events are one JSON
+    // line on a Unix socket, not HTTP, and the spool they fall back to has to be drained by
+    // whoever comes up first (docs/specs/loop.md section 1).
+    #[cfg(unix)]
+    if loop_socket {
+        let spool_storage = storage.clone();
+        tokio::task::spawn_blocking(move || loop_socket::ingest_spool_at_startup(spool_storage));
+        match agentworth_storage::default_socket_path() {
+            Ok(socket_path) => {
+                match loop_socket::start_loop_socket(storage.clone(), socket_path).await {
+                    Ok(bound) => println!("Loop socket {}", bound.display()),
+                    Err(e) => tracing::warn!("loop: socket not started: {e:#}"),
+                }
+            }
+            Err(e) => tracing::warn!("loop: no socket path: {e:#}"),
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = loop_socket;
 
     if open_browser {
         let open_url = url.clone();

@@ -85,12 +85,23 @@ jobs:
           npm ci
           npm run build
 
-      - name: Assert the dashboard will actually be embedded
+      # Same reason, second rust-embed folder: apps/home is `archie home`'s deck
+      # (apps/cli/src/server/static_files.rs, `HomeDeckAssets`).
+      - name: Build home deck
+        working-directory: apps/home
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assert the dashboard and home deck will actually be embedded
         shell: bash
         run: |
           test -f apps/dashboard/dist/index.html \
             || { echo "::error::apps/dashboard/dist/index.html missing — the binary would ship without a UI"; exit 1; }
+          test -f apps/home/dist/index.html \
+            || { echo "::error::apps/home/dist/index.html missing — archie home would ship with no deck"; exit 1; }
           echo "dashboard dist: $(du -sh apps/dashboard/dist | cut -f1)"
+          echo "home dist: $(du -sh apps/home/dist | cut -f1)"
 
       - name: Build binaries
         run: |

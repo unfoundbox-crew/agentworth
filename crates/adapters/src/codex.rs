@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use agentworth_adapter_sdk::{
-    compute_fast_fingerprint, AgentAdapter, DetectionResult, ParseResult, ScanOptions,
-    SessionSource,
+    reuse_or_compute_fingerprint, AgentAdapter, DetectionResult, KnownSourceMap, ParseResult,
+    ScanOptions, SessionSource,
 };
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
@@ -181,7 +181,17 @@ fn read_codex_workspace(path: &Path) -> Option<String> {
 /// Build a `SessionSource` whose identity path carries the session's workspace (see
 /// [`CODEX_REPO_MARKER`]). Size, mtime and fingerprint always come from the real file --
 /// only the identity string embeds the synthetic prefix.
-fn build_codex_source(path: &Path, adapter_name: &str) -> Result<SessionSource> {
+///
+/// `known_sources` is keyed by that same identity string (it comes straight from the
+/// `source_path` column), so content is only hashed when this file's size or mtime has
+/// actually moved since the last scan -- see `reuse_or_compute_fingerprint`. The workspace
+/// read below still happens unconditionally: the identity has to exist before it can be
+/// looked up, and deriving it needs the workspace.
+fn build_codex_source(
+    path: &Path,
+    adapter_name: &str,
+    known_sources: &KnownSourceMap,
+) -> Result<SessionSource> {
     let metadata = std::fs::metadata(path)?;
     let file_size_bytes = metadata.len();
     let mtime_epoch_secs = metadata
@@ -189,11 +199,18 @@ fn build_codex_source(path: &Path, adapter_name: &str) -> Result<SessionSource> 
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let fingerprint = compute_fast_fingerprint(path, file_size_bytes, mtime_epoch_secs)?;
 
     let real_path = path.to_string_lossy().to_string();
     let workspace = read_codex_workspace(path);
     let identity = wrap_with_repo_marker(workspace.as_deref(), &real_path);
+
+    let fingerprint = reuse_or_compute_fingerprint(
+        known_sources,
+        &identity,
+        path,
+        file_size_bytes,
+        mtime_epoch_secs,
+    )?;
 
     Ok(SessionSource {
         path: PathBuf::from(identity),
@@ -306,7 +323,7 @@ impl AgentAdapter for CodexAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_codex_file(custom) {
-                        if let Ok(source) = build_codex_source(custom, self.name()) {
+                        if let Ok(source) = build_codex_source(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -318,7 +335,7 @@ impl AgentAdapter for CodexAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_codex_file(path) {
-                            if let Ok(source) = build_codex_source(path, self.name()) {
+                            if let Ok(source) = build_codex_source(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -329,7 +346,7 @@ impl AgentAdapter for CodexAdapter {
             for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_codex_file(&root) {
-                        if let Ok(source) = build_codex_source(&root, self.name()) {
+                        if let Ok(source) = build_codex_source(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -341,7 +358,7 @@ impl AgentAdapter for CodexAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_codex_file(path) {
-                            if let Ok(source) = build_codex_source(path, self.name()) {
+                            if let Ok(source) = build_codex_source(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -1386,7 +1403,7 @@ mod tests {
             .join(".codex")
             .join("worktrees")
             .join("7bc9")
-            .join("vibelaunch")
+            .join("example-app")
             .join("node_modules")
             .join("protobufjs");
         std::fs::create_dir_all(&worktree_dir).unwrap();

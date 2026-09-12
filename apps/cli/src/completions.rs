@@ -194,6 +194,7 @@ pub fn chunk_kind_candidates() -> Vec<CompletionCandidate> {
         ("tool_invocation", "a tool call and its result"),
         ("apology_panic", "the agent apologising or thrashing"),
         ("code_lineage", "a chunk carrying code provenance"),
+        ("user_turn", "a prompt the person typed"),
     ])
 }
 
