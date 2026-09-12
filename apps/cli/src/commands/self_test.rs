@@ -1,4 +1,4 @@
-//! `archie doctor --self-test`: runs Saurabh's real release workflow, in order,
+//! `archie doctor --self-test`: runs the maintainer's real release workflow, in order,
 //! against the real index and real sources on this machine, with no network, and times
 //! every step.
 //!

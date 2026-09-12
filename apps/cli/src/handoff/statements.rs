@@ -113,7 +113,10 @@ mod tests {
             "Maybe we move the renderer into its own crate later on, or maybe not.",
             "I could go either way on whether the budget belongs in the renderer.",
         ] {
-            assert!(found(text).is_empty(), "deliberation must not be quoted: {text}");
+            assert!(
+                found(text).is_empty(),
+                "deliberation must not be quoted: {text}"
+            );
         }
     }
 

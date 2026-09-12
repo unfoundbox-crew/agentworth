@@ -46,15 +46,15 @@ Where that server definition goes differs per harness, and this repo does not
 document the registration step for Codex, OpenCode or Gemini CLI. Use each
 harness's own MCP configuration docs, with the command and args above.
 
-## The 13 tools
+## The 17 tools
 
 All read-only. Nothing scans, nothing writes, nothing touches the original
 session logs.
 
-A client's `tools/list` shows 23, not 13. The extra 10 are the pre-0.1.16 tool
+A client's `tools/list` shows 27, not 17. The extra 10 are the pre-0.1.16 tool
 names, still registered as deprecated aliases forwarding to the same handlers,
 so a client configured before the rename keeps working. They are removed in
-v0.1.20. Use the 13 below.
+v0.1.20. Use the 17 below.
 
 | Tool | What it answers |
 | :--- | :--- |
@@ -66,11 +66,15 @@ v0.1.20. Use the 13 below.
 | `agent_list` | Which adapters are detected and what they yield. |
 | `stats_outcomes` | Verified-outcome rate by model, adapter or repo, with an `n` floor. |
 | `stats_ladder` | Of everything spent in a window, how much bought a verified outcome, and what it cost per model, repo or adapter. |
+| `session_wake` | What you were doing, in 30 lines: the checkout, the newest session's task, proof, loose ends, and the next step. |
 | `session_handoff` | What a session promised, decided and did not finish. |
 | `session_carry_forward` | What the previous sessions in this repo left for this one. |
 | `session_forgotten` | Decisions compaction dropped, returned verbatim with receipts. |
 | `session_asks` | Where a question's answer already landed. |
 | `repo_suspect` | Commits whose session never proved anything. |
+| `agent_status` | Which sessions are registered, working, idle, or ended, right now. |
+| `session_drift` | Did the files this session read change since it last checked, and who changed them. |
+| `session_burn` | Live tokens, dollars, turns, cache-read share, and burn rate for a session. |
 
 Full schemas: the [Reference](/docs/reference/).
 
@@ -81,8 +85,10 @@ Redacted output is the default everywhere event or file content comes back.
 
 ## A session's first and last tool call
 
-Open with `session_carry_forward`, so the session starts knowing what the last few did.
-Close with `session_handoff`, so the next one does. If the session compacted in
+Open with `session_wake`, so the session starts knowing what it was doing,
+the checkout it's in, and what to do next. `session_carry_forward` is there
+too, for the last few handoffs in full. Close with `session_handoff`, so the
+next one does. If the session compacted in
 between, `session_forgotten` recovers what its own summaries dropped.
 
 No tool scans. Run `archie scan` yourself if the index looks stale.

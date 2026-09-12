@@ -84,19 +84,19 @@ By repo, every group clearing n>=20, 17 of 44 groups covering 2,024 of the
 
 | repo | n | below | share |
 | :--- | ---: | ---: | ---: |
-| katana/video | 30 | 18 | 60.0% |
-| Users/saurabh | 36 | 15 | 41.7% |
+| example-repo/video | 30 | 18 | 60.0% |
+| Users/dev | 36 | 15 | 41.7% |
 | upscaler/backend | 291 | 55 | 18.9% |
 | motionvector/pluto | 84 | 12 | 14.3% |
 | code/motionvector | 378 | 49 | 13.0% |
 | motionvector/studio | 84 | 10 | 11.9% |
 | unfoundbox/memes | 38 | 4 | 10.5% |
-| katana/upscaler | 143 | 15 | 10.5% |
+| example-repo/upscaler | 143 | 15 | 10.5% |
 | apps/vibelaunch | 288 | 30 | 10.4% |
 | motionvector/motionvector | 34 | 3 | 8.8% |
 | motionvector/spacepilot | 97 | 8 | 8.2% |
 | unfoundbox/agentworth | 102 | 6 | 5.9% |
-| saurabh/code | 95 | 5 | 5.3% |
+| dev/code | 95 | 5 | 5.3% |
 | upscaler/frontend | 148 | 7 | 4.7% |
 | tinkers/blog | 26 | 1 | 3.8% |
 | mvec/engine | 109 | 4 | 3.7% |
@@ -104,9 +104,10 @@ By repo, every group clearing n>=20, 17 of 44 groups covering 2,024 of the
 
 Sixty points of spread, and repo is again the axis that moves — the same
 finding `verified-outcome-rate.md` and `archie-bench.md` both landed on.
-`Users/saurabh` is not a repo; it is what `extract_repository_or_workspace`
+`Users/dev` is not a repo; it is what `extract_repository_or_workspace`
 returns for a session started outside one, and it stays in the table because
-hiding it would flatter the spread.
+hiding it would flatter the spread. (`dev` is an anonymized bucket name
+standing in for the real username; the counts and rates are unchanged.)
 
 ### 2. What the gate would cost, and what it could save
 
@@ -204,14 +205,14 @@ naked share is the share that ran no test, build, or lint command at all:
 | apps/learn | 21 | 100.0% |
 | tinkers/blog | 45 | 95.6% |
 | resolution/lab | 28 | 92.9% |
-| Users/saurabh | 32 | 84.4% |
+| Users/dev | 32 | 84.4% |
 | upscaler/backend | 421 | 81.7% |
 | motionvector/pluto | 178 | 79.8% |
 | motionvector/spacepilot | 144 | 75.0% |
 | unfoundbox/memes | 46 | 71.7% |
 | motionvector/studio | 179 | 69.8% |
-| katana/video | 43 | 69.8% |
-| saurabh/code | 123 | 65.9% |
+| example-repo/video | 43 | 69.8% |
+| dev/code | 123 | 65.9% |
 | upscaler/free | 23 | 65.2% |
 | motionvector/motionvector | 51 | 64.7% |
 | apps/vibelaunch | 441 | 64.6% |

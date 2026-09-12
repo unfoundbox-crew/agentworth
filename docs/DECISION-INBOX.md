@@ -4,6 +4,30 @@ Owner of this doc: the master session. Everything below this section is a
 historical log from earlier sessions — kept for the record, not maintained
 going forward.
 
+## 2026-09-05, session_wake
+
+**PARSER_VERSION is not bumped for the workspace metadata. Decided; no revisit
+planned.**
+
+What was added: the Claude Code adapter now records the last non-empty `cwd` and
+`gitBranch` it sees in a transcript into the trace's `metadata`, as
+`workspace.cwd` and `workspace.git_branch`. Claude Code writes both on every
+record and the adapter had always dropped them. `session_wake` reads the generic
+keys for its "Ran in" line and says nothing when they are absent, which is what
+every other adapter will produce until it records the same two facts.
+
+Why no bump: wake re-parses the transcript it reports on, so the value it prints
+is live regardless of what the index holds. A `PARSER_VERSION` bump re-parses
+every Claude Code session on every machine -- tens of thousands of files for some
+users -- to backfill one optional line on one surface. That trade is not worth
+making.
+
+The consequence, stated so nobody rediscovers it: `sessions.metadata` stays NULL
+for every row scanned before this change until the user runs `archie scan
+--force`. Anything reading the workspace keys off the *index* rather than off a
+freshly parsed trace will find nothing there for old sessions. Wake is unaffected
+because it never reads them from the index.
+
 ## 2026-09-02, master session
 
 What landed today:
@@ -223,7 +247,7 @@ across all specs and confirms the OutcomeKind fix (done above) unblocks judging 
 The spec's "Open questions" flagged two things as undecided, both now resolved and fixed:
 
 1. **Repository/project-name redaction gap.** Confirmed real by reading the rules directly:
-   the only path-touching rule strips a home directory's *username* (`/Users/saurabh` → `~`),
+   the only path-touching rule strips a home directory's *username* (`/Users/dev` → `~`),
    leaving the rest of the path — including the repo name — intact. `AGENTS.md` says exports
    must never leak repository names; they were leaking. Fixed:
    `agentworth_schema::extract_repository_or_workspace` (moved from `agentworth-storage`,
@@ -292,7 +316,7 @@ assertion: `cargo build --workspace` exit 0; `cargo clippy --workspace --all-tar
   Candidate next step: tighten whichever adapters' `.detect()`/file-matching accepts these, or
   filter at scan time before they become rows at all.
 - **The non-worktree main checkout has a stale `agentworth serve` running.**
-  `/Users/saurabh/code/unfoundbox/agentworth` (not this worktree) is on `main` at `fd4d364` —
+  `/Users/dev/code/unfoundbox/agentworth` (not this worktree) is on `main` at `fd4d364` —
   predates every fix in this doc — and has a live server (native binary + npm-launcher-wrapped
   node process, both on port 3252) serving from it. Same checkout already flagged earlier today
   for peer leftovers (modified `SessionInspector.tsx`/`api.ts`/`Cargo.toml`, untracked
@@ -538,7 +562,7 @@ New shared function: `agentworth_storage::estimate_total_cost_from_per_model_usa
 
 No command's output shape changed — each already showed one dollar figure (or, for `pr_blame`/`recall`/`blind_spots`, one figure per row), so the fix makes that number correct rather than adding a new per-model breakdown nobody asked for.
 
-**`blunder.rs`'s existing katana test needed one line.** It set `trace.stats.token_usage` directly without the matching `per_model_token_usage` a real trace always carries alongside it (both come from the same `recalculate_stats` loop — this only diverges in hand-built test fixtures). Added `per_model_token_usage.insert(...)` so the fixture stays valid under the new pricing path. The fictional model name that test uses ("Claude Opus 5 (Extended Thinking)") doesn't match any real pricing-table pattern either way, so the asserted `blunder_score` is unchanged.
+**`blunder.rs`'s existing rm-rf-disaster test needed one line.** It set `trace.stats.token_usage` directly without the matching `per_model_token_usage` a real trace always carries alongside it (both come from the same `recalculate_stats` loop — this only diverges in hand-built test fixtures). Added `per_model_token_usage.insert(...)` so the fixture stays valid under the new pricing path. The fictional model name that test uses ("Claude Opus 5 (Extended Thinking)") doesn't match any real pricing-table pattern either way, so the asserted `blunder_score` is unchanged.
 
 **Tests**: one new test per fixed command (6 total), each constructing or scanning a real session on a clearly non-Sonnet model (DeepSeek Chat or gpt-4o-mini) and asserting the reported cost matches that model's real rate *and* differs meaningfully (>$1) from what Sonnet's blended rate would have produced on the same tokens. `autopsy`/`blind_spots`/`pr_blame`/`recall` needed a real on-disk JSONL fixture scanned through `Scanner::run_scan` (their cost path re-parses from disk via `scanner.load_trace`, not from whatever's in SQLite) — `recall.rs`'s also needed a real vector-store chunk insert via the deterministic offline embedder. `receipt.rs`/`blunder.rs` could build the trace in memory directly, no scan needed.
 

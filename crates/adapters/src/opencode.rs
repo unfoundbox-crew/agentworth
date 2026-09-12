@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use agentworth_adapter_sdk::{
-    compute_fast_fingerprint, AgentAdapter, DetectionResult, ParseResult, ScanOptions,
-    SessionSource,
+    reuse_or_compute_fingerprint, AgentAdapter, DetectionResult, KnownSourceMap, ParseResult,
+    ScanOptions, SessionSource,
 };
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
@@ -21,6 +21,7 @@ use walkdir::WalkDir;
 
 use crate::exit_status::backfill_shell_exit_codes;
 use crate::normalize_mcp_tool_name;
+use crate::usage_ledger::UsageLedger;
 
 /// Adapter for discovering and normalizing OpenCode agent session histories.
 pub struct OpenCodeAdapter;
@@ -32,6 +33,12 @@ impl Default for OpenCodeAdapter {
 }
 
 impl OpenCodeAdapter {
+    /// 2: the legacy file-based path credits token usage once per message id rather than
+    /// once per record, matching what the SQLite path's one-row-per-message shape already
+    /// gives. No session on this machine uses that path, so for most indexes this bump only
+    /// costs one reparse.
+    pub const PARSER_VERSION: i64 = 2;
+
     pub fn new() -> Self {
         Self
     }
@@ -146,7 +153,11 @@ fn decode_opencode_project_directory(path_str: &str) -> Option<String> {
 /// with the resolved repository directory (see [`wrap_with_repo_marker`]) when one can be
 /// decoded from the path. Metadata (size/mtime/fingerprint) is always computed from the real
 /// file on disk -- only the *identity* string embeds the synthetic prefix.
-fn build_opencode_file_source(path: &Path, adapter_name: &str) -> anyhow::Result<SessionSource> {
+fn build_opencode_file_source(
+    path: &Path,
+    adapter_name: &str,
+    known_sources: &KnownSourceMap,
+) -> anyhow::Result<SessionSource> {
     let metadata = std::fs::metadata(path)?;
     let file_size_bytes = metadata.len();
     let mtime_epoch_secs = metadata
@@ -154,11 +165,18 @@ fn build_opencode_file_source(path: &Path, adapter_name: &str) -> anyhow::Result
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let fingerprint = compute_fast_fingerprint(path, file_size_bytes, mtime_epoch_secs)?;
 
     let real_locator = path.to_string_lossy().to_string();
     let repo_dir = decode_opencode_project_directory(&real_locator);
     let identity = wrap_with_repo_marker(repo_dir.as_deref(), ".opencode-project-session", &real_locator);
+
+    let fingerprint = reuse_or_compute_fingerprint(
+        known_sources,
+        &identity,
+        path,
+        file_size_bytes,
+        mtime_epoch_secs,
+    )?;
 
     Ok(SessionSource {
         path: PathBuf::from(identity),
@@ -202,6 +220,10 @@ fn query_opencode_sessions(conn: &Connection) -> Vec<(String, i64, i64, Option<S
 impl AgentAdapter for OpenCodeAdapter {
     fn name(&self) -> &'static str {
         "opencode"
+    }
+
+    fn parser_version(&self) -> i64 {
+        Self::PARSER_VERSION
     }
 
     /// `source.path` may be a synthetic identity string (see [`OPENCODE_REPO_MARKER`]) wrapping
@@ -311,7 +333,7 @@ impl AgentAdapter for OpenCodeAdapter {
                 if root.file_name().and_then(|n| n.to_str()) == Some("opencode.db") {
                     db_paths.push(root);
                 } else if is_candidate_opencode_file(&root) {
-                    if let Ok(source) = build_opencode_file_source(&root, self.name()) {
+                    if let Ok(source) = build_opencode_file_source(&root, self.name(), &options.known_sources) {
                         sources.push(source);
                     }
                 }
@@ -373,7 +395,7 @@ impl AgentAdapter for OpenCodeAdapter {
             {
                 let path = entry.path();
                 if path.is_file() && is_candidate_opencode_file(path) {
-                    if let Ok(source) = build_opencode_file_source(path, self.name()) {
+                    if let Ok(source) = build_opencode_file_source(path, self.name(), &options.known_sources) {
                         sources.push(source);
                     }
                 }
@@ -426,6 +448,7 @@ impl AgentAdapter for OpenCodeAdapter {
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
         let mut last_model: Option<String> = None;
+        let mut usage_ledger = UsageLedger::default();
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -474,7 +497,7 @@ impl AgentAdapter for OpenCodeAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_opencode_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
+                        let evts = parse_opencode_record(item, &mut sequence, timestamp, idx + 1, &mut last_model, &mut usage_ledger);
                         trace.events.extend(evts);
                     }
 
@@ -520,7 +543,7 @@ impl AgentAdapter for OpenCodeAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num, &mut last_model, &mut usage_ledger);
                 trace.events.extend(events);
             }
         }
@@ -966,6 +989,7 @@ fn parse_opencode_record(
     ts: DateTime<Utc>,
     line_num: usize,
     last_model: &mut Option<String>,
+    usage_ledger: &mut UsageLedger,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -979,7 +1003,19 @@ fn parse_opencode_record(
         .or_else(|| val.get("tokens"))
         .or_else(|| val.get("token_usage"))
     {
-        let usage = extract_token_usage(usage_val);
+        // The SQLite path this adapter normally reads gets one row per message for free
+        // (`message.id` is the primary key -- 8,538 rows, 8,538 distinct ids on this machine's
+        // 276 MB `opencode.db`, measured 2026-09-10). This legacy file path has no such
+        // guarantee: it is an append-only log, so a streamed message repeating its usage block
+        // would be summed once per record. No install on this machine still uses it, so this
+        // guard is written from the shape rather than from a measurement -- see
+        // `crate::usage_ledger::UsageLedger` for the two harnesses where it WAS measured.
+        let message_id = val
+            .get("id")
+            .or_else(|| val.get("message_id"))
+            .or_else(|| val.get("messageID"))
+            .and_then(|v| v.as_str());
+        let usage = usage_ledger.credit_delta(message_id, extract_token_usage(usage_val));
         if usage.total() > 0 {
             let model = val
                 .get("model")
@@ -1610,13 +1646,13 @@ mod tests {
         .unwrap();
 
         conn.execute(
-            "INSERT INTO project (id, worktree) VALUES ('proj-1', '/Users/saurabh/code/unfoundbox/agentworth')",
+            "INSERT INTO project (id, worktree) VALUES ('proj-1', '/Users/dev/code/unfoundbox/agentworth')",
             [],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO session (id, project_id, directory, time_created, time_updated) \
-             VALUES ('sess-1', 'proj-1', '/Users/saurabh/code/unfoundbox/agentworth', 1716000000, 1716000020)",
+             VALUES ('sess-1', 'proj-1', '/Users/dev/code/unfoundbox/agentworth', 1716000000, 1716000020)",
             [],
         )
         .unwrap();
@@ -1874,7 +1910,7 @@ mod tests {
             .unwrap();
 
         let adapter = OpenCodeAdapter::new();
-        let source = build_opencode_file_source(temp.path(), adapter.name()).unwrap();
+        let source = build_opencode_file_source(temp.path(), adapter.name(), &KnownSourceMap::new()).unwrap();
         assert!(adapter.source_exists(&source));
 
         drop(temp);

@@ -4,15 +4,15 @@ pub mod embedder;
 pub mod pricing;
 pub mod vector;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use agentworth_adapter_sdk::SessionSource;
 use agentworth_outcomes::outcome_rank;
 use agentworth_schema::{
-    compaction_rounds, AgentWorthTrace, CompactionRound, EventPayload, FileActionType, OutcomeKind,
-    TokenUsage,
+    compaction_rounds, is_subagent_transcript, AgentWorthTrace, CompactionRound, EventPayload,
+    FileActionType, OutcomeKind, TokenUsage, TraceKind,
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -60,7 +60,18 @@ pub struct AggregateStats {
 /// needs to be findable by `agentworth audit`/`autopsy`/`blind-spots`, which query with
 /// `include_stubs: true` specifically to see this population. Only `total_tokens` (not
 /// `total_events`) is allowed to make that call.
-const NON_STUB_SQL_PREDICATE: &str = "total_events > 1 AND total_tokens > 0";
+///
+/// Conversations only. A `fleet_snapshot` row (`TraceKind::FleetSnapshot`: Herdr's workspace
+/// file) has no tokens by construction and is not a session at all, so it is neither a stub
+/// nor a non-stub; it is outside this population entirely and shows up only when a caller
+/// asks for that kind (`SessionFilter::kind`).
+const NON_STUB_SQL_PREDICATE: &str =
+    "kind = 'conversation' AND total_events > 1 AND total_tokens > 0";
+
+/// Just the activity half of `NON_STUB_SQL_PREDICATE`, without the `kind` term. Used where
+/// the kind is already constrained separately and only the events/tokens bar is conditional
+/// (the `include_stubs` path of `list_sessions_filtered`). Keep the two literals in lockstep.
+const NON_STUB_ACTIVITY_PREDICATE: &str = "total_events > 1 AND total_tokens > 0";
 
 /// Why an unchanged source has to be reparsed anyway. See `Storage::needs_backfill`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,14 +96,15 @@ pub enum BackfillReason {
 /// `Scanner::run_scan`), separate from `NON_STUB_SQL_PREDICATE`'s broader aggregate-reporting
 /// definition. The real-world shape this targets: a non-session file (config, cache, telemetry
 /// dump) or a truly-abandoned session with at most one normalized event -- not a genuine
-/// conversation that simply lacks captured usage numbers.
-const NEAR_EMPTY_EVENTS_SQL_PREDICATE: &str = "total_events <= 1";
+/// conversation that simply lacks captured usage numbers. Conversations only: a one-pane
+/// fleet snapshot is one event and is exactly as real as an eight-pane one.
+const NEAR_EMPTY_EVENTS_SQL_PREDICATE: &str = "kind = 'conversation' AND total_events <= 1";
 
 /// Rust-side mirror of `NEAR_EMPTY_EVENTS_SQL_PREDICATE`, for the scanner to apply the same
 /// "too thin to index" test to an in-memory trace before it ever reaches a row in `sessions`.
 /// Keep this in lockstep with the SQL string above.
-pub fn is_near_empty_session(total_events: usize) -> bool {
-    total_events <= 1
+pub fn is_near_empty_session(kind: TraceKind, total_events: usize) -> bool {
+    kind == TraceKind::Conversation && total_events <= 1
 }
 
 /// Ordering options when querying session traces.
@@ -127,6 +139,29 @@ pub struct SessionFilter {
     pub order_by: Option<SessionOrderBy>,
     pub include_stubs: Option<bool>,
     pub outcome: Option<String>,
+    /// `None` lists conversations (the stub predicate applies unless `include_stubs`).
+    /// `Some(FleetSnapshot)` lists snapshots, to which no stub predicate applies.
+    pub kind: Option<TraceKind>,
+}
+
+/// One row of `identity_sightings`: a name attached to a harness session id, with the window
+/// it was seen in. See `agentworth_schema::IdentitySighting`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentitySightingRow {
+    pub session_id: String,
+    pub name: String,
+    pub via: String,
+    pub agent: Option<String>,
+    /// The trace that reported it (for a Herdr snapshot, the snapshot's own session id).
+    pub observed_by: String,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+}
+
+fn parse_rfc3339(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
 }
 
 /// Lightweight summary of a stored session.
@@ -134,10 +169,31 @@ pub struct SessionFilter {
 pub struct SessionSummary {
     pub session_id: String,
     pub adapter: String,
+    #[serde(default)]
+    pub kind: TraceKind,
     pub source_path: String,
     pub started_at: DateTime<Utc>,
     pub duration_seconds: Option<f64>,
+    /// The raw sum of all four counters below. Kept as-is for compatibility, but note what
+    /// it means: `cache_read_tokens` enters at face value, so on a long session this number
+    /// tracks how large the context grew, not what the session spent. A real subagent
+    /// transcript measured 2026-09-10 was 98.7% cache reads. Rank spend by
+    /// `cost_weighted_tokens`; read `total_tokens` as context volume.
     pub total_tokens: u64,
+    /// `total_tokens` with each counter weighted by what it costs relative to a base input
+    /// token: input + output + 1.25 x cache_creation + 0.1 x cache_read. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total` for the source of the weights and
+    /// for what this deliberately is not (it is not dollars).
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_tokens: u64,
     pub total_events: usize,
     pub tool_calls_count: usize,
     pub models_used: Vec<String>,
@@ -445,7 +501,13 @@ pub struct LadderSessionRow {
     pub repo: String,
     pub rung: u8,
     pub model: String,
+    /// The raw sum, cache reads at face value. See `SessionSummary::total_tokens`.
     pub total_tokens: u64,
+    /// `total_tokens` with the cache counters weighted by what they cost. Rank spend by this
+    /// one; a session can top the raw list purely by re-reading a large cached prompt. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`.
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
     pub cost_usd: f64,
 }
 
@@ -484,6 +546,12 @@ pub struct UsagePeriodSummary {
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
     pub total_tokens: u64,
+    /// `total_tokens` weighted by what each counter costs relative to a base input token. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`. Present on every token-bearing
+    /// rollup so no client has to re-derive the multipliers -- a second copy of the formula in
+    /// TypeScript is exactly how the Rust/TS drift in this codebase starts.
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
     pub total_duration_seconds: f64,
     pub estimated_cost_usd: f64,
     pub cache_hit_ratio: f64,
@@ -501,6 +569,12 @@ pub struct ModelUsagePeriodSummary {
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
     pub total_tokens: u64,
+    /// `total_tokens` weighted by what each counter costs relative to a base input token. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`. Present on every token-bearing
+    /// rollup so no client has to re-derive the multipliers -- a second copy of the formula in
+    /// TypeScript is exactly how the Rust/TS drift in this codebase starts.
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
     pub estimated_cost_usd: f64,
     pub cache_hit_ratio: f64,
 }
@@ -581,7 +655,14 @@ pub struct UsageReportRow {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
+    /// The raw sum of the four counters above -- cache reads at face value. See
+    /// `SessionSummary::total_tokens` for why that is context volume, not spend.
     pub total_tokens: u64,
+    /// `total_tokens` with the cache counters weighted by what they cost:
+    /// input + output + 1.25 x cache_creation + 0.1 x cache_read. See
+    /// `agentworth_schema::TokenUsage::cost_weighted_total`.
+    #[serde(default)]
+    pub cost_weighted_tokens: u64,
     pub estimated_cost_usd: f64,
     pub cache_hit_ratio: f64,
 }
@@ -745,6 +826,182 @@ pub struct AnchoredBlame {
     pub unanchored_rows: usize,
 }
 
+/// One machine, keyed by its box fingerprint (`agentworth_schema::host_fingerprint`).
+/// `system_id` is SpacePilot's configuration id (chip+memory), stored alongside for the join
+/// described in docs/specs/loop.md section 2 -- it is not this row's key, because the same box
+/// can report different configuration ids over its lifetime (RAM upgrade, a different backend).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MachineRow {
+    pub host_fingerprint: String,
+    pub system_id: Option<String>,
+    pub os: Option<String>,
+    pub arch: Option<String>,
+    pub first_seen: DateTime<Utc>,
+}
+
+/// Where one session's agent sits right now: `registered → working → idle → ended`
+/// (docs/specs/loop.md section 1). `last_seq` is bumped by subagent activity without moving
+/// `state`, so a subagent can never revive an idle pane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentStateRow {
+    pub session_id: String,
+    pub state: String,
+    pub since: DateTime<Utc>,
+    pub pane_id: Option<String>,
+    pub cwd: Option<String>,
+    pub git_head: Option<String>,
+    pub last_seq: i64,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// The efference copy of one tool call: what a session predicted it would touch, recorded at
+/// `PreToolUse` before the tool runs. `result` is filled in later from `PostToolUse` /
+/// `PostToolUseFailure` (`ok` / `error`), and stays `None` until then.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IntentRow {
+    pub tool_use_id: String,
+    pub session_id: String,
+    pub seq: i64,
+    pub tool: String,
+    pub predicted_paths: Vec<String>,
+    pub command: Option<String>,
+    pub known: bool,
+    pub at: DateTime<Utc>,
+    pub result: Option<String>,
+}
+
+/// One path this session read, hashed at `PostToolUse` -- the support set U that
+/// `session_drift` re-checks (docs/specs/loop.md section 1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SupportRow {
+    pub session_id: String,
+    pub path: String,
+    pub sha256: Option<String>,
+    pub size: Option<i64>,
+    pub read_seq: i64,
+    pub read_at: DateTime<Utc>,
+}
+
+/// A join key seen in this session's own trace: a `run_id`, a `sha256`, or a `pane_id`
+/// (docs/specs/loop.md section 2). `sessions_for_anchor` is the other side of this table --
+/// "who else produced or held this value."
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnchorRow {
+    pub session_id: String,
+    pub seq: i64,
+    pub kind: String,
+    pub value: String,
+}
+
+/// One turn's priced usage from the transcript tail (docs/specs/governor.md): what the
+/// spend cap reads. `input`/`output`/`cache_read`/`cache_creation` are `Option` because not
+/// every adapter's assistant record carries every field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnUsageRow {
+    pub session_id: String,
+    pub seq: i64,
+    pub at: DateTime<Utc>,
+    pub model: String,
+    pub input: Option<i64>,
+    pub output: Option<i64>,
+    pub cache_read: Option<i64>,
+    pub cache_creation: Option<i64>,
+    pub usd: f64,
+}
+
+/// Aggregate spend over some set of turns -- one session (`session_spend`) or a time window
+/// across every session (`window_spend`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpendRow {
+    pub tokens: i64,
+    pub usd: f64,
+    pub turns: i64,
+    pub cache_read_share: f64,
+    pub first_at: Option<DateTime<Utc>>,
+    pub last_at: Option<DateTime<Utc>>,
+}
+
+/// The distribution of `total_tokens` across some population of primary sessions. `n` is the
+/// sample size the other four numbers are drawn from -- always check it before trusting a
+/// percentile computed from a handful of sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Percentiles {
+    pub n: usize,
+    pub p50: u64,
+    pub p90: u64,
+    pub p99: u64,
+    pub max: u64,
+}
+
+impl Percentiles {
+    /// Nearest-rank percentiles over `samples`, sorted in place. Empty input is all zeros with
+    /// `n: 0` rather than an error -- a machine with no indexed sessions yet is a fact to show,
+    /// not a failure to propagate.
+    fn from_samples(samples: &mut [u64]) -> Self {
+        samples.sort_unstable();
+        let n = samples.len();
+        if n == 0 {
+            return Percentiles { n: 0, p50: 0, p90: 0, p99: 0, max: 0 };
+        }
+        let at = |pct: f64| -> u64 {
+            let rank = ((pct * n as f64).ceil() as usize).clamp(1, n);
+            samples[rank - 1]
+        };
+        Percentiles { n, p50: at(0.50), p90: at(0.90), p99: at(0.99), max: samples[n - 1] }
+    }
+}
+
+/// One governor decision, with its evidence (docs/specs/governor.md "The brake").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GovernorEventRow {
+    pub id: Option<i64>,
+    pub session_id: String,
+    pub at: DateTime<Utc>,
+    pub seq: Option<i64>,
+    pub rule: String,
+    pub action: String,
+    pub reason: String,
+    pub evidence: Option<String>,
+}
+
+/// A session currently blocked from submitting a prompt (the spend-cap halt), until
+/// `lift_session` or a raised cap clears it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SuspensionRow {
+    pub session_id: String,
+    pub rule: String,
+    pub reason: String,
+    pub since: DateTime<Utc>,
+    pub lifted_at: Option<DateTime<Utc>>,
+    /// What the session had already spent when a person lifted it. The cap is measured from
+    /// here afterwards, so a lift buys a whole cap's worth of work rather than one prompt.
+    #[serde(default)]
+    pub tokens_at_lift: Option<i64>,
+    #[serde(default)]
+    pub usd_at_lift: Option<f64>,
+}
+
+/// One row of `home_directions` (apps/home/DESIGN.md, "the Train"). `done_rung` and `state`
+/// are stored as their protocol strings ("said".."ci", "riding".."halted") rather than a
+/// storage-side enum -- `apps/cli/src/server/home/protocol.rs` owns the closed set and this
+/// crate never needs to branch on the value, only round-trip it. `riders` is a JSON array of
+/// persona ids. `spent_tokens` and `reached` are deliberately absent: they are derived, never
+/// stored (see `Storage::home_direction_area_spend` and the module doc above `home_directions`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HomeDirectionRow {
+    pub id: String,
+    pub goal: String,
+    pub area: String,
+    pub done_rung: String,
+    pub budget_tokens: i64,
+    pub riders: Vec<String>,
+    pub state: String,
+    pub exception_reason: Option<String>,
+    pub exception_since: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Label for a `FileActionType`, matching its `#[serde(rename_all = "snake_case")]` form.
 fn file_action_label(action: FileActionType) -> &'static str {
     match action {
@@ -866,8 +1123,26 @@ impl Storage {
                 -- invocations (see `agentworth_schema::TraceStats::effort`). NULL means the
                 -- harness never declared one, which is every adapter except Codex today.
                 effort TEXT,
+                -- `TraceKind`: 'conversation' or 'fleet_snapshot'. The stub predicates apply
+                -- to conversations only.
+                kind TEXT NOT NULL DEFAULT 'conversation',
                 FOREIGN KEY(source_path) REFERENCES sources(source_path) ON DELETE CASCADE
             );
+
+            -- Append-only. A name seen attached to a harness session id, by one observer, at
+            -- one moment (`agentworth_schema::IdentitySighting`). Keyed on (session, name, via)
+            -- so a rename adds a row and a repeat sighting only moves `last_seen_at`.
+            CREATE TABLE IF NOT EXISTS identity_sightings (
+                session_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                via TEXT NOT NULL,
+                agent TEXT,
+                observed_by TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                PRIMARY KEY (session_id, name, via)
+            );
+            CREATE INDEX IF NOT EXISTS idx_identity_sightings_session ON identity_sightings(session_id);
 
             CREATE TABLE IF NOT EXISTS file_modifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -922,8 +1197,161 @@ impl Storage {
                 PRIMARY KEY(session_id, model),
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
             );
+
+            -- The box a session ran on. Keyed by `agentworth_schema::host_fingerprint`, the
+            -- salted hostname digest ported from SpacePilot so both products assign the same
+            -- machine the same id (docs/specs/loop.md section 2). `system_id` is SpacePilot's
+            -- own configuration id, carried here only for the join.
+            CREATE TABLE IF NOT EXISTS machines (
+                host_fingerprint TEXT PRIMARY KEY,
+                system_id TEXT,
+                os TEXT,
+                arch TEXT,
+                first_seen TEXT NOT NULL
+            );
+
+            -- Live state for the loop (docs/specs/loop.md section 1): registered / working /
+            -- idle / ended, updated from Claude Code hooks rather than scanned from a tape.
+            CREATE TABLE IF NOT EXISTS agent_state (
+                session_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                since TEXT NOT NULL,
+                pane_id TEXT,
+                cwd TEXT,
+                git_head TEXT,
+                last_seq INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+
+            -- Efference copy of a tool call, written at `PreToolUse`: what this session
+            -- predicted it would touch. `predicted_paths` is a JSON array; the actual paths
+            -- are denormalized into `intent_paths` below so "who wrote this path after seq N"
+            -- is one indexed query instead of a JSON scan over every intent.
+            CREATE TABLE IF NOT EXISTS tool_intents (
+                tool_use_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                tool TEXT NOT NULL,
+                predicted_paths TEXT NOT NULL,
+                command TEXT,
+                known INTEGER NOT NULL,
+                at TEXT NOT NULL,
+                result TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS intent_paths (
+                tool_use_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                PRIMARY KEY(tool_use_id, path)
+            );
+
+            -- The support set U: paths this session read, hashed at `PostToolUse`
+            -- (docs/specs/loop.md section 1). `session_drift` re-hashes these and reports what
+            -- changed underneath the session and who changed it.
+            CREATE TABLE IF NOT EXISTS support_set (
+                session_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                sha256 TEXT,
+                size INTEGER,
+                read_seq INTEGER NOT NULL,
+                read_at TEXT NOT NULL,
+                PRIMARY KEY(session_id, path)
+            );
+
+            -- Join keys seen in a session's own trace -- `run_id`, `sha256`, `pane_id`
+            -- (docs/specs/loop.md section 2).
+            CREATE TABLE IF NOT EXISTS trace_anchors (
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY(session_id, seq, kind, value)
+            );
+
+            -- Per-turn priced usage from the transcript tail (docs/specs/governor.md): what
+            -- the meter and the spend cap read.
+            CREATE TABLE IF NOT EXISTS turn_usage (
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                at TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input INTEGER,
+                output INTEGER,
+                cache_read INTEGER,
+                cache_creation INTEGER,
+                usd REAL NOT NULL,
+                PRIMARY KEY(session_id, seq)
+            );
+
+            -- One governor decision, with its evidence (docs/specs/governor.md "The brake").
+            CREATE TABLE IF NOT EXISTS governor_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                at TEXT NOT NULL,
+                seq INTEGER,
+                rule TEXT NOT NULL,
+                action TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                evidence TEXT
+            );
+
+            -- A session blocked from submitting a prompt by the spend cap, until
+            -- `archie policy lift` or a raised cap clears it.
+            CREATE TABLE IF NOT EXISTS session_suspensions (
+                session_id TEXT PRIMARY KEY,
+                rule TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                since TEXT NOT NULL,
+                lifted_at TEXT,
+                tokens_at_lift INTEGER,
+                usd_at_lift REAL
+            );
+
+            -- A standing intent the human set once (apps/home/DESIGN.md, "the Train"):
+            -- goal, the repo area it owns, the evidence rung that means done, a token
+            -- budget, and the riders (persona ids) subscribed to it. `spent_tokens` and
+            -- `reached` are NEVER stored here -- they are derived on every read from
+            -- `turn_usage`/`sessions` (see apps/cli/src/server/home/directions.rs). `state`,
+            -- `exception_reason` and `exception_since` ARE stored: they are the last
+            -- materialized answer, recomputed on a poll loop and only rewritten (and
+            -- broadcast as a `direction` frame) when they actually change.
+            CREATE TABLE IF NOT EXISTS home_directions (
+                id TEXT PRIMARY KEY,
+                goal TEXT NOT NULL,
+                area TEXT NOT NULL,
+                done_rung TEXT NOT NULL,
+                budget_tokens INTEGER NOT NULL,
+                riders TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'idle',
+                exception_reason TEXT,
+                exception_since TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             "#,
         )?;
+
+        // The lift baseline arrived after `session_suspensions` shipped, so an index written by
+        // v0.1.22's first build has the table without these two columns.
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(session_suspensions)")?;
+            let columns: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(Result::ok)
+                .collect();
+            if !columns.is_empty() && !columns.contains(&"tokens_at_lift".to_string()) {
+                let _ = conn.execute(
+                    "ALTER TABLE session_suspensions ADD COLUMN tokens_at_lift INTEGER",
+                    [],
+                );
+                let _ = conn.execute(
+                    "ALTER TABLE session_suspensions ADD COLUMN usd_at_lift REAL",
+                    [],
+                );
+            }
+        }
 
         // Fallback schema migrations for existing databases before creating indexes
         let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
@@ -975,6 +1403,52 @@ impl Storage {
             if !columns.contains(&"effort".to_string()) {
                 let _ = conn.execute("ALTER TABLE sessions ADD COLUMN effort TEXT", []);
             }
+            // NULL on every row scanned before this column existed: the box that ran the
+            // session was never recorded, and there is no source to backfill it from.
+            if !columns.contains(&"host_fingerprint".to_string()) {
+                let _ =
+                    conn.execute("ALTER TABLE sessions ADD COLUMN host_fingerprint TEXT", []);
+            }
+            // Every row written before this column existed was a conversation: the only
+            // adapter that produces another kind (herdr) produced nothing indexable before.
+            if !columns.contains(&"kind".to_string()) {
+                let _ = conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'conversation'",
+                    [],
+                );
+            }
+        }
+
+        // `agent_state.last_stop` holds the JSON classification of the last `Stop`: what this
+        // session predicted it would change, what changed anyway, and who else predicted those
+        // paths. A column rather than a table because there is exactly one per session and it
+        // is replaced, never accumulated.
+        let mut stmt = conn.prepare("PRAGMA table_info(agent_state)")?;
+        let agent_state_columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+        if !agent_state_columns.is_empty() && !agent_state_columns.contains(&"last_stop".to_string())
+        {
+            let _ = conn.execute("ALTER TABLE agent_state ADD COLUMN last_stop TEXT", []);
+        }
+
+        // The meter's resume point (docs/specs/governor.md): how far into which transcript
+        // file it has already priced, so a restart of `archie serve` does not re-price turns
+        // already written to `turn_usage`.
+        if !agent_state_columns.is_empty()
+            && !agent_state_columns.contains(&"transcript_offset".to_string())
+        {
+            let _ = conn.execute(
+                "ALTER TABLE agent_state ADD COLUMN transcript_offset INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+        }
+        if !agent_state_columns.is_empty()
+            && !agent_state_columns.contains(&"transcript_path".to_string())
+        {
+            let _ = conn.execute("ALTER TABLE agent_state ADD COLUMN transcript_path TEXT", []);
         }
 
         // Data migration: `primary_outcome` used to be written in hand-rolled PascalCase
@@ -1008,6 +1482,12 @@ impl Storage {
 
         conn.execute_batch(
             r#"
+            -- `needs_backfill` and the sources-upsert path both look up a session by its
+            -- source path exactly once per scanned file. Without this index that query is a
+            -- full table scan of `sessions` per file -- on a no-op incremental scan of ~8,800
+            -- sources against ~5,300 indexed sessions that was ~47M btree row visits, over 75%
+            -- of total scan wall time measured with samply (see PR body / scan-fast branch).
+            CREATE INDEX IF NOT EXISTS idx_sessions_source_path ON sessions(source_path);
             CREATE INDEX IF NOT EXISTS idx_sessions_adapter ON sessions(adapter);
             CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
             CREATE INDEX IF NOT EXISTS idx_sessions_tokens ON sessions(total_tokens);
@@ -1022,6 +1502,16 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_file_modifications_session ON file_modifications(session_id);
             CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
             CREATE INDEX IF NOT EXISTS idx_session_risk_demoted ON session_risk(demoted_claims);
+            CREATE INDEX IF NOT EXISTS idx_tool_intents_session_seq ON tool_intents(session_id, seq);
+            CREATE INDEX IF NOT EXISTS idx_intent_paths_path_seq ON intent_paths(path, seq);
+            CREATE INDEX IF NOT EXISTS idx_trace_anchors_kind_value ON trace_anchors(kind, value);
+            CREATE INDEX IF NOT EXISTS idx_governor_events_session_at ON governor_events(session_id, at);
+            CREATE INDEX IF NOT EXISTS idx_agent_state_cwd ON agent_state(cwd);
+            CREATE INDEX IF NOT EXISTS idx_agent_state_pane_id ON agent_state(pane_id);
+            -- `list_sessions_for_repo` orders by last activity, not start time, so the
+            -- bounded newest-first scan needs its own expression index to stay bounded.
+            CREATE INDEX IF NOT EXISTS idx_sessions_last_activity
+                ON sessions(COALESCE(ended_at, started_at));
 
             "#,
         )?;
@@ -1117,6 +1607,29 @@ impl Storage {
         }
 
         Ok(true) // New or modified -> needs scan
+    }
+
+    /// Every indexed source's `(file_size, mtime, fingerprint)`, keyed by `source_path`, in one
+    /// query. Used by the scanner to seed each adapter's `ScanOptions::known_sources` before
+    /// enumeration, so a file whose stat already matches what's on record never gets its
+    /// content hashed at all -- see `agentworth_adapter_sdk::SessionSource::from_path_with_known`.
+    pub fn all_source_metadata(&self) -> Result<HashMap<String, (u64, i64, String)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare("SELECT source_path, file_size, mtime, fingerprint FROM sources")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (source_path, file_size, mtime, fingerprint) = row?;
+            out.insert(source_path, (file_size.max(0) as u64, mtime, fingerprint));
+        }
+        Ok(out)
     }
 
     /// Returns the `(file_size, mtime, fingerprint)` recorded for `source_path` in the
@@ -1397,9 +1910,9 @@ impl Storage {
                 cache_creation_tokens, total_tokens, models_used, tools_used, metadata, scanned_at,
                 primary_outcome, composite_score, prompt_preview,
                 compaction_count, compaction_tokens_dropped, parser_version, backfilled_version,
-                effort
+                effort, kind
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
             ON CONFLICT(session_id) DO UPDATE SET
                 adapter = excluded.adapter,
                 source_path = excluded.source_path,
@@ -1427,7 +1940,8 @@ impl Storage {
                 compaction_tokens_dropped = excluded.compaction_tokens_dropped,
                 parser_version = excluded.parser_version,
                 backfilled_version = excluded.backfilled_version,
-                effort = excluded.effort;
+                effort = excluded.effort,
+                kind = excluded.kind;
             "#,
             params![
                 trace.session_id,
@@ -1460,8 +1974,32 @@ impl Storage {
                 // proof that a backfill pass ran at that version -- see `needs_backfill`.
                 parser_version,
                 trace.stats.effort,
+                trace.kind.as_str(),
             ],
         )?;
+
+        for sighting in &trace.identities {
+            tx.execute(
+                r#"
+                INSERT INTO identity_sightings
+                    (session_id, name, via, agent, observed_by, first_seen_at, last_seen_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+                ON CONFLICT(session_id, name, via) DO UPDATE SET
+                    agent = COALESCE(excluded.agent, identity_sightings.agent),
+                    observed_by = excluded.observed_by,
+                    first_seen_at = MIN(identity_sightings.first_seen_at, excluded.first_seen_at),
+                    last_seen_at = MAX(identity_sightings.last_seen_at, excluded.last_seen_at);
+                "#,
+                params![
+                    sighting.session_id,
+                    sighting.name,
+                    sighting.via,
+                    sighting.agent,
+                    trace.session_id,
+                    sighting.seen_at.to_rfc3339(),
+                ],
+            )?;
+        }
 
         // 3. Replace this session's file-modification records. A full trace is re-parsed from
         // disk on every scan (see Scanner::run_scan), so events are rewritten wholesale rather
@@ -1588,6 +2126,44 @@ impl Storage {
     /// Upsert an indexed trace into the database atomically, with no verdict, no score, and
     /// no parser version. A row written this way always reads as needing a backfill -- which
     /// is correct: nothing about it came from a scan.
+    /// Every row physically in the `sessions` table -- conversations, conversation stubs and
+    /// fleet snapshots alike. The raw storage-health count behind `archie scan`'s "Total
+    /// Indexed ... in SQLite index" and `archie doctor`'s storage line. Distinct from
+    /// `get_aggregate_stats`, which counts conversations only: a snapshot is indexed (so it
+    /// is counted here) but is not a session (so it is not counted there).
+    pub fn total_row_count(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
+        Ok(n as usize)
+    }
+
+    /// Every name ever seen attached to `session_id`, oldest first sighting first. Names are
+    /// display; this is the history a rename would otherwise erase.
+    pub fn identity_sightings(&self, session_id: &str) -> Result<Vec<IdentitySightingRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT name, via, agent, observed_by, first_seen_at, last_seen_at
+             FROM identity_sightings WHERE session_id = ?1
+             ORDER BY first_seen_at ASC, name ASC",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(IdentitySightingRow {
+                session_id: session_id.to_string(),
+                name: row.get(0)?,
+                via: row.get(1)?,
+                agent: row.get(2)?,
+                observed_by: row.get(3)?,
+                first_seen_at: parse_rfc3339(&row.get::<_, String>(4)?),
+                last_seen_at: parse_rfc3339(&row.get::<_, String>(5)?),
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     pub fn upsert_trace(&self, trace: &AgentWorthTrace) -> Result<()> {
         self.upsert_session(trace, None, None, 0)
     }
@@ -1611,8 +2187,11 @@ impl Storage {
 
         let mut stats = AggregateStats::default();
 
+        // Conversations only in both modes: a fleet snapshot is not a session and never
+        // belongs in a session aggregate. `include_stubs` relaxes only the events/tokens bar.
+        // The raw "how many rows are in SQLite" count is `total_row_count`, not this.
         let where_clause = if include_stubs {
-            String::new()
+            "WHERE kind = 'conversation'".to_string()
         } else {
             format!("WHERE {NON_STUB_SQL_PREDICATE}")
         };
@@ -1868,7 +2447,9 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE sessions.session_id = ?1
@@ -1897,7 +2478,9 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE sessions.session_id LIKE ?1 ESCAPE '\'
@@ -1980,7 +2563,9 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE 1=1
@@ -1989,8 +2574,21 @@ impl Storage {
 
         let mut param_values: Vec<Box<dyn ToSql>> = Vec::new();
 
-        if !filter.include_stubs.unwrap_or(false) {
-            sql.push_str(&format!(" AND ({NON_STUB_SQL_PREDICATE})"));
+        match filter.kind {
+            // Snapshots are outside the stub population: asked for by kind, shown whole.
+            Some(kind) if kind != TraceKind::Conversation => {
+                sql.push_str(" AND sessions.kind = ?");
+                param_values.push(Box::new(kind.as_str()));
+            }
+            // Conversations only, always. `include_stubs` relaxes the events/tokens bar, never
+            // the kind -- a fleet snapshot is not a conversation stub, it is a different kind,
+            // and `--all-stubs` must not surface it.
+            _ => {
+                sql.push_str(" AND sessions.kind = 'conversation'");
+                if !filter.include_stubs.unwrap_or(false) {
+                    sql.push_str(&format!(" AND ({NON_STUB_ACTIVITY_PREDICATE})"));
+                }
+            }
         }
 
         if let Some(ref adapter) = filter.adapter {
@@ -2380,6 +2978,7 @@ impl Storage {
             models: Vec<String>,
             effort: Option<String>,
             tokens: u64,
+            cost_weighted_tokens: u64,
             steps: u64,
             cost_usd: f64,
         }
@@ -2442,6 +3041,13 @@ impl Storage {
                     models,
                     effort: row.get(6)?,
                     tokens: row.get::<_, i64>(7)? as u64,
+                    cost_weighted_tokens: TokenUsage::new(
+                        input as u64,
+                        output as u64,
+                        cache_read as u64,
+                        cache_creation as u64,
+                    )
+                    .cost_weighted_total(),
                     steps: row.get::<_, i64>(8)? as u64,
                 });
             }
@@ -2652,6 +3258,7 @@ impl Storage {
                 rung: f.rung,
                 model: f.models.first().cloned().unwrap_or_default(),
                 total_tokens: f.tokens,
+                cost_weighted_tokens: f.cost_weighted_tokens,
                 cost_usd: f.cost_usd,
             })
             .collect();
@@ -2706,6 +3313,66 @@ impl Storage {
         let mut ranked: Vec<(String, usize)> = repo_counts.into_iter().collect();
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         Ok(ranked)
+    }
+
+    /// `total_tokens` across primary sessions (subagent transcripts excluded, per
+    /// `is_subagent_transcript` -- a fan-out of small subagent runs would otherwise drag the
+    /// distribution down and hide how big a real session gets), optionally narrowed to one
+    /// repo by `extract_repository_or_workspace`. Feeds `archie policy init`'s comments and
+    /// `archie policy check`'s warning: the number a spend cap should be judged against is this
+    /// machine's own history, not a guess.
+    pub fn session_token_percentiles(&self, repo: Option<&str>) -> Result<Percentiles> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&format!(
+            "SELECT source_path, total_tokens FROM sessions WHERE {NON_STUB_SQL_PREDICATE}"
+        ))?;
+        let mut rows = stmt.query([])?;
+
+        let mut tokens: Vec<u64> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let source_path: String = row.get(0)?;
+            if is_subagent_transcript(&source_path) {
+                continue;
+            }
+            if let Some(repo) = repo {
+                if extract_repository_or_workspace(&source_path) != repo {
+                    continue;
+                }
+            }
+            let total_tokens: i64 = row.get(1)?;
+            tokens.push(total_tokens.max(0) as u64);
+        }
+
+        Ok(Percentiles::from_samples(&mut tokens))
+    }
+
+    /// How many primary sessions (subagents excluded, as in `session_token_percentiles`) spent
+    /// more than `cap` tokens. Feeds `archie policy check`'s warning: a cap below the machine's
+    /// own p99 is a cap that would have tripped on real, already-indexed sessions.
+    pub fn count_primary_sessions_over_tokens(&self, cap: u64, repo: Option<&str>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&format!(
+            "SELECT source_path, total_tokens FROM sessions WHERE {NON_STUB_SQL_PREDICATE}"
+        ))?;
+        let mut rows = stmt.query([])?;
+
+        let mut count = 0usize;
+        while let Some(row) = rows.next()? {
+            let source_path: String = row.get(0)?;
+            if is_subagent_transcript(&source_path) {
+                continue;
+            }
+            if let Some(repo) = repo {
+                if extract_repository_or_workspace(&source_path) != repo {
+                    continue;
+                }
+            }
+            let total_tokens: i64 = row.get(1)?;
+            if total_tokens.max(0) as u64 > cap {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     /// Retrieve daily usage summaries grouped by day and adapter.
@@ -2766,6 +3433,13 @@ impl Storage {
                 cache_read_tokens: cache_read as u64,
                 cache_creation_tokens: cache_creation as u64,
                 total_tokens: total as u64,
+                cost_weighted_tokens: TokenUsage::new(
+                    input as u64,
+                    output as u64,
+                    cache_read as u64,
+                    cache_creation as u64,
+                )
+                .cost_weighted_total(),
                 total_duration_seconds: duration,
                 estimated_cost_usd,
                 cache_hit_ratio,
@@ -2841,6 +3515,13 @@ impl Storage {
                 cache_read_tokens: cache_read as u64,
                 cache_creation_tokens: cache_creation as u64,
                 total_tokens: total as u64,
+                cost_weighted_tokens: TokenUsage::new(
+                    input as u64,
+                    output as u64,
+                    cache_read as u64,
+                    cache_creation as u64,
+                )
+                .cost_weighted_total(),
                 estimated_cost_usd,
                 cache_hit_ratio,
             });
@@ -3044,6 +3725,13 @@ impl Storage {
                     cache_read_tokens: a.cache_read,
                     cache_creation_tokens: a.cache_creation,
                     total_tokens: a.total,
+                    cost_weighted_tokens: TokenUsage::new(
+                        a.input,
+                        a.output,
+                        a.cache_read,
+                        a.cache_creation,
+                    )
+                    .cost_weighted_total(),
                     estimated_cost_usd,
                     cache_hit_ratio,
                 }
@@ -3275,8 +3963,9 @@ impl Storage {
     }
 
     /// The most recent non-stub sessions whose derived repository/workspace name equals
-    /// `repo`, newest first. Backs `carry_forward` and the "most recent session for the
-    /// caller's cwd" default on `session_handoff` (docs/specs/handoff.md).
+    /// `repo`, ordered by last activity (newest first). Backs `carry_forward` and the "most
+    /// recent session for the caller's cwd" default on `session_handoff`
+    /// (docs/specs/handoff.md) and `session_wake` (docs/specs/wake.md).
     ///
     /// **`repo` is not a stored column.** There is only `source_path`, and
     /// `extract_repository_or_workspace` derives the key from it at read time -- the same
@@ -3286,11 +3975,22 @@ impl Storage {
     /// `scan_exhausted` says plainly when the budget ran out before `limit` was reached
     /// rather than letting a partial answer look complete.
     ///
+    /// Ordered by `COALESCE(ended_at, started_at) DESC`, not `started_at`: a parent session
+    /// that ran all day should outrank a subagent it spawned at noon and finished quickly.
+    /// `include_subagents` filters out rows `agentworth_schema::is_subagent_transcript` flags
+    /// (subagent transcripts otherwise "win newest" because they start after their parent);
+    /// pass `true` for the old behaviour.
+    ///
     /// Deliberately no schema change: the derivation is a pure string function over a column
     /// that is already indexed and already read, and adding a stored `repo` column would need
     /// a migration plus a rescan to backfill, for a query that runs at most a handful of times
     /// per session.
-    pub fn list_sessions_for_repo(&self, repo: &str, limit: usize) -> Result<RepoSessionPage> {
+    pub fn list_sessions_for_repo(
+        &self,
+        repo: &str,
+        limit: usize,
+        include_subagents: bool,
+    ) -> Result<RepoSessionPage> {
         if limit == 0 {
             return Ok(RepoSessionPage {
                 sessions: Vec::new(),
@@ -3305,11 +4005,13 @@ impl Storage {
                    sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
                    sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
-                   sessions.compaction_tokens_dropped, sources.mtime
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE ({NON_STUB_SQL_PREDICATE})
-            ORDER BY sessions.started_at DESC
+            ORDER BY COALESCE(sessions.ended_at, sessions.started_at) DESC
             LIMIT {REPO_SCAN_BUDGET}
             "#
         ))?;
@@ -3322,6 +4024,9 @@ impl Storage {
             scanned += 1;
             let source_path: String = row.get(2)?;
             if extract_repository_or_workspace(&source_path) != repo {
+                continue;
+            }
+            if !include_subagents && is_subagent_transcript(&source_path) {
                 continue;
             }
             sessions.push(row_to_session_summary(row)?);
@@ -3552,13 +4257,1031 @@ impl Storage {
             unanchored_rows,
         })
     }
+
+    /// Record or refresh a machine. Idempotent on `host_fingerprint`; `first_seen` is set only
+    /// on the row's first insert -- a later `upsert_machine` call for the same box updates
+    /// `system_id`/`os`/`arch` without moving when it was first seen.
+    pub fn upsert_machine(&self, machine: &MachineRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO machines (host_fingerprint, system_id, os, arch, first_seen)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(host_fingerprint) DO UPDATE SET
+                system_id = excluded.system_id,
+                os = excluded.os,
+                arch = excluded.arch;
+            "#,
+            params![
+                machine.host_fingerprint,
+                machine.system_id,
+                machine.os,
+                machine.arch,
+                machine.first_seen.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Stamp a session with the machine it ran on.
+    pub fn set_session_host(&self, session_id: &str, host_fingerprint: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            "UPDATE sessions SET host_fingerprint = ?1 WHERE session_id = ?2",
+            params![host_fingerprint, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Write or replace this session's current loop state.
+    pub fn upsert_agent_state(&self, state: &AgentStateRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO agent_state (
+                session_id, state, since, pane_id, cwd, git_head, last_seq, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ON CONFLICT(session_id) DO UPDATE SET
+                state = excluded.state,
+                since = excluded.since,
+                pane_id = excluded.pane_id,
+                cwd = excluded.cwd,
+                git_head = excluded.git_head,
+                last_seq = excluded.last_seq,
+                updated_at = excluded.updated_at;
+            "#,
+            params![
+                state.session_id,
+                state.state,
+                state.since.to_rfc3339(),
+                state.pane_id,
+                state.cwd,
+                state.git_head,
+                state.last_seq,
+                state.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Store this session's last `Stop` classification, as JSON. A session with no
+    /// `agent_state` row yet gets one written first by `upsert_agent_state`; this only ever
+    /// updates, so it is a no-op on a session the loop has never seen.
+    pub fn set_agent_last_stop(&self, session_id: &str, last_stop_json: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            "UPDATE agent_state SET last_stop = ?1 WHERE session_id = ?2",
+            params![last_stop_json, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// The JSON written by `set_agent_last_stop`, if this session has stopped at least once.
+    pub fn get_agent_last_stop(&self, session_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt =
+            conn.prepare("SELECT last_stop FROM agent_state WHERE session_id = ?1")?;
+        let mut rows = stmt.query_map(params![session_id], |row| row.get::<_, Option<String>>(0))?;
+        Ok(rows.next().transpose()?.flatten())
+    }
+
+    fn row_to_agent_state(row: &rusqlite::Row) -> rusqlite::Result<AgentStateRow> {
+        let since: String = row.get(2)?;
+        let updated_at: String = row.get(7)?;
+        Ok(AgentStateRow {
+            session_id: row.get(0)?,
+            state: row.get(1)?,
+            since: DateTime::parse_from_rfc3339(&since)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            pane_id: row.get(3)?,
+            cwd: row.get(4)?,
+            git_head: row.get(5)?,
+            last_seq: row.get(6)?,
+            updated_at: DateTime::parse_from_rfc3339(&updated_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+        })
+    }
+
+    /// Every session currently tracked by the loop, newest `updated_at` first.
+    pub fn list_agent_states(&self, limit: usize) -> Result<Vec<AgentStateRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, state, since, pane_id, cwd, git_head, last_seq, updated_at
+            FROM agent_state
+            ORDER BY updated_at DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], Self::row_to_agent_state)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The loop state for one session, if it has ever reported one.
+    pub fn get_agent_state(&self, session_id: &str) -> Result<Option<AgentStateRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, state, since, pane_id, cwd, git_head, last_seq, updated_at
+            FROM agent_state
+            WHERE session_id = ?1
+            "#,
+        )?;
+        let mut rows = stmt.query_map(params![session_id], Self::row_to_agent_state)?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    /// Record one tool call's predicted write set, idempotent on `tool_use_id` -- a retried
+    /// hook delivery updates the row in place rather than duplicating it or erroring.
+    pub fn insert_intent(&self, intent: &IntentRow, paths: &[String]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let predicted_json = serde_json::to_string(&intent.predicted_paths)?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            r#"
+            INSERT INTO tool_intents (
+                tool_use_id, session_id, seq, tool, predicted_paths, command, known, at, result
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(tool_use_id) DO UPDATE SET
+                session_id = excluded.session_id,
+                seq = excluded.seq,
+                tool = excluded.tool,
+                predicted_paths = excluded.predicted_paths,
+                command = excluded.command,
+                known = excluded.known,
+                at = excluded.at;
+            "#,
+            params![
+                intent.tool_use_id,
+                intent.session_id,
+                intent.seq,
+                intent.tool,
+                predicted_json,
+                intent.command,
+                intent.known as i64,
+                intent.at.to_rfc3339(),
+                intent.result,
+            ],
+        )?;
+        tx.execute(
+            "DELETE FROM intent_paths WHERE tool_use_id = ?1",
+            params![intent.tool_use_id],
+        )?;
+        for path in paths {
+            tx.execute(
+                r#"
+                INSERT INTO intent_paths (tool_use_id, session_id, seq, path)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(tool_use_id, path) DO NOTHING;
+                "#,
+                params![intent.tool_use_id, intent.session_id, intent.seq, path],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Fill in the reafference for a previously recorded intent: `ok` or `error` from
+    /// `PostToolUse` / `PostToolUseFailure`.
+    pub fn set_intent_result(&self, tool_use_id: &str, result: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            "UPDATE tool_intents SET result = ?1 WHERE tool_use_id = ?2",
+            params![result, tool_use_id],
+        )?;
+        Ok(())
+    }
+
+    /// Every session (other than `excluding_session`) that predicted a write to `path` at or
+    /// after `after_seq`, newest first -- "who moved this, and when" for `session_drift`.
+    pub fn writers_of_path(
+        &self,
+        path: &str,
+        after_seq: i64,
+        excluding_session: Option<&str>,
+    ) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, seq FROM intent_paths
+            WHERE path = ?1 AND seq >= ?2 AND (?3 IS NULL OR session_id != ?3)
+            ORDER BY seq DESC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![path, after_seq, excluding_session], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every session (other than `excluding_session`) that predicted a write to `path` after
+    /// `since`, newest first.
+    ///
+    /// Time, not `seq`, because `seq` counts one session's own events: comparing "my seq 5" to
+    /// "your seq 2" says nothing about which happened first, and drift is always a question
+    /// across two sessions. `writers_of_path` stays for callers comparing within one.
+    pub fn writers_of_path_since(
+        &self,
+        path: &str,
+        since: DateTime<Utc>,
+        excluding_session: Option<&str>,
+    ) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT p.session_id, p.seq FROM intent_paths p
+            JOIN tool_intents t ON t.tool_use_id = p.tool_use_id
+            WHERE p.path = ?1 AND t.at > ?2 AND (?3 IS NULL OR p.session_id != ?3)
+            ORDER BY t.at DESC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![path, since.to_rfc3339(), excluding_session], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every path this session predicted it would write at or after `after_seq`. The union
+    /// a `Stop` classifies the working tree against.
+    pub fn intent_paths_for_session(&self, session_id: &str, after_seq: i64) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT path FROM intent_paths WHERE session_id = ?1 AND seq > ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![session_id, after_seq], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every intent this session recorded, oldest first. The governor's ledger is rebuilt from
+    /// these when a restarted `serve` meets a session already in flight.
+    pub fn intents_for_session(&self, session_id: &str) -> Result<Vec<IntentRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT tool_use_id, session_id, seq, tool, predicted_paths, command, known, at, result
+            FROM tool_intents WHERE session_id = ?1 ORDER BY seq ASC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                let paths: String = row.get(4)?;
+                let at: String = row.get(7)?;
+                Ok(IntentRow {
+                    tool_use_id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    seq: row.get(2)?,
+                    tool: row.get(3)?,
+                    predicted_paths: serde_json::from_str(&paths).unwrap_or_default(),
+                    command: row.get(5)?,
+                    known: row.get::<_, i64>(6)? != 0,
+                    at: DateTime::parse_from_rfc3339(&at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    result: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Record (or refresh) one entry in a session's support set U.
+    pub fn upsert_support(&self, support: &SupportRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO support_set (session_id, path, sha256, size, read_seq, read_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(session_id, path) DO UPDATE SET
+                sha256 = excluded.sha256,
+                size = excluded.size,
+                read_seq = excluded.read_seq,
+                read_at = excluded.read_at;
+            "#,
+            params![
+                support.session_id,
+                support.path,
+                support.sha256,
+                support.size,
+                support.read_seq,
+                support.read_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The current support set U for one session.
+    pub fn support_for_session(&self, session_id: &str) -> Result<Vec<SupportRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, path, sha256, size, read_seq, read_at
+            FROM support_set WHERE session_id = ?1
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                let read_at: String = row.get(5)?;
+                Ok(SupportRow {
+                    session_id: row.get(0)?,
+                    path: row.get(1)?,
+                    sha256: row.get(2)?,
+                    size: row.get(3)?,
+                    read_seq: row.get(4)?,
+                    read_at: DateTime::parse_from_rfc3339(&read_at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Record join keys seen in a session's trace. Idempotent: a duplicate
+    /// `(session_id, seq, kind, value)` is silently ignored rather than erroring, since the
+    /// same anchor can legitimately be re-emitted by a retried hook delivery.
+    pub fn insert_anchors(&self, anchors: &[AnchorRow]) -> Result<()> {
+        if anchors.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tx = conn.transaction()?;
+        for anchor in anchors {
+            tx.execute(
+                r#"
+                INSERT INTO trace_anchors (session_id, seq, kind, value)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(session_id, seq, kind, value) DO NOTHING;
+                "#,
+                params![anchor.session_id, anchor.seq, anchor.kind, anchor.value],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every anchor recorded for one session.
+    pub fn anchors_for_session(&self, session_id: &str) -> Result<Vec<AnchorRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT session_id, seq, kind, value FROM trace_anchors WHERE session_id = ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                Ok(AnchorRow {
+                    session_id: row.get(0)?,
+                    seq: row.get(1)?,
+                    kind: row.get(2)?,
+                    value: row.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every session that has recorded this `(kind, value)` anchor -- e.g. every session that
+    /// touched a given `run_id` -- newest `seq` first.
+    pub fn sessions_for_anchor(&self, kind: &str, value: &str) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, seq FROM trace_anchors
+            WHERE kind = ?1 AND value = ?2
+            ORDER BY seq DESC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![kind, value], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Record turns' priced usage. Idempotent on `(session_id, seq)`: a re-tailed transcript
+    /// line is silently ignored rather than double-counted.
+    pub fn insert_turn_usage(&self, rows: &[TurnUsageRow]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tx = conn.transaction()?;
+        for row in rows {
+            tx.execute(
+                r#"
+                INSERT INTO turn_usage (
+                    session_id, seq, at, model, input, output, cache_read, cache_creation, usd
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                ON CONFLICT(session_id, seq) DO NOTHING;
+                "#,
+                params![
+                    row.session_id,
+                    row.seq,
+                    row.at.to_rfc3339(),
+                    row.model,
+                    row.input,
+                    row.output,
+                    row.cache_read,
+                    row.cache_creation,
+                    row.usd,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn row_to_spend(row: &rusqlite::Row) -> rusqlite::Result<SpendRow> {
+        let cache_read_sum: i64 = row.get(3)?;
+        let denom: i64 = row.get(4)?;
+        let first_at: Option<String> = row.get(5)?;
+        let last_at: Option<String> = row.get(6)?;
+        Ok(SpendRow {
+            tokens: row.get(0)?,
+            usd: row.get(1)?,
+            turns: row.get(2)?,
+            cache_read_share: if denom > 0 { cache_read_sum as f64 / denom as f64 } else { 0.0 },
+            first_at: first_at
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+            last_at: last_at
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+        })
+    }
+
+    const SPEND_AGGREGATE_SQL: &'static str = r#"
+        SELECT
+            COALESCE(SUM(COALESCE(input, 0) + COALESCE(output, 0) + COALESCE(cache_read, 0) + COALESCE(cache_creation, 0)), 0) AS tokens,
+            COALESCE(SUM(usd), 0.0) AS usd,
+            COUNT(*) AS turns,
+            COALESCE(SUM(COALESCE(cache_read, 0)), 0) AS cache_read_sum,
+            COALESCE(SUM(COALESCE(input, 0) + COALESCE(cache_read, 0) + COALESCE(cache_creation, 0)), 0) AS denom,
+            MIN(at) AS first_at,
+            MAX(at) AS last_at
+        FROM turn_usage
+    "#;
+
+    /// One session's total spend since it started, from `turn_usage`.
+    pub fn session_spend(&self, session_id: &str) -> Result<SpendRow> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = format!("{} WHERE session_id = ?1", Self::SPEND_AGGREGATE_SQL);
+        let mut stmt = conn.prepare(&sql)?;
+        let row = stmt.query_row(params![session_id], Self::row_to_spend)?;
+        Ok(row)
+    }
+
+    /// One session's priced turns, oldest first. `since` bounds them for a rate question --
+    /// tokens per minute over the last ten minutes -- and `None` returns the whole session.
+    pub fn turn_usage_for_session(
+        &self,
+        session_id: &str,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<TurnUsageRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, seq, at, model, input, output, cache_read, cache_creation, usd
+            FROM turn_usage
+            WHERE session_id = ?1 AND (?2 IS NULL OR at >= ?2)
+            ORDER BY seq ASC
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![session_id, since.map(|s| s.to_rfc3339())], |row| {
+                let at: String = row.get(2)?;
+                Ok(TurnUsageRow {
+                    session_id: row.get(0)?,
+                    seq: row.get(1)?,
+                    at: DateTime::parse_from_rfc3339(&at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    model: row.get(3)?,
+                    input: row.get(4)?,
+                    output: row.get(5)?,
+                    cache_read: row.get(6)?,
+                    cache_creation: row.get(7)?,
+                    usd: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Total spend across every session since `since`, for a per-window cap.
+    pub fn window_spend(&self, since: DateTime<Utc>) -> Result<SpendRow> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = format!("{} WHERE at >= ?1", Self::SPEND_AGGREGATE_SQL);
+        let mut stmt = conn.prepare(&sql)?;
+        let row = stmt.query_row(params![since.to_rfc3339()], Self::row_to_spend)?;
+        Ok(row)
+    }
+
+    /// Record one governor decision.
+    pub fn insert_governor_event(&self, event: &GovernorEventRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO governor_events (session_id, at, seq, rule, action, reason, evidence)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+            "#,
+            params![
+                event.session_id,
+                event.at.to_rfc3339(),
+                event.seq,
+                event.rule,
+                event.action,
+                event.reason,
+                event.evidence,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn row_to_governor_event(row: &rusqlite::Row) -> rusqlite::Result<GovernorEventRow> {
+        let at: String = row.get(2)?;
+        Ok(GovernorEventRow {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            at: DateTime::parse_from_rfc3339(&at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            seq: row.get(3)?,
+            rule: row.get(4)?,
+            action: row.get(5)?,
+            reason: row.get(6)?,
+            evidence: row.get(7)?,
+        })
+    }
+
+    /// This session's governor events, newest first.
+    pub fn governor_events_for_session(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<GovernorEventRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, session_id, at, seq, rule, action, reason, evidence
+            FROM governor_events
+            WHERE session_id = ?1
+            ORDER BY at DESC, id DESC
+            LIMIT ?2
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![session_id, limit as i64], Self::row_to_governor_event)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The most recent governor events across every session.
+    pub fn recent_governor_events(&self, limit: usize) -> Result<Vec<GovernorEventRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, session_id, at, seq, rule, action, reason, evidence
+            FROM governor_events
+            ORDER BY at DESC, id DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], Self::row_to_governor_event)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Suspend a session, or update the reason on an already-suspended one. `since` is kept
+    /// as the original suspension time when the session is already suspended and not yet
+    /// lifted -- a second trip for the same breach must not reset the clock.
+    pub fn suspend_session(&self, suspension: &SuspensionRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            INSERT INTO session_suspensions (session_id, rule, reason, since, lifted_at)
+            VALUES (?1, ?2, ?3, ?4, NULL)
+            ON CONFLICT(session_id) DO UPDATE SET
+                rule = excluded.rule,
+                reason = excluded.reason,
+                since = CASE
+                    WHEN session_suspensions.lifted_at IS NULL THEN session_suspensions.since
+                    ELSE excluded.since
+                END,
+                lifted_at = NULL;
+            "#,
+            params![
+                suspension.session_id,
+                suspension.rule,
+                suspension.reason,
+                suspension.since.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Lift an active suspension, stamping what the session had spent at that moment. Returns
+    /// `false` when nothing was active for this session.
+    ///
+    /// The baseline is the whole point: without it the next turn is over the cap again the
+    /// instant it starts, and the lift buys one prompt.
+    pub fn lift_session(&self, session_id: &str, tokens: i64, usd: f64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let changed = conn.execute(
+            r#"
+            UPDATE session_suspensions
+            SET lifted_at = ?1, tokens_at_lift = ?2, usd_at_lift = ?3
+            WHERE session_id = ?4 AND lifted_at IS NULL
+            "#,
+            params![Utc::now().to_rfc3339(), tokens, usd, session_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// What this session had spent when it was last lifted, if it ever was. `None` means the
+    /// cap is measured from the start of the session.
+    pub fn lift_baseline(&self, session_id: &str) -> Result<Option<(i64, f64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT tokens_at_lift, usd_at_lift FROM session_suspensions WHERE session_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![session_id], |row| {
+            let tokens: Option<i64> = row.get(0)?;
+            let usd: Option<f64> = row.get(1)?;
+            Ok(tokens.map(|t| (t, usd.unwrap_or(0.0))))
+        })?;
+        Ok(rows.next().transpose()?.flatten())
+    }
+
+    /// The highest turn sequence already stored for this session. A restarted `serve` resumes
+    /// its transcript counter here: `turn_usage` is keyed on `(session_id, seq)` and inserts
+    /// nothing on conflict, so a counter that restarted at zero would discard every new turn.
+    pub fn max_turn_seq(&self, session_id: &str) -> Result<u64> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let max: Option<i64> = conn.query_row(
+            "SELECT MAX(seq) FROM turn_usage WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )?;
+        Ok(max.unwrap_or(0).max(0) as u64)
+    }
+
+    fn row_to_suspension(row: &rusqlite::Row) -> rusqlite::Result<SuspensionRow> {
+        let since: String = row.get(3)?;
+        let lifted_at: Option<String> = row.get(4)?;
+        let tokens_at_lift: Option<i64> = row.get(5)?;
+        let usd_at_lift: Option<f64> = row.get(6)?;
+        Ok(SuspensionRow {
+            session_id: row.get(0)?,
+            rule: row.get(1)?,
+            reason: row.get(2)?,
+            since: DateTime::parse_from_rfc3339(&since)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            lifted_at: lifted_at
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+            tokens_at_lift,
+            usd_at_lift,
+        })
+    }
+
+    /// This session's active suspension, if any.
+    pub fn active_suspension(&self, session_id: &str) -> Result<Option<SuspensionRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT session_id, rule, reason, since, lifted_at, tokens_at_lift, usd_at_lift
+            FROM session_suspensions
+            WHERE session_id = ?1 AND lifted_at IS NULL
+            "#,
+        )?;
+        let mut rows = stmt.query_map(params![session_id], Self::row_to_suspension)?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    /// Every suspension on record, newest `since` first. `include_lifted` also returns
+    /// suspensions that have already been cleared.
+    pub fn list_suspensions(&self, include_lifted: bool) -> Result<Vec<SuspensionRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = if include_lifted {
+            "SELECT session_id, rule, reason, since, lifted_at, tokens_at_lift, usd_at_lift FROM session_suspensions ORDER BY since DESC"
+        } else {
+            "SELECT session_id, rule, reason, since, lifted_at, tokens_at_lift, usd_at_lift FROM session_suspensions WHERE lifted_at IS NULL ORDER BY since DESC"
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt
+            .query_map([], Self::row_to_suspension)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Stamp how far the meter has read into this session's transcript, so a restart resumes
+    /// instead of re-pricing turns already in `turn_usage`. Creates a minimal `agent_state`
+    /// row if the loop has never seen this session.
+    pub fn set_transcript_cursor(&self, session_id: &str, path: &str, offset: u64) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            r#"
+            INSERT INTO agent_state (session_id, state, since, last_seq, updated_at, transcript_path, transcript_offset)
+            VALUES (?1, 'unknown', ?2, 0, ?2, ?3, ?4)
+            ON CONFLICT(session_id) DO UPDATE SET
+                transcript_path = excluded.transcript_path,
+                transcript_offset = excluded.transcript_offset;
+            "#,
+            params![session_id, now, path, offset as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Where the meter left off for this session, if it has ever recorded a cursor.
+    pub fn get_transcript_cursor(&self, session_id: &str) -> Result<Option<(String, u64)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            "SELECT transcript_path, transcript_offset FROM agent_state WHERE session_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![session_id], |row| {
+            let path: Option<String> = row.get(0)?;
+            let offset: i64 = row.get(1)?;
+            Ok(path.map(|p| (p, offset as u64)))
+        })?;
+        Ok(rows.next().transpose()?.flatten())
+    }
+
+    fn row_to_home_direction(row: &rusqlite::Row) -> rusqlite::Result<HomeDirectionRow> {
+        let riders_json: String = row.get(5)?;
+        let exception_since: Option<String> = row.get(8)?;
+        let created_at: String = row.get(9)?;
+        let updated_at: String = row.get(10)?;
+        Ok(HomeDirectionRow {
+            id: row.get(0)?,
+            goal: row.get(1)?,
+            area: row.get(2)?,
+            done_rung: row.get(3)?,
+            budget_tokens: row.get(4)?,
+            riders: serde_json::from_str(&riders_json).unwrap_or_default(),
+            state: row.get(6)?,
+            exception_reason: row.get(7)?,
+            exception_since: exception_since
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+            created_at: DateTime::parse_from_rfc3339(&created_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            updated_at: DateTime::parse_from_rfc3339(&updated_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+        })
+    }
+
+    const HOME_DIRECTION_SELECT: &'static str = r#"
+        SELECT id, goal, area, done_rung, budget_tokens, riders, state,
+               exception_reason, exception_since, created_at, updated_at
+        FROM home_directions
+    "#;
+
+    /// Creates a direction, or updates its human-editable fields (goal/area/done rung/budget/
+    /// riders) on an existing one. `state`, `exception_reason` and `exception_since` are never
+    /// touched here -- only `set_home_direction_dynamic` (the recompute loop) writes those, so
+    /// a `set_direction` frame can never accidentally clear an in-flight halt. `created_at` is
+    /// stamped once and kept on every later upsert of the same id.
+    pub fn upsert_home_direction(&self, row: &HomeDirectionRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let riders_json = serde_json::to_string(&row.riders)?;
+        conn.execute(
+            r#"
+            INSERT INTO home_directions
+                (id, goal, area, done_rung, budget_tokens, riders, state, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'idle', ?7, ?7)
+            ON CONFLICT(id) DO UPDATE SET
+                goal = excluded.goal,
+                area = excluded.area,
+                done_rung = excluded.done_rung,
+                budget_tokens = excluded.budget_tokens,
+                riders = excluded.riders,
+                updated_at = excluded.updated_at;
+            "#,
+            params![
+                row.id,
+                row.goal,
+                row.area,
+                row.done_rung,
+                row.budget_tokens,
+                riders_json,
+                row.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Rewrites only the derived/materialized fields the recompute loop owns: `state` and the
+    /// exception it carries. Called only when the freshly-computed value differs from what's
+    /// stored, so a caller can broadcast a `direction` frame exactly when this returns changed.
+    pub fn set_home_direction_dynamic(
+        &self,
+        id: &str,
+        state: &str,
+        exception_reason: Option<&str>,
+        exception_since: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        conn.execute(
+            r#"
+            UPDATE home_directions
+            SET state = ?2, exception_reason = ?3, exception_since = ?4, updated_at = ?5
+            WHERE id = ?1
+            "#,
+            params![
+                id,
+                state,
+                exception_reason,
+                exception_since.map(|d| d.to_rfc3339()),
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_home_direction(&self, id: &str) -> Result<Option<HomeDirectionRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = format!("{} WHERE id = ?1", Self::HOME_DIRECTION_SELECT);
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query_map(params![id], Self::row_to_home_direction)?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    /// Every direction on record, oldest first (stable ordering for the strip board).
+    pub fn list_home_directions(&self) -> Result<Vec<HomeDirectionRow>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sql = format!("{} ORDER BY created_at ASC", Self::HOME_DIRECTION_SELECT);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], Self::row_to_home_direction)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// A direction's `spentTokens`, derived rather than stored: every `turn_usage` row for a
+    /// session whose `agent_state.cwd` falls under the direction's `area` (exact match, or a
+    /// `/`-bounded prefix so `/repo/foo` is under `/repo` but `/repo-other` is not), priced
+    /// since the direction was created. Joined on `agent_state.session_id = turn_usage.session_id`.
+    pub fn home_direction_area_spend(&self, area: &str, since: DateTime<Utc>) -> Result<SpendRow> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                COALESCE(SUM(COALESCE(tu.input, 0) + COALESCE(tu.output, 0) + COALESCE(tu.cache_read, 0) + COALESCE(tu.cache_creation, 0)), 0) AS tokens,
+                COALESCE(SUM(tu.usd), 0.0) AS usd,
+                COUNT(*) AS turns,
+                COALESCE(SUM(COALESCE(tu.cache_read, 0)), 0) AS cache_read_sum,
+                COALESCE(SUM(COALESCE(tu.input, 0) + COALESCE(tu.cache_read, 0) + COALESCE(tu.cache_creation, 0)), 0) AS denom,
+                MIN(tu.at) AS first_at,
+                MAX(tu.at) AS last_at
+            FROM turn_usage tu
+            JOIN agent_state a ON a.session_id = tu.session_id
+            WHERE a.cwd IS NOT NULL
+              AND (a.cwd = ?1 OR a.cwd LIKE ?1 || '/%')
+              AND tu.at >= ?2
+            "#,
+        )?;
+        let row = stmt.query_row(params![area, since.to_rfc3339()], Self::row_to_spend)?;
+        Ok(row)
+    }
+
+    /// A direction's `reached` rung, derived: the highest `sessions.primary_outcome` among
+    /// sessions whose `agent_state.cwd` falls under `area`, started at or after the direction
+    /// was created. Joined the same way as `home_direction_area_spend`. Returns the outcome's
+    /// own snake_case string (`OutcomeKind`'s serde encoding) or `None` when no matching
+    /// session has any recorded outcome yet.
+    pub fn home_direction_area_reached(
+        &self,
+        area: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT s.primary_outcome
+            FROM sessions s
+            JOIN agent_state a ON a.session_id = s.session_id
+            WHERE a.cwd IS NOT NULL
+              AND (a.cwd = ?1 OR a.cwd LIKE ?1 || '/%')
+              AND s.started_at >= ?2
+              AND s.primary_outcome IS NOT NULL
+            ORDER BY CASE s.primary_outcome
+                WHEN 'ci_or_deployment_verified' THEN 5
+                WHEN 'commit_observed' THEN 4
+                WHEN 'test_or_build_passed' THEN 3
+                WHEN 'artifact_changed' THEN 2
+                WHEN 'done_claimed' THEN 1
+                ELSE 0
+            END DESC
+            LIMIT 1
+            "#,
+        )?;
+        let mut rows = stmt.query_map(params![area, since.to_rfc3339()], |row| row.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Whether a direction should read as `halted`: either an active spend-cap suspension
+    /// (`session_suspensions.lifted_at IS NULL`) or a governor thrash halt (`governor_events`
+    /// with `action = 'halt'`, at or after the direction was created) on any session whose
+    /// `agent_state.cwd` falls under `area`. Checks the suspension first since it is the
+    /// standing state; the governor halt is the point-in-time event. Returns the reason string
+    /// to show as the direction's exception, or `None` if neither applies.
+    pub fn home_direction_area_halt_reason(
+        &self,
+        area: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        {
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT ss.reason
+                FROM session_suspensions ss
+                JOIN agent_state a ON a.session_id = ss.session_id
+                WHERE a.cwd IS NOT NULL
+                  AND (a.cwd = ?1 OR a.cwd LIKE ?1 || '/%')
+                  AND ss.lifted_at IS NULL
+                ORDER BY ss.since DESC
+                LIMIT 1
+                "#,
+            )?;
+            let mut rows = stmt.query_map(params![area], |row| row.get::<_, String>(0))?;
+            if let Some(reason) = rows.next().transpose()? {
+                return Ok(Some(reason));
+            }
+        }
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT ge.reason
+            FROM governor_events ge
+            JOIN agent_state a ON a.session_id = ge.session_id
+            WHERE a.cwd IS NOT NULL
+              AND (a.cwd = ?1 OR a.cwd LIKE ?1 || '/%')
+              AND ge.action = 'halt'
+              AND ge.at >= ?2
+            ORDER BY ge.at DESC
+            LIMIT 1
+            "#,
+        )?;
+        let mut rows = stmt.query_map(params![area, since.to_rfc3339()], |row| row.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Session ids whose `agent_state.cwd` falls under `area` -- the same membership test
+    /// `home_direction_area_spend`/`_reached`/`_halt_reason` apply, exposed directly for
+    /// callers (the `waiting`/`idle` state rules) that need to reason about presence per
+    /// session rather than an aggregate.
+    /// The `sessions.session_id` already indexed for a given `source_path`, if any -- how
+    /// `apps/cli/src/server/home/transcript_feed.rs` turns a live-tail filesystem event (which
+    /// only carries a path) back into a session id. `None` for a source that hasn't been
+    /// scanned yet (a brand-new session file): the transcript feed only follows sessions
+    /// already in the index, and picking one up on its very first write is left to the
+    /// periodic scanner.
+    pub fn session_id_for_source_path(&self, source_path: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt =
+            conn.prepare("SELECT session_id FROM sessions WHERE source_path = ?1 LIMIT 1")?;
+        let mut rows = stmt.query_map(params![source_path], |row| row.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    pub fn home_direction_area_session_ids(&self, area: &str) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT DISTINCT session_id FROM agent_state
+            WHERE cwd IS NOT NULL AND (cwd = ?1 OR cwd LIKE ?1 || '/%')
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![area], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
 }
 
 /// How many sessions `list_sessions_for_repo` will walk before giving up. Every row is one
 /// `extract_repository_or_workspace` call over an already-fetched string, so this is cheap;
 /// the budget exists so an index that grows to six figures can't turn one handoff lookup into
 /// a full table scan.
-const REPO_SCAN_BUDGET: usize = 5_000;
+pub const REPO_SCAN_BUDGET: usize = 5_000;
 
 /// What `Storage::list_sessions_for_repo` found, and whether it ran out of budget looking.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -3676,6 +5399,17 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
     let compaction_count: i64 = row.get(12).unwrap_or(0);
     let compaction_tokens_dropped: i64 = row.get(13).unwrap_or(0);
     let source_mtime_epoch_secs: Option<i64> = row.get(14).ok();
+    let kind = row
+        .get::<_, String>(15)
+        .ok()
+        .and_then(|k| TraceKind::parse(&k))
+        .unwrap_or_default();
+    let usage = TokenUsage::new(
+        row.get::<_, i64>(16).unwrap_or(0) as u64,
+        row.get::<_, i64>(17).unwrap_or(0) as u64,
+        row.get::<_, i64>(18).unwrap_or(0) as u64,
+        row.get::<_, i64>(19).unwrap_or(0) as u64,
+    );
 
     let started_at = DateTime::parse_from_rfc3339(&started_str)
         .map(|dt| dt.with_timezone(&Utc))
@@ -3686,10 +5420,16 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
     Ok(SessionSummary {
         session_id,
         adapter,
+        kind,
         source_path,
         started_at,
         duration_seconds,
         total_tokens: total_tokens as u64,
+        cost_weighted_tokens: usage.cost_weighted_total(),
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cache_read_tokens: usage.cache_read_tokens,
+        cache_creation_tokens: usage.cache_creation_tokens,
         total_events: total_events as usize,
         tool_calls_count: tool_calls_count as usize,
         models_used,
@@ -3724,6 +5464,18 @@ pub fn normalize_metadata(raw: Option<String>) -> Option<serde_json::Value> {
         // Not JSON at all: hand back what is actually stored rather than dropping it.
         Err(_) => Some(serde_json::Value::String(raw)),
     }
+}
+
+/// The Unix socket `archie serve` listens on and `archie hook` writes to, in the same
+/// directory as the index (docs/specs/loop.md section 1).
+pub fn default_socket_path() -> Result<PathBuf> {
+    Ok(default_db_dir()?.join("archie.sock"))
+}
+
+/// Where `archie hook` appends when nothing is listening on the socket, and where
+/// `archie scan` ingests from.
+pub fn default_spool_dir() -> Result<PathBuf> {
+    Ok(default_db_dir()?.join("spool"))
 }
 
 pub fn default_db_dir() -> Result<PathBuf> {
@@ -4015,10 +5767,10 @@ mod tests {
         let storage = Storage::open_in_memory().expect("open storage");
 
         let paths = [
-            "/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/uuid1.jsonl",
-            "/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/uuid2.jsonl",
-            "/Users/saurabh/.claude/projects/-Users-saurabh-code-motionvector-fleet/uuid3.jsonl",
-            "/Users/saurabh/code/standalone-repo/.claude/session.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/uuid1.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/uuid2.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-example-fleet/uuid3.jsonl",
+            "/Users/dev/code/standalone-repo/.claude/session.jsonl",
         ];
 
         for (i, p) in paths.iter().enumerate() {
@@ -4032,6 +5784,67 @@ mod tests {
         assert!(!repos.is_empty());
         assert_eq!(repos[0].0, "unfoundbox/agentworth");
         assert_eq!(repos[0].1, 2);
+    }
+
+    #[test]
+    fn test_session_token_percentiles_excludes_subagents_and_narrows_by_repo() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        // Primary sessions in one repo: 100, 200, 300, ..., 1000 tokens.
+        for i in 1..=10u64 {
+            let path = format!(
+                "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/sess{i}.jsonl"
+            );
+            let prov = Provenance::new(path, "claude_code", 100, 100, format!("fp{i}"));
+            let mut trace =
+                AgentWorthTrace::new(format!("sess_{i}"), "claude_code", prov, Utc::now());
+            trace.stats.token_usage = TokenUsage::new(i * 100, 0, 0, 0);
+            trace.stats.total_events = 5;
+            storage.upsert_trace(&trace).expect("upsert");
+        }
+
+        // A subagent transcript with a huge token count that must not skew the percentiles.
+        let sub_prov = Provenance::new(
+            "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/uuid1234/subagents/agent-abc123.jsonl",
+            "claude_code",
+            100,
+            100,
+            "fp_sub",
+        );
+        let mut sub_trace =
+            AgentWorthTrace::new("sess_sub".to_string(), "claude_code", sub_prov, Utc::now());
+        sub_trace.stats.token_usage = TokenUsage::new(10_000_000, 0, 0, 0);
+        sub_trace.stats.total_events = 5;
+        storage.upsert_trace(&sub_trace).expect("upsert subagent");
+
+        // A primary session in a different repo, to prove repo narrowing.
+        let other_prov = Provenance::new(
+            "/Users/dev/.claude/projects/-Users-dev-code-example-fleet/sess_other.jsonl",
+            "claude_code",
+            100,
+            100,
+            "fp_other",
+        );
+        let mut other_trace = AgentWorthTrace::new(
+            "sess_other".to_string(),
+            "claude_code",
+            other_prov,
+            Utc::now(),
+        );
+        other_trace.stats.token_usage = TokenUsage::new(5_000_000, 0, 0, 0);
+        other_trace.stats.total_events = 5;
+        storage.upsert_trace(&other_trace).expect("upsert other");
+
+        let machine_wide = storage.session_token_percentiles(None).expect("percentiles");
+        assert_eq!(machine_wide.n, 11, "the subagent row is excluded, both repos counted");
+        assert_eq!(machine_wide.max, 5_000_000, "not the 10M subagent row");
+
+        let this_repo = storage
+            .session_token_percentiles(Some("unfoundbox/agentworth"))
+            .expect("repo percentiles");
+        assert_eq!(this_repo.n, 10);
+        assert_eq!(this_repo.max, 1000);
+        assert_eq!(this_repo.p50, 500);
     }
 
     #[test]
@@ -5678,6 +7491,114 @@ mod tests {
         assert_eq!(all_list.len(), 3);
     }
 
+    /// A fleet snapshot (Herdr's `session.json`) has no tokens and may have one event. It is
+    /// not a stub and not a conversation: hidden from the default list and from the
+    /// aggregate, never pruned as near-empty, shown whole when asked for by kind.
+    #[test]
+    fn fleet_snapshots_are_outside_the_stub_population_and_listed_by_kind() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::open_path(&temp.path().join("t.db")).unwrap();
+
+        let prov = Provenance::new("/h/.config/herdr/session.json", "herdr", 100, 100, "fp_snap");
+        let mut snap = AgentWorthTrace::new("herdr-session-1", "herdr", prov, Utc::now());
+        snap.kind = TraceKind::FleetSnapshot;
+        snap.stats.total_events = 1;
+        storage.upsert_trace(&snap).expect("upsert snapshot");
+
+        let prov = Provenance::new("/path/real.jsonl", "claude_code", 100, 100, "fp_real");
+        let mut real = AgentWorthTrace::new("real_1", "claude_code", prov, Utc::now());
+        real.stats.total_events = 10;
+        real.stats.token_usage = TokenUsage::new(500, 100, 0, 0);
+        storage.upsert_trace(&real).expect("upsert real");
+
+        let default_list = storage.list_sessions(50).expect("list default");
+        assert_eq!(default_list.len(), 1);
+        assert_eq!(default_list[0].session_id, "real_1");
+        assert_eq!(default_list[0].kind, TraceKind::Conversation);
+
+        let snapshots = storage
+            .list_sessions_filtered(&SessionFilter {
+                kind: Some(TraceKind::FleetSnapshot),
+                ..Default::default()
+            })
+            .expect("list snapshots");
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].session_id, "herdr-session-1");
+        assert_eq!(snapshots[0].kind, TraceKind::FleetSnapshot);
+
+        let conversations = storage
+            .list_sessions_filtered(&SessionFilter {
+                kind: Some(TraceKind::Conversation),
+                include_stubs: Some(true),
+                ..Default::default()
+            })
+            .expect("list conversations");
+        assert_eq!(conversations.len(), 1);
+
+        // The leak this guards: --all-stubs (kind None, include_stubs) must relax only the
+        // events/tokens bar, never the kind, so it still does not surface the snapshot.
+        let all_stubs = storage
+            .list_sessions_filtered(&SessionFilter {
+                include_stubs: Some(true),
+                ..Default::default()
+            })
+            .expect("list all-stubs");
+        assert_eq!(all_stubs.len(), 1);
+        assert_eq!(all_stubs[0].session_id, "real_1");
+
+        // The session aggregate counts conversations in both modes -- the snapshot is never a
+        // session. include_stubs relaxes only the events/tokens bar.
+        assert_eq!(storage.get_aggregate_stats(false).unwrap().total_sessions, 1);
+        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 1);
+        assert!(!storage
+            .get_aggregate_stats(true)
+            .unwrap()
+            .sessions_by_adapter
+            .contains_key("herdr"));
+        // But storage health counts every physical row, snapshot included.
+        assert_eq!(storage.total_row_count().unwrap(), 2);
+        assert!(storage.stub_sessions().unwrap().is_empty(), "a one-event snapshot is not near-empty");
+        assert!(!is_near_empty_session(TraceKind::FleetSnapshot, 1));
+        assert!(is_near_empty_session(TraceKind::Conversation, 1));
+    }
+
+    /// A rename adds a sighting; it never rewrites one.
+    #[test]
+    fn identity_sightings_append_and_a_rename_keeps_the_old_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::open_path(&temp.path().join("t.db")).unwrap();
+        let t0 = Utc::now();
+        let t1 = t0 + chrono::Duration::hours(1);
+
+        let sighting = |name: &str, at| agentworth_schema::IdentitySighting {
+            session_id: "abc".to_string(),
+            agent: Some("claude".to_string()),
+            name: name.to_string(),
+            seen_at: at,
+            via: "herdr:w9:pane 18".to_string(),
+        };
+        let prov = Provenance::new("/h/.config/herdr/session.json", "herdr", 100, 100, "fp1");
+        let mut snap = AgentWorthTrace::new("herdr-session-1", "herdr", prov, t0);
+        snap.kind = TraceKind::FleetSnapshot;
+        snap.identities = vec![sighting("louis", t0)];
+        storage.upsert_trace(&snap).unwrap();
+
+        // The file was saved again with the pane renamed; the row is replaced, the name is not.
+        snap.identities = vec![sighting("louis-fable", t1)];
+        storage.upsert_trace(&snap).unwrap();
+        // And seen once more under the new name.
+        snap.identities = vec![sighting("louis-fable", t1 + chrono::Duration::hours(1))];
+        storage.upsert_trace(&snap).unwrap();
+
+        let rows = storage.identity_sightings("abc").unwrap();
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["louis", "louis-fable"]);
+        assert_eq!(rows[0].observed_by, "herdr-session-1");
+        assert_eq!(rows[0].agent.as_deref(), Some("claude"));
+        assert!(rows[1].last_seen_at > rows[1].first_seen_at);
+        assert!(storage.identity_sightings("nobody").unwrap().is_empty());
+    }
+
     /// Regression test for the `get_aggregate_stats`/`list_sessions_filtered` stub-count
     /// mismatch (docs/DECISION-INBOX.md): `get_aggregate_stats` used to run an unconditional
     /// `COUNT(*)`/`SUM(...)` over every row, including stubs, while `list_sessions_filtered`
@@ -5764,12 +7685,13 @@ mod tests {
         assert_eq!(stats_excl.sessions_by_adapter.get("claude_code"), Some(&2));
         assert_eq!(stats_excl.sessions_by_adapter.get("codex"), Some(&1));
 
-        // The raw-inventory mode (used by `agentworth scan`'s "Total Indexed" line and
-        // `agentworth doctor`) must still see every row, stubs included.
+        // include_stubs mode counts every conversation, stubs included (these five are all
+        // conversations). The raw all-rows count is `total_row_count`; snapshots, if any,
+        // would show there and not here.
         let stats_incl = storage
             .get_aggregate_stats(true)
             .expect("aggregate stats including stubs");
-        assert_eq!(stats_incl.total_sessions, 5, "all 3 real + 2 stub sessions");
+        assert_eq!(stats_incl.total_sessions, 5, "all 3 real + 2 stub conversations");
         assert_eq!(
             stats_incl.verified_outcomes_count, 2,
             "including stubs, both real_1 and stub_verified count as verified"
@@ -6372,7 +8294,7 @@ mod tests {
         }
 
         let page = storage
-            .list_sessions_for_repo("unfoundbox/agentworth", 10)
+            .list_sessions_for_repo("unfoundbox/agentworth", 10, false)
             .expect("repo lookup");
         let ids: Vec<&str> = page.sessions.iter().map(|s| s.session_id.as_str()).collect();
         assert_eq!(
@@ -6385,7 +8307,7 @@ mod tests {
 
         // A limit smaller than the match count truncates without claiming exhaustion.
         let page = storage
-            .list_sessions_for_repo("unfoundbox/agentworth", 1)
+            .list_sessions_for_repo("unfoundbox/agentworth", 1, false)
             .expect("repo lookup");
         assert_eq!(page.sessions.len(), 1);
         assert_eq!(page.sessions[0].session_id, "newest");
@@ -6393,7 +8315,7 @@ mod tests {
 
         // An unknown repo is an empty list, not an error.
         let page = storage
-            .list_sessions_for_repo("nobody/nothing", 3)
+            .list_sessions_for_repo("nobody/nothing", 3, false)
             .expect("repo lookup");
         assert!(page.sessions.is_empty());
 
@@ -6405,8 +8327,474 @@ mod tests {
     }
 
     #[test]
+    fn test_list_sessions_for_repo_excludes_subagents_unless_asked() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base = Utc::now();
+
+        let parent_path =
+            "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/parent-uuid.jsonl";
+        let subagent_path = "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/\
+                              parent-uuid/subagents/agent-abc123.jsonl";
+
+        for (id, path, offset_secs) in
+            [("parent", parent_path, 0), ("subagent", subagent_path, 60)]
+        {
+            let prov = Provenance::new(path, "claude_code", 100, 1, format!("fp_{id}"));
+            let mut trace = AgentWorthTrace::new(
+                id,
+                "claude_code",
+                prov,
+                base + Duration::seconds(offset_secs),
+            );
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            storage.upsert_trace(&trace).expect("seed session");
+        }
+
+        let excluded = storage
+            .list_sessions_for_repo("unfoundbox/agentworth", 10, false)
+            .expect("repo lookup");
+        let ids: Vec<&str> = excluded.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["parent"],
+            "the subagent starts later than its parent but must not answer for it"
+        );
+
+        let included = storage
+            .list_sessions_for_repo("unfoundbox/agentworth", 10, true)
+            .expect("repo lookup");
+        let ids: Vec<&str> = included.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["subagent", "parent"], "include_subagents=true keeps both");
+    }
+
+    #[test]
+    fn test_list_sessions_for_repo_orders_by_last_activity_not_start() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base = Utc::now();
+
+        // "early_start" started first but ran all day; "late_start" started later but ended
+        // sooner. Last activity should rank "early_start" first.
+        let prov = Provenance::new(
+            "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/early.jsonl",
+            "claude_code",
+            100,
+            1,
+            "fp_early",
+        );
+        let mut early = AgentWorthTrace::new("early_start", "claude_code", prov, base);
+        early.stats.total_events = 5;
+        early.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+        early.ended_at = Some(base + Duration::hours(10));
+        storage.upsert_trace(&early).expect("seed early");
+
+        let prov = Provenance::new(
+            "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/late.jsonl",
+            "claude_code",
+            100,
+            1,
+            "fp_late",
+        );
+        let mut late =
+            AgentWorthTrace::new("late_start", "claude_code", prov, base + Duration::hours(1));
+        late.stats.total_events = 5;
+        late.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+        late.ended_at = Some(base + Duration::hours(2));
+        storage.upsert_trace(&late).expect("seed late");
+
+        let page = storage
+            .list_sessions_for_repo("unfoundbox/agentworth", 10, false)
+            .expect("repo lookup");
+        let ids: Vec<&str> = page.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["early_start", "late_start"],
+            "last activity (ended_at), not started_at, decides the order"
+        );
+    }
+
+    /// `list_sessions_for_repo` scans newest-first by last activity, which is an expression and
+    /// so cannot use the plain `started_at` index. Without its own index the bounded scan reads
+    /// and sorts the whole table on every call.
+    #[test]
+    fn test_list_sessions_for_repo_ordering_has_its_own_index() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let conn = storage.conn.lock().expect("lock");
+        let found: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                ["idx_sessions_last_activity"],
+                |row| row.get(0),
+            )
+            .expect("query sqlite_master");
+        assert_eq!(found, 1, "the last-activity index is created on open");
+    }
+
+    #[test]
     fn test_last_scanned_at_is_none_on_an_empty_index() {
         let storage = Storage::open_in_memory().expect("open storage");
         assert_eq!(storage.last_scanned_at().expect("last scanned"), None);
+    }
+
+    fn table_exists(storage: &Storage, name: &str) -> bool {
+        let conn = storage.conn.lock().expect("lock");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![name],
+                |row| row.get(0),
+            )
+            .expect("query sqlite_master");
+        count == 1
+    }
+
+    #[test]
+    fn test_loop_tables_exist_after_open() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        for name in [
+            "machines",
+            "agent_state",
+            "tool_intents",
+            "intent_paths",
+            "support_set",
+            "trace_anchors",
+        ] {
+            assert!(table_exists(&storage, name), "{name} must exist after open");
+        }
+    }
+
+    #[test]
+    fn test_host_fingerprint_alter_is_idempotent_across_two_opens() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let storage = Storage::open_path(temp.path()).expect("open 1");
+            storage.set_session_host("sess_x", "abc123").ok();
+        }
+        // Reopening re-runs initialize_schema, including the guarded ALTER. It must not error
+        // on a column that already exists.
+        let storage = Storage::open_path(temp.path()).expect("open 2");
+        let conn = storage.conn.lock().expect("lock");
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)").unwrap();
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(
+            columns.iter().filter(|c| c.as_str() == "host_fingerprint").count(),
+            1,
+            "the guarded ALTER must not duplicate the column on a second open"
+        );
+    }
+
+    #[test]
+    fn test_writers_of_path_returns_newest_and_excludes_asking_session() {
+        let storage = Storage::open_in_memory().expect("open storage");
+
+        storage
+            .insert_intent(
+                &IntentRow {
+                    tool_use_id: "tu_1".to_string(),
+                    session_id: "sess_a".to_string(),
+                    seq: 1,
+                    tool: "Write".to_string(),
+                    predicted_paths: vec!["/repo/foo.rs".to_string()],
+                    command: None,
+                    known: true,
+                    at: Utc::now(),
+                    result: None,
+                },
+                &["/repo/foo.rs".to_string()],
+            )
+            .expect("insert intent 1");
+        storage
+            .insert_intent(
+                &IntentRow {
+                    tool_use_id: "tu_2".to_string(),
+                    session_id: "sess_b".to_string(),
+                    seq: 5,
+                    tool: "Edit".to_string(),
+                    predicted_paths: vec!["/repo/foo.rs".to_string()],
+                    command: None,
+                    known: true,
+                    at: Utc::now(),
+                    result: None,
+                },
+                &["/repo/foo.rs".to_string()],
+            )
+            .expect("insert intent 2");
+
+        let writers = storage
+            .writers_of_path("/repo/foo.rs", 0, Some("sess_a"))
+            .expect("writers");
+        assert_eq!(writers, vec![("sess_b".to_string(), 5)]);
+
+        let writers_no_exclude = storage
+            .writers_of_path("/repo/foo.rs", 0, None)
+            .expect("writers");
+        assert_eq!(
+            writers_no_exclude,
+            vec![("sess_b".to_string(), 5), ("sess_a".to_string(), 1)],
+            "newest seq first"
+        );
+    }
+
+    #[test]
+    fn test_sessions_for_anchor_round_trips_a_run_id() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage
+            .insert_anchors(&[
+                AnchorRow {
+                    session_id: "sess_a".to_string(),
+                    seq: 3,
+                    kind: "run_id".to_string(),
+                    value: "run-xyz".to_string(),
+                },
+                AnchorRow {
+                    session_id: "sess_b".to_string(),
+                    seq: 7,
+                    kind: "run_id".to_string(),
+                    value: "run-xyz".to_string(),
+                },
+            ])
+            .expect("insert anchors");
+
+        let sessions = storage.sessions_for_anchor("run_id", "run-xyz").expect("lookup");
+        assert_eq!(
+            sessions,
+            vec![("sess_b".to_string(), 7), ("sess_a".to_string(), 3)]
+        );
+        assert_eq!(storage.anchors_for_session("sess_a").expect("anchors").len(), 1);
+    }
+
+    #[test]
+    fn test_list_agent_states_orders_newest_updated_first() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let older = Utc::now() - Duration::minutes(10);
+        let newer = Utc::now();
+
+        storage
+            .upsert_agent_state(&AgentStateRow {
+                session_id: "sess_old".to_string(),
+                state: "idle".to_string(),
+                since: older,
+                pane_id: None,
+                cwd: None,
+                git_head: None,
+                last_seq: 1,
+                updated_at: older,
+            })
+            .expect("upsert old");
+        storage
+            .upsert_agent_state(&AgentStateRow {
+                session_id: "sess_new".to_string(),
+                state: "working".to_string(),
+                since: newer,
+                pane_id: Some("pane_1".to_string()),
+                cwd: Some("/repo".to_string()),
+                git_head: Some("deadbeef".to_string()),
+                last_seq: 2,
+                updated_at: newer,
+            })
+            .expect("upsert new");
+
+        let states = storage.list_agent_states(10).expect("list");
+        let ids: Vec<&str> = states.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["sess_new", "sess_old"]);
+        assert_eq!(
+            storage.get_agent_state("sess_new").expect("get").unwrap().pane_id,
+            Some("pane_1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_governor_tables_exist_after_open() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        for name in ["turn_usage", "governor_events", "session_suspensions"] {
+            assert!(table_exists(&storage, name), "{name} must exist after open");
+        }
+    }
+
+    #[test]
+    fn test_transcript_cursor_alter_is_idempotent_across_two_opens() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let storage = Storage::open_path(temp.path()).expect("open 1");
+            storage.set_transcript_cursor("sess_x", "/tmp/x.jsonl", 42).unwrap();
+        }
+        let storage = Storage::open_path(temp.path()).expect("open 2");
+        {
+            let conn = storage.conn.lock().expect("lock");
+            let mut stmt = conn.prepare("PRAGMA table_info(agent_state)").unwrap();
+            let columns: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect();
+            for name in ["transcript_offset", "transcript_path"] {
+                assert_eq!(
+                    columns.iter().filter(|c| c.as_str() == name).count(),
+                    1,
+                    "the guarded ALTER must not duplicate {name} on a second open"
+                );
+            }
+        }
+        assert_eq!(
+            storage.get_transcript_cursor("sess_x").unwrap(),
+            Some(("/tmp/x.jsonl".to_string(), 42))
+        );
+    }
+
+    fn turn(session_id: &str, seq: i64, cache_read: Option<i64>, usd: f64) -> TurnUsageRow {
+        TurnUsageRow {
+            session_id: session_id.to_string(),
+            seq,
+            at: Utc::now(),
+            model: "sonnet".to_string(),
+            input: Some(100),
+            output: Some(50),
+            cache_read,
+            cache_creation: Some(0),
+            usd,
+        }
+    }
+
+    #[test]
+    fn test_session_spend_arithmetic_and_cache_read_share() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage
+            .insert_turn_usage(&[
+                turn("sess_a", 1, Some(0), 0.10),
+                turn("sess_a", 2, Some(100), 0.20),
+                turn("sess_b", 1, Some(0), 5.0),
+            ])
+            .unwrap();
+        // Duplicate seq is ignored, not double-counted.
+        storage.insert_turn_usage(&[turn("sess_a", 1, Some(0), 999.0)]).unwrap();
+
+        let spend = storage.session_spend("sess_a").unwrap();
+        assert_eq!(spend.turns, 2);
+        assert_eq!(spend.tokens, 150 + 250);
+        assert!((spend.usd - 0.30).abs() < 1e-9);
+        let denom: i64 = 100 + 200;
+        assert!((spend.cache_read_share - (100.0 / denom as f64)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_session_spend_zero_denominator_does_not_divide_by_zero() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let spend = storage.session_spend("sess_none").unwrap();
+        assert_eq!(spend.turns, 0);
+        assert_eq!(spend.cache_read_share, 0.0);
+    }
+
+    #[test]
+    fn test_window_spend_spans_sessions() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage
+            .insert_turn_usage(&[turn("sess_a", 1, Some(0), 1.0), turn("sess_b", 1, Some(0), 2.0)])
+            .unwrap();
+        let spend = storage.window_spend(Utc::now() - Duration::minutes(1)).unwrap();
+        assert_eq!(spend.turns, 2);
+        assert!((spend.usd - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_governor_events_round_trip() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage
+            .insert_governor_event(&GovernorEventRow {
+                id: None,
+                session_id: "sess_a".to_string(),
+                at: Utc::now(),
+                seq: Some(7),
+                rule: "thrash".to_string(),
+                action: "halt".to_string(),
+                reason: "lib.rs edited 3 times, no passing run".to_string(),
+                evidence: Some(r#"{"file":"lib.rs"}"#.to_string()),
+            })
+            .unwrap();
+        let events = storage.governor_events_for_session("sess_a", 10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].rule, "thrash");
+        assert_eq!(storage.recent_governor_events(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_suspend_session_upsert_keeps_original_since() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let first_since = Utc::now() - Duration::minutes(30);
+        storage
+            .suspend_session(&SuspensionRow {
+                session_id: "sess_a".to_string(),
+                rule: "spend_cap".to_string(),
+                reason: "over budget".to_string(),
+                since: first_since,
+                lifted_at: None,
+                tokens_at_lift: None,
+                usd_at_lift: None,
+            })
+            .unwrap();
+        storage
+            .suspend_session(&SuspensionRow {
+                session_id: "sess_a".to_string(),
+                rule: "spend_cap".to_string(),
+                reason: "over budget again".to_string(),
+                since: Utc::now(),
+                lifted_at: None,
+                tokens_at_lift: None,
+                usd_at_lift: None,
+            })
+            .unwrap();
+        let active = storage.active_suspension("sess_a").unwrap().unwrap();
+        assert_eq!(active.since.timestamp(), first_since.timestamp());
+        assert_eq!(active.reason, "over budget again");
+    }
+
+    #[test]
+    fn test_lift_session_returns_false_when_nothing_active() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        assert!(!storage.lift_session("sess_none", 0, 0.0).unwrap());
+
+        storage
+            .suspend_session(&SuspensionRow {
+                session_id: "sess_a".to_string(),
+                rule: "spend_cap".to_string(),
+                reason: "over budget".to_string(),
+                since: Utc::now(),
+                lifted_at: None,
+                tokens_at_lift: None,
+                usd_at_lift: None,
+            })
+            .unwrap();
+        assert!(storage.lift_session("sess_a", 6_000, 0.42).unwrap());
+        assert!(storage.active_suspension("sess_a").unwrap().is_none());
+        assert!(!storage.lift_session("sess_a", 6_000, 0.42).unwrap());
+        assert_eq!(
+            storage.lift_baseline("sess_a").unwrap(),
+            Some((6_000, 0.42)),
+            "the cap is measured from the lift, not from the start of the session"
+        );
+    }
+
+    #[test]
+    fn test_max_turn_seq_is_where_a_restarted_meter_resumes() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        assert_eq!(storage.max_turn_seq("sess_a").unwrap(), 0);
+        storage
+            .insert_turn_usage(&[TurnUsageRow {
+                session_id: "sess_a".to_string(),
+                seq: 7,
+                at: Utc::now(),
+                model: "claude-fable-5-1".to_string(),
+                input: Some(10),
+                output: Some(5),
+                cache_read: Some(0),
+                cache_creation: Some(0),
+                usd: 0.001,
+            }])
+            .unwrap();
+        assert_eq!(storage.max_turn_seq("sess_a").unwrap(), 7);
+        assert_eq!(storage.max_turn_seq("sess_b").unwrap(), 0);
     }
 }

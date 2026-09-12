@@ -140,7 +140,7 @@ impl AgentAdapter for HermesAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_hermes_file(custom) {
-                        if let Ok(source) = SessionSource::from_path(custom, self.name()) {
+                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -152,7 +152,7 @@ impl AgentAdapter for HermesAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_hermes_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -163,7 +163,7 @@ impl AgentAdapter for HermesAdapter {
             for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_hermes_file(&root) {
-                        if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -175,7 +175,7 @@ impl AgentAdapter for HermesAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_hermes_file(path) {
-                            if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }

@@ -22,6 +22,7 @@
 | `compaction-diff.md` | built | #83 — `forgotten_context`, `agentworth forgotten`, stored round boundaries, and a handoff section |
 | `asks.md` | built | #97 — `session_asks`, `agentworth asks`, a questions-to-answers index, tier 1 only |
 | `market-autofix.md` | research doc, not a build item | — |
+| `token-accounting.md` | built | the streamed-usage double count, and `cost_weighted_tokens` beside `total_tokens` |
 | `beliefs.md` | proposed, measured | — |
 | `efficiency-receipts.md` | proposed, measured | — |
 | `cli-grammar.md` | §1, §2 and §4(1) built | #118 — the noun tree, one session resolver, the `archie` name, completions, and a regenerated reference. The cockpit (§3) and `window receipt` are not built. |
@@ -29,8 +30,11 @@
 | `convergence.md` | proposed, measured | — |
 | `done-gate.md` | proposed, measured | — |
 | `extensions.md` | proposed | — |
+| `wake.md` | built | #TBD — `session_wake`, `archie session wake`; carry-forward and the cwd default skip subagent transcripts |
+| `loop.md` | built | #TBD — the return path: archie hook, the socket, drift, anchors, machine fingerprint |
+| `governor.md` | built | #TBD — `archie hook --gate`, the thrash halt, the session spend cap, `session burn`, `policy show|check|lift|replay` |
 
-Twenty-six specs sit beside this file. They are independent of each other but
+Twenty-seven specs sit beside this file. They are independent of each other but
 not of the backend, and two of them are worth less than they look until a bug
 lands first. This is the sequencing.
 

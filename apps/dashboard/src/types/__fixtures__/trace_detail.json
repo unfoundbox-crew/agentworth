@@ -1,0 +1,98 @@
+{
+  "events_offset": 0,
+  "events_total": 2,
+  "outcomes": [
+    {
+      "confidence": 0.8999999761581421,
+      "kind": "commit_observed",
+      "summary": "git commit abc123 observed"
+    }
+  ],
+  "recoveries": [],
+  "score": {
+    "complexity_score": 0.5,
+    "composite_score": 0.64,
+    "explanations": [
+      "commit observed for this session"
+    ],
+    "outcome_score": 0.7,
+    "per_model": {},
+    "provenance_score": 1.0,
+    "recovery_score": 0.0,
+    "total_estimated_cost_usd": 0.14,
+    "verifiability_score": 0.6
+  },
+  "trace": {
+    "adapter": "claude_code",
+    "ended_at": "2026-09-01T10:08:02Z",
+    "events": [
+      {
+        "id": "evt-fixture-0",
+        "payload": {
+          "data": {
+            "content": "Fix the dashboard coverage matrix."
+          },
+          "type": "user_message"
+        },
+        "sequence": 0,
+        "timestamp": "2026-09-01T10:00:00Z"
+      },
+      {
+        "id": "evt-fixture-1",
+        "payload": {
+          "data": {
+            "action": "edit",
+            "diff": "- item.tokens === \"yes\"\n+ item.token_accounting",
+            "lines_changed": 6,
+            "path": "apps/dashboard/src/components/CoverageMatrix.tsx"
+          },
+          "type": "file_action"
+        },
+        "raw_ref": "L145",
+        "sequence": 1,
+        "timestamp": "2026-09-01T10:00:05Z"
+      }
+    ],
+    "kind": "conversation",
+    "provenance": {
+      "adapter_name": "claude_code",
+      "content_fingerprint": "blake3:fixture0001",
+      "file_size_bytes": 184320,
+      "mtime_epoch_secs": 1772000000,
+      "source_path": "/Users/example/.claude/projects/demo/sess_fixture_0001.jsonl"
+    },
+    "session_id": "sess_fixture_0001",
+    "started_at": "2026-09-01T10:00:00Z",
+    "stats": {
+      "assistant_messages_count": 1,
+      "compaction_count": 0,
+      "compaction_tokens_dropped": 0,
+      "duration_seconds": 482.5,
+      "effort": null,
+      "models_used": [
+        "claude-sonnet-5"
+      ],
+      "per_model_token_usage": {
+        "claude-sonnet-5": {
+          "cache_creation_tokens": 1200,
+          "cache_read_tokens": 8000,
+          "input_tokens": 12000,
+          "output_tokens": 3400
+        }
+      },
+      "token_usage": {
+        "cache_creation_tokens": 1200,
+        "cache_read_tokens": 8000,
+        "input_tokens": 12000,
+        "output_tokens": 3400
+      },
+      "tool_calls_count": 0,
+      "tools_used": {
+        "Edit": 4,
+        "Read": 5
+      },
+      "total_events": 2,
+      "user_messages_count": 1
+    }
+  }
+}

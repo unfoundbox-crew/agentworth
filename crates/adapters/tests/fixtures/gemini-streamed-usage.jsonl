@@ -1,0 +1,4 @@
+{"id":"msg-fixture-1","type":"user","timestamp":"2026-06-12T13:11:00.000Z","content":"Summarise the log."}
+{"id":"msg-fixture-2","type":"gemini","model":"gemini-2.5-pro","timestamp":"2026-06-12T13:11:04.000Z","content":"Reading","thoughts":"","tokens":{"input":14549,"output":30,"cached":0,"thoughts":100,"tool":0,"total":14679}}
+{"id":"msg-fixture-2","type":"gemini","model":"gemini-2.5-pro","timestamp":"2026-06-12T13:11:06.000Z","content":"Reading the log now.","thoughts":"","tokens":{"input":14549,"output":70,"cached":0,"thoughts":240,"tool":0,"total":14859}}
+{"id":"msg-fixture-3","type":"gemini","model":"gemini-2.5-pro","timestamp":"2026-06-12T13:11:20.000Z","content":"Done.","tokens":{"input":200,"output":15,"cached":14000,"thoughts":5,"tool":0,"total":14220}}

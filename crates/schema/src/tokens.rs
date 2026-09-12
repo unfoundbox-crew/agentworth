@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign};
 
+/// Anthropic's published price multiplier for a 5-minute prompt-cache write, relative to one
+/// base input token. See `TokenUsage::cost_weighted_total`.
+pub const CACHE_WRITE_5M_MULTIPLIER: f64 = 1.25;
+
+/// Anthropic's published price multiplier for a prompt-cache read, relative to one base input
+/// token. See `TokenUsage::cost_weighted_total`.
+pub const CACHE_READ_MULTIPLIER: f64 = 0.1;
+
 /// Token accounting metrics for model invocations and sessions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
@@ -28,6 +36,32 @@ impl TokenUsage {
             cache_read_tokens,
             cache_creation_tokens,
         }
+    }
+
+    /// Tokens weighted by what they actually cost, relative to one base input token.
+    ///
+    /// `total()` adds `cache_read_tokens` at face value, so on a long session it tracks how
+    /// big the context got, not what the session spent -- a real subagent transcript measured
+    /// 2026-09-10 held 19,042,532 cache-read tokens out of a 19,294,496 total, so the headline
+    /// was 98.7% re-reads of an already-paid-for prompt.
+    ///
+    /// The multipliers are Anthropic's published prompt-caching ratios, relative to the base
+    /// input price: a 5-minute cache write costs 1.25x and a cache read costs 0.1x. Verified
+    /// 2026-09-10 against
+    /// <https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching> ("Pricing").
+    ///
+    /// Two things this is deliberately NOT: it is not dollars (a token's base price varies by
+    /// model, and this crate does not know the model here), and it is not exact for every
+    /// cache entry -- a 1-hour cache write is 2x, not 1.25x, and Fable 5.1 / Mythos 5.1 read
+    /// at 0.025x rather than 0.1x. `cache_creation_tokens` does not record which TTL was
+    /// bought, so the common 5-minute case is assumed. Treat this as a comparable weight for
+    /// ranking sessions against each other, not as a bill.
+    pub fn cost_weighted_total(&self) -> u64 {
+        let weighted = self.input_tokens as f64
+            + self.output_tokens as f64
+            + CACHE_WRITE_5M_MULTIPLIER * self.cache_creation_tokens as f64
+            + CACHE_READ_MULTIPLIER * self.cache_read_tokens as f64;
+        weighted as u64
     }
 
     /// Total tokens across all categories.

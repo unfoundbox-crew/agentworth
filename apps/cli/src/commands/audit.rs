@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::commands::{is_high_risk_rm_path, is_leaked_katana_var, APOLOGY_PATTERNS};
+use crate::commands::{is_high_risk_rm_path, is_leaked_loop_var, APOLOGY_PATTERNS};
 use agentworth_core::Scanner;
 use agentworth_redaction::{RedactionCategory, RedactionReport, Redactor};
 use agentworth_schema::{AgentWorthTrace, EventPayload, NormalizedEvent};
@@ -204,7 +204,7 @@ fn audit_trace(
                 // docs/DECISION-INBOX.md for how this was found (while unifying credential
                 // detection in this same file, unrelated to that change).
                 if is_recursive_delete_command(&lower_cmd) {
-                    if is_leaked_katana_var(&lower_cmd) {
+                    if is_leaked_loop_var(&lower_cmd) {
                         report.critical_count += 1;
                         report.findings.push(SafetyFinding {
                             severity: SafetySeverity::Critical,
@@ -213,7 +213,7 @@ fn audit_trace(
                             timestamp: ts.clone(),
                             rule_id: "LEAKED_SHELL_VARIABLE".to_string(),
                             title: "Leaked Shell Variable in Destructive Deletion".to_string(),
-                            description: "Command executes 'rm -rf' with an unconstrained/leaked shell variable ($d), matching the Katana disaster signature where a missing 'local d' deleted protected repositories.".to_string(),
+                            description: "Command executes 'rm -rf' with an unconstrained/leaked shell variable ($d), matching the signature of an incident where a missing 'local d' deleted protected repositories.".to_string(),
                             offending_snippet: cmd_str.clone(),
                             turn_index: turn_num,
                             project: project.to_string(),
@@ -398,10 +398,10 @@ fn find_destructive_sweep_signature(cmd: &str) -> Option<&'static str> {
 /// deletion. Gates the Critical/High rm classification above -- without this guard, *every*
 /// `ShellCommand` (`ls`, `git status`, `echo`, `cargo build`, ...) fell into that chain's `else`
 /// arm and was mislabeled "recursive file removal." Deliberately broader than
-/// `is_leaked_katana_var`'s own internal substring check (`rm -rf`/`rm -fr`/`rm -r -f` only): a
+/// `is_leaked_loop_var`'s own internal substring check (`rm -rf`/`rm -fr`/`rm -r -f` only): a
 /// bare `rm -r` (recursive, no explicit `-f`) is still a real recursive deletion in a
 /// non-interactive agent shell (nothing prompts for confirmation), so it's still worth surfacing
-/// as at least `RECURSIVE_DELETION` -- it just can't be the *Katana* signature specifically,
+/// as at least `RECURSIVE_DELETION` -- it just can't be the leaked-variable signature specifically,
 /// which needs an actual leaked variable in an `-rf`-shaped command. A non-recursive `rm -f
 /// somefile.txt` (single-file force delete, no `-r` anywhere) is deliberately excluded: it isn't
 /// a "recursive directory deletion" and doesn't belong in this rule at all -- see

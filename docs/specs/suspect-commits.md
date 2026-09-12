@@ -54,7 +54,7 @@ by hand against the blame path that triggered each flag:
 
 | commit | matched on | evidence path | real |
 | :--- | :--- | :--- | :--- |
-| bd84c85a | `docs/HANDOFF.md` | `/Users/saurabh/code/unfoundbox/agentworth/docs/HANDOFF.md` | yes |
+| bd84c85a | `docs/HANDOFF.md` | `/Users/dev/code/unfoundbox/agentworth/docs/HANDOFF.md` | yes |
 | ca746787 | `.gitignore` | `.gitignore` | no |
 | ddf62cb4 | `README.md` | `web/README.md` | no |
 | 80d9d22a | `README.md` | `web/README.md` | no |
@@ -289,19 +289,22 @@ Correct — and the same commit the original measurement's table marked "yes".
 So the 10-flag sample was taken from the other side, which is the more useful
 one: **the first 10 flags anchoring removes.** All ten are false, all ten for the
 same reason — a relative path from an `opencode` session whose own repository
-resolves to `Users/saurabh`, not `unfoundbox/agentworth`:
+resolves to `Users/dev`, not `unfoundbox/agentworth`:
 
 | commit | matched | evidence path | session repo |
 | :--- | :--- | :--- | :--- |
-| ca746787 | `.gitignore` | `.gitignore` | `Users/saurabh` |
-| ddf62cb4 | `README.md` | `web/README.md` | `Users/saurabh` |
-| 80d9d22a | `README.md` | `web/README.md` | `Users/saurabh` |
-| 6f1c0478 | `AGENTS.md` | `AGENTS.md` | `Users/saurabh` |
-| 1185ce4b | `README.md` | `web/README.md` | `Users/saurabh` |
-| 97e9c6eb | `apps/cli/src/main.rs` | `apps/cli/src/main.rs` | `Users/saurabh` |
-| c245897e | `Cargo.lock` | `Cargo.lock` | `Users/saurabh` |
-| 0dcd2d80 | `.gitignore` | `.gitignore` | `Users/saurabh` |
-| 5b35e4e7 | `Cargo.lock` | `Cargo.lock` | `Users/saurabh` |
-| 947f854a | `crates/adapters/src/claude.rs` | `crates/adapters/src/claude.rs` | `Users/saurabh` |
+| ca746787 | `.gitignore` | `.gitignore` | `Users/dev` |
+| ddf62cb4 | `README.md` | `web/README.md` | `Users/dev` |
+| 80d9d22a | `README.md` | `web/README.md` | `Users/dev` |
+| 6f1c0478 | `AGENTS.md` | `AGENTS.md` | `Users/dev` |
+| 1185ce4b | `README.md` | `web/README.md` | `Users/dev` |
+| 97e9c6eb | `apps/cli/src/main.rs` | `apps/cli/src/main.rs` | `Users/dev` |
+| c245897e | `Cargo.lock` | `Cargo.lock` | `Users/dev` |
+| 0dcd2d80 | `.gitignore` | `.gitignore` | `Users/dev` |
+| 5b35e4e7 | `Cargo.lock` | `Cargo.lock` | `Users/dev` |
+| 947f854a | `crates/adapters/src/claude.rs` | `crates/adapters/src/claude.rs` | `Users/dev` |
+
+(`Users/dev` is an anonymized bucket name — the underlying session-repo key, not a real
+username. The count and every other number in this table is unchanged.)
 
 10 of 10 removed flags false, 1 of 1 kept flag right.

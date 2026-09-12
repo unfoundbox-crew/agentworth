@@ -5,6 +5,7 @@ members = [
     "crates/adapters",
     "crates/storage",
     "crates/core",
+    "crates/loop",
     "crates/outcomes",
     "crates/scoring",
     "crates/redaction",
@@ -14,7 +15,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.18"
+version = "0.1.23"
 edition = "2021"
 authors = ["AgentWorth Contributors"]
 license = "Apache-2.0"
@@ -52,6 +53,7 @@ agentworth-adapter-sdk = { path = "crates/adapter-sdk" }
 agentworth-adapters = { path = "crates/adapters" }
 agentworth-storage = { path = "crates/storage", default-features = false }
 agentworth-core = { path = "crates/core", default-features = false }
+agentworth-loop = { path = "crates/loop" }
 agentworth-outcomes = { path = "crates/outcomes" }
 agentworth-scoring = { path = "crates/scoring" }
 agentworth-redaction = { path = "crates/redaction" }

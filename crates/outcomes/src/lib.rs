@@ -354,7 +354,7 @@ mod tests {
                 id: Some("call_edit".to_string()),
                 name: "replace_file_content".to_string(),
                 arguments: serde_json::json!({
-                    "TargetFile": "/Users/saurabh/code/unfoundbox/agentworth/crates/outcomes/src/recovery.rs",
+                    "TargetFile": "/Users/dev/code/unfoundbox/agentworth/crates/outcomes/src/recovery.rs",
                     "ReplacementContent": "let x = 42;"
                 }),
             }),

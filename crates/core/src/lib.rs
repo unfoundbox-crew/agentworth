@@ -88,10 +88,16 @@ impl Scanner {
                 )
             })?;
 
+        // Match on `identity_names()`, not just `name()`: an adapter can file sessions under
+        // more than one product identity (Gemini's "gemini" vs. "antigravity", see
+        // `compute_adapter_matrix`'s doc comment in apps/cli/src/server/routes.rs for the same
+        // join bug found independently in the matrix). A session tagged "antigravity" has no
+        // adapter whose own `name()` equals it, but the Gemini adapter's `identity_names()`
+        // does, and it parses the file the same way.
         let adapter = self
             .adapters
             .iter()
-            .find(|a| a.name() == summary.adapter)
+            .find(|a| a.identity_names().contains(&summary.adapter.as_str()))
             .with_context(|| format!("No adapter registered for '{}'", summary.adapter))?;
 
         // Rebuild the exact `SessionSource` this session was last scanned with, from the
@@ -114,7 +120,12 @@ impl Scanner {
             })?;
         let source = SessionSource {
             path: std::path::PathBuf::from(&summary.source_path),
-            adapter_name: adapter.name().to_string(),
+            // The session's own indexed identity (e.g. "antigravity"), not `adapter.name()`
+            // (e.g. "gemini") -- an adapter that files sessions under more than one identity
+            // re-derives the specific one from the path anyway (see e.g. `GeminiAdapter::parse`'s
+            // `detect_product_identity`), but this keeps the rebuilt `SessionSource` faithful to
+            // what was actually indexed.
+            adapter_name: summary.adapter.clone(),
             file_size_bytes,
             mtime_epoch_secs,
             fingerprint,
@@ -130,6 +141,67 @@ impl Scanner {
 
         let parse_result = adapter.parse(&source)?;
         Ok(parse_result.trace)
+    }
+
+    /// Parses and indexes exactly one source through the adapter named `adapter_name`,
+    /// without enumerating or touching anything else on disk -- the registration path for a
+    /// caller that already knows which file changed and which adapter claims it (e.g.
+    /// `apps/cli/src/server/home/gateway.rs`'s live-tail-driven transcript feed, the moment it
+    /// sees a changed path `Storage::session_id_for_source_path` doesn't know about yet). This
+    /// is the same parse/detect/score/upsert sequence `run_scan` runs per source, just scoped
+    /// to one file instead of a full or even a `--path`-scoped scan, so a freshly-seated rider's
+    /// first transcript write doesn't have to wait for the next periodic `archie scan`.
+    ///
+    /// `Ok(None)` when `adapter_name` doesn't recognize `path` at all (its own `enumerate`
+    /// rejects it, e.g. wrong extension or not a session shape it claims), or the parsed trace
+    /// has no real activity yet -- a session file can exist with its first bytes written and
+    /// nothing else, same near-empty check `run_scan` applies. Never prunes stub sessions or
+    /// touches any source other than `path`; that stays exclusively a full-scan concern.
+    pub fn scan_one_source(&self, adapter_name: &str, path: &std::path::Path) -> Result<Option<String>> {
+        let adapter = self
+            .adapters
+            .iter()
+            .find(|a| a.name() == adapter_name)
+            .with_context(|| format!("no registered adapter named '{adapter_name}'"))?;
+
+        let options = ScanOptions {
+            custom_paths: vec![path.to_path_buf()],
+            force: true,
+            ..Default::default()
+        };
+        let sources = adapter.enumerate(&options)?;
+        let Some(source) = sources.into_iter().find(|s| s.path == path) else {
+            return Ok(None);
+        };
+
+        let parse_result = adapter.parse(&source)?;
+        if parse_result.trace.events.is_empty()
+            || is_near_empty_session(parse_result.trace.kind, parse_result.trace.stats.total_events)
+        {
+            return Ok(None);
+        }
+
+        let outcome_detector = OutcomeHierarchyDetector::new();
+        let (outcomes, verification_notes) =
+            outcome_detector.detect_outcomes_with_verification(&parse_result.trace);
+        let strongest = outcome_detector.strongest_outcome(&outcomes);
+        let primary_outcome_str = strongest.map(|o| outcome_kind_name(o.kind));
+
+        let scorer = TraceScorer::new();
+        let score = scorer.score(&parse_result.trace);
+        let risk = compute_session_risk(&parse_result.trace, &verification_notes);
+
+        let session_id = parse_result.trace.session_id.clone();
+        self.storage.upsert_session(
+            &parse_result.trace,
+            primary_outcome_str.as_deref(),
+            Some(score.composite_score),
+            adapter.parser_version(),
+        )?;
+        if let Err(e) = self.storage.upsert_session_risk(&risk) {
+            warn!("Failed storing session risk for {:?}: {}", path, e);
+        }
+        Ok(Some(session_id))
     }
 
     /// Deletes indexed sessions with at most one normalized event (see
@@ -172,6 +244,23 @@ impl Scanner {
     where
         F: FnMut(usize, usize),
     {
+        // Seed `known_sources` from the index before enumeration, so an adapter can compare a
+        // file's current (size, mtime) against what's already indexed and skip hashing its
+        // content entirely when they match -- see
+        // `agentworth_adapter_sdk::SessionSource::from_path_with_known`. A `--force` scan wants
+        // every file rehashed regardless, so it skips this lookup (and the fingerprint the
+        // adapter computes then is used only to detect *future* changes, not this one).
+        // On failure this degrades to "no cache" rather than failing the scan -- every source
+        // just gets hashed as it always did.
+        let mut options = options.clone();
+        if !options.force {
+            match self.storage.all_source_metadata() {
+                Ok(known) => options.known_sources = Arc::new(known),
+                Err(e) => warn!("Failed loading known-source cache for scan: {}", e),
+            }
+        }
+        let options = &options;
+
         // 1. Enumerate all sources across registered adapters in parallel threads
         let all_sources: Vec<(usize, SessionSource)> = std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(self.adapters.len());
@@ -297,7 +386,9 @@ impl Scanner {
                     // cleanup of rows already indexed under looser past filtering.
                     // `ScanOptions::include_stubs` is the explicit opt-out for callers that
                     // want even one-event rows kept.
-                    if !options.include_stubs && is_near_empty_session(parse_result.trace.stats.total_events) {
+                    if !options.include_stubs
+                        && is_near_empty_session(parse_result.trace.kind, parse_result.trace.stats.total_events)
+                    {
                         continue;
                     }
 
@@ -377,11 +468,13 @@ impl Scanner {
             0
         };
 
-        // `true`: this summary's own "Total Indexed" / "N total in index" labels (main.rs,
-        // static_files.rs) promise a raw count of everything in the SQLite index, stubs
-        // included -- not a "real activity" count. See get_aggregate_stats's doc comment.
+        // This summary's own "Total Indexed" / "N total in index" labels (main.rs,
+        // static_files.rs) promise a raw count of everything in the SQLite index -- every row,
+        // conversation stubs and fleet snapshots included. `aggregate_stats` is the
+        // conversation aggregate (snapshots excluded), used for the token/model/by-adapter
+        // breakdown; the two legitimately differ when the index holds any snapshot.
         let aggregate_stats = self.storage.get_aggregate_stats(true)?;
-        let total_indexed_sessions = aggregate_stats.total_sessions;
+        let total_indexed_sessions = self.storage.total_row_count()?;
 
         Ok(ScanSummary {
             discovered_sources: total,
@@ -701,6 +794,7 @@ mod tests {
             custom_paths: vec![one_event_temp.path().to_path_buf()],
             force: true,
             include_stubs: true,
+            ..Default::default()
         };
         let summary2 = scanner
             .run_scan(&include_stubs_options, |_, _| {})
@@ -1234,6 +1328,96 @@ mod tests {
             .load_trace("virtual-sess")
             .expect("load_trace must resolve a virtual source via adapter.source_exists, not Path::exists");
         assert_eq!(loaded.events.len(), 2);
+    }
+
+    /// `load_trace` used to look an adapter up by `a.name() == summary.adapter` alone, which
+    /// fails for any session filed under a secondary identity a registered adapter's
+    /// `identity_names()` claims but whose `name()` differs -- exactly the "antigravity" case
+    /// the real gemini adapter has (`GeminiAdapter::identity_names` returns `["gemini",
+    /// "antigravity"]`, but `name()` is only `"gemini"`). A summary row with `adapter =
+    /// "antigravity"` produced "No adapter registered for 'antigravity'" even though the
+    /// session was fully indexed and its source fully present. Modeled with a fake adapter
+    /// (rather than the real Gemini one) to isolate the lookup bug from Gemini's own parsing.
+    #[test]
+    fn test_load_trace_resolves_a_session_filed_under_a_secondary_identity_name() {
+        use agentworth_adapter_sdk::{DetectionResult, ParseResult};
+        use agentworth_schema::{EventPayload, NormalizedEvent, Provenance};
+
+        struct FakeMultiIdentityAdapter;
+
+        impl AgentAdapter for FakeMultiIdentityAdapter {
+            fn name(&self) -> &'static str {
+                "fake_primary"
+            }
+
+            fn identity_names(&self) -> Vec<&'static str> {
+                vec!["fake_primary", "fake_secondary"]
+            }
+
+            fn source_exists(&self, _source: &SessionSource) -> bool {
+                true
+            }
+
+            fn detect(&self, _options: &ScanOptions) -> Result<DetectionResult> {
+                Ok(DetectionResult {
+                    adapter_name: self.name(),
+                    is_present: true,
+                    discovered_roots: vec![],
+                    confidence: 1.0,
+                })
+            }
+
+            fn enumerate(&self, _options: &ScanOptions) -> Result<Vec<SessionSource>> {
+                Ok(vec![])
+            }
+
+            fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
+                let provenance = Provenance::new(
+                    source.path.to_string_lossy().to_string(),
+                    "fake_secondary",
+                    source.file_size_bytes,
+                    source.mtime_epoch_secs,
+                    &source.fingerprint,
+                );
+                let mut trace = AgentWorthTrace::new(
+                    "secondary-identity-sess",
+                    "fake_secondary",
+                    provenance,
+                    Utc::now(),
+                );
+                trace.events.push(NormalizedEvent::new(
+                    1,
+                    Utc::now(),
+                    EventPayload::UserMessage { content: "hi from a secondary identity".to_string() },
+                ));
+                trace.recalculate_stats();
+                Ok(ParseResult { trace, malformed_lines: 0, warnings: vec![] })
+            }
+        }
+
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(FakeMultiIdentityAdapter)], storage.clone());
+
+        let source = SessionSource {
+            path: std::path::PathBuf::from("/repo/.fake/secondary-session.jsonl"),
+            adapter_name: "fake_secondary".to_string(),
+            file_size_bytes: 4096,
+            mtime_epoch_secs: 1_000,
+            fingerprint: "deadbeef".to_string(),
+        };
+        let parse_result = FakeMultiIdentityAdapter.parse(&source).expect("parse fixture");
+        // The summary row is stored under "fake_secondary" -- the identity `parse()` assigned --
+        // not under the adapter's own `name()` ("fake_primary"), matching how the real Gemini
+        // adapter files a subset of its sessions as "antigravity".
+        storage
+            .upsert_session(&parse_result.trace, None, None, 0)
+            .expect("seed secondary-identity session");
+
+        let loaded = scanner
+            .load_trace("secondary-identity-sess")
+            .expect("load_trace must resolve a session via identity_names(), not name() alone");
+        assert_eq!(loaded.events.len(), 1);
     }
 
     /// The stub-pruning pass (`prune_stub_sessions`) decides survival by checking whether
