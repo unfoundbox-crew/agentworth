@@ -1,10 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import http from 'node:http';
 import https from 'node:https';
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+/**
+ * https everywhere in production; the test suite points the resolver at a local
+ * `http://127.0.0.1:<port>` fixture server instead of the network (no mocking of `https.get`
+ * itself), so both downloadFile and downloadText pick their transport off the URL's own
+ * protocol rather than assuming https.
+ */
+function httpGet(url, opts, cb) {
+  const client = url.startsWith('http://') ? http : https;
+  return client.get(url, opts, cb);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -78,9 +91,22 @@ export function downloadLine(done, total, { cols = 80, unicode = true, lamp = 'o
 }
 
 /** `~/.agentworth/bin/v0.1.16` rather than the expanded home, so the line fits 80 columns. */
-function tilde(p) {
-  const home = os.homedir();
+function tildeFor(p, home) {
   return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+}
+
+function tilde(p) {
+  return tildeFor(p, os.homedir());
+}
+
+/**
+ * Strips every occurrence of `home` out of `str` (replaced with `~`). Used on error text that
+ * can embed a full command line or a tool's own stderr -- both can carry the cache dir's full
+ * path, and a copy-pasted error message should not carry the reporter's home directory.
+ */
+function redactHome(str, home) {
+  if (!home) return String(str);
+  return String(str).split(home).join('~');
 }
 
 /**
@@ -241,19 +267,48 @@ export function findCargoTargetBinary(startDir, binName = getBinaryName()) {
  * @param {number} [redirects=5]
  * @returns {Promise<void>}
  */
-export function downloadFile(url, destPath, redirects = 5, onProgress = null) {
+/** No socket activity for this long -- headers or body -- and the download is presumed stalled. */
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 60_000;
+
+export function downloadFile(
+  url,
+  destPath,
+  redirects = 5,
+  onProgress = null,
+  timeoutMs = DEFAULT_DOWNLOAD_TIMEOUT_MS,
+) {
   return new Promise((resolve, reject) => {
     if (redirects < 0) {
       return reject(new Error('Too many redirects while downloading binary.'));
     }
 
-    const request = https.get(url, { headers: { 'User-Agent': 'agentworth-npm-resolver' } }, (res) => {
+    // A connection that stalls (accepted, headers sent, then nothing) used to hang until the
+    // caller's own machinery noticed -- for downloadAndExtractBinary that meant never touching
+    // the lock file, so a live holder stuck on a dead connection got its lock stolen 15
+    // minutes later and landed in the exact confirm-read race this same fix closes elsewhere.
+    // An idle socket timeout means a stall fails fast and releases the lock long before that.
+    let settled = false;
+    const finishResolve = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const finishReject = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
+    const request = httpGet(url, { headers: { 'User-Agent': 'agentworth-npm-resolver' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return downloadFile(res.headers.location, destPath, redirects - 1, onProgress).then(resolve, reject);
+        return downloadFile(res.headers.location, destPath, redirects - 1, onProgress, timeoutMs).then(
+          finishResolve,
+          finishReject,
+        );
       }
 
       if (res.statusCode !== 200) {
-        return reject(new Error(`Failed to download binary: HTTP ${res.statusCode} from ${url}`));
+        return finishReject(new Error(`Failed to download binary: HTTP ${res.statusCode} from ${url}`));
       }
 
       // The asset is ~23 MB and the release CDN is often slow, so silence here reads as a
@@ -273,20 +328,251 @@ export function downloadFile(url, destPath, redirects = 5, onProgress = null) {
 
       fileStream.on('finish', () => {
         if (onProgress) onProgress(received, total || received);
-        fileStream.close(resolve);
+        fileStream.close(finishResolve);
       });
 
       fileStream.on('error', (err) => {
-        fs.unlink(destPath, () => reject(err));
+        fs.unlink(destPath, () => finishReject(err));
       });
     });
 
     request.on('error', (err) => {
-      reject(err);
+      finishReject(err);
+    });
+
+    // Fires on idle -- no bytes sent or received -- for `timeoutMs`, whether that idle time is
+    // before headers arrive or mid-body. destroy(err) aborts the socket and emits 'error' on
+    // the request above with this same error, which is what actually rejects the promise.
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`Download stalled (no data for ${timeoutMs}ms): ${url}`));
     });
   });
 }
 
+
+/**
+ * The GitHub Releases base URL archives are fetched from. Overridable with
+ * `AGENTWORTH_RELEASE_BASE_URL` (env, or `options.releaseBaseUrl`) so tests -- and anyone
+ * mirroring releases internally -- can point the launcher at a different host. The default
+ * itself never changes.
+ */
+const DEFAULT_RELEASE_BASE_URL = 'https://github.com/unfoundbox-crew/agentworth/releases/download';
+
+function releaseBaseUrl(options = {}) {
+  const fromOptions = options.releaseBaseUrl;
+  const fromEnv =
+    (options.env && options.env.AGENTWORTH_RELEASE_BASE_URL) || process.env.AGENTWORTH_RELEASE_BASE_URL;
+  const base = fromOptions || fromEnv || DEFAULT_RELEASE_BASE_URL;
+  return base.replace(/\/+$/, '');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Downloads a small text file (redirect-following, like downloadFile) and returns its body.
+ * Used for the `.sha256` sidecar, which is a handful of bytes -- no progress reporting needed.
+ *
+ * @param {string} url
+ * @param {number} [redirects=5]
+ * @returns {Promise<string>}
+ */
+export function downloadText(url, redirects = 5) {
+  return new Promise((resolve, reject) => {
+    if (redirects < 0) {
+      return reject(new Error('Too many redirects while downloading checksum file.'));
+    }
+
+    const request = httpGet(url, { headers: { 'User-Agent': 'agentworth-npm-resolver' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        return downloadText(res.headers.location, redirects - 1).then(resolve, reject);
+      }
+
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`Failed to download ${url}: HTTP ${res.statusCode}`));
+      }
+
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => resolve(data));
+      res.on('error', reject);
+    });
+
+    request.on('error', reject);
+  });
+}
+
+/**
+ * Streaming sha256 of a file on disk -- never loads the whole archive into memory.
+ *
+ * @param {string} filePath
+ * @returns {Promise<string>} lowercase hex digest
+ */
+export function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
+
+/**
+ * Pulls the hex digest out of a `sha256sum`-style checksum file (`<hex>  <filename>`, the
+ * format both `shasum -a 256` and `sha256sum` emit -- see release.yml). Only the first
+ * non-blank line is read; a sidecar always describes exactly one archive.
+ *
+ * @param {string} text
+ * @param {string} archiveName - used only to make a parse failure's error message useful
+ * @returns {string} lowercase hex digest
+ */
+export function parseSha256Line(text, archiveName) {
+  const line = String(text || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  const match = line && line.match(/^([0-9a-fA-F]{64})\s+\*?(.+)$/);
+  if (!match) {
+    throw new Error(`Could not parse checksum file for ${archiveName}: ${JSON.stringify(text).slice(0, 200)}`);
+  }
+  // The `sha256sum`/`shasum -a 256` line format is `<hex>  <filename>` -- a sidecar that
+  // parses but names a different file is not evidence for *this* archive's integrity (a stale
+  // cached sidecar, a mirror serving the wrong pairing). Compare basenames: some tools emit a
+  // bare filename, others the full path they hashed.
+  const namedFile = path.basename(match[2].trim());
+  if (namedFile !== archiveName) {
+    throw new Error(`Checksum file names "${namedFile}" but expected "${archiveName}"`);
+  }
+  return match[1].toLowerCase();
+}
+
+/** The three native binaries the release tarball ships (apps/cli/Cargo.toml's [[bin]] targets). */
+function threeBinaryNames(platform) {
+  const suffix = platform === 'win32' ? '.exe' : '';
+  return ['agentworth', 'archie', 'agwt'].map((n) => `${n}${suffix}`);
+}
+
+/**
+ * The completeness marker written only after a checksum-verified install finishes -- contains
+ * the archive's own sha256, one newline. Presence and size can't tell a truncated binary from
+ * a good one when both happen to land at the same byte count (#173's real broken file was mode
+ * 755 and the exact size of the good one), so the marker, not the binaries themselves, is what
+ * every completeness gate actually trusts.
+ */
+function markerPath(dir) {
+  return path.join(dir, '.installed');
+}
+
+/** True when every one of the three native binaries is executable in `dir` AND the completeness marker is present. */
+function installIsComplete(dir, platform) {
+  return threeBinaryNames(platform).every((name) => isExecutable(path.join(dir, name))) && fs.existsSync(markerPath(dir));
+}
+
+/**
+ * Removes any `.v<version>.tmp-<pid>` leftover in `binDir` whose pid is no longer alive -- a
+ * holder killed mid-extraction leaves its temp dir behind forever otherwise, since only the
+ * *next* holder's own pid-named dir was ever cleaned up. Only the current lock holder calls
+ * this, and only dead-pid dirs (never our own, never a live one) are touched.
+ */
+function sweepDeadTmpExtractDirs(binDir, version) {
+  const prefix = `.v${version}.tmp-`;
+  let entries;
+  try {
+    entries = fs.readdirSync(binDir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!name.startsWith(prefix)) continue;
+    const pid = Number(name.slice(prefix.length));
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
+    if (isPidAlive(pid)) continue;
+    try {
+      fs.rmSync(path.join(binDir, name), { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+/** The pid a lock file names, or null if it can't be read or doesn't look like a pid. */
+export function readLockPid(lockFile) {
+  let pidText;
+  try {
+    pidText = fs.readFileSync(lockFile, 'utf8').trim();
+  } catch {
+    return null;
+  }
+  const pid = Number(pidText);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+/** True when `pid` (from a lock or a tmp-dir name) is still a live process. */
+function isPidAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // ESRCH: no such process -- dead, stale. EPERM: it exists but we can't signal it (a
+    // different user) -- still alive, don't take it over. Anything else: be conservative.
+    return err && err.code === 'EPERM';
+  }
+}
+
+/**
+ * True when the process named by the lock file's pid is still alive. A lock whose holder is
+ * gone is stale immediately, regardless of how fresh its mtime looks -- the pid is written but
+ * was never read before this, which is why a killed holder used to block every waiter for the
+ * full 15-minute staleness window.
+ */
+function isLockHolderAlive(lockFile) {
+  return isPidAlive(readLockPid(lockFile));
+}
+
+/** Refreshes the lock file's mtime so a slow but live download never ages past LOCK_STALE_MS. */
+function touchLockFile(lockFile) {
+  try {
+    const now = new Date();
+    fs.utimesSync(lockFile, now, now);
+  } catch {}
+}
+
+/**
+ * Attempts to become the confirmed lock holder for `lockFile`. Winning the exclusive `wx`
+ * create is necessary but not sufficient: two waiters can both decide the same lock is stale,
+ * both unlink it, and both win a `wx` in sequence (W1 creates and writes its pid; W2, still
+ * mid-takeover from the *same* staleness read, unlinks W1's fresh lock and creates its own).
+ * So after writing our pid we re-read the file back -- if it no longer names us, someone else
+ * has since taken over and we must fall back to the wait loop rather than act as holder too.
+ *
+ * `afterWrite` is a test-only seam: it runs synchronously right after the pid is written and
+ * the fd closed, but before the confirming re-read, so a test can deterministically inject a
+ * competing takeover into that exact window instead of relying on real scheduling luck.
+ *
+ * @returns {boolean} true only if this call is the confirmed sole holder
+ */
+function tryAcquireLock(lockFile, afterWrite) {
+  try {
+    const fd = fs.openSync(lockFile, 'wx');
+    fs.writeSync(fd, String(process.pid));
+    fs.closeSync(fd);
+  } catch (err) {
+    if (err.code === 'EEXIST') return false;
+    throw err;
+  }
+  if (afterWrite) afterWrite();
+  return readLockPid(lockFile) === process.pid;
+}
+
+/** A lock older than this by mtime, OR whose holder pid is no longer alive, is stale and may be taken over. */
+const LOCK_STALE_MS = 15 * 60 * 1000;
+const LOCK_POLL_MS = 500;
 
 /**
  * True when the binary at `binPath` reports `expected`. Used to stop a stale
@@ -430,6 +716,10 @@ export async function downloadAndExtractBinary(options = {}) {
   const version = options.version || getPackageVersion();
   const targetTriple = getTargetTriple(platform, arch);
   const binName = getBinaryName(platform, options.invokedAs);
+  // Used to redact the user's home directory out of any error text -- resolved once, the same
+  // value getCacheDir used to build cacheDir, so redaction always matches what's actually
+  // embedded in a path.
+  const effectiveHomeDir = options.homeDir || os.homedir();
 
   if (!targetTriple) {
     throw new Error(`Unsupported platform/architecture: ${platform}-${arch}`);
@@ -438,57 +728,229 @@ export async function downloadAndExtractBinary(options = {}) {
   const cacheDir = getCacheDir(version, options.homeDir);
   const cachedBinary = path.join(cacheDir, binName);
 
-  if (isExecutable(cachedBinary)) {
+  // Presence and mode bits alone were the whole bug: #173's truncated binary was mode 755 and
+  // the exact byte size of the good one, so `isExecutable` said yes. `installIsComplete` also
+  // requires the completeness marker, written only after a checksum-verified install -- a
+  // truncated-but-executable leftover from before this fix will not have one.
+  if (installIsComplete(cacheDir, platform) && isExecutable(cachedBinary)) {
     return cachedBinary;
   }
 
-  fs.mkdirSync(cacheDir, { recursive: true });
+  // The version directory itself (~/.agentworth/bin) -- one level up from the versioned
+  // cacheDir. The lock and the atomic-install temp dir both live here, never inside
+  // cacheDir, so they never get mistaken for part of the extracted install.
+  const binDir = path.dirname(cacheDir);
+  fs.mkdirSync(binDir, { recursive: true });
+  const lockFile = path.join(binDir, `v${version}.lock`);
 
-  const archiveName = `agentworth-v${version}-${targetTriple}.tar.gz`;
-  const url = `https://github.com/unfoundbox-crew/agentworth/releases/download/v${version}/${archiveName}`;
+  // One download per version: everyone racing to resolve this version either becomes the
+  // downloader (holds the lock file) or a waiter (polls until the lock is gone, then reuses
+  // whatever the downloader produced). This is what stops the hook-storm from #173 -- with
+  // several sessions open, every one of them used to start its own download of the same
+  // archive at once.
+  for (;;) {
+    if (installIsComplete(cacheDir, platform) && isExecutable(cachedBinary)) {
+      return cachedBinary;
+    }
 
-  const archivePath = path.join(cacheDir, archiveName);
-  const progress = options.silent ? null : startDownloadProgress();
+    const haveLock = tryAcquireLock(lockFile, options.__testAfterLockWrite);
+    if (haveLock) break;
 
-  if (progress) {
-    console.error(brandLine('*', 'resolving', `v${version}  ${targetTriple}`));
-  }
-
-  try {
-    await downloadFile(url, archivePath, 5, progress ? progress.tick : null);
-  } finally {
-    if (progress) progress.done();
-  }
-
-  // No --force-local here: it was a Windows-only GNU tar workaround, and Windows
-  // support was dropped in 8b837c3. BSD tar (macOS's default) doesn't recognize
-  // the flag and fails every extraction with it present -- v0.1.11 shipped this
-  // exact break. Keep it off; there's no platform left where it does anything.
-  try {
-    execFileSync('tar', ['-xzf', archivePath, '-C', cacheDir]);
-  } catch (err) {
-    throw new Error(`Failed to extract ${archiveName}: ${err.message}`);
-  } finally {
+    // Stale if the mtime is old (the 15-minute backstop) OR the holder's own pid is dead --
+    // the pid check catches a killed holder immediately instead of leaving every waiter
+    // blocked for the full window. A live holder touches its lock's mtime on every download
+    // tick, so a slow-but-alive download is never mistaken for abandoned by the age check.
+    let stat = null;
     try {
-      if (fs.existsSync(archivePath)) {
-        fs.unlinkSync(archivePath);
+      stat = fs.statSync(lockFile);
+    } catch {
+      // The lock vanished between the failed open and this stat -- another waiter's stale
+      // takeover, or the holder finishing. Loop straight back to the top and try again.
+      continue;
+    }
+    const staleByAge = Date.now() - stat.mtimeMs > LOCK_STALE_MS;
+    const holderGone = !isLockHolderAlive(lockFile);
+    if (staleByAge || holderGone) {
+      try {
+        fs.unlinkSync(lockFile);
+      } catch {}
+      continue;
+    }
+
+    await sleep(LOCK_POLL_MS);
+  }
+
+  try {
+    // Re-check now that we hold the lock: another process could have finished (and left a
+    // complete, marker-bearing install) in the window between our last check and acquiring
+    // it. Only the lock holder ever reads this and only the lock holder ever touches cacheDir
+    // below -- waiters above never rm or rename it themselves, they just wait and re-check.
+    if (installIsComplete(cacheDir, platform) && isExecutable(cachedBinary)) {
+      return cachedBinary;
+    }
+
+    // While holding the lock: a previous holder killed mid-extraction leaves its own
+    // pid-named temp dir behind forever otherwise -- nothing but the *next* holder's cleanup
+    // of its own dir ever touched these.
+    sweepDeadTmpExtractDirs(binDir, version);
+
+    const archiveName = `agentworth-v${version}-${targetTriple}.tar.gz`;
+    const url = `${releaseBaseUrl(options)}/v${version}/${archiveName}`;
+
+    // Extract into a temp directory next to (not inside) the final version directory, and
+    // only rename it into place once all three native binaries plus the completeness marker
+    // are confirmed present. A version directory is then always either complete or absent --
+    // never the half-extracted state that left #173's truncated binary answering for every
+    // later invocation with exit 137. The downloaded archive and its `.part` file live inside
+    // this same temp directory too, never inside cacheDir -- cacheDir only ever holds a
+    // complete install, nothing transient.
+    const tmpExtractDir = path.join(binDir, `.v${version}.tmp-${process.pid}`);
+    if (fs.existsSync(tmpExtractDir)) {
+      fs.rmSync(tmpExtractDir, { recursive: true, force: true });
+    }
+    fs.mkdirSync(tmpExtractDir, { recursive: true });
+
+    const archivePath = path.join(tmpExtractDir, archiveName);
+    const partPath = `${archivePath}.part`;
+
+    try {
+      const progress = options.silent ? null : startDownloadProgress();
+      if (progress) {
+        console.error(brandLine('*', 'resolving', `v${version}  ${targetTriple}`));
+      }
+
+      // Download to a `.part` file and verify against the published `.sha256` sidecar before
+      // the archive name is ever used for real -- a truncated or corrupted download must never
+      // reach `tar`. One retry on mismatch or truncation; if that also fails, say so with the
+      // archive name, both hash prefixes, and the recovery command.
+      const MAX_ATTEMPTS = 2;
+      let lastErr = null;
+      let verified = false;
+      let verifiedSha256 = null;
+      try {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS && !verified; attempt += 1) {
+          try {
+            try {
+              if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+            } catch {}
+            touchLockFile(lockFile);
+            const onTick = (done, total) => {
+              touchLockFile(lockFile);
+              if (progress) progress.tick(done, total);
+            };
+            await downloadFile(url, partPath, 5, onTick, options.downloadTimeoutMs);
+            const sha256Text = await downloadText(`${url}.sha256`);
+            const expected = parseSha256Line(sha256Text, archiveName);
+            const actual = await sha256File(partPath);
+            if (actual !== expected) {
+              throw new Error(
+                `checksum mismatch: expected ${expected.slice(0, 12)}…, got ${actual.slice(0, 12)}…`,
+              );
+            }
+            verified = true;
+            verifiedSha256 = expected;
+          } catch (err) {
+            lastErr = err;
+            try {
+              if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+            } catch {}
+          }
+        }
+      } finally {
+        if (progress) progress.done();
+      }
+
+      if (!verified) {
+        throw new Error(
+          `Failed to download and verify ${archiveName}: ${lastErr ? lastErr.message : 'unknown error'}\n` +
+            `Recovery: rm -rf ${tildeFor(cacheDir, effectiveHomeDir)}, then rerun.`,
+        );
+      }
+
+      fs.renameSync(partPath, archivePath);
+
+      // No --force-local here: it was a Windows-only GNU tar workaround, and Windows
+      // support was dropped in 8b837c3. BSD tar (macOS's default) doesn't recognize
+      // the flag and fails every extraction with it present -- v0.1.11 shipped this
+      // exact break. Keep it off; there's no platform left where it does anything.
+      try {
+        execFileSync('tar', ['-xzf', archivePath, '-C', tmpExtractDir]);
+      } catch (err) {
+        // err.message (execFileSync's "Command failed: tar ... <stderr>") embeds the full
+        // archivePath and tmpExtractDir, both under the user's home -- redact before it ever
+        // reaches a terminal or a pasted bug report.
+        throw new Error(`Failed to extract ${archiveName}: ${redactHome(err.message, effectiveHomeDir)}`);
+      } finally {
+        try {
+          if (fs.existsSync(archivePath)) fs.unlinkSync(archivePath);
+        } catch {}
+      }
+
+      if (platform !== 'win32') {
+        for (const name of threeBinaryNames(platform)) {
+          const p = path.join(tmpExtractDir, name);
+          if (fs.existsSync(p)) {
+            try {
+              fs.chmodSync(p, 0o755);
+            } catch {}
+          }
+        }
+      }
+
+      // Written only now, after tar succeeded and the binaries are chmod'd -- this file, not
+      // the binaries' own presence or size, is what every completeness check actually trusts.
+      try {
+        fs.writeFileSync(markerPath(tmpExtractDir), `${verifiedSha256}\n`);
+      } catch (err) {
+        throw new Error(`Failed to write install marker for ${archiveName}: ${redactHome(err.message, effectiveHomeDir)}`);
+      }
+
+      if (!installIsComplete(tmpExtractDir, platform)) {
+        throw new Error(
+          `Extracted archive ${archiveName} is missing one or more of the expected binaries ` +
+            `(${threeBinaryNames(platform).join(', ')}).`,
+        );
+      }
+
+      // Only the lock holder reaches here, and it re-checked completeness above right after
+      // acquiring the lock -- so this final check is only about a leftover from a run that
+      // somehow finished outside the lock (shouldn't happen, but a complete leftover is not an
+      // error). Waiters never execute this branch at all.
+      if (!installIsComplete(cacheDir, platform)) {
+        if (fs.existsSync(cacheDir)) {
+          fs.rmSync(cacheDir, { recursive: true, force: true });
+        }
+        fs.renameSync(tmpExtractDir, cacheDir);
+      }
+    } finally {
+      try {
+        if (fs.existsSync(tmpExtractDir)) {
+          fs.rmSync(tmpExtractDir, { recursive: true, force: true });
+        }
+      } catch {}
+    }
+
+    if (!installIsComplete(cacheDir, platform) || !isExecutable(cachedBinary)) {
+      throw new Error(`Downloaded binary is not executable: ${tildeFor(cachedBinary, effectiveHomeDir)}`);
+    }
+
+    if (!options.silent) {
+      console.error(brandLine('*', 'installed', `${binName} in ${tildeFor(cacheDir, effectiveHomeDir)}`));
+    }
+
+    return cachedBinary;
+  } finally {
+    if (options.__testBeforeUnlock) options.__testBeforeUnlock();
+    // Only release the lock if it still names us. If it doesn't, some other process has
+    // since taken it over (the same confirm-read race tryAcquireLock guards against, just on
+    // the way out instead of the way in) -- unlinking it here would free a lock we no longer
+    // own out from under whoever now holds it.
+    try {
+      if (readLockPid(lockFile) === process.pid) {
+        fs.unlinkSync(lockFile);
       }
     } catch {}
   }
-
-  if (process.platform !== 'win32') {
-    fs.chmodSync(cachedBinary, 0o755);
-  }
-
-  if (!isExecutable(cachedBinary)) {
-    throw new Error(`Downloaded binary is not executable: ${cachedBinary}`);
-  }
-
-  if (!options.silent) {
-    console.error(brandLine('*', 'installed', `${binName} in ${tilde(cacheDir)}`));
-  }
-
-  return cachedBinary;
 }
 
 /**
@@ -685,11 +1147,14 @@ export function resolveBinary(options = {}) {
       };
     }
 
-    // 8. User local cache (~/.agentworth/bin/v{version}/) -- versioned by construction,
-    // nothing to check.
+    // 8. User local cache (~/.agentworth/bin/v{version}/) -- versioned by construction, but
+    // not immune to a truncated-yet-executable leftover (#173: same byte size, mode 755, just
+    // corrupt). installIsComplete also requires the completeness marker downloadAndExtractBinary
+    // only writes after a checksum-verified install, so a broken leftover from before this fix
+    // is correctly treated as not found here rather than served.
     const cacheDir = getCacheDir(expectedVersion, homeDir);
     const cachedBin = path.join(cacheDir, binName);
-    if (isExecutable(cachedBin)) {
+    if (isExecutable(cachedBin) && installIsComplete(cacheDir, platform)) {
       return {
         found: true,
         path: cachedBin,
@@ -753,21 +1218,35 @@ export function buildChildEnv(baseEnv, npmVersion) {
  * @returns {number} Exit code
  */
 export function run(argv = process.argv.slice(2), options = {}) {
+  // `archie hook` runs on every tool call in every open agent session (see #173's
+  // follow-up: 1,000+ concurrent downloads from hooks alone, before the binary was even
+  // installed once). A hook has to exit fast and cannot be the thing that kicks off a
+  // 26 MB download -- it resolves from whatever is already present and nothing else.
+  const isHookInvocation = Array.isArray(argv) && argv[0] === 'hook';
+
   const resolvedArgs = resolveArguments(argv);
   let binaryResult = resolveBinary(options);
 
   // If binary not found on clean machine, attempt on-demand download from GitHub Release
-  if ((!binaryResult.found || !binaryResult.path) && options.autoDownload !== false) {
+  if ((!binaryResult.found || !binaryResult.path) && options.autoDownload !== false && !isHookInvocation) {
     try {
       const resolverModuleUrl = new URL('./resolver.js', import.meta.url).href;
       const syncDownloadScript = `
         import { downloadAndExtractBinary } from '${resolverModuleUrl}';
-        await downloadAndExtractBinary({
-          platform: ${JSON.stringify(options.platform || process.platform)},
-          arch: ${JSON.stringify(options.arch || process.arch)},
-          homeDir: ${JSON.stringify(options.homeDir || (options.env && options.env.HOME) || '')},
-          invokedAs: ${JSON.stringify(options.invokedAs || '')}
-        });
+        try {
+          await downloadAndExtractBinary({
+            platform: ${JSON.stringify(options.platform || process.platform)},
+            arch: ${JSON.stringify(options.arch || process.arch)},
+            homeDir: ${JSON.stringify(options.homeDir || (options.env && options.env.HOME) || '')},
+            invokedAs: ${JSON.stringify(options.invokedAs || '')}
+          });
+        } catch (err) {
+          // A bare throw here prints a full stack trace of the eval wrapper, which is noise
+          // on top of the actual cause -- the message alone (checksum mismatch, extraction
+          // failure, recovery step) is what a user reading this needs.
+          console.error(err && err.message ? err.message : String(err));
+          process.exitCode = 1;
+        }
       `;
       const dlResult = spawnSync(process.execPath, ['--input-type=module', '-e', syncDownloadScript], {
         stdio: 'inherit',
@@ -783,6 +1262,12 @@ export function run(argv = process.argv.slice(2), options = {}) {
   }
 
   if (!binaryResult.found || !binaryResult.path) {
+    if (isHookInvocation) {
+      // Fail fast and quiet: no download, nothing on stdout (a hook's stdout can be read as
+      // the hook's own output by the caller), one short line on stderr for anyone looking.
+      console.error(brandLine(' ', 'skip', 'no native binary yet, hook exiting'));
+      return 0;
+    }
     const message = formatMissingBinaryMessage(getPlatformKey(options.platform, options.arch));
     console.error(message);
     return 1;

@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **The npm launcher no longer leaves a broken binary behind after a slow or truncated download, and no longer lets concurrent first runs race into the same version directory.** On a slow connection, `tar` could extract a partial archive before the download finished, leaving an unsigned, non-executable binary that every later invocation ran into exit 137 with no explanation; three invocations starting close together also wrote into the same cache directory at once, since nothing serialized them. The launcher now downloads to a `.part` file, verifies it against the release's published `.sha256` before extraction, extracts into a temp directory and only renames it into place once all three native binaries are present and executable, and takes a lock per version directory so concurrent callers share one download instead of racing. `agentworth hook` -- which runs on every tool call in some setups -- never starts a download itself; it resolves only from a binary that's already present and fails fast and quietly otherwise, which is what turned a single truncated download into 1,000+ concurrent ones on the reporter's machine. (#173)
 
 ---
 
