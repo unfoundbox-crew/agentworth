@@ -430,25 +430,28 @@ visible from reading the source.
    full day while three deploys reported success. Always check
    `grep -c '\-\-mv-' dist/assets/*.css` before deploying.
 
-8. **Two things reach the network. Neither sends your data, but say so in the docs.**
+8. **Two things can reach the network. Neither sends your data. One of them is
+   off in every shipped binary.**
 
    | Path | What it does |
    | :--- | :--- |
-   | `agwt search` | `fastembed` is a default feature; downloads a BGE-Small model from Hugging Face on first run |
+   | `agwt search` with the `fastembed` feature | downloads a BGE-Small model (~133MB) from Hugging Face on first run, then announces it (PR #169) |
    | `agwt blunder --submit` | opt-in POST to stfuopus.lol |
 
-   The model download is a dependency fetch — it pulls a model *to* you and
+   `fastembed` is NOT a default feature (checked 2026-09-12: `crates/storage/Cargo.toml`
+   has `default = []` and `apps/cli` depends on storage with `default-features = false`).
+   Every released binary runs `agwt search` on the deterministic hash embedder, which
+   is keyword-strength matching, not semantic search. An earlier version of this note
+   said the opposite, and the 2026-09-07 dogfood pass logged the result as "silent
+   hash embed". Turning the feature on is a roadmap item (`docs/ROADMAP.md`), not a
+   one-line flag flip: it adds an ONNX runtime to every platform build.
+
+   The model download is a dependency fetch: it pulls a model *to* you and
    sends nothing *about* you. Treat it like `npm install`, not like telemetry.
    No trace data, no prompts, no code leaves the machine on either path.
-
-   Two things do need fixing, and both are small: the landing page says "100%
-   offline", which is not literally true when a first run needs network; and
-   `show_download_progress(false)` makes the download silent, so an air-gapped
-   user gets a failure with no explanation. Document the download, and let it
-   announce itself.
-
-   Local-only remains the product line, and it is about user data, which still
-   never leaves. Do not overstate this the way an earlier note in this file did.
+   Local-only remains the product line, and it is about user data, which never
+   leaves. Do not overstate it, and do not describe search as semantic until the
+   feature ships on by default.
 
 9. **Do not build in the shared checkout at `~/code/unfoundbox/agentworth`.**
    It carries other sessions' uncommitted work, so `git pull` there fails

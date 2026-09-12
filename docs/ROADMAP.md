@@ -16,6 +16,7 @@ Value: what a user gets. Cost: tokens to ship. P0 first, P3 last.
 | P1 | Land #133 (Claude Code plugin), then #134 (DSH plugin, stacked on #133) | #133 conflicts with main on `CHANGELOG.md` and `SKILL.md` only; #134 is clean on top | 400k | plugins |
 | P1 | Land #167 (state.vscdb adapter for Cursor and VS Code forks) | Mergeable; needs fixture + PARSER_VERSION check | 500k | adapter |
 | P1 | Land #135 + #138 (landing page, blog) | Content, waits on your read only | 100k | your call |
+| P1 | Ship `fastembed` on by default so `agwt search` is semantic in released binaries | Off in every shipped binary today; adds ONNX runtime to all platform builds, CI time, and a first-run download that #169 now announces | 700k | storage + cli + ci |
 | P1 | Rescan and refresh verified-outcome-rate numbers | Every quoted number predates the exit-code fix | 150k | docs |
 | P2 | done-gate: `session_gate` tool | Measured 2026-09-03, top extension doorway | 800k | loop + mcp |
 | P2 | efficiency-receipts: `fanout_reads`, `repeat_check`, then `window receipt` | Measured; unblocks cli-grammar §4(3) | 900k | mcp + cli |
