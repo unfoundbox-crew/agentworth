@@ -2,6 +2,8 @@
 
 ## Where this stands, 2026-09-02
 
+What is left and in what order, with the lane spec for building it: `docs/ROADMAP.md` (2026-09-12).
+
 | Spec | Status | PR |
 | :--- | :--- | :--- |
 | `fleet-view.md` | built | #41, plus the SSE live-tail endpoint (v0.1.10) |
