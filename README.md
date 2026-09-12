@@ -4,7 +4,7 @@
 
 [![npm](https://img.shields.io/npm/v/agentworth?style=flat-square&color=000000)](https://www.npmjs.com/package/agentworth)
 [![License](https://img.shields.io/badge/license-Apache--2.0-000000?style=flat-square)](LICENSE)
-[![Privacy](https://img.shields.io/badge/telemetry-zero%20(100%25%20local)-000000?style=flat-square)](#100-offline-local-sqlite-architecture)
+[![Privacy](https://img.shields.io/badge/telemetry-zero%20(100%25%20local)-000000?style=flat-square)](#local-first-sqlite-architecture)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-000000?style=flat-square)](#quickstart)
 [![Website](https://img.shields.io/badge/website-agentworth.dev-000000?style=flat-square)](https://agentworth.dev)
 
@@ -178,11 +178,11 @@ Every score provides an explainable 5-factor breakdown:
 
 ---
 
-## 100% Offline Local SQLite Architecture
+## Local-First SQLite Architecture
 
 AgentWorth is designed around strict privacy, performance, and local-first invariants:
 
-* **Zero Telemetry & Offline Execution**: Scanning, indexing, scoring, and UI serving function completely offline. Zero network calls or telemetry.
+* **Your Data Never Leaves, With Two Named Exceptions**: Scanning, indexing, scoring, and UI serving run completely offline — your session data, prompts, and code are never sent anywhere. Two things do reach the network, and neither sends anything about you: `agwt search` downloads a small (~133MB) embedding model from Hugging Face the first time it runs (a one-time dependency fetch, the same kind of download as `npm install`, not telemetry), and `agwt blunder --submit` is an explicit opt-in POST of a redacted incident report.
 * **Raw Histories Remain Source of Truth**: Original agent transcripts are NEVER modified and NEVER duplicated into database storage. SQLite stores only metadata, SHA-256 fingerprints, derived features, and outcome indexes. Full trajectories are streamed lazily on demand.
 * **Streaming Parsers & Bounded Memory**: Multi-gigabyte JSONL files are processed as bounded streams with incremental rescanning. Unchanged files are skipped based on `(path, size, mtime, SHA-256)`.
 * **SQLite with WAL Mode**: High-performance concurrent reads and batched transactions with zero background daemon required.
