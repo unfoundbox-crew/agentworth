@@ -164,7 +164,7 @@ async fn test_sessions_find_redacts_source_path_by_default() {
     seed_non_stub_session(
         &storage,
         "sess-1",
-        "/Users/saurabh/code/unfoundbox/agentworth/sess-1.jsonl",
+        "/Users/dev/code/unfoundbox/agentworth/sess-1.jsonl",
     );
     let server = AgentWorthMcpServer::new(Arc::new(storage));
 
@@ -195,22 +195,22 @@ async fn test_sessions_find_repo_filter_sets_truncated_flag() {
     seed_non_stub_session(
         &storage,
         "sess-a1",
-        "/Users/saurabh/code/unfoundbox/agentworth/sess-a1.jsonl",
+        "/Users/dev/code/unfoundbox/agentworth/sess-a1.jsonl",
     );
     seed_non_stub_session(
         &storage,
         "sess-a2",
-        "/Users/saurabh/code/unfoundbox/agentworth/sess-a2.jsonl",
+        "/Users/dev/code/unfoundbox/agentworth/sess-a2.jsonl",
     );
     seed_non_stub_session(
         &storage,
         "sess-a3",
-        "/Users/saurabh/code/unfoundbox/agentworth/sess-a3.jsonl",
+        "/Users/dev/code/unfoundbox/agentworth/sess-a3.jsonl",
     );
     seed_non_stub_session(
         &storage,
         "sess-b1",
-        "/Users/saurabh/code/othercorp/otherrepo/sess-b1.jsonl",
+        "/Users/dev/code/othercorp/otherrepo/sess-b1.jsonl",
     );
     let server = AgentWorthMcpServer::new(Arc::new(storage));
 
@@ -238,12 +238,12 @@ async fn test_sessions_find_repo_filter_no_truncation_when_limit_covers_all_matc
     seed_non_stub_session(
         &storage,
         "sess-a1",
-        "/Users/saurabh/code/unfoundbox/agentworth/sess-a1.jsonl",
+        "/Users/dev/code/unfoundbox/agentworth/sess-a1.jsonl",
     );
     seed_non_stub_session(
         &storage,
         "sess-b1",
-        "/Users/saurabh/code/othercorp/otherrepo/sess-b1.jsonl",
+        "/Users/dev/code/othercorp/otherrepo/sess-b1.jsonl",
     );
     let server = AgentWorthMcpServer::new(Arc::new(storage));
 

@@ -1,0 +1,16 @@
+{
+  "session_id": "8f2a1c40-3d5e-4b7a-9c1e-2f6d8a0b3e51",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-code-archie/8f2a1c40-3d5e-4b7a-9c1e-2f6d8a0b3e51.jsonl",
+  "cwd": "/Users/dev/code/archie",
+  "hook_event_name": "PreToolUse",
+  "agent_id": "agent_01Dx5MnQr2Ws8Bt6Kc3Lz9Yf",
+  "agent_type": "Explore",
+  "tool_name": "Edit",
+  "tool_use_id": "toolu_01Ey6PqRs3Xt9Cu7Ld4Nz0Ag",
+  "tool_input": {
+    "file_path": "/Users/dev/code/archie/crates/loop/src/state.rs",
+    "old_string": "AgentState::Idle",
+    "new_string": "AgentState::Ended",
+    "replace_all": false
+  }
+}

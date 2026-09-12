@@ -1,5 +1,5 @@
 use crate::report::RedactionReport;
-use crate::rules::{default_rules, RedactionRule};
+use crate::rules::{default_rules, publication_rules, RedactionRule};
 use agentworth_outcomes::RecoverySignal;
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, NormalizedEvent, OutcomeEvidence, ShellCommand, ToolCall,
@@ -26,6 +26,26 @@ impl Redactor {
         Self {
             rules: default_rules(),
         }
+    }
+
+    /// The default rules PLUS [`crate::rules::publication_rules`] -- for text that is about to
+    /// leave the machine.
+    ///
+    /// Use this and only this on an outbound path (`blunder --submit`, `export --redact`). Every
+    /// local surface -- `session_show`, `repo_blame`, the dashboard, MCP output -- keeps using
+    /// [`Redactor::new`], because those exist to tell an operator which repository a session
+    /// touched and a profile that blanked repo names would make them useless.
+    ///
+    /// Additive by construction: the publication rules are appended after the defaults, so
+    /// anything the default profile catches this one still catches, and the extra rules operate
+    /// on the defaults' output (the path-tail rule needs the username already rewritten to `~`).
+    ///
+    /// This raises the floor; it does not make a payload provably clean. An organization named
+    /// in prose rather than in a path still gets through. Publishing stays an operator decision.
+    pub fn for_publication() -> Self {
+        let mut rules = default_rules();
+        rules.extend(publication_rules());
+        Self { rules }
     }
 
     /// Creates a Redactor with custom rules.
@@ -287,15 +307,31 @@ impl Redactor {
             .map(|e| augmented.redact_event_internal(e, report))
             .collect();
 
+        // Names are free text a person typed (a pane label, an agent name): same rules as
+        // any other string. The session id is a harness id, not personal, and stays.
+        let sanitized_identities = trace
+            .identities
+            .iter()
+            .map(|s| agentworth_schema::IdentitySighting {
+                session_id: s.session_id.clone(),
+                agent: s.agent.clone(),
+                name: augmented.redact_text_internal(&s.name, report),
+                seen_at: s.seen_at,
+                via: augmented.redact_text_internal(&s.via, report),
+            })
+            .collect();
+
         AgentWorthTrace {
             session_id: trace.session_id.clone(),
             adapter: trace.adapter.clone(),
+            kind: trace.kind,
             provenance: sanitized_provenance,
             started_at: trace.started_at,
             ended_at: trace.ended_at,
             stats: trace.stats.clone(),
             events: sanitized_events,
             metadata: sanitized_metadata,
+            identities: sanitized_identities,
         }
     }
 

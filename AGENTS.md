@@ -17,6 +17,7 @@ The immediate product is not a marketplace.
 - `docs/DECISION-INBOX.md` — dated status at the top; the body below it is a historical log.
 - `CHANGELOG.md` — what shipped per release.
 - `README.md` — the user-facing description of the product.
+- `CLAUDE.md` — a symlink to this file, so Claude Code sessions load it too.
 
 To check any of these is still current: `git log -1 <path>` for when it last changed, and `gh pr view <N>` for any PR number it cites.
 
@@ -51,6 +52,46 @@ All distribution methods should execute the same native binary.
 * AgentWorth never sends a prompt to a model on its own. A command may call one only behind an explicit flag that names the model, after printing the estimated cost.
 * Keep marketplace logic outside the core scanner.
 * Gemini / Antigravity (gemini-3.7-flash): Never rush or take shortcuts. Read the full specification, understand the structural intent, and execute thoroughly — other agents are not in a hurry, and accuracy beats hasty completion.
+
+## Ask Archie before you ask Saurabh (2026-09-07)
+
+Any question about this machine's sessions, panes, spend, what an agent did,
+who is waiting on whom, or what another session said, goes to Archie first:
+the MCP tools when they are connected, `archie` on the CLI when they are not,
+SQLite directly when neither fits. Only when Archie cannot answer does the
+question go to the human, and then it goes with what Archie did say.
+
+Two receipts. A director session told an adapter lane to key rows on the herdr
+pane letter without checking whether the letter existed on disk; it did not,
+and the lane had to measure what the director should have. A chief-of-staff
+session was corrected four times in one afternoon for reading transcripts by
+hand instead of calling the index. Both cost the human a turn he should not
+have spent.
+
+Before dispatching any lane, the dispatcher states, in the brief, what it
+measured and what it assumed. A lane that finds the brief's assumption wrong
+says so in `NOT CONFIRMED` and does not route around it.
+
+## Dogfood before you propose
+
+AgentWorth's own index is the first source for any number about sessions. Before
+you propose a threshold, a default, a cap, or a claim about "typical" sessions,
+query it. Use `archie session list --json`, `archie stats`, `archie session burn`,
+the MCP tools `session_list`/`session_show`/`session_burn`, or SQLite directly.
+Put the query and its result in the proposal.
+
+Here is the receipt that made this rule. On 2026-09-06, a proposed spend cap of
+`[spend] tokens = 20000000` went into the governor's docs as an example, before
+anyone queried the index. The index held primary sessions of 728M, 273M, 131M,
+and 107M tokens on this machine. A cap at 20M would have halted every one of
+them, dozens of times over. Nobody checked before writing the number down.
+
+`archie policy init` exists so this check is one command, not a memory: it
+writes a starter `policy.toml` with this machine's own token percentiles in the
+comments, so the number a person sets is theirs, not a guess.
+
+Memory is not canon; this file is. A rule that lives only in a session's memory
+dies with the worktree.
 
 ## Pipeline
 
@@ -126,6 +167,13 @@ Bump the adapter's `PARSER_VERSION` whenever the parse output changes for files 
 parse — new or corrected fields, different normalization, changed token accounting. An
 incremental scan skips unchanged bytes, so without the bump the index keeps serving what the
 old parser produced until someone runs `--force`.
+
+Fixture paths come from `agentworth_schema::fixtures`, never from a literal. This is a public
+repo, and on 2026-09-10 it was found carrying the maintainer's real system username in 101
+places plus a third party's project name inside shipped fixtures and user-facing copy -- all of
+it typed by agents building fixtures from whatever was on screen. Build paths with
+`fixtures::claude_transcript(fixtures::REPO, uuid)` and the convenient option is also the safe
+one. Need a name the module lacks? Add it there, not at the call site.
 
 Every PR that touches an adapter or a CLI command adds a fixture shaped like the data it
 handles. Every bug that came from real data ships with a redacted fixture that reproduces
@@ -382,25 +430,28 @@ visible from reading the source.
    full day while three deploys reported success. Always check
    `grep -c '\-\-mv-' dist/assets/*.css` before deploying.
 
-8. **Two things reach the network. Neither sends your data, but say so in the docs.**
+8. **Two things can reach the network. Neither sends your data. One of them is
+   off in every shipped binary.**
 
    | Path | What it does |
    | :--- | :--- |
-   | `agwt search` | `fastembed` is a default feature; downloads a BGE-Small model from Hugging Face on first run |
+   | `agwt search` with the `fastembed` feature | downloads a BGE-Small model (~133MB) from Hugging Face on first run, then announces it (PR #169) |
    | `agwt blunder --submit` | opt-in POST to stfuopus.lol |
 
-   The model download is a dependency fetch — it pulls a model *to* you and
+   `fastembed` is NOT a default feature (checked 2026-09-12: `crates/storage/Cargo.toml`
+   has `default = []` and `apps/cli` depends on storage with `default-features = false`).
+   Every released binary runs `agwt search` on the deterministic hash embedder, which
+   is keyword-strength matching, not semantic search. An earlier version of this note
+   said the opposite, and the 2026-09-07 dogfood pass logged the result as "silent
+   hash embed". Turning the feature on is a roadmap item (`docs/ROADMAP.md`), not a
+   one-line flag flip: it adds an ONNX runtime to every platform build.
+
+   The model download is a dependency fetch: it pulls a model *to* you and
    sends nothing *about* you. Treat it like `npm install`, not like telemetry.
    No trace data, no prompts, no code leaves the machine on either path.
-
-   Two things do need fixing, and both are small: the landing page says "100%
-   offline", which is not literally true when a first run needs network; and
-   `show_download_progress(false)` makes the download silent, so an air-gapped
-   user gets a failure with no explanation. Document the download, and let it
-   announce itself.
-
-   Local-only remains the product line, and it is about user data, which still
-   never leaves. Do not overstate this the way an earlier note in this file did.
+   Local-only remains the product line, and it is about user data, which never
+   leaves. Do not overstate it, and do not describe search as semantic until the
+   feature ships on by default.
 
 9. **Do not build in the shared checkout at `~/code/unfoundbox/agentworth`.**
    It carries other sessions' uncommitted work, so `git pull` there fails

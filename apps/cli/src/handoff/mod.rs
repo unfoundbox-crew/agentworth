@@ -555,42 +555,9 @@ pub(crate) fn collect_runs(events: &[&agentworth_schema::NormalizedEvent]) -> Ve
     runs
 }
 
-/// Test-, build- or release-shaped commands: the ones whose exit code is evidence rather than
-/// trivia. Deliberately a prefix/substring list and not a parser -- the cost of a false
-/// positive here is one extra line in a section that is already ranked, not a wrong claim.
-pub(crate) fn is_verification_command(command: &str) -> bool {
-    let lower = command.to_lowercase();
-    const NEEDLES: &[&str] = &[
-        "test",
-        "cargo build",
-        "cargo check",
-        "cargo clippy",
-        "cargo fmt",
-        "npm run",
-        "pnpm run",
-        "yarn ",
-        "make ",
-        "pytest",
-        "go build",
-        "go vet",
-        "tsc",
-        "eslint",
-        "vitest",
-        "jest",
-        "git commit",
-        "git push",
-        "gh pr",
-        "gh run",
-        "gh workflow",
-        "docker build",
-        "mvn ",
-        "gradle",
-        "ruff",
-        "mypy",
-        "nextest",
-    ];
-    NEEDLES.iter().any(|n| lower.contains(n))
-}
+/// Verification classification lives in `agentworth-loop` now: the governor needs the same
+/// notion of "a command whose exit code is evidence" while the session is still running.
+pub(crate) use agentworth_loop::is_verification_command;
 
 /// The highest rung any evidence in this session reached.
 fn strongest_outcome_line(outcomes: &[OutcomeEvidence]) -> Option<OutcomeLine> {

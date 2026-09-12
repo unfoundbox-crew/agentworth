@@ -34,6 +34,8 @@ Verified with `cargo metadata --no-deps` (9 Rust crates + 1 binary crate, matchi
 | `crates/scoring` | `TraceScorer`: the explainable 5-factor `TraceScore` (see §5, §8). |
 | `crates/redaction` | `Redactor`: regex-based PII/secret scrubbing, applied to a *copy* of a trace before export (see §6, §8). |
 | `crates/export-atif` | Converts `AgentWorthTrace` into the ATIF (Agent Trajectory Interchange Format) JSON shape for `archie session export --format atif`. |
+| `crates/loop` | The socket server, spool, agent state machine, and drift/prediction logic behind `archie hook`, `archie serve`'s socket listener, `agent_status`, and `session_drift` (`docs/specs/loop.md`). Pure and testable — no I/O beyond the socket and the spool files. |
+| `crates/loop` | The synchronous gate behind `archie hook --gate`: the thrash halt and the session spend cap, evaluated against `policy.toml` and the transcript tail, one socket round trip, fails open (`docs/specs/governor.md`). Never routes and never calls a model. |
 | `apps/cli` | The `agentworth` / `archie` / `agwt` binary (`apps/cli/Cargo.toml`, `[[bin]]` x3, same `src/main.rs`). A noun-verb grammar -- `session`, `agent`, `repo`, `window` and `stats` carry everything that acts on indexed data, and `scan`, `serve`, `mcp`, `doctor`, `docs`, `config`, `version`, `update`, `completions` and `merge` act on the machine or the index itself. Pre-0.1.16 spellings still run, hidden, until v0.1.20. Plus an embedded Axum REST API (`apps/cli/src/server/routes.rs`: `/stats`, `/traces`, `/traces/:id`, `/usage`, `/pacing`, `/blame`, `/matrix`, `/archaeology`, `/scan`, `/export/:id`) that backs `archie serve`. |
 | `apps/web` | Marketing site only. React + Vite + Tailwind, deploys to agentworth.dev via the Vercel CLI. Makes **no** API calls — anything fetching `/api/*` here ships a request that 404s in production. |
 | `apps/dashboard` | The local app the CLI serves. Keyboard-first three-pane explorer, compiled **into** the binary with `rust-embed`, so `npm run build` here must run before `cargo` or the binary ships a stub instead of a UI. |
@@ -185,8 +187,14 @@ SQLite via `rusqlite` (bundled), opened with `PRAGMA journal_mode = WAL; PRAGMA 
 
 Two tables:
 
-- **`sources`** — `source_path` (PK), `adapter`, `file_size`, `mtime`, `fingerprint`, `scanned_at`. One row per discovered file; this is the incremental-rescan cache (`should_scan_source` compares size/mtime/fingerprint and skips a re-parse if all three match).
+- **`sources`** — `source_path` (PK), `adapter`, `file_size`, `mtime`, `fingerprint`, `scanned_at`. One row per discovered file; this is the incremental-rescan cache (`should_scan_source` compares size/mtime/fingerprint and skips a re-parse if all three match). `~/.agentworth/spool/*.jsonl` — where `archie hook` writes when `archie serve`'s socket isn't reachable — is a source like any other: `archie scan` and `archie serve` at startup both ingest it through this same table (`docs/specs/loop.md`).
 - **`sessions`** — `session_id` (PK, FK → `sources.source_path` `ON DELETE CASCADE`), `adapter`, timestamps, `duration_seconds`, every `TraceStats` field flattened into columns (`total_events`, `*_count`, four token columns, `total_tokens`), `models_used`/`tools_used`/`metadata` as JSON-serialized TEXT, `scanned_at`, `primary_outcome`, `composite_score`. A `PRAGMA table_info` + `ALTER TABLE ADD COLUMN` fallback exists for the last two columns, for databases created before they existed.
+
+The governor (`docs/specs/governor.md`) adds three tables: `governor_events`
+(one row per note/halt/deny, with the rule, the session, and the evidence),
+`session_suspensions` (a session over its spend cap, cleared by `archie
+policy lift` or a higher cap), and `turn_usage` (per-turn tokens and dollars
+from the transcript tail, which `archie session burn` reads live).
 
 Eight indices on `sessions`/`sources`, plus three SQL views (`v_daily_usage`, `v_weekly_usage`, `v_monthly_usage`) that pre-aggregate token/event/duration rollups grouped by day/week/month and adapter — this is what backs `archie stats usage`.
 

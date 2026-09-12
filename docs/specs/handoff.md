@@ -243,6 +243,13 @@ answer to one `repo` value, which is what carry-forward wants and what a
 - **No auto-run at session end.** Nothing in this product watches for a session
   ending. The agent asks.
 
+  **Changed by `docs/specs/loop.md`:** Archie now receives harness events —
+  `PreToolUse`, `PostToolUse`, `Stop` — pushed to it as they happen, so it is
+  no longer blind between scans. That is a narrower change than it sounds:
+  Archie still never scans or reindexes on its own from MCP, and a session
+  still has to ask for a handoff, drift check, or anything else. It just
+  isn't waiting for the next `archie scan` to know a `Stop` happened.
+
 ## Sequencing
 
 1. `prompt_preview`. It is already on the README's list and it gates this.

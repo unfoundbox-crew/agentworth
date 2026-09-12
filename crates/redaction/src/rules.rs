@@ -113,6 +113,53 @@ pub fn repository_identity_rule(repo_or_workspace: &str) -> Option<RedactionRule
 }
 
 /// Builds the default suite of redaction rules covering API keys, env vars, paths, emails, etc.
+/// The rules `default_rules()` deliberately does NOT apply, added on top of it by
+/// [`crate::Redactor::for_publication`] wherever redacted text leaves the machine.
+///
+/// The default profile's path rule strips a home directory's USERNAME and stops there
+/// (`/Users/alice/code/acme/api` -> `~/code/acme/api`). That is the right answer for every
+/// local surface: `repo_blame` and `session_show` exist to tell an operator which repository a
+/// session touched, and a profile that blanked the repo name would make them useless. It is the
+/// wrong answer the moment the same string is posted publicly -- measured 2026-09-10, a
+/// `blunder --submit` payload captured against a local listener still carried repository and
+/// organization names after full default redaction.
+///
+/// So this is additive and narrow: it removes what follows `~`, which is where the org and repo
+/// names sit once the username is gone. It runs AFTER the home-directory rules, on their output,
+/// which is why `Redactor::for_publication` appends rather than replaces.
+///
+/// What it does not claim to catch: an organization or repository named in free prose rather
+/// than in a path ("we pushed to acme/api"). There is no general rule for that -- a name is only
+/// identifiable as a name in context. Publication is an operator decision, and this raises the
+/// floor rather than making the payload provably clean.
+pub fn publication_rules() -> Vec<RedactionRule> {
+    vec![
+        // Everything after `~`, which by this point is what the home-directory rules left
+        // behind. Anchored on `~/` so a bare tilde in prose ("~5 minutes") is untouched, and
+        // stopping at whitespace or a quote so it takes one path and not the rest of the line.
+        RedactionRule::new(
+            "publication_unix_path_tail",
+            RedactionCategory::FilePath,
+            Regex::new(r#"~/[^\s"'`;|&)\]]*"#).expect("valid regex"),
+            "~/[PATH]",
+        ),
+        RedactionRule::new(
+            "publication_windows_path_tail",
+            RedactionCategory::FilePath,
+            Regex::new(r#"~\\[^\s"'`;|&)\]]*"#).expect("valid regex"),
+            r"~\[PATH]",
+        ),
+        // A repository named by its forge URL or `owner/repo` shorthand next to a forge host.
+        RedactionRule::new(
+            "publication_forge_repo",
+            RedactionCategory::FilePath,
+            Regex::new(r"(?i)\b((?:github|gitlab|bitbucket)\.com)[:/][A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
+                .expect("valid regex"),
+            "${1}/[REPO]",
+        ),
+    ]
+}
+
 pub fn default_rules() -> Vec<RedactionRule> {
     vec![
         // 1. PEM Private Keys

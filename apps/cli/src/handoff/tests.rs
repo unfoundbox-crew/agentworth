@@ -146,11 +146,17 @@ pub(crate) fn fixture_summary(prompt_preview: Option<&str>) -> SessionSummary {
     SessionSummary {
         session_id: "452c23fd-6e9b-4948-8e8f-6a31f1c3f7dd".to_string(),
         adapter: "claude_code".to_string(),
+        kind: agentworth_schema::TraceKind::Conversation,
         source_path: "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/fixture.jsonl"
             .to_string(),
         started_at: Utc::now(),
         duration_seconds: Some(600.0),
         total_tokens: 1700,
+        cost_weighted_tokens: 1300,
+        input_tokens: 900,
+        output_tokens: 100,
+        cache_read_tokens: 500,
+        cache_creation_tokens: 200,
         total_events: 11,
         tool_calls_count: 0,
         models_used: vec!["claude-opus-4".to_string()],
@@ -533,4 +539,16 @@ fn redaction_masks_paths_commands_and_quoted_text_through_one_instance() {
     // The unredacted report is untouched -- `redacted` returns a copy, same guarantee
     // `Redactor::redact_trace` already gives.
     assert!(report.ran.iter().any(|c| c.command.contains("sk-ant-")));
+}
+
+#[test]
+fn is_verification_command_matches_the_program_not_the_word_test() {
+    assert!(!is_verification_command(
+        r#"cd x; /usr/bin/grep -n -A4 "…test…""#
+    ));
+    assert!(is_verification_command("cd x && cargo test -p foo"));
+    assert!(is_verification_command("FOO=1 pytest tests/"));
+    assert!(!is_verification_command(r#"grep -rn "test" src"#));
+    assert!(!is_verification_command("ls crates"));
+    assert!(is_verification_command("git commit -m x"));
 }

@@ -147,7 +147,8 @@ fn test_scanner_with_all_adapters_end_to_end() {
     // 2. Codex session
     let codex_dir = temp.path().join(".codex");
     fs::create_dir_all(&codex_dir).unwrap();
-    let codex_file = codex_dir.join("rollout-2026-01-01T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl");
+    let codex_file =
+        codex_dir.join("rollout-2026-01-01T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl");
     let mut f2 = File::create(&codex_file).unwrap();
     writeln!(f2, r#"{{"role":"user","content":"Fix test"}}"#).unwrap();
     writeln!(
@@ -234,7 +235,8 @@ fn test_scanner_with_all_11_adapters_end_to_end() {
     // 2. Codex
     let codex_dir = temp.path().join(".codex");
     fs::create_dir_all(&codex_dir).unwrap();
-    let f_codex = codex_dir.join("rollout-2026-01-01T00-00-00-019ee1ad-49fd-7c31-84e0-2679c0c1afc0.jsonl");
+    let f_codex =
+        codex_dir.join("rollout-2026-01-01T00-00-00-019ee1ad-49fd-7c31-84e0-2679c0c1afc0.jsonl");
     let mut f = File::create(&f_codex).unwrap();
     writeln!(f, r#"{{"role":"user","content":"Hi Codex"}}"#).unwrap();
     writeln!(f, r#"{{"role":"assistant","model":"gpt-4o","usage":{{"prompt_tokens":100,"completion_tokens":50}},"content":"Hi"}}"#).unwrap();
@@ -279,13 +281,17 @@ fn test_scanner_with_all_11_adapters_end_to_end() {
     writeln!(f, r#"{{"type":"user","text":"Hi Cursor"}}"#).unwrap();
     writeln!(f, r#"{{"type":"ai","model":"cursor-fast","tokens":{{"promptTokens":100,"completionTokens":50}},"text":"Hi"}}"#).unwrap();
 
-    // 8. Herdr
-    let herdr_dir = temp.path().join(".herdr").join("sessions");
+    // 8. Herdr: a workspace snapshot, not a transcript. One pane, so one event and no tokens;
+    // indexed anyway because a `fleet_snapshot` is outside the near-empty rule.
+    let herdr_dir = temp.path().join(".config").join("herdr");
     fs::create_dir_all(&herdr_dir).unwrap();
-    let f_herdr = herdr_dir.join("herdr.jsonl");
+    let f_herdr = herdr_dir.join("session.json");
     let mut f = File::create(&f_herdr).unwrap();
-    writeln!(f, r#"{{"role":"supervisor","content":"Hi Herdr"}}"#).unwrap();
-    writeln!(f, r#"{{"role":"worker","model":"herdr-swarm","usage":{{"input_tokens":100,"output_tokens":50}},"content":"Hi"}}"#).unwrap();
+    write!(
+        f,
+        r#"{{"version":3,"workspaces":[{{"id":"w1","custom_name":"fleet","identity_cwd":"/tmp/repo","public_pane_numbers":{{"1":1}},"tabs":[{{"custom_name":null,"panes":{{"1":{{"cwd":"/tmp/repo","label":"lead","agent_session":{{"source":"herdr:claude","agent":"claude","kind":"id","value":"00000000-0000-4000-8000-000000000001"}}}}}},"focused":1,"root_pane":1}}],"active_tab":0}}],"active":0}}"#
+    )
+    .unwrap();
 
     // 9. Hermes
     let hermes_dir = temp.path().join(".hermes").join("sessions");
@@ -334,12 +340,102 @@ fn test_scanner_with_all_11_adapters_end_to_end() {
     assert_eq!(by_adapter.get("gemini"), Some(&1));
     assert_eq!(by_adapter.get("goose"), Some(&1));
     assert_eq!(by_adapter.get("grok"), Some(&1));
-    assert_eq!(by_adapter.get("herdr"), Some(&1));
+    // herdr indexed a fleet_snapshot, not a session, so it is a row in the index
+    // (total_indexed_sessions counts it) but not in the conversation aggregate.
+    assert_eq!(by_adapter.get("herdr"), None);
     assert_eq!(by_adapter.get("hermes"), Some(&1));
     assert_eq!(by_adapter.get("openclaw"), Some(&1));
     assert_eq!(by_adapter.get("opencode"), Some(&1));
     assert_eq!(by_adapter.get("pi"), Some(&1));
 
-    // Each session: 100 in + 50 out = 150 tokens * 11 = 1650 total tokens
-    assert_eq!(summary.aggregate_stats.token_usage.total(), 1650);
+    // Ten transcripts at 100 in + 50 out = 1500 tokens; the Herdr snapshot carries none.
+    assert_eq!(summary.aggregate_stats.token_usage.total(), 1500);
+}
+
+/// `Scanner::scan_one_source` is the registration path `apps/cli/src/server/home/gateway.rs`'s
+/// transcript feed uses the moment a live-tail event names a path
+/// `Storage::session_id_for_source_path` doesn't know about yet (e.g. a freshly-seated
+/// `start_rider` pane's own harness session), instead of waiting for the next periodic
+/// `archie scan`. This pins down that it indexes exactly the one file it's given -- an unknown
+/// path resolves to a session id through the adapter's own parse, and a second, unrelated
+/// session file sitting right next to it in the same directory is left untouched (proving this
+/// is not secretly a full or directory-scoped rescan).
+#[test]
+fn test_scan_one_source_registers_an_unknown_path_without_a_full_rescan() {
+    let temp = tempdir().unwrap();
+    let claude_dir = temp.path().join(".claude").join("projects").join("my-project");
+    fs::create_dir_all(&claude_dir).unwrap();
+
+    let fresh_path = claude_dir.join("sess-fresh.jsonl");
+    let mut fresh_file = File::create(&fresh_path).unwrap();
+    writeln!(
+        fresh_file,
+        r#"{{"type":"user","timestamp":"2026-09-07T10:00:00Z","content":"say pong and nothing else"}}"#
+    )
+    .unwrap();
+    writeln!(
+        fresh_file,
+        r#"{{"type":"assistant","timestamp":"2026-09-07T10:00:02Z","content":[{{"type":"text","text":"pong"}}]}}"#
+    )
+    .unwrap();
+
+    // A second, unrelated session in the same directory -- never named in the
+    // `scan_one_source` call, so it must stay unindexed.
+    let sibling_path = claude_dir.join("sess-sibling.jsonl");
+    let mut sibling_file = File::create(&sibling_path).unwrap();
+    writeln!(
+        sibling_file,
+        r#"{{"type":"user","timestamp":"2026-09-07T09:00:00Z","content":"unrelated session"}}"#
+    )
+    .unwrap();
+    writeln!(
+        sibling_file,
+        r#"{{"type":"assistant","timestamp":"2026-09-07T09:00:02Z","content":[{{"type":"text","text":"sure"}}]}}"#
+    )
+    .unwrap();
+
+    let db_path = temp.path().join("index.db");
+    let storage = Arc::new(Storage::open_path(&db_path).unwrap());
+    let scanner = Scanner::new(storage.clone());
+
+    let fresh_path_str = fresh_path.to_string_lossy().to_string();
+    let sibling_path_str = sibling_path.to_string_lossy().to_string();
+
+    // Not indexed yet -- the same lookup the transcript feed makes before falling back to
+    // `scan_one_source`.
+    assert_eq!(storage.session_id_for_source_path(&fresh_path_str).unwrap(), None);
+
+    let session_id = scanner
+        .scan_one_source("claude_code", &fresh_path)
+        .unwrap()
+        .expect("a real, non-empty session resolves to a session id");
+    assert_eq!(session_id, "sess-fresh", "claude_code derives the session id from the file stem");
+
+    assert_eq!(
+        storage.session_id_for_source_path(&fresh_path_str).unwrap(),
+        Some("sess-fresh".to_string()),
+        "the named path is now resolvable, exactly like a normal scan would leave it"
+    );
+    assert_eq!(
+        storage.session_id_for_source_path(&sibling_path_str).unwrap(),
+        None,
+        "the sibling session was never named in the call and must stay unindexed"
+    );
+}
+
+/// A path the named adapter doesn't recognize at all (wrong adapter for this file) returns
+/// `Ok(None)`, the same "nothing to feed" signal the transcript feed treats as a no-op rather
+/// than an error.
+#[test]
+fn test_scan_one_source_returns_none_for_a_path_its_adapter_does_not_recognize() {
+    let temp = tempdir().unwrap();
+    let unrelated_path = temp.path().join("not-a-session.txt");
+    File::create(&unrelated_path).unwrap();
+
+    let db_path = temp.path().join("index.db");
+    let storage = Arc::new(Storage::open_path(&db_path).unwrap());
+    let scanner = Scanner::new(storage);
+
+    let result = scanner.scan_one_source("claude_code", &unrelated_path).unwrap();
+    assert_eq!(result, None);
 }

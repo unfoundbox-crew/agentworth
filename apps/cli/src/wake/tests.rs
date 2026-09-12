@@ -208,6 +208,39 @@ fn a_compaction_summary_is_not_what_the_user_last_asked() {
 }
 
 #[test]
+fn last_asked_skips_harness_relays_and_notifications() {
+    let mut trace = empty_trace("relay-session");
+    push(
+        &mut trace,
+        1,
+        EventPayload::UserMessage {
+            content: "Rebuild the landing page terminals at 2x and push".to_string(),
+        },
+    );
+    push(
+        &mut trace,
+        2,
+        EventPayload::UserMessage {
+            content: "Another Claude session sent a message: the CI is red on main".to_string(),
+        },
+    );
+    push(
+        &mut trace,
+        3,
+        EventPayload::UserMessage {
+            content: "[SYSTEM NOTIFICATION] background task finished".to_string(),
+        },
+    );
+    trace.recalculate_stats();
+
+    let session = report_from(&trace, None).session.expect("a session");
+    assert_eq!(
+        session.last_asked.as_deref(),
+        Some("Rebuild the landing page terminals at 2x and push")
+    );
+}
+
+#[test]
 fn no_user_message_at_all_is_a_gap_and_the_line_is_omitted() {
     let mut trace = empty_trace("silent-session");
     push(&mut trace, 1, shell("ls", None));
@@ -560,5 +593,43 @@ fn the_no_session_document_is_redacted_unless_raw_was_asked_for() {
     assert!(
         raw.workspace.contains(&home),
         "include_raw is the opt-in, and it opts in"
+    );
+}
+
+#[test]
+fn drift_adds_exactly_one_line_after_proof_and_stays_inside_the_budget() {
+    let mut report = fixture_report();
+    report.moved_under_you = Some(MovedUnderYou {
+        count: 3,
+        first_path: "/Users/x/code/unfoundbox/agentworth/crates/loop/src/state.rs".to_string(),
+        first_writer: Some("1c7e4b92".to_string()),
+    });
+    let markdown = render_markdown(&report);
+    let moved: Vec<&str> = markdown
+        .lines()
+        .filter(|line| line.starts_with("**Moved under you**"))
+        .collect();
+    assert_eq!(moved.len(), 1, "one line, never two: {markdown}");
+    assert!(moved[0].contains("3 files"), "{}", moved[0]);
+    assert!(moved[0].contains("by 1c7e4b92"), "{}", moved[0]);
+    assert!(lines(&markdown) <= MAX_LINES, "{markdown}");
+
+    let proof = markdown
+        .lines()
+        .position(|line| line.starts_with("**Proof**"))
+        .expect("a proof line");
+    let moved_at = markdown
+        .lines()
+        .position(|line| line.starts_with("**Moved under you**"))
+        .expect("a moved line");
+    assert_eq!(moved_at, proof + 1, "it sits right after Proof");
+}
+
+#[test]
+fn a_session_nothing_moved_under_keeps_the_line_out() {
+    let markdown = render_markdown(&fixture_report());
+    assert!(
+        !markdown.contains("Moved under you"),
+        "no drift, no line: {markdown}"
     );
 }

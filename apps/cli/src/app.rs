@@ -49,6 +49,8 @@ mod asks_command;
 // Same collision, same fix again: `commands::wake` would clash with `crate::wake`.
 #[path = "commands/wake.rs"]
 mod wake_command;
+#[path = "commands/home_cmd.rs"]
+mod home_cmd;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -212,10 +214,36 @@ enum Commands {
     /// Start the local API server and interactive explorer UI
     Serve(ServeArgs),
 
+    /// One command for a new user: serve the built `apps/home` deck and open it. Same as
+    /// `archie serve --home`, plus: fails loudly if the deck was never built into this
+    /// binary, opens the browser at `/home/` instead of the API root, and does not treat an
+    /// already-running `archie serve` holding the loop socket as fatal
+    Home(HomeArgs),
+
     /// Start the read-only MCP server over stdio, for a coding agent to query this machine's
     /// session index mid-session (see docs/specs/mcp-server.md). Register it once with
     /// `claude mcp add agentworth --scope user -- archie mcp`.
     Mcp,
+
+    /// Plumbing: read one harness hook event on stdin and hand it to the loop
+    /// (docs/specs/loop.md). Never prints to stdout, never fails the agent, exits 0 always.
+    /// `archie hook print claude` prints the settings.json snippet that registers it
+    Hook {
+        #[command(subcommand)]
+        action: Option<HookCommand>,
+
+        /// Answer the harness synchronously instead of recording and returning: one socket
+        /// round trip inside 50 ms, and exit 0 with nothing on stdout if it misses
+        #[arg(long)]
+        gate: bool,
+    },
+
+    /// The governor's policy file: what it says, whether it parses, and clearing a session
+    /// it suspended (docs/specs/governor.md). Nothing is governed until a `policy.toml` exists
+    Policy {
+        #[command(subcommand)]
+        action: PolicyCommand,
+    },
 
     /// Check local environment, adapter discoveries, and SQLite database health
     Doctor(DoctorArgs),
@@ -389,6 +417,104 @@ enum SessionCommand {
 
     /// Rank indexed sessions by real secret/credential exposure risk, by category and severity
     Risk(RiskArgs),
+
+    /// What moved under this session since it read it, and which session moved it
+    Drift(LoopSessionArgs),
+
+    /// The join keys this session's tool results carried -- a SpacePilot run_id, a receipt
+    /// hash -- and the other sessions that carried them
+    Anchors(LoopSessionArgs),
+
+    /// What this session has spent so far, from its own transcript: tokens, dollars at the
+    /// table price, turns, cache read share, and the rate over the last ten minutes
+    Burn(LoopSessionArgs),
+}
+
+/// `archie hook print <harness>`. One harness so far; the subcommand exists so the second
+/// one is an addition rather than a breaking change to the first one's output.
+#[derive(Subcommand, Debug, PartialEq)]
+enum HookCommand {
+    /// Print the hook registration snippet for a harness. Never writes a settings file
+    Print {
+        /// The harness to print for. Both are verified against that harness's own hooks
+        /// reference (docs/specs/loop.md, docs/specs/governor.md)
+        #[arg(value_parser = ["claude", "codex"])]
+        harness: String,
+
+        /// Also register the sync gates, so the governor can stop a turn. Claude Code only:
+        /// the Codex snippet is gated by construction, since Codex has no batch hook
+        #[arg(long)]
+        govern: bool,
+    },
+}
+
+/// `archie policy`: the four verbs over `policy.toml` (docs/specs/governor.md).
+#[derive(Subcommand, Debug, PartialEq)]
+enum PolicyCommand {
+    /// Write a starter policy.toml, with this machine's own token percentiles as comments
+    Init(PolicyInitArgs),
+
+    /// What is governed right now, and which files were read to decide that
+    Show(PolicyShowArgs),
+
+    /// Parse both files and say what is wrong with them, naming the file and the line
+    Check,
+
+    /// Clear a spend-cap suspension so the session can submit prompts again
+    Lift {
+        /// The session to lift, by full id
+        #[arg(value_name = "SESSION")]
+        session_id: String,
+    },
+
+    /// What the current thresholds would have done to the sessions already indexed
+    Replay(PolicyReplayArgs),
+}
+
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct PolicyInitArgs {
+    /// Write `.agentworth/policy.toml` in the current repo instead of `~/.agentworth/policy.toml`
+    #[arg(long)]
+    repo: bool,
+
+    /// Overwrite an existing file
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct PolicyShowArgs {
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct PolicyReplayArgs {
+    /// How far back to replay, in days
+    #[arg(long, value_name = "DAYS", default_value = "30d", value_parser = parse_since_days)]
+    since: i64,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+/// `30d`, `30`, `2w`: the replay window, in days. Anything else is an error rather than a
+/// silent default, because a mistyped window would quietly report on the wrong period.
+fn parse_since_days(raw: &str) -> Result<i64, String> {
+    let text = raw.trim();
+    let (number, multiplier) = match text.strip_suffix('d') {
+        Some(rest) => (rest, 1),
+        None => match text.strip_suffix('w') {
+            Some(rest) => (rest, 7),
+            None => (text, 1),
+        },
+    };
+    number
+        .parse::<i64>()
+        .map(|n| n * multiplier)
+        .map_err(|_| format!("{raw} is not a window like 30d or 2w"))
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -399,6 +525,10 @@ enum AgentCommand {
     /// One adapter in detail: what it extracts, whether it is present here, and what it
     /// has actually put in the index
     Show(AgentShowArgs),
+
+    /// Where every agent on this machine is right now, one line each, from the loop's own
+    /// hook events rather than from a scan
+    Status(AgentStatusArgs),
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -495,6 +625,12 @@ struct SessionListArgs {
     /// Include 1-event session stubs in the listing
     #[arg(long)]
     all_stubs: bool,
+
+    /// Which kind of row to list: `conversation` (the default) or `fleet_snapshot` (a
+    /// multi-agent workspace as of one moment, e.g. Herdr). `--adapter` on a snapshot
+    /// adapter implies it.
+    #[arg(long, value_parser = ["conversation", "fleet_snapshot"])]
+    kind: Option<String>,
 
     /// Only sessions whose completion claims were never independently corroborated by
     /// tests or CI -- the blind spots
@@ -629,7 +765,7 @@ struct SearchArgs {
     #[arg(long, default_value_t = 0.0)]
     min_score: f32,
 
-    /// Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)
+    /// Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage, user_turn)
     #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(crate::completions::chunk_kind_candidates))]
     kind: Option<String>,
 
@@ -676,6 +812,11 @@ struct BlunderArgs {
     /// Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol
     #[arg(short, long)]
     submit: bool,
+
+    /// Print the exact redacted payload a submission would POST, and send nothing.
+    /// Read this before you ever pass --submit.
+    #[arg(long)]
+    dry_run: bool,
 
     /// Output blunder exhibits as formatted JSON
     #[arg(long)]
@@ -728,6 +869,31 @@ struct RiskArgs {
     json: bool,
 }
 
+/// The session reference the loop verbs take. Not `SessionRefArgs`: a session that has only
+/// ever spoken through hooks has no row in `sessions` for the picker to offer, so these
+/// resolve against the loop's own index (`agent_state`) instead.
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct LoopSessionArgs {
+    /// The session, by full id or a unique prefix. Defaults to the most recently active one
+    #[arg(value_name = "SESSION_ID")]
+    session_id: Option<String>,
+
+    /// The most recently active session, which is also the default
+    #[arg(long)]
+    last: bool,
+
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq, Default)]
+struct AgentStatusArgs {
+    /// Output as formatted JSON
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(clap::Args, Debug, PartialEq)]
 struct ServeArgs {
     /// Port to bind the server to
@@ -741,6 +907,29 @@ struct ServeArgs {
     /// Optional path to custom web frontend dist directory
     #[arg(long)]
     dist: Option<PathBuf>,
+
+    /// Do not listen on the loop's Unix socket. Hook events then take the spool, and
+    /// `archie scan` ingests them (docs/specs/loop.md section 1)
+    #[arg(long)]
+    no_socket: bool,
+
+    /// Start the gateway behind `apps/home` (a WebSocket at /ws) alongside the HTTP API.
+    /// Unix-only: it dials herdr's own Unix socket for live presence. See
+    /// `apps/cli/src/server/home_gateway.rs`
+    #[arg(long)]
+    home: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct HomeArgs {
+    /// Port to bind the server to. Reuses `archie serve`'s own default, so `archie home`
+    /// and `archie serve --home` land on the same URL unless told otherwise
+    #[arg(short, long, default_value_t = crate::DEFAULT_PORT)]
+    port: u16,
+
+    /// Do not open the default browser
+    #[arg(long)]
+    no_open: bool,
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
@@ -1284,7 +1473,10 @@ enum Action {
     },
     Scan(ScanArgs),
     Serve(ServeArgs),
+    Home(HomeArgs),
     Mcp,
+    Hook(Option<HookCommand>, bool),
+    Policy(PolicyCommand),
     Doctor(DoctorArgs),
     Docs(DocsArgs),
     Config(ConfigAction),
@@ -1306,7 +1498,10 @@ fn normalize(command: Commands) -> Action {
         Commands::Stats { action, args } => Action::Stats { action, args },
         Commands::Scan(a) => Action::Scan(a),
         Commands::Serve(a) => Action::Serve(a),
+        Commands::Home(a) => Action::Home(a),
         Commands::Mcp => Action::Mcp,
+        Commands::Hook { action, gate } => Action::Hook(action, gate),
+        Commands::Policy { action } => Action::Policy(action),
         Commands::Doctor(a) => Action::Doctor(a),
         Commands::Docs(a) => Action::Docs(a),
         Commands::Config { action } => Action::Config(action),
@@ -1533,9 +1728,12 @@ pub fn run() -> Result<()> {
             } else {
                 run_traces_command(
                     limit,
-                    a.adapter,
-                    a.model,
-                    a.all_stubs,
+                    TraceListQuery {
+                        adapter: a.adapter,
+                        model: a.model,
+                        kind: a.kind.as_deref().and_then(agentworth_schema::TraceKind::parse),
+                        all_stubs: a.all_stubs,
+                    },
                     resolve_json(a.json),
                     cli.db_path,
                     &ui,
@@ -1585,7 +1783,7 @@ pub fn run() -> Result<()> {
             crate::run_audit_command(a.safety, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Session(SessionCommand::Blunder(a)) => {
-            crate::run_blunder_command(a.top, a.submit, resolve_json(a.json), cli.db_path, &ui)?;
+            crate::run_blunder_command(a.top, a.submit, a.dry_run, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Session(SessionCommand::Handoff(a)) => {
             handoff_command::run_handoff_command(
@@ -1605,6 +1803,30 @@ pub fn run() -> Result<()> {
                 a.workspace,
                 a.repo,
                 a.redact,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::Drift(a)) => {
+            crate::commands::run_session_drift_command(
+                if a.last { None } else { a.session_id },
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::Burn(a)) => {
+            crate::commands::run_session_burn_command(
+                if a.last { None } else { a.session_id },
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Session(SessionCommand::Anchors(a)) => {
+            crate::commands::run_session_anchors_command(
+                if a.last { None } else { a.session_id },
                 resolve_json(a.json),
                 cli.db_path,
                 &ui,
@@ -1708,6 +1930,9 @@ pub fn run() -> Result<()> {
         Action::Agent(AgentCommand::Show(a)) => {
             run_agent_show_command(&a.adapter, resolve_json(a.json), cli.db_path, &ui)?;
         }
+        Action::Agent(AgentCommand::Status(a)) => {
+            crate::commands::run_agent_status_command(resolve_json(a.json), cli.db_path, &ui)?;
+        }
         Action::Repo(RepoCommand::List(a)) => {
             let limit = config::resolve_limit(a.limit, persisted_config.limit, 20);
             run_repo_list_command(limit, resolve_json(a.json), cli.db_path, &ui)?;
@@ -1750,7 +1975,58 @@ pub fn run() -> Result<()> {
             let storage = open_storage(cli.db_path)?;
             let dist_path = crate::server::resolve_dist_dir(a.dist)?;
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(crate::start_server(storage, a.port, a.open, dist_path, &ui))?;
+            runtime.block_on(crate::start_server(
+                storage,
+                a.port,
+                a.open,
+                dist_path,
+                !a.no_socket,
+                a.home,
+                &ui,
+            ))?;
+        }
+        Action::Home(a) => {
+            home_cmd::run_home_command(
+                home_cmd::HomeCommandArgs {
+                    port: a.port,
+                    no_open: a.no_open,
+                },
+                cli.db_path,
+                &ui,
+            )?;
+        }
+        Action::Hook(None, true) => {
+            crate::commands::run_gate_command(cli.verbose)?;
+        }
+        Action::Hook(None, false) => {
+            crate::commands::run_hook_command(cli.verbose)?;
+        }
+        Action::Hook(Some(HookCommand::Print { harness, govern }), _) => {
+            match harness.as_str() {
+                "claude" => crate::commands::print_claude_snippet(govern)?,
+                "codex" => crate::commands::print_codex_snippet()?,
+                other => anyhow::bail!("no hook snippet for {other}; `claude` and `codex` are the harnesses"),
+            }
+        }
+        Action::Policy(PolicyCommand::Init(a)) => {
+            crate::commands::run_policy_init_command(a.repo, a.force, cli.db_path, &ui)?;
+        }
+        Action::Policy(PolicyCommand::Show(a)) => {
+            crate::commands::run_policy_show_command(resolve_json(a.json), &ui)?;
+        }
+        Action::Policy(PolicyCommand::Check) => {
+            crate::commands::run_policy_check_command(cli.db_path, &ui)?;
+        }
+        Action::Policy(PolicyCommand::Lift { session_id }) => {
+            crate::commands::run_policy_lift_command(session_id, cli.db_path, &ui)?;
+        }
+        Action::Policy(PolicyCommand::Replay(a)) => {
+            crate::commands::run_policy_replay_command(
+                a.since,
+                resolve_json(a.json),
+                cli.db_path,
+                &ui,
+            )?;
         }
         Action::Mcp => {
             let storage = open_storage(cli.db_path)?;
@@ -1883,8 +2159,8 @@ fn run_scan_command(
     // still been scanned once, and a second introduction is a lie about which run this is.
     if !json
         && storage
-            .get_aggregate_stats(true)
-            .map(|s| s.total_sessions == 0)
+            .total_row_count()
+            .map(|n| n == 0)
             .unwrap_or(false)
     {
         let index = storage
@@ -1899,6 +2175,7 @@ fn run_scan_command(
         custom_paths: paths,
         force,
         include_stubs,
+        ..Default::default()
     };
 
     // A stream that cannot move the cursor gets frame 1 once and nothing after it: a
@@ -1911,6 +2188,22 @@ fn run_scan_command(
         progress.tick(current, total);
     })?;
     progress.clear();
+
+    // The spool is a raw history like any other, so a scan is where it lands when nothing was
+    // listening on the socket (docs/specs/loop.md section 1). Ingested files are deleted, so
+    // this is idempotent and a failure here never fails the scan.
+    match crate::loop_runtime::ingest_default_spool(storage.clone()) {
+        Ok(ingest) if ingest.events > 0 => {
+            if !json {
+                println!(
+                    "Loop: ingested {} hook event(s) from the spool",
+                    ingest.events
+                );
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("loop: could not ingest the spool: {e:#}"),
+    }
 
     if json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -2058,6 +2351,7 @@ fn run_stats_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui) -
                 "cache_read_tokens": stats.token_usage.cache_read_tokens,
                 "cache_creation_tokens": stats.token_usage.cache_creation_tokens,
                 "total_tokens": stats.token_usage.total(),
+                "cost_weighted_tokens": stats.token_usage.cost_weighted_total(),
             },
             "verdict_breakdown": {
                 "ci_or_deployment_verified": verdict.ci_or_deployment_verified,
@@ -2203,20 +2497,39 @@ fn build_trace_rows(
         .collect()
 }
 
-fn run_traces_command(
-    limit: usize,
+/// The filters `session list` collects: adapter, model, kind, and whether one-event stubs
+/// are kept. Bundled so `run_traces_command` stays under the argument limit.
+struct TraceListQuery {
     adapter: Option<String>,
     model: Option<String>,
+    kind: Option<agentworth_schema::TraceKind>,
     all_stubs: bool,
+}
+
+fn run_traces_command(
+    limit: usize,
+    query: TraceListQuery,
     json: bool,
     db_path: Option<PathBuf>,
     ui: &crate::ui::Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
+    let TraceListQuery { adapter, model, kind, all_stubs } = query;
+
+    // `--adapter herdr` is asking for snapshots; nobody should have to know the word.
+    let kind = kind.or_else(|| {
+        let name = adapter.as_deref()?;
+        agentworth_adapters::all_adapters()
+            .iter()
+            .find(|a| a.name() == name)
+            .map(|a| a.trace_kind())
+            .filter(|k| *k != agentworth_schema::TraceKind::Conversation)
+    });
 
     let filter = SessionFilter {
         adapter,
         model,
+        kind,
         limit: None,
         include_stubs: if all_stubs { Some(true) } else { None },
         order_by: Some(SessionOrderBy::StartedAtDesc),
@@ -2226,7 +2539,9 @@ fn run_traces_command(
     let all_sessions = storage.list_sessions_filtered(&filter)?;
     let filtered_sessions: Vec<_> = all_sessions
         .into_iter()
-        .filter(|s| all_stubs || s.total_events > 1)
+        .filter(|s| {
+            all_stubs || s.kind != agentworth_schema::TraceKind::Conversation || s.total_events > 1
+        })
         .take(limit)
         .collect();
 
@@ -2257,10 +2572,19 @@ fn run_traces_command(
                 json!({
                     "session_id": s.session_id,
                     "adapter": s.adapter,
+                    "kind": s.kind.as_str(),
                     "source_path": s.source_path,
                     "started_at": s.started_at,
                     "duration_seconds": s.duration_seconds,
+                    // The raw sum, cache reads at face value -- context volume, not spend.
+                    // `cost_weighted_tokens` is the one to rank by; see
+                    // `docs/specs/token-accounting.md`.
                     "total_tokens": s.total_tokens,
+                    "cost_weighted_tokens": s.cost_weighted_tokens,
+                    "input_tokens": s.input_tokens,
+                    "output_tokens": s.output_tokens,
+                    "cache_read_tokens": s.cache_read_tokens,
+                    "cache_creation_tokens": s.cache_creation_tokens,
                     "total_events": s.total_events,
                     "tool_calls_count": s.tool_calls_count,
                     "models_used": s.models_used,
@@ -2588,7 +2912,9 @@ pub(crate) fn inspect_view(
         input_tokens: tokens.input_tokens,
         output_tokens: tokens.output_tokens,
         cache_read_tokens: tokens.cache_read_tokens,
+        cache_creation_tokens: tokens.cache_creation_tokens,
         total_tokens: tokens.total(),
+        cost_weighted_tokens: tokens.cost_weighted_total(),
         models_used: trace.stats.models_used.clone(),
         tools_used: trace.stats.tools_used.iter().map(|(k, v)| (k.clone(), *v)).collect(),
         source_path: &trace.provenance.source_path,
@@ -2764,11 +3090,11 @@ fn run_doctor_command(json_output: bool, custom_db_path: Option<PathBuf>, ui: &c
 
     if let Ok(st) = &storage_res {
         storage_healthy = true;
-        // true: this is a raw index-health count ("total_indexed_sessions" under "storage"),
-        // matching `archie scan`'s own "Total Indexed... in SQLite index" promise -- not a
-        // "real activity" metric.
-        if let Ok(stats) = st.get_aggregate_stats(true) {
-            total_indexed = stats.total_sessions;
+        // Raw index-health count ("total_indexed_sessions" under "storage"), matching
+        // `archie scan`'s own "Total Indexed... in SQLite index" promise -- every row,
+        // snapshots included -- not a "real activity" metric (that is get_aggregate_stats).
+        if let Ok(n) = st.total_row_count() {
+            total_indexed = n;
         }
         let actual_path = PathBuf::from(&db_path_display);
         if let Ok(meta) = std::fs::metadata(&actual_path) {
@@ -3080,6 +3406,8 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
             input: r.input_tokens,
             output: r.output_tokens,
             cache_read: r.cache_read_tokens,
+            cache_creation: r.cache_creation_tokens,
+            cost_weighted: r.cost_weighted_tokens,
             cost_usd: r.estimated_cost_usd,
             measured: r.total_tokens > 0,
         })
@@ -4190,7 +4518,7 @@ fn adapter_source_root(name: &str) -> &'static str {
         "gemini" => "~/.gemini/ / antigravity",
         "goose" => "~/.config/goose/sessions/",
         "grok" => "~/.grok/ / ~/.xai/",
-        "herdr" => "~/.herdr/",
+        "herdr" => "~/.config/herdr/",
         "hermes" => "~/.hermes/",
         "kimi" => "~/.kimi/",
         "manus" => "~/.manus/",
@@ -4224,8 +4552,8 @@ fn run_cockpit_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui)
     let (storage, missing) = match open_storage(db_path) {
         Ok(s) => {
             let empty = s
-                .get_aggregate_stats(true)
-                .map(|a| a.total_sessions == 0)
+                .total_row_count()
+                .map(|n| n == 0)
                 .unwrap_or(true);
             (Some(s), if empty { Some(String::new()) } else { None })
         }
@@ -4573,8 +4901,8 @@ mod grammar_tests {
             .collect();
 
         for expected in [
-            "session", "agent", "repo", "window", "stats", "scan", "serve", "mcp", "doctor",
-            "docs", "config", "version", "update", "completions", "merge", "tui",
+            "session", "agent", "repo", "window", "stats", "scan", "serve", "home", "mcp",
+            "doctor", "docs", "config", "version", "update", "completions", "merge", "tui",
         ] {
             assert!(
                 visible.iter().any(|n| n == expected),

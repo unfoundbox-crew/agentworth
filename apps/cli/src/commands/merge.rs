@@ -84,6 +84,18 @@ const SESSION_CHILD_TABLES: &[ChildTable] = &[
             "cache_creation_tokens",
         ],
     },
+    ChildTable {
+        name: "identity_sightings",
+        columns: &[
+            "session_id",
+            "name",
+            "via",
+            "agent",
+            "observed_by",
+            "first_seen_at",
+            "last_seen_at",
+        ],
+    },
     // `trajectory_chunks.session_id` has no `FOREIGN KEY` constraint -- SQLite can't add one to
     // a table that already exists on every user's local index without a full table rebuild, and
     // this table's rows predate that constraint. That means
@@ -103,6 +115,90 @@ const SESSION_CHILD_TABLES: &[ChildTable] = &[
             "text_content",
             "metadata_json",
             "embedding",
+        ],
+    },
+    // The loop's five per-session tables (docs/specs/loop.md section 3). They carry live state
+    // rather than history, but they are keyed by `session_id` like every table above, so a
+    // merge that dropped them would lose a merged session's support set and anchors silently --
+    // which is the exact bug this list exists to prevent.
+    ChildTable {
+        name: "agent_state",
+        columns: &[
+            "session_id",
+            "state",
+            "since",
+            "pane_id",
+            "cwd",
+            "git_head",
+            "last_seq",
+            "updated_at",
+            "last_stop",
+        ],
+    },
+    ChildTable {
+        name: "tool_intents",
+        columns: &[
+            "tool_use_id",
+            "session_id",
+            "seq",
+            "tool",
+            "predicted_paths",
+            "command",
+            "known",
+            "at",
+            "result",
+        ],
+    },
+    ChildTable {
+        name: "intent_paths",
+        columns: &["tool_use_id", "session_id", "seq", "path"],
+    },
+    ChildTable {
+        name: "support_set",
+        columns: &["session_id", "path", "sha256", "size", "read_seq", "read_at"],
+    },
+    ChildTable {
+        name: "trace_anchors",
+        columns: &["session_id", "seq", "kind", "value"],
+    },
+    // The governor's three (docs/specs/governor.md). `turn_usage` is a merged session's whole
+    // spend history; the other two are why it was stopped and whether it still is.
+    ChildTable {
+        name: "turn_usage",
+        columns: &[
+            "session_id",
+            "seq",
+            "at",
+            "model",
+            "input",
+            "output",
+            "cache_read",
+            "cache_creation",
+            "usd",
+        ],
+    },
+    ChildTable {
+        name: "governor_events",
+        columns: &[
+            "session_id",
+            "at",
+            "seq",
+            "rule",
+            "action",
+            "reason",
+            "evidence",
+        ],
+    },
+    ChildTable {
+        name: "session_suspensions",
+        columns: &[
+            "session_id",
+            "rule",
+            "reason",
+            "since",
+            "lifted_at",
+            "tokens_at_lift",
+            "usd_at_lift",
         ],
     },
 ];
@@ -636,7 +732,8 @@ mod tests {
             let storage2 = agentworth_storage::Storage::open_path(db2.path()).unwrap();
 
             use agentworth_schema::{
-                AgentWorthTrace, EventPayload, FileActionType, NormalizedEvent, Provenance,
+                AgentWorthTrace, EventPayload, FileActionType, IdentitySighting, NormalizedEvent,
+                Provenance,
             };
             use chrono::Utc;
 
@@ -663,6 +760,15 @@ mod tests {
                     lines_changed: Some(4),
                 },
             ));
+            // identity_sightings: a name seen attached to a harness session id, carried by
+            // upsert_trace like the other trace-borne child rows.
+            trace.identities.push(IdentitySighting {
+                session_id: "sess-child".to_string(),
+                agent: Some("claude".to_string()),
+                name: "worker-claude".to_string(),
+                seen_at: now,
+                via: "herdr:w9:pane 18".to_string(),
+            });
             trace.recalculate_stats();
             storage2.upsert_trace(&trace).unwrap();
 
@@ -714,6 +820,99 @@ mod tests {
                 rusqlite::params![chrono::Utc::now().to_rfc3339()],
             )
             .unwrap();
+        }
+
+        // The loop's five tables, written through the same storage API `archie hook` uses.
+        {
+            let now = chrono::Utc::now();
+            let storage2 = agentworth_storage::Storage::open_path(db2.path()).unwrap();
+            storage2
+                .upsert_agent_state(&agentworth_storage::AgentStateRow {
+                    session_id: "sess-child".to_string(),
+                    state: "idle".to_string(),
+                    since: now,
+                    pane_id: Some("%17".to_string()),
+                    cwd: Some("/repo".to_string()),
+                    git_head: Some("abc1234".to_string()),
+                    last_seq: 4,
+                    updated_at: now,
+                })
+                .unwrap();
+            storage2
+                .set_agent_last_stop("sess-child", "{\"own\":[],\"world\":[]}")
+                .unwrap();
+            storage2
+                .insert_intent(
+                    &agentworth_storage::IntentRow {
+                        tool_use_id: "toolu_child".to_string(),
+                        session_id: "sess-child".to_string(),
+                        seq: 2,
+                        tool: "Edit".to_string(),
+                        predicted_paths: vec!["/repo/src/lib.rs".to_string()],
+                        command: None,
+                        known: true,
+                        at: now,
+                        result: Some("ok".to_string()),
+                    },
+                    &["/repo/src/lib.rs".to_string()],
+                )
+                .unwrap();
+            storage2
+                .upsert_support(&agentworth_storage::SupportRow {
+                    session_id: "sess-child".to_string(),
+                    path: "/repo/README.md".to_string(),
+                    sha256: Some("f".repeat(64)),
+                    size: Some(12),
+                    read_seq: 3,
+                    read_at: now,
+                })
+                .unwrap();
+            storage2
+                .insert_anchors(&[agentworth_storage::AnchorRow {
+                    session_id: "sess-child".to_string(),
+                    seq: 3,
+                    kind: "sha256".to_string(),
+                    value: "a".repeat(64),
+                }])
+                .unwrap();
+
+            // The governor's three.
+            storage2
+                .insert_turn_usage(&[agentworth_storage::TurnUsageRow {
+                    session_id: "sess-child".to_string(),
+                    seq: 1,
+                    at: now,
+                    model: "claude-fable-5-1".to_string(),
+                    input: Some(120),
+                    output: Some(40),
+                    cache_read: Some(9_000),
+                    cache_creation: Some(200),
+                    usd: 0.01,
+                }])
+                .unwrap();
+            storage2
+                .insert_governor_event(&agentworth_storage::GovernorEventRow {
+                    id: None,
+                    session_id: "sess-child".to_string(),
+                    at: now,
+                    seq: Some(4),
+                    rule: "thrash".to_string(),
+                    action: "halt".to_string(),
+                    reason: "src/lib.rs has been edited 3 times".to_string(),
+                    evidence: Some("{\"edits\":3}".to_string()),
+                })
+                .unwrap();
+            storage2
+                .suspend_session(&agentworth_storage::SuspensionRow {
+                    session_id: "sess-child".to_string(),
+                    rule: "spend".to_string(),
+                    reason: "over the cap".to_string(),
+                    since: now,
+                    lifted_at: None,
+                    tokens_at_lift: None,
+                    usd_at_lift: None,
+                })
+                .unwrap();
         }
 
         let stats = merge_sqlite_databases(db1.path(), db2.path()).unwrap();

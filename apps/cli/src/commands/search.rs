@@ -175,13 +175,23 @@ fn bootstrap_vector_store<V: VectorStore>(
     max_sessions_per_run: usize,
 ) -> Result<BootstrapOutcome> {
     let already_indexed = vector_store.indexed_session_ids()?;
+    let with_user_turns = vector_store.session_ids_with_kind(ChunkKind::UserTurn)?;
     let all_sessions = storage.list_sessions_filtered(&SessionFilter::default())?;
-    let mut pending_sessions: Vec<_> = all_sessions
+    let (indexed, mut pending_sessions): (Vec<_>, Vec<_>) = all_sessions
         .into_iter()
-        .filter(|s| !already_indexed.contains(&s.session_id))
+        .partition(|s| already_indexed.contains(&s.session_id));
+
+    // Sessions embedded before `user_turn` was a kind hold every other chunk but not that
+    // one. They get just the missing kind, never a re-embed of what they already hold. A
+    // session whose only user turns are harness envelopes never gains one and is re-read on
+    // every search; that read is a parse, not an embed, and it is the price of not keeping a
+    // "nothing to backfill" marker per session.
+    let mut backfill_sessions: Vec<_> = indexed
+        .into_iter()
+        .filter(|s| s.total_events > 0 && !with_user_turns.contains(&s.session_id))
         .collect();
 
-    if pending_sessions.is_empty() {
+    if pending_sessions.is_empty() && backfill_sessions.is_empty() {
         return Ok(BootstrapOutcome::default());
     }
 
@@ -189,20 +199,35 @@ fn bootstrap_vector_store<V: VectorStore>(
     pending_sessions.truncate(max_sessions_per_run);
     let sessions_embedded = pending_sessions.len();
     let sessions_still_pending = total_pending - sessions_embedded;
+    backfill_sessions.truncate(max_sessions_per_run);
 
     let scanner = Scanner::new(Arc::clone(storage));
     let mut chunks_embedded = 0;
 
+    let mut embed = |chunks: Vec<agentworth_schema::TrajectoryChunk>| {
+        if chunks.is_empty() {
+            return;
+        }
+        let texts: Vec<String> = chunks.iter().map(|c| c.text_content.clone()).collect();
+        if let Ok(embeddings) = embedder.embed_batch(&texts) {
+            let _ = vector_store.insert_embeddings(&chunks, &embeddings);
+            chunks_embedded += chunks.len();
+        }
+    };
+
     for sess in &pending_sessions {
         if let Ok(trace) = scanner.load_trace(&sess.session_id) {
-            let chunks = TrajectoryChunker::extract_chunks(&trace);
-            if !chunks.is_empty() {
-                let texts: Vec<String> = chunks.iter().map(|c| c.text_content.clone()).collect();
-                if let Ok(embeddings) = embedder.embed_batch(&texts) {
-                    let _ = vector_store.insert_embeddings(&chunks, &embeddings);
-                    chunks_embedded += chunks.len();
-                }
-            }
+            embed(TrajectoryChunker::extract_chunks(&trace));
+        }
+    }
+
+    for sess in &backfill_sessions {
+        if let Ok(trace) = scanner.load_trace(&sess.session_id) {
+            let user_turns: Vec<_> = TrajectoryChunker::extract_chunks(&trace)
+                .into_iter()
+                .filter(|c| c.kind == ChunkKind::UserTurn)
+                .collect();
+            embed(user_turns);
         }
     }
 

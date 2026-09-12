@@ -4,7 +4,10 @@ pub mod audit;
 pub mod blunder;
 pub mod blunder_blame;
 pub mod docs;
+pub mod governor_cmds;
+pub mod hook;
 pub mod ladder;
+pub mod loop_cmds;
 pub mod receipt;
 pub mod search;
 pub mod suspect;
@@ -13,7 +16,15 @@ pub use audit::run_audit_command;
 pub use blunder::run_blunder_command;
 pub use blunder_blame::run_blunder_blame_command;
 pub use docs::run_docs_command;
+pub use governor_cmds::{
+    run_policy_check_command, run_policy_init_command, run_policy_lift_command,
+    run_policy_replay_command, run_policy_show_command, run_session_burn_command,
+};
+pub use hook::{print_claude_snippet, print_codex_snippet, run_gate_command, run_hook_command};
 pub use ladder::{run_ladder_command, LadderArgs};
+pub use loop_cmds::{
+    run_agent_status_command, run_session_anchors_command, run_session_drift_command,
+};
 pub use receipt::{render_svg_receipt, render_terminal_receipt, run_receipt_command};
 pub use search::run_search_command;
 
@@ -81,8 +92,10 @@ pub fn is_high_risk_rm_path(cmd: &str) -> bool {
     false
 }
 
-/// Checks if a destructive command uses a bare/unscoped loop variable (the Katana disaster signature).
-pub fn is_leaked_katana_var(cmd: &str) -> bool {
+/// Checks if a destructive command uses a bare/unscoped loop variable (the leaked-shell-variable
+/// disaster signature). Function name kept as `is_leaked_loop_var` because `blunder.rs` (out of
+/// scope for this rename pass) imports it by that exact name.
+pub fn is_leaked_loop_var(cmd: &str) -> bool {
     let lower = cmd.to_lowercase();
     if !lower.contains("rm -rf") && !lower.contains("rm -fr") && !lower.contains("rm -r -f") {
         return false;

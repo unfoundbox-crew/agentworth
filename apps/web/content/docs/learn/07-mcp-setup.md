@@ -46,15 +46,15 @@ Where that server definition goes differs per harness, and this repo does not
 document the registration step for Codex, OpenCode or Gemini CLI. Use each
 harness's own MCP configuration docs, with the command and args above.
 
-## The 14 tools
+## The 17 tools
 
 All read-only. Nothing scans, nothing writes, nothing touches the original
 session logs.
 
-A client's `tools/list` shows 24, not 14. The extra 10 are the pre-0.1.16 tool
+A client's `tools/list` shows 27, not 17. The extra 10 are the pre-0.1.16 tool
 names, still registered as deprecated aliases forwarding to the same handlers,
 so a client configured before the rename keeps working. They are removed in
-v0.1.20. Use the 14 below.
+v0.1.20. Use the 17 below.
 
 | Tool | What it answers |
 | :--- | :--- |
@@ -72,6 +72,9 @@ v0.1.20. Use the 14 below.
 | `session_forgotten` | Decisions compaction dropped, returned verbatim with receipts. |
 | `session_asks` | Where a question's answer already landed. |
 | `repo_suspect` | Commits whose session never proved anything. |
+| `agent_status` | Which sessions are registered, working, idle, or ended, right now. |
+| `session_drift` | Did the files this session read change since it last checked, and who changed them. |
+| `session_burn` | Live tokens, dollars, turns, cache-read share, and burn rate for a session. |
 
 Full schemas: the [Reference](/docs/reference/).
 

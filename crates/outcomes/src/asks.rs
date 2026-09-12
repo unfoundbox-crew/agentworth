@@ -1,13 +1,13 @@
 //! Asks: a questions-to-answers index over a session.
 //!
-//! `docs/specs/asks.md` is the design. In a long session Saurabh asks a question, the answer
+//! `docs/specs/asks.md` is the design. In a long session the operator asks a question, the answer
 //! lands several messages later among tool notifications, and he re-asks it because scrolling
 //! costs time and re-asking costs tokens. This module finds every question in a trace and, for
 //! each, the first substantive assistant text that plausibly answers it -- deterministic, no
 //! model involved, same spirit as `loose_ends.rs` next to it.
 //!
 //! A question comes from one of two places:
-//! - **A user turn.** Any sentence in a `UserMessage` containing `?` is a question Saurabh asked.
+//! - **A user turn.** Any sentence in a `UserMessage` containing `?` is a question the operator asked.
 //! - **An assistant flag line.** A line in an `AssistantMessage` starting with `⚑` or `🚩` is a
 //!   question the assistant asked back to him -- the convention `~/.claude/CLAUDE.md` calls out
 //!   as "prefix the line with a flag character" when a decision needs him specifically.
@@ -21,7 +21,7 @@
 //! `no_reply_yet`.
 //!
 //! A flag-line question is never scanned forward for an answer: it is, by construction, the
-//! assistant asking Saurabh something, so there is no assistant text later in the trace that
+//! assistant asking the operator something, so there is no assistant text later in the trace that
 //! would count as answering it -- the reply worth showing is his own next message, which this
 //! index does not reach for (it only follows *assistant* text). It is always `flagged_back_to_user`.
 
@@ -49,7 +49,7 @@ fn filler_re() -> &'static regex::Regex {
     FILLER.get_or_init(|| regex::Regex::new(FILLER_PATTERN).expect("valid regex"))
 }
 
-/// The two flag glyphs `~/.claude/CLAUDE.md` recognizes for "this line asks Saurabh a decision".
+/// The two flag glyphs `~/.claude/CLAUDE.md` recognizes for "this line asks the operator for a decision".
 const FLAG_CHARS: [char; 2] = ['⚑', '🚩'];
 
 /// Who asked the question.
@@ -69,7 +69,7 @@ pub enum AskStatus {
     /// A substantive assistant answer was found, and it wasn't itself another question.
     Answered,
     /// Either a flag-line question (always this), or the reply found was itself a question --
-    /// both mean the ball is back in Saurabh's court.
+    /// both mean the ball is back in the operator's court.
     FlaggedBackToUser,
     /// No assistant text before the next user turn, or before the trace ends.
     NoReplyYet,

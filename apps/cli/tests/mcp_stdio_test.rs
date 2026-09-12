@@ -23,7 +23,7 @@ async fn test_stdio_tools_list_and_sessions_find() {
     let storage = Storage::open_in_memory().expect("open in-memory storage");
 
     let prov = Provenance::new(
-        "/Users/saurabh/code/unfoundbox/agentworth/sess-1.jsonl",
+        "/Users/dev/code/unfoundbox/agentworth/sess-1.jsonl",
         "claude_code",
         100,
         12345,
@@ -71,6 +71,9 @@ async fn test_stdio_tools_list_and_sessions_find() {
         "session_wake",
         "session_forgotten",
         "session_asks",
+        "agent_status",
+        "session_drift",
+        "session_burn",
     ] {
         assert!(
             tool_names.contains(&expected),
@@ -113,7 +116,7 @@ async fn retired_tool_names_reach_the_same_handler() {
     let storage = Storage::open_in_memory().expect("open in-memory storage");
 
     let prov = Provenance::new(
-        "/Users/saurabh/code/unfoundbox/agentworth/sess-1.jsonl",
+        "/Users/dev/code/unfoundbox/agentworth/sess-1.jsonl",
         "claude_code",
         100,
         12345,

@@ -21,6 +21,7 @@ mod opencode;
 mod pi;
 mod qwen;
 mod windsurf;
+mod usage_ledger;
 mod zhipu;
 
 pub use aider::AiderAdapter;

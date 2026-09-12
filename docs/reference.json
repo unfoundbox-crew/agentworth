@@ -1,6 +1,6 @@
 {
-  "version": "0.1.19",
-  "generatedDate": "2026-09-06",
+  "version": "0.1.24",
+  "generatedDate": "2026-09-12",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -343,6 +343,17 @@
           "help": "Include 1-event session stubs in the listing",
           "default": "false",
           "possibleValues": []
+        },
+        {
+          "name": "--kind",
+          "positional": false,
+          "required": false,
+          "help": "Which kind of row to list: `conversation` (the default) or `fleet_snapshot` (a multi-agent workspace as of one moment, e.g. Herdr). `--adapter` on a snapshot adapter implies it",
+          "default": null,
+          "possibleValues": [
+            "conversation",
+            "fleet_snapshot"
+          ]
         },
         {
           "name": "--unproven",
@@ -907,7 +918,7 @@
           "name": "--kind, -k",
           "positional": false,
           "required": false,
-          "help": "Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)",
+          "help": "Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage, user_turn)",
           "default": null,
           "possibleValues": []
         },
@@ -998,6 +1009,14 @@
           "positional": false,
           "required": false,
           "help": "Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--dry-run",
+          "positional": false,
+          "required": false,
+          "help": "Print the exact redacted payload a submission would POST, and send nothing. Read this before you ever pass --submit",
           "default": "false",
           "possibleValues": []
         },
@@ -1107,6 +1126,96 @@
       ]
     },
     {
+      "path": "archie session drift",
+      "about": "What moved under this session since it read it, and which session moved it",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "The session, by full id or a unique prefix. Defaults to the most recently active one",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "The most recently active session, which is also the default",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session anchors",
+      "about": "The join keys this session's tool results carried -- a SpacePilot run_id, a receipt hash -- and the other sessions that carried them",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "The session, by full id or a unique prefix. Defaults to the most recently active one",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "The most recently active session, which is also the default",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie session burn",
+      "about": "What this session has spent so far, from its own transcript: tokens, dollars at the table price, turns, cache read share, and the rate over the last ten minutes",
+      "args": [
+        {
+          "name": "SESSION_ID",
+          "positional": true,
+          "required": false,
+          "help": "The session, by full id or a unique prefix. Defaults to the most recently active one",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--last",
+          "positional": false,
+          "required": false,
+          "help": "The most recently active session, which is also the default",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "archie agent",
       "about": "The agent adapters: what each one extracts, and how one is doing on this machine",
       "args": []
@@ -1137,6 +1246,20 @@
           "default": null,
           "possibleValues": []
         },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie agent status",
+      "about": "Where every agent on this machine is right now, one line each, from the loop's own hook events rather than from a scan",
+      "args": [
         {
           "name": "--json",
           "positional": false,
@@ -1434,6 +1557,44 @@
           "help": "Optional path to custom web frontend dist directory",
           "default": null,
           "possibleValues": []
+        },
+        {
+          "name": "--no-socket",
+          "positional": false,
+          "required": false,
+          "help": "Do not listen on the loop's Unix socket. Hook events then take the spool, and `archie scan` ingests them (docs/specs/loop.md section 1)",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--home",
+          "positional": false,
+          "required": false,
+          "help": "Start the gateway behind `apps/home` (a WebSocket at /ws) alongside the HTTP API. Unix-only: it dials herdr's own Unix socket for live presence. See `apps/cli/src/server/home_gateway.rs`",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie home",
+      "about": "One command for a new user: serve the built `apps/home` deck and open it. Same as `archie serve --home`, plus: fails loudly if the deck was never built into this binary, opens the browser at `/home/` instead of the API root, and does not treat an already-running `archie serve` holding the loop socket as fatal",
+      "args": [
+        {
+          "name": "--port, -p",
+          "positional": false,
+          "required": false,
+          "help": "Port to bind the server to. Reuses `archie serve`'s own default, so `archie home` and `archie serve --home` land on the same URL unless told otherwise",
+          "default": "3000",
+          "possibleValues": []
+        },
+        {
+          "name": "--no-open",
+          "positional": false,
+          "required": false,
+          "help": "Do not open the default browser",
+          "default": "false",
+          "possibleValues": []
         }
       ]
     },
@@ -1441,6 +1602,127 @@
       "path": "archie mcp",
       "about": "Start the read-only MCP server over stdio, for a coding agent to query this machine's session index mid-session (see docs/specs/mcp-server.md). Register it once with `claude mcp add agentworth --scope user -- archie mcp`",
       "args": []
+    },
+    {
+      "path": "archie hook",
+      "about": "Plumbing: read one harness hook event on stdin and hand it to the loop (docs/specs/loop.md). Never prints to stdout, never fails the agent, exits 0 always. `archie hook print claude` prints the settings.json snippet that registers it",
+      "args": [
+        {
+          "name": "--gate",
+          "positional": false,
+          "required": false,
+          "help": "Answer the harness synchronously instead of recording and returning: one socket round trip inside 50 ms, and exit 0 with nothing on stdout if it misses",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie hook print",
+      "about": "Print the hook registration snippet for a harness. Never writes a settings file",
+      "args": [
+        {
+          "name": "HARNESS",
+          "positional": true,
+          "required": true,
+          "help": "The harness to print for. Both are verified against that harness's own hooks reference (docs/specs/loop.md, docs/specs/governor.md)",
+          "default": null,
+          "possibleValues": [
+            "claude",
+            "codex"
+          ]
+        },
+        {
+          "name": "--govern",
+          "positional": false,
+          "required": false,
+          "help": "Also register the sync gates, so the governor can stop a turn. Claude Code only: the Codex snippet is gated by construction, since Codex has no batch hook",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie policy",
+      "about": "The governor's policy file: what it says, whether it parses, and clearing a session it suspended (docs/specs/governor.md). Nothing is governed until a `policy.toml` exists",
+      "args": []
+    },
+    {
+      "path": "archie policy init",
+      "about": "Write a starter policy.toml, with this machine's own token percentiles as comments",
+      "args": [
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Write `.agentworth/policy.toml` in the current repo instead of `~/.agentworth/policy.toml`",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--force",
+          "positional": false,
+          "required": false,
+          "help": "Overwrite an existing file",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie policy show",
+      "about": "What is governed right now, and which files were read to decide that",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie policy check",
+      "about": "Parse both files and say what is wrong with them, naming the file and the line",
+      "args": []
+    },
+    {
+      "path": "archie policy lift",
+      "about": "Clear a spend-cap suspension so the session can submit prompts again",
+      "args": [
+        {
+          "name": "SESSION",
+          "positional": true,
+          "required": true,
+          "help": "The session to lift, by full id",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie policy replay",
+      "about": "What the current thresholds would have done to the sessions already indexed",
+      "args": [
+        {
+          "name": "--since",
+          "positional": false,
+          "required": false,
+          "help": "How far back to replay, in days",
+          "default": "30d",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
     },
     {
       "path": "archie doctor",
@@ -1842,6 +2124,14 @@
       }
     },
     {
+      "name": "agent_status",
+      "description": "Where every agent on this machine is right now: one row per session the loop has seen, with its state (registered / working / idle / ended), when it entered that state, the repository it is working in, its terminal pane when herdr exported one, and its event sequence. Fed by the harness's own hooks (`archie hook`), not by a scan, so it is current rather than as-of-last-scan. An empty list means no hook is registered -- `archie hook print claude` prints the snippet.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object"
+      }
+    },
+    {
       "name": "repo_blame",
       "description": "Find sessions whose recorded file modifications match a substring of file_path -- AI Code Blame, the same query /api/blame makes. Returned paths are redacted.",
       "inputSchema": {
@@ -1957,6 +2247,23 @@
       }
     },
     {
+      "name": "session_burn",
+      "description": "What one session has spent so far, metered from its own transcript: tokens, dollars at the pricing table's rates, turns, the cache read share, and the rate over the last ten minutes. This is AgentWorth's own count, not the provider's accounting -- it never reports a 'remaining'. When the harness writes its own rate-limit line (Codex does; Claude Code does not) that line is returned verbatim under `provider_limit`, labelled as the provider's. Numbers are as of the last update `archie serve` wrote, and are zero on a machine with no `policy.toml`, since nothing is metered until something is governed.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "session_id": {
+            "description": "The session, by full id or a unique prefix. Defaults to the most recently active\nsession in the loop's own index, which is the caller itself in the normal case.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
       "name": "session_carry_forward",
       "description": "The last N handoffs for one repository, newest first, so a session's first tool call can be \"what happened here recently\" and the answer is structured rather than a file it has to find and parse. `repo` is the same key session_handoff's receipt reports (e.g. `unfoundbox/agentworth`); a repo's worktrees all answer to one value. n defaults to 3, ceiling 10. Handoffs are listed, never merged -- merging two contradictory facts needs judgment about which is current, and that is not in the index. Subagent transcripts are excluded unless include_subagents is true. Redacted by default.",
       "inputSchema": {
@@ -2005,6 +2312,23 @@
         "required": [
           "repo"
         ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "session_drift",
+      "description": "What moved under a session since it read it. The support set U is the paths the session actually read, hashed at the time; this re-hashes them and returns the ones that differ, each with the session that predicted a write to that path afterwards, or nothing when no agent on this machine did (someone edited it by hand, or another tool did). The answer to \"did my ground move because of me or someone else\", which no harness summary can give. Reads files and rows; never scans, never writes. Files over 4 MB were not hashed and are counted as unhashed rather than reported as unchanged.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "session_id": {
+            "description": "The session, by full id or a unique prefix. Defaults to the most recently active\nsession in the loop's own index, which is the caller itself in the normal case.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       }
     },

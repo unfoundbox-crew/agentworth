@@ -1,3 +1,4 @@
+use crate::usage_ledger::UsageLedger;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -33,7 +34,12 @@ impl ClaudeCodeAdapter {
     /// shape. Before that every session's tool results, shell exit codes, user-message count
     /// and prompt preview were parsed from a shape the files don't use -- so every row indexed
     /// by version 1 is wrong and has to be reparsed once, even though its bytes never changed.
-    pub const PARSER_VERSION: i64 = 2;
+    ///
+    /// 3: token usage is now credited once per `message.id` rather than once per record (see
+    /// `UsageLedger`). Every session indexed by version 2 that contains a multi-block assistant
+    /// message has an inflated token total -- 1.75x on the transcript this was measured on --
+    /// so those rows need a reparse even though their bytes never changed.
+    pub const PARSER_VERSION: i64 = 3;
 
     pub fn new() -> Self {
         Self
@@ -173,7 +179,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
         for root in roots_to_scan {
             if root.is_file() {
                 if is_candidate_claude_file(&root) {
-                    if let Ok(source) = SessionSource::from_path(&root, self.name()) {
+                    if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                         sources.push(source);
                     }
                 }
@@ -185,7 +191,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 {
                     let path = entry.path();
                     if path.is_file() && is_candidate_claude_file(path) {
-                        if let Ok(source) = SessionSource::from_path(path, self.name()) {
+                        if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -215,6 +221,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
         let mut last_model: Option<String> = None;
+        let mut usage_ledger = UsageLedger::default();
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -271,7 +278,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
 
                         collect_unfinished_calls(item, &mut unfinished_calls);
                         track_workspace_fields(item, &mut last_cwd, &mut last_git_branch);
-                        let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
+                        let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1, &mut last_model, &mut usage_ledger);
                         trace.events.extend(evts);
                     }
 
@@ -321,7 +328,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
 
                 collect_unfinished_calls(&val, &mut unfinished_calls);
                 track_workspace_fields(&val, &mut last_cwd, &mut last_git_branch);
-                let events = parse_claude_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_claude_record(&val, &mut sequence, timestamp, line_num, &mut last_model, &mut usage_ledger);
                 trace.events.extend(events);
             }
 
@@ -383,33 +390,53 @@ fn collect_unfinished_calls(val: &Value, out: &mut HashSet<String>) {
     }
 }
 
+/// Directory or file names that belong to another harness. A path is rejected when one of
+/// its components *is* one of these (with or without a leading dot, or followed by `-`, `_`
+/// or `.`), never when the name merely appears inside a longer component. The earlier
+/// substring check over the whole path rejected a Claude session whose project slug
+/// mentioned another tool (`-Users-me-code-codex-review`), and, once in a few thousand
+/// runs, a `tempfile` whose six random characters happened to spell `xai` -- which is how
+/// `test_scanner_end_to_end_with_in_memory_storage` failed on CI with 0 discovered sources.
+const OTHER_HARNESS_NAMES: &[&str] = &[
+    "codex",
+    "gemini",
+    "antigravity",
+    "opencode",
+    "goose",
+    "cursor",
+    "composer",
+    "herdr",
+    "hermes",
+    "openclaw",
+    "grok",
+    "xai",
+    "pi",
+    "deepseek",
+    "kimi",
+    "minimax",
+    "qwen",
+    "zhipu",
+    "codegeex",
+    "manus",
+    "aider",
+    "cline",
+    "windsurf",
+];
+
+fn component_names_other_harness(component: &str) -> bool {
+    let name = component.trim_start_matches('.').to_ascii_lowercase();
+    OTHER_HARNESS_NAMES.iter().any(|token| {
+        name == *token
+            || name
+                .strip_prefix(token)
+                .is_some_and(|rest| rest.starts_with(['-', '_', '.']))
+    })
+}
+
 fn is_candidate_claude_file(path: &Path) -> bool {
-    let path_str = path.to_string_lossy().to_lowercase();
-    if path_str.contains("codex")
-        || path_str.contains("gemini")
-        || path_str.contains("antigravity")
-        || path_str.contains("opencode")
-        || path_str.contains("goose")
-        || path_str.contains("cursor")
-        || path_str.contains("composer")
-        || path_str.contains("herdr")
-        || path_str.contains("hermes")
-        || path_str.contains("openclaw")
-        || path_str.contains("grok")
-        || path_str.contains("xai")
-        || path_str.contains("/.pi/")
-        || path_str.contains("/pi/")
-        || path_str.contains(".pi")
-        || path_str.contains("deepseek")
-        || path_str.contains("kimi")
-        || path_str.contains("minimax")
-        || path_str.contains("qwen")
-        || path_str.contains("zhipu")
-        || path_str.contains("codegeex")
-        || path_str.contains("manus")
-        || path_str.contains("aider")
-        || path_str.contains("cline")
-        || path_str.contains("windsurf")
+    if path
+        .components()
+        .any(|c| component_names_other_harness(&c.as_os_str().to_string_lossy()))
     {
         return false;
     }
@@ -533,6 +560,7 @@ fn parse_claude_record(
     ts: DateTime<Utc>,
     line_num: usize,
     last_model: &mut Option<String>,
+    usage_ledger: &mut UsageLedger,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -544,7 +572,11 @@ fn parse_claude_record(
         .get("usage")
         .or_else(|| val.get("message").and_then(|m| m.get("usage")))
     {
-        let usage = extract_token_usage(usage_val);
+        let message_id = val
+            .get("message")
+            .and_then(|m| m.get("id"))
+            .and_then(|v| v.as_str());
+        let usage = usage_ledger.credit_delta(message_id, extract_token_usage(usage_val));
         if usage.total() > 0 {
             let model = val
                 .get("model")
@@ -1059,6 +1091,38 @@ fn parse_claude_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidate_filter_rejects_other_harness_directories_by_component() {
+        for rejected in [
+            "/home/u/.codex/sessions/2026/09/rollout.jsonl",
+            "/home/u/.pi/agent/sessions/abc.jsonl",
+            "/home/u/.local/share/goose/sessions/abc.jsonl",
+            "/home/u/.deepseek-coder/history/abc.jsonl",
+            "/Users/u/Library/Application Support/Cursor/User/abc.jsonl",
+            "/home/u/.gemini/tmp/abc.jsonl",
+            "/home/u/.claude/projects/-Users-u-code-x/settings.json",
+            "/home/u/.claude/projects/-Users-u-code-x/notes.json",
+        ] {
+            assert!(!is_candidate_claude_file(Path::new(rejected)), "{rejected}");
+        }
+    }
+
+    #[test]
+    fn candidate_filter_accepts_claude_paths_that_merely_mention_another_tool() {
+        for accepted in [
+            // A Claude Code project slug names the repo, and the repo may be about another tool.
+            "/home/u/.claude/projects/-Users-u-code-codex-review/8f1c.jsonl",
+            "/home/u/.claude/projects/-Users-u-code-gemini-eval/8f1c.jsonl",
+            "/home/u/.claude/projects/-Users-u-code-my-cursor-clone/8f1c.jsonl",
+            // tempfile's six random characters: the CI failure was a name like this.
+            "/tmp/.tmpXaIq9Z.jsonl",
+            "/tmp/.tmpgROKa1.jsonl",
+            "/tmp/.tmpQwEn00.jsonl",
+        ] {
+            assert!(is_candidate_claude_file(Path::new(accepted)), "{accepted}");
+        }
+    }
     use std::io::Write;
     use tempfile::{tempdir, NamedTempFile};
 
