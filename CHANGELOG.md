@@ -9,15 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **AgentWorth is a Claude Code plugin.** The repo carries `.claude-plugin/plugin.json` and is its own marketplace (`.claude-plugin/marketplace.json`), so `/plugin marketplace add unfoundbox-crew/agentworth` then `/plugin install agentworth@agentworth` gives Claude Code the 13 read-only MCP tools (over `npx -y agentworth@<version> mcp`) and the `agentworth` skill in one step, with no `claude mcp add` and no `npx skills add`. The skill moved to `skills/agentworth/SKILL.md`, which is where the plugin loader looks; the root `SKILL.md` is a symlink to it so `npx skills add` keeps working. `claude plugin validate . --strict` passes. The release version gate now checks the plugin manifest's `version` and its pinned `npx` package version too.
-
-- **AgentWorth is a DeepSeek Harness plugin.** `packages/dsh-plugin-agentworth` is a dsh bundle (npm `dsh-plugin-agentworth`): one `cordis.patch.yml` row mounts the MCP server through `@deepseek-ai/dsh-mcp-client` as `mcp__agentworth__<tool>`, and the package's own plugin registers the `agentworth` skill from a bundled copy of `SKILL.md` through `ctx.skills.register()`, so nothing has to exist on disk beyond the package. `dsh plugin --profile <name> add dsh-plugin-agentworth` installs it. The bundled `SKILL.md` is test-checked byte for byte against `skills/agentworth/SKILL.md`, the release version gate checks the package version and its npx pin, and the release workflow publishes it beside `agentworth`.
-
-### Fixed
-
-- **The MCP server now introduces itself as `agentworth`** with its own version, not as `rmcp 3.2.0`. `Implementation::from_build_env()` reads the crate name at rmcp's build, not ours, so every client saw the SDK's name in `serverInfo`.
+_Nothing yet._
 
 ---
 
@@ -25,7 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Cursor and VS Code AI SQLite `state.vscdb` extraction.** Cursor, Trae, and other VS Code AI derivatives store their actual conversation turns and composer sessions inside SQLite databases (`state.vscdb`) under `workspaceStorage` and `globalStorage`. The Cursor adapter now automatically parses `composer.composerData`, `workbench.panel.aichat.chatdata`, and `aiService.prompts` from `ItemTable`, extracting turns, prompts, model identifiers, token usage, and file diffs with cross-platform path resolution for macOS (`Library/Application Support`), Linux (`.config`), and Windows (`AppData/Roaming`).
+- **AgentWorth is a Claude Code plugin.** The repo carries `.claude-plugin/plugin.json` and is its own marketplace (`.claude-plugin/marketplace.json`), so `/plugin marketplace add unfoundbox-crew/agentworth` then `/plugin install agentworth@agentworth` gives Claude Code the 13 read-only MCP tools (over `npx -y agentworth@<version> mcp`) and the `agentworth` skill in one step, with no `claude mcp add` and no `npx skills add`. The skill moved to `skills/agentworth/SKILL.md`, which is where the plugin loader looks; the root `SKILL.md` is a symlink to it so `npx skills add` keeps working. `claude plugin validate . --strict` passes. The release version gate now checks the plugin manifest's `version` and its pinned `npx` package version too. (#133)
+- **AgentWorth is a DeepSeek Harness plugin.** `packages/dsh-plugin-agentworth` is a dsh bundle (npm `dsh-plugin-agentworth`): one `cordis.patch.yml` row mounts the MCP server through `@deepseek-ai/dsh-mcp-client` as `mcp__agentworth__<tool>`, and the package's own plugin registers the `agentworth` skill from a bundled copy of `SKILL.md` through `ctx.skills.register()`, so nothing has to exist on disk beyond the package. `dsh plugin --profile <name> add dsh-plugin-agentworth` installs it. The bundled `SKILL.md` is test-checked byte for byte against `skills/agentworth/SKILL.md`, the release version gate checks the package version and its npx pin, and the release workflow publishes it beside `agentworth`. (#134)
+- **Cursor and VS Code AI SQLite `state.vscdb` extraction.** Cursor, Trae, and other VS Code AI derivatives store their actual conversation turns and composer sessions inside SQLite databases (`state.vscdb`) under `workspaceStorage` and `globalStorage`. The Cursor adapter now automatically parses `composer.composerData`, `workbench.panel.aichat.chatdata`, and `aiService.prompts` from `ItemTable`, extracting turns, prompts, model identifiers, token usage, and file diffs with cross-platform path resolution for macOS (`Library/Application Support`), Linux (`.config`), and Windows (`AppData/Roaming`). `PARSER_VERSION` bumped to 2 for the Cursor adapter, so an incremental scan reparses already-indexed sessions instead of serving stale output. (#167)
+- **`docs/specs/memory.md`.** Typed facts with receipts, bi-temporal supersession, and pull hydration -- the spec for what a session remembers across restarts and why markdown alone is not the tax (542 vs 1,552 tokens, measured). (#162)
+- **A blog post: why nobody hands an agent its receipts.** What five harnesses' own docs say an agent gets back on resume, read against what they actually restore. (#138)
+
+### Changed
+
+- **The landing page sells the product; benchmarks moved to docs.** The homepage read like a lab manual -- two readers said so. Marketing copy stays on the landing page, the measurement tables move to `docs/`. (#135)
+- **The spec index and capability matrix, re-measured 2026-09-12.** The spec index had drifted from each spec's own status header (`suspect-commits.md` listed proposed when built, four specs had no row at all); rewrote it from each spec's own first-15-lines status. The capability matrix numbers are re-measured against the live SQLite index rather than a 2026-09-02 snapshot: total sessions 10,329 -> 6,054, Codex tokens 1 -> 745 of 972, `prompt_preview` no longer zero across the board, and a new `compaction_count` column. Two sections that can't be reproduced from SQL/archie alone stay marked NOT RE-MEASURED. (#168)
+- **Roadmap updated after v0.1.23**, and AGENTS.md item 8 now says fastembed is off by default in every shipped binary (`default = []` in Cargo.toml) -- correcting an earlier claim that overstated it. (#170)
+
+### Fixed
+
+- **The MCP server now introduces itself as `agentworth`** with its own version, not as `rmcp 3.2.0`. `Implementation::from_build_env()` reads the crate name at rmcp's build, not ours, so every client saw the SDK's name in `serverInfo`.
+- **The embedding-model download now announces itself instead of failing silently.** `LocalEmbedder::new()` called fastembed with `with_show_download_progress(false)` and no announcement, so a binary built with the `fastembed` feature (off in shipped binaries today) fetched a model with no explanation -- an air-gapped user just saw a failure. `embedder.rs` now prints a `warn!`-level line before the model load naming the model, source, rough size, that it is a one-time dependency fetch (like `npm install`), and that no local data is sent. README.md, `docs/TRENDSHIFT.md`, `docs/ARCHITECTURE.md`, and the web app's `ArchiePage.tsx` no longer overstate "100% offline" / "zero network calls" -- they name the two real exceptions instead. (#169)
 
 ---
 
