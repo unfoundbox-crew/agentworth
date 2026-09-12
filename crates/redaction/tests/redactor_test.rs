@@ -91,7 +91,7 @@ GITHUB_ACCESS_TOKEN=ghp_secrettokenvalue123
 fn test_scrub_home_directories() {
     let redactor = Redactor::new();
 
-    let text = "Found config at /Users/saurabh/code/unfoundbox/agentworth/Cargo.toml and /home/alice/.config/app.json";
+    let text = "Found config at /Users/dev/code/unfoundbox/agentworth/Cargo.toml and /home/alice/.config/app.json";
     let redacted = redactor.redact_text(text);
     assert_eq!(
         redacted,
@@ -113,10 +113,10 @@ fn test_scrub_emails_and_credentials_and_ips() {
     assert!(!redacted.contains("user.name+tag@sub.domain.org"));
     assert!(redacted.contains("[REDACTED_EMAIL]"));
 
-    let url_text = "Clone git repo: https://saurabh:ghp_secrettoken@github.com/org/repo.git";
+    let url_text = "Clone git repo: https://dev:ghp_secrettoken@github.com/org/repo.git";
     let redacted_url = redactor.redact_text(url_text);
     assert!(!redacted_url.contains("ghp_secrettoken"));
-    assert!(!redacted_url.contains("saurabh:"));
+    assert!(!redacted_url.contains("dev:"));
     assert!(redacted_url.contains("https://[REDACTED_CREDENTIALS]@github.com/org/repo.git"));
 
     let ip_text = "Server running on 192.168.1.100 and database at 10.0.0.5";
@@ -191,7 +191,7 @@ fn test_redact_trace_and_preview() {
     let redactor = Redactor::new();
     let start = Utc::now();
     let prov = Provenance::new(
-        "/Users/saurabh/logs/trace.jsonl",
+        "/Users/dev/logs/trace.jsonl",
         "claude_code",
         100,
         12345,
@@ -200,8 +200,8 @@ fn test_redact_trace_and_preview() {
     let mut trace = AgentWorthTrace::new("sess-1", "claude_code", prov, start);
 
     trace.metadata = json!({
-        "developer_email": "saurabh@example.com",
-        "home": "/Users/saurabh/dev"
+        "developer_email": "dev@example.com",
+        "home": "/Users/dev/dev"
     });
 
     trace.events.push(NormalizedEvent::new(
@@ -209,7 +209,7 @@ fn test_redact_trace_and_preview() {
         start,
         EventPayload::UserMessage {
             content:
-                "Please check my OpenAI key sk-1234567890abcdef1234567890 in /Users/saurabh/test.py"
+                "Please check my OpenAI key sk-1234567890abcdef1234567890 in /Users/dev/test.py"
                     .to_string(),
         },
     ));
@@ -218,8 +218,8 @@ fn test_redact_trace_and_preview() {
         2,
         start,
         EventPayload::ShellCommand(ShellCommand {
-            command: "cat /Users/saurabh/.env".to_string(),
-            cwd: Some("/Users/saurabh/code".to_string()),
+            command: "cat /Users/dev/.env".to_string(),
+            cwd: Some("/Users/dev/code".to_string()),
             exit_code: Some(0),
             output: Some("SECRET_KEY=shhh123456\nPASSWORD=mypassword123".to_string()),
         }),
@@ -229,7 +229,7 @@ fn test_redact_trace_and_preview() {
         3,
         start,
         EventPayload::FileAction {
-            path: "/Users/saurabh/app.js".to_string(),
+            path: "/Users/dev/app.js".to_string(),
             action: FileActionType::Write,
             diff: Some("+ const key = 'sk-ant-api03-1234567890abcdef1234567890-xyz';".to_string()),
             lines_changed: Some(1),
@@ -256,7 +256,7 @@ fn test_redact_trace_and_preview() {
 
     if let EventPayload::UserMessage { content } = &redacted_trace.events[0].payload {
         assert!(!content.contains("sk-1234567890abcdef1234567890"));
-        assert!(!content.contains("/Users/saurabh"));
+        assert!(!content.contains("/Users/dev"));
         assert!(content.contains("~/test.py"));
     } else {
         panic!("unexpected payload");
@@ -630,7 +630,7 @@ fn test_redact_trace_masks_repository_identity() {
     let redactor = Redactor::new();
     let start = Utc::now();
     let prov = Provenance::new(
-        "/Users/saurabh/code/unfoundbox/agentworth/session.jsonl",
+        "/Users/dev/code/unfoundbox/agentworth/session.jsonl",
         "claude_code",
         100,
         12345,
@@ -666,7 +666,7 @@ fn test_redact_trace_home_path_only_case_is_unaffected_by_repository_rule() {
     let redactor = Redactor::new();
     let start = Utc::now();
     let prov = Provenance::new(
-        "/Users/saurabh/logs/trace.jsonl",
+        "/Users/dev/logs/trace.jsonl",
         "claude_code",
         100,
         12345,
@@ -701,19 +701,19 @@ fn test_redact_recovery_signal_scrubs_summaries_and_files() {
     let redactor = Redactor::new();
     let signals = vec![RecoverySignal {
         failure_sequence: 3,
-        failure_summary: "build failed reading /Users/saurabh/app.js".to_string(),
+        failure_summary: "build failed reading /Users/dev/app.js".to_string(),
         recovery_sequence: 7,
         recovery_summary: "fixed after checking DATABASE_URL=postgres://u:p@host/db"
             .to_string(),
         steps_to_recover: 4,
         duration_seconds: Some(12.5),
         corrective_actions_count: 2,
-        correlated_files: vec!["/Users/saurabh/app.js".to_string()],
+        correlated_files: vec!["/Users/dev/app.js".to_string()],
     }];
 
     let redacted = redactor.redact_recovery_signal(&signals);
     assert_eq!(redacted.len(), 1);
-    assert!(!redacted[0].failure_summary.contains("/Users/saurabh"));
+    assert!(!redacted[0].failure_summary.contains("/Users/dev"));
     assert!(redacted[0].failure_summary.contains("~/app.js"));
     assert!(!redacted[0].recovery_summary.contains("postgres://u:p@host/db"));
     assert_eq!(redacted[0].correlated_files, vec!["~/app.js".to_string()]);
@@ -729,7 +729,7 @@ fn test_for_trace_composes_repository_redaction_across_trace_outcomes_and_recove
 
     let start = Utc::now();
     let prov = Provenance::new(
-        "/Users/saurabh/code/unfoundbox/agentworth/session.jsonl",
+        "/Users/dev/code/unfoundbox/agentworth/session.jsonl",
         "claude_code",
         100,
         12345,

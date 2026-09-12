@@ -1,0 +1,17 @@
+[
+  {
+    "action": "edit",
+    "adapter": "claude_code",
+    "file_path": "apps/dashboard/src/components/CoverageMatrix.tsx",
+    "model": "claude-sonnet-5",
+    "models_used": [
+      "claude-sonnet-5"
+    ],
+    "modified_at": "2026-09-01T10:00:05Z",
+    "session_id": "sess_fixture_0001",
+    "source_path": "/Users/example/.claude/projects/demo/sess_fixture_0001.jsonl",
+    "started_at": "2026-09-01T10:00:00Z",
+    "tool_calls_count": 9,
+    "total_tokens": 24600
+  }
+]

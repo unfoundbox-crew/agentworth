@@ -146,7 +146,7 @@ export const mockDetailedTraces: Record<string, AgentWorthTrace> = {
     session_id: 'sess-cl-8902f',
     adapter: 'claude_code',
     provenance: {
-      source_path: '/Users/saurabh/.claude/sessions/sess-8902f.jsonl',
+      source_path: '/Users/dev/.claude/sessions/sess-8902f.jsonl',
       adapter_name: 'claude_code',
       file_size_bytes: 48920,
       mtime_epoch_secs: 1724938920,
@@ -274,7 +274,7 @@ export const mockDetailedTraces: Record<string, AgentWorthTrace> = {
           type: 'shell_command',
           data: {
             command: 'cargo test -p agentworth-export-atif',
-            cwd: '/Users/saurabh/code/unfoundbox/agentworth',
+            cwd: '/Users/dev/code/acme/example-repo',
             exit_code: 101,
             output: `error[E0382]: borrow of moved value: \`trace\`
   --> crates/export-atif/src/serializer.rs:42:18
@@ -311,9 +311,9 @@ error: could not compile \`agentworth-export-atif\` (lib test) due to 1 previous
           type: 'shell_command',
           data: {
             command: 'cargo test -p agentworth-export-atif',
-            cwd: '/Users/saurabh/code/unfoundbox/agentworth',
+            cwd: '/Users/dev/code/acme/example-repo',
             exit_code: 0,
-            output: `   Compiling agentworth-export-atif v0.1.0 (/Users/saurabh/code/unfoundbox/agentworth/crates/export-atif)
+            output: `   Compiling agentworth-export-atif v0.1.0 (/Users/dev/code/acme/example-repo/crates/export-atif)
     Finished \`test\` profile [unoptimized + debuginfo] in 1.42s
      Running unittests src/lib.rs (target/debug/deps/agentworth_export_atif-8a21)
 
@@ -336,7 +336,7 @@ test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
           type: 'shell_command',
           data: {
             command: 'git commit -m "feat(export-atif): implement ATIF v1.1.0 serializer with redaction"',
-            cwd: '/Users/saurabh/code/unfoundbox/agentworth',
+            cwd: '/Users/dev/code/acme/example-repo',
             exit_code: 0,
             output: `[feat-schema-claude-scan 4a9f12b] feat(export-atif): implement ATIF v1.1.0 serializer with redaction
  2 files changed, 32 insertions(+), 2 deletions(-)`,

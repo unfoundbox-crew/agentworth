@@ -17,6 +17,8 @@ pub enum ChunkKind {
     ApologyPanic,
     /// File / code changes and diff lineage.
     CodeLineage,
+    /// A prompt the person typed, harness envelopes stripped (see `is_human_prompt`).
+    UserTurn,
 }
 
 impl ChunkKind {
@@ -28,6 +30,7 @@ impl ChunkKind {
             Self::ToolInvocation => "tool_invocation",
             Self::ApologyPanic => "apology_panic",
             Self::CodeLineage => "code_lineage",
+            Self::UserTurn => "user_turn",
         }
     }
 }
@@ -48,6 +51,7 @@ impl std::str::FromStr for ChunkKind {
             "tool_invocation" | "toolinvocation" | "tool" => Ok(Self::ToolInvocation),
             "apology_panic" | "apologypanic" | "panic" | "apology" => Ok(Self::ApologyPanic),
             "code_lineage" | "codelineage" | "lineage" => Ok(Self::CodeLineage),
+            "user_turn" | "userturn" | "user" | "prompt" | "human" => Ok(Self::UserTurn),
             other => Err(format!("Unknown chunk kind: {}", other)),
         }
     }
@@ -207,6 +211,8 @@ mod tests {
         assert_eq!(ChunkKind::ToolInvocation.to_string(), "tool_invocation");
         assert_eq!(ChunkKind::ApologyPanic.to_string(), "apology_panic");
         assert_eq!(ChunkKind::CodeLineage.to_string(), "code_lineage");
+        assert_eq!(ChunkKind::UserTurn.to_string(), "user_turn");
+        assert_eq!("prompt".parse::<ChunkKind>().unwrap(), ChunkKind::UserTurn);
 
         let serialized = serde_json::to_string(&ChunkKind::ApologyPanic).unwrap();
         assert_eq!(serialized, "\"apology_panic\"");

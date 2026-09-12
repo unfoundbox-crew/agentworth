@@ -21,33 +21,29 @@ export const CoverageMatrix: React.FC<CoverageMatrixProps> = ({ className = "" }
 
   const filtered = capabilities.filter((item) => {
     const matchesSearch =
-      item.name.toLowerCase().includes(search.toLowerCase()) || item.id.toLowerCase().includes(search.toLowerCase());
+      item.name.toLowerCase().includes(search.toLowerCase()) ||
+      item.adapter.toLowerCase().includes(search.toLowerCase());
 
     if (!matchesSearch) return false;
 
     if (filterType === "measured") {
-      return item.tokens === "yes" || item.tokens === "partial";
+      return item.token_accounting;
     }
     if (filterType === "pending") {
-      return item.tokens === "no";
+      return !item.token_accounting;
     }
     return true;
   });
 
-  const renderBadge = (status: "yes" | "no" | "partial" | string) => {
-    if (status === "yes") {
+  // A capability the fixture suite hasn't proven yet is absence of evidence, not a failure --
+  // AGENTS.md item 4 and the design system's verdict-chip rule both say "no" is neutral, never
+  // a danger colour. Only `true` earns the filled pill.
+  const renderBadge = (status: boolean) => {
+    if (status) {
       return (
         <span className="status-pill is-good">
           <span className="dot" />
           Yes
-        </span>
-      );
-    }
-    if (status === "partial" || status === "rung 2") {
-      return (
-        <span className="status-pill is-warn">
-          <span className="dot" />
-          {status === "rung 2" ? "Rung 2" : "Partial"}
         </span>
       );
     }
@@ -67,7 +63,7 @@ export const CoverageMatrix: React.FC<CoverageMatrixProps> = ({ className = "" }
           <div>
             <div className="panel-kicker">
               <span className="tag-pill">The coverage matrix</span>
-              <span className="tag-pill">21 adapters</span>
+              <span className="tag-pill">{capabilities.length} adapters</span>
             </div>
             <h2>Adapter extraction capabilities</h2>
             <p>
@@ -111,7 +107,11 @@ export const CoverageMatrix: React.FC<CoverageMatrixProps> = ({ className = "" }
               onClick={() => setFilterType(mode)}
               className={`chip ${filterType === mode ? "is-active" : ""}`}
             >
-              {mode === "all" ? "All (21)" : mode === "measured" ? "Token measured" : "Discovery only"}
+              {mode === "all"
+                ? `All (${capabilities.length})`
+                : mode === "measured"
+                  ? "Token measured"
+                  : "Discovery only"}
             </button>
           ))}
         </div>
@@ -134,25 +134,27 @@ export const CoverageMatrix: React.FC<CoverageMatrixProps> = ({ className = "" }
           </thead>
           <tbody>
             {filtered.map((item) => (
-              <tr key={item.id}>
+              <tr key={item.adapter}>
                 <td>
                   <div className="flex items-center gap-2.5">
-                    <div className="shrink-0">{getAgentLogo(item.id, 16)}</div>
+                    <div className="shrink-0">{getAgentLogo(item.adapter, 16)}</div>
                     <div>
                       <div className="text-ink font-medium">{item.name}</div>
-                      {item.notes && (
-                        <div className="text-[11px] font-normal text-muted truncate max-w-xs">{item.notes}</div>
+                      {item.formats.length > 0 && (
+                        <div className="text-[11px] font-normal text-muted truncate max-w-xs">
+                          {item.formats.join(", ")}
+                        </div>
                       )}
                     </div>
                   </div>
                 </td>
-                <td className="is-center">{renderBadge(item.sessions)}</td>
-                <td className="is-center">{renderBadge(item.tokens)}</td>
-                <td className="is-center">{renderBadge(item.cache_split)}</td>
-                <td className="is-center">{renderBadge(item.models)}</td>
-                <td className="is-center">{renderBadge(item.file_edits)}</td>
-                <td className="is-center">{renderBadge(item.shell_exit)}</td>
-                <td className="is-center">{renderBadge(item.outcomes)}</td>
+                <td className="is-center">{renderBadge(item.detected)}</td>
+                <td className="is-center">{renderBadge(item.token_accounting)}</td>
+                <td className="is-center">{renderBadge(item.cache_breakdown)}</td>
+                <td className="is-center">{renderBadge(item.model_switches)}</td>
+                <td className="is-center">{renderBadge(item.file_actions)}</td>
+                <td className="is-center">{renderBadge(item.shell_commands)}</td>
+                <td className="is-center">{renderBadge(item.error_recovery)}</td>
               </tr>
             ))}
           </tbody>

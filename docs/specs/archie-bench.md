@@ -165,8 +165,8 @@ bottom five:
 | … | | | | |
 | claude-sonnet-5 | motionvector/studio | 15 | 10 | 66.7% |
 | claude-haiku-4-5-20251001 | upscaler/backend | 20 | 12 | 60.0% |
-| claude-sonnet-5 | Users/saurabh | 15 | 9 | 60.0% |
-| claude-sonnet-4-6 | katana/video | 17 | 5 | 29.4% |
+| claude-sonnet-5 | Users/dev | 15 | 9 | 60.0% |
+| claude-sonnet-4-6 | example-repo/video | 17 | 5 | 29.4% |
 | deepseek-v4-flash-free | motionvector/media-scratch | 10 | 2 | 20.0% |
 
 | Axis | at n>=10 | worst | best | spread |
@@ -183,10 +183,12 @@ the bottom of the list. **The cross is worth
 building because one of its two axes carries almost all of the signal, and it is
 not the one a public leaderboard ranks.**
 
-Two of the 44 repo keys are not repos. `Users/saurabh` (36 sessions) and
-`saurabh/code` (95) are directory buckets above a repository — sessions started
+Two of the 44 repo keys are not repos. `Users/dev` (36 sessions) and
+`dev/code` (95) are directory buckets above a repository — sessions started
 in a home or parent directory. They are honest keys for where the work
 happened, and they should not be printed as if they were projects.
+(`dev` here is an anonymized bucket name standing in for the real username;
+the counts and rates are unchanged.)
 
 ### 3. Tokens, steps and cost per verified outcome
 

@@ -1,0 +1,197 @@
+{
+  "version": 3,
+  "workspaces": [
+    {
+      "id": "w9",
+      "custom_name": "fleet",
+      "identity_cwd": "/home/dev/code/acme/engine/.claude/worktrees/architect",
+      "public_pane_numbers": {
+        "15": 13,
+        "22": 20,
+        "14": 12,
+        "12": 10,
+        "25": 23,
+        "33": 31,
+        "18": 16,
+        "20": 18
+      },
+      "next_public_pane_number": 32,
+      "public_tab_numbers": [
+        2
+      ],
+      "next_public_tab_number": 5,
+      "tabs": [
+        {
+          "custom_name": null,
+          "layout": {
+            "Split": {
+              "direction": "Horizontal",
+              "ratio": 0.25333333,
+              "first": {
+                "Split": {
+                  "direction": "Vertical",
+                  "ratio": 0.33333334,
+                  "first": {
+                    "Pane": 12
+                  },
+                  "second": {
+                    "Split": {
+                      "direction": "Vertical",
+                      "ratio": 0.5,
+                      "first": {
+                        "Split": {
+                          "direction": "Horizontal",
+                          "ratio": 0.5,
+                          "first": {
+                            "Pane": 14
+                          },
+                          "second": {
+                            "Pane": 33
+                          }
+                        }
+                      },
+                      "second": {
+                        "Pane": 15
+                      }
+                    }
+                  }
+                }
+              },
+              "second": {
+                "Split": {
+                  "direction": "Horizontal",
+                  "ratio": 0.6,
+                  "first": {
+                    "Pane": 25
+                  },
+                  "second": {
+                    "Split": {
+                      "direction": "Vertical",
+                      "ratio": 0.33999997,
+                      "first": {
+                        "Pane": 20
+                      },
+                      "second": {
+                        "Split": {
+                          "direction": "Vertical",
+                          "ratio": 0.5,
+                          "first": {
+                            "Pane": 18
+                          },
+                          "second": {
+                            "Pane": 22
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "panes": {
+            "33": {
+              "cwd": "/home/dev/code/acme",
+              "label": "peer2-grok",
+              "agent_session": {
+                "source": "herdr:grok",
+                "agent": "grok",
+                "kind": "id",
+                "value": "b1ee0fbb-73e5-57fe-b032-d418481395c7"
+              }
+            },
+            "15": {
+              "cwd": "/home/dev/code/acme",
+              "label": "worker-codex",
+              "agent_session": {
+                "source": "herdr:codex",
+                "agent": "codex",
+                "kind": "id",
+                "value": "c008053c-9ef4-59a0-af0a-4e485a389303"
+              }
+            },
+            "20": {
+              "cwd": "/home/dev/code/acme/agentworth",
+              "label": "worker-claude",
+              "agent_session": {
+                "source": "herdr:claude",
+                "agent": "claude",
+                "kind": "id",
+                "value": "adec3bdc-0fad-5212-bd43-efb9ebfa648d"
+              }
+            },
+            "25": {
+              "cwd": "/home/dev/code/acme",
+              "label": "chief-gemini",
+              "agent_name": "chief",
+              "managed_agent_kind": "agy",
+              "agent_session": {
+                "source": "herdr:antigravity_cli",
+                "agent": "agy",
+                "kind": "id",
+                "value": "85eca68d-6a82-5c0e-8bef-a90f22029c44"
+              }
+            },
+            "18": {
+              "cwd": "/home/dev/code/acme",
+              "label": "peer-cursor",
+              "agent_name": "cursor-agent",
+              "managed_agent_kind": "cursor",
+              "agent_session": {
+                "source": "herdr:cursor",
+                "agent": "cursor",
+                "kind": "id",
+                "value": "2b0495c8-3ce8-5cda-ac48-42913da369b3"
+              }
+            },
+            "14": {
+              "cwd": "/home/dev/code/acme",
+              "label": "peer-grok",
+              "agent_name": "grok-lead",
+              "managed_agent_kind": "grok",
+              "agent_session": {
+                "source": "herdr:grok",
+                "agent": "grok",
+                "kind": "id",
+                "value": "ca9f6be1-5918-551b-8a06-f65b7724556c"
+              }
+            },
+            "12": {
+              "cwd": "/home/dev/code/acme/engine/.claude/worktrees/architect",
+              "label": "partner-claude",
+              "agent_name": "partner-claude",
+              "managed_agent_kind": "claude",
+              "agent_session": {
+                "source": "herdr:claude",
+                "agent": "claude",
+                "kind": "id",
+                "value": "21553d04-cadd-503c-8b11-ad03f51cd8bf"
+              }
+            },
+            "22": {
+              "cwd": "/home/dev/code/acme",
+              "label": "peer2-gemini",
+              "agent_name": "peer-agy",
+              "managed_agent_kind": "agy",
+              "agent_session": {
+                "source": "herdr:antigravity_cli",
+                "agent": "agy",
+                "kind": "id",
+                "value": "b611c6f1-e9e6-51be-9afc-1750be3d39f5"
+              }
+            }
+          },
+          "zoomed": true,
+          "focused": 25,
+          "root_pane": 12
+        }
+      ],
+      "active_tab": 0
+    }
+  ],
+  "active": 0,
+  "selected": 0,
+  "sidebar_width": 26,
+  "sidebar_section_split": 0.5,
+  "collapsed_space_keys": []
+}

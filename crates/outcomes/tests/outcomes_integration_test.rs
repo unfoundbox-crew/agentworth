@@ -148,7 +148,7 @@ fn test_outcome_ranking_comparisons() {
 }
 
 /// The crash, reproduced as a test: `crates/outcomes/src/recovery.rs:571` used to byte-slice
-/// failure output at a fixed offset (`&s[..80]`) to build the failure summary. On Saurabh's
+/// failure output at a fixed offset (`&s[..80]`) to build the failure summary. On the maintainer's
 /// machine, a transcript containing Hebrew ('ך', 2 bytes) hit that offset mid-character and
 /// panicked mid-scan. This fixture packs every text field the detector touches (the shell
 /// command's failure output, the tool result's failure output, and the corrective/success

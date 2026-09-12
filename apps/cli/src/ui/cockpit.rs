@@ -562,7 +562,7 @@ pub fn row_span(lines: &[String], rows: usize) -> Option<(usize, usize)> {
 ///
 /// Not the repository name itself. `get_top_repositories` returns the decoded form --
 /// `unfoundbox/agentworth` -- while the column the filter searches, `sessions.source_path`,
-/// holds Claude Code's encoded slug, `-Users-saurabh-code-unfoundbox-agentworth`. A `LIKE`
+/// holds Claude Code's encoded slug, `-Users-dev-code-unfoundbox-agentworth`. A `LIKE`
 /// for `unfoundbox/agentworth` matches nothing at all, because the separator in the path is
 /// a hyphen. The last segment is in both spellings, so that is what gets typed.
 ///
@@ -1219,7 +1219,7 @@ mod tests {
     }
 
     /// The bug this exists to stop: filtering on `unfoundbox/agentworth` searched a
-    /// column that spells it `-Users-saurabh-code-unfoundbox-agentworth`, so Enter on the
+    /// column that spells it `-Users-dev-code-unfoundbox-agentworth`, so Enter on the
     /// repos screen produced an empty list rather than that repository's sessions.
     #[test]
     fn a_repository_is_filtered_by_the_segment_that_appears_in_the_path() {
