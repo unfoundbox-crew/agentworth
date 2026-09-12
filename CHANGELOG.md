@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.24] - 2026-09-12
+
+### Added
+
+- **Cursor and VS Code AI SQLite `state.vscdb` extraction.** Cursor, Trae, and other VS Code AI derivatives store their actual conversation turns and composer sessions inside SQLite databases (`state.vscdb`) under `workspaceStorage` and `globalStorage`. The Cursor adapter now automatically parses `composer.composerData`, `workbench.panel.aichat.chatdata`, and `aiService.prompts` from `ItemTable`, extracting turns, prompts, model identifiers, token usage, and file diffs with cross-platform path resolution for macOS (`Library/Application Support`), Linux (`.config`), and Windows (`AppData/Roaming`).
+
+---
+
 ## [0.1.23] - 2026-09-10
 
 ### Added

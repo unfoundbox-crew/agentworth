@@ -1,38 +1,42 @@
 # Specs, and the order to build them
 
-## Where this stands, 2026-09-02
+## Where this stands, 2026-09-12
 
 | Spec | Status | PR |
 | :--- | :--- | :--- |
-| `fleet-view.md` | built | #41, plus the SSE live-tail endpoint (v0.1.10) |
-| `trajectory-scrubber.md` | built | #40 |
-| `cache-economics.md` | built | #42 |
-| `context-composition.md` | built | #46 |
-| `compaction.md` | built | #57 (dashboard pane), #62 (per-session tracking) — session list still doesn't show "compacted N times" |
-| `dropped-commitments.md` | built | #44 (dashboard), #TBD — detector in Rust, `agentworth loose-ends`, and carry-forward over MCP |
-| `mcp-server.md` | built | #56 |
-| `local-search.md` | draft, not built | precondition met — MCP server shipped 2026-09-02 (#56); zvec measured 2026-09-03 and declined (dynamic C++ library, no x86_64 macOS asset); hybrid = FTS5 + cosine + RRF in-process when built |
+| `agent-bus.md` | proposed 2026-09-07, not built | — |
+| `archie-bench.md` | built (the local table) | #124 |
 | `archie.md` | proposed (umbrella spec) | — |
-| `desktop-app.md` | proposal, not started | — |
-| `questions.md` | proposed | — |
-| `verified-outcome-rate.md` | proposed, measured | — |
-| `suspect-commits.md` | proposed, measured | — |
-| `handoff.md` | built | #77 — `session_handoff`, `carry_forward`, `agentworth handoff`; `prompt_preview` turned out to be filled since #47, only the pre-#47 rows are null |
-| `loose-ends.md` | built | #77 — `agentworth loose-ends`, the dashboard's detector ported to Rust |
-| `compaction-diff.md` | built | #83 — `forgotten_context`, `agentworth forgotten`, stored round boundaries, and a handoff section |
-| `asks.md` | built | #97 — `session_asks`, `agentworth asks`, a questions-to-answers index, tier 1 only |
-| `market-autofix.md` | research doc, not a build item | — |
-| `token-accounting.md` | built | the streamed-usage double count, and `cost_weighted_tokens` beside `total_tokens` |
+| `asks.md` | built | #97 |
 | `beliefs.md` | proposed, measured | — |
-| `efficiency-receipts.md` | proposed, measured | — |
-| `cli-grammar.md` | §1, §2 and §4(1) built | #118 — the noun tree, one session resolver, the `archie` name, completions, and a regenerated reference. The cockpit (§3) and `window receipt` are not built. |
-| `archie-bench.md` | the local table built, #124 | #124 — `archie stats ladder` and the `stats_ladder` tool. The opt-in aggregate export is not built |
+| `cache-economics.md` | built | #42 |
+| `cli-grammar.md` | built: grammar and cockpit; §4(3) (`window receipt`) not built, waits on spec G | #118, #121 |
+| `compaction-diff.md` | built | #83 |
+| `compaction.md` | built | #57 (dashboard pane), #62 (per-session tracking) |
+| `context-composition.md` | built | #46 |
 | `convergence.md` | proposed, measured | — |
+| `desktop-app.md` | proposal, not started | — |
 | `done-gate.md` | proposed, measured | — |
+| `dropped-commitments.md` | built; carry-forward over MCP not yet done | #44 |
+| `efficiency-receipts.md` | proposed, P0 measured; nothing built | — |
 | `extensions.md` | proposed | — |
-| `wake.md` | built | #TBD — `session_wake`, `archie session wake`; carry-forward and the cwd default skip subagent transcripts |
-| `loop.md` | built | #TBD — the return path: archie hook, the socket, drift, anchors, machine fingerprint |
-| `governor.md` | built | #TBD — `archie hook --gate`, the thrash halt, the session spend cap, `session burn`, `policy show|check|lift|replay` |
+| `fleet-view.md` | built | #41, plus the SSE live-tail endpoint (v0.1.10) |
+| `governor.md` | built | #TBD (2026-09-06) |
+| `handoff.md` | built | #TBD (2026-09-02) |
+| `home-latency.md` | measured | — |
+| `home.md` | concept locked 2026-09-07, not built | — |
+| `local-search.md` | draft, not built (mostly); MCP-server precondition met | — |
+| `loop.md` | built | #TBD (2026-09-06) |
+| `loose-ends.md` | built | #77 |
+| `market-autofix.md` | research doc, not a build item | — |
+| `mcp-server.md` | built | #56 |
+| `questions.md` | proposed | — |
+| `spacepilot-loop.md` | direction, decided 2026-09-02; nothing built | — |
+| `suspect-commits.md` | built | #84 |
+| `token-accounting.md` | built | — |
+| `trajectory-scrubber.md` | built | #40 |
+| `verified-outcome-rate.md` | proposed, measured | — |
+| `wake.md` | built | #TBD (2026-09-05) |
 
 Twenty-seven specs sit beside this file. They are independent of each other but
 not of the backend, and two of them are worth less than they look until a bug
