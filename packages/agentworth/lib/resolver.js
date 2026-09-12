@@ -267,19 +267,48 @@ export function findCargoTargetBinary(startDir, binName = getBinaryName()) {
  * @param {number} [redirects=5]
  * @returns {Promise<void>}
  */
-export function downloadFile(url, destPath, redirects = 5, onProgress = null) {
+/** No socket activity for this long -- headers or body -- and the download is presumed stalled. */
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 60_000;
+
+export function downloadFile(
+  url,
+  destPath,
+  redirects = 5,
+  onProgress = null,
+  timeoutMs = DEFAULT_DOWNLOAD_TIMEOUT_MS,
+) {
   return new Promise((resolve, reject) => {
     if (redirects < 0) {
       return reject(new Error('Too many redirects while downloading binary.'));
     }
 
+    // A connection that stalls (accepted, headers sent, then nothing) used to hang until the
+    // caller's own machinery noticed -- for downloadAndExtractBinary that meant never touching
+    // the lock file, so a live holder stuck on a dead connection got its lock stolen 15
+    // minutes later and landed in the exact confirm-read race this same fix closes elsewhere.
+    // An idle socket timeout means a stall fails fast and releases the lock long before that.
+    let settled = false;
+    const finishResolve = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const finishReject = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
     const request = httpGet(url, { headers: { 'User-Agent': 'agentworth-npm-resolver' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return downloadFile(res.headers.location, destPath, redirects - 1, onProgress).then(resolve, reject);
+        return downloadFile(res.headers.location, destPath, redirects - 1, onProgress, timeoutMs).then(
+          finishResolve,
+          finishReject,
+        );
       }
 
       if (res.statusCode !== 200) {
-        return reject(new Error(`Failed to download binary: HTTP ${res.statusCode} from ${url}`));
+        return finishReject(new Error(`Failed to download binary: HTTP ${res.statusCode} from ${url}`));
       }
 
       // The asset is ~23 MB and the release CDN is often slow, so silence here reads as a
@@ -299,16 +328,23 @@ export function downloadFile(url, destPath, redirects = 5, onProgress = null) {
 
       fileStream.on('finish', () => {
         if (onProgress) onProgress(received, total || received);
-        fileStream.close(resolve);
+        fileStream.close(finishResolve);
       });
 
       fileStream.on('error', (err) => {
-        fs.unlink(destPath, () => reject(err));
+        fs.unlink(destPath, () => finishReject(err));
       });
     });
 
     request.on('error', (err) => {
-      reject(err);
+      finishReject(err);
+    });
+
+    // Fires on idle -- no bytes sent or received -- for `timeoutMs`, whether that idle time is
+    // before headers arrive or mid-body. destroy(err) aborts the socket and emits 'error' on
+    // the request above with this same error, which is what actually rejects the promise.
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`Download stalled (no data for ${timeoutMs}ms): ${url}`));
     });
   });
 }
@@ -440,20 +476,45 @@ function installIsComplete(dir, platform) {
 }
 
 /**
- * True when the process named by the lock file's pid is still alive. A lock whose holder is
- * gone is stale immediately, regardless of how fresh its mtime looks -- the pid is written but
- * was never read before this, which is why a killed holder used to block every waiter for the
- * full 15-minute staleness window.
+ * Removes any `.v<version>.tmp-<pid>` leftover in `binDir` whose pid is no longer alive -- a
+ * holder killed mid-extraction leaves its temp dir behind forever otherwise, since only the
+ * *next* holder's own pid-named dir was ever cleaned up. Only the current lock holder calls
+ * this, and only dead-pid dirs (never our own, never a live one) are touched.
  */
-function isLockHolderAlive(lockFile) {
+function sweepDeadTmpExtractDirs(binDir, version) {
+  const prefix = `.v${version}.tmp-`;
+  let entries;
+  try {
+    entries = fs.readdirSync(binDir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!name.startsWith(prefix)) continue;
+    const pid = Number(name.slice(prefix.length));
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
+    if (isPidAlive(pid)) continue;
+    try {
+      fs.rmSync(path.join(binDir, name), { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+/** The pid a lock file names, or null if it can't be read or doesn't look like a pid. */
+export function readLockPid(lockFile) {
   let pidText;
   try {
     pidText = fs.readFileSync(lockFile, 'utf8').trim();
   } catch {
-    return false;
+    return null;
   }
   const pid = Number(pidText);
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+/** True when `pid` (from a lock or a tmp-dir name) is still a live process. */
+function isPidAlive(pid) {
+  if (!pid) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -464,12 +525,49 @@ function isLockHolderAlive(lockFile) {
   }
 }
 
+/**
+ * True when the process named by the lock file's pid is still alive. A lock whose holder is
+ * gone is stale immediately, regardless of how fresh its mtime looks -- the pid is written but
+ * was never read before this, which is why a killed holder used to block every waiter for the
+ * full 15-minute staleness window.
+ */
+function isLockHolderAlive(lockFile) {
+  return isPidAlive(readLockPid(lockFile));
+}
+
 /** Refreshes the lock file's mtime so a slow but live download never ages past LOCK_STALE_MS. */
 function touchLockFile(lockFile) {
   try {
     const now = new Date();
     fs.utimesSync(lockFile, now, now);
   } catch {}
+}
+
+/**
+ * Attempts to become the confirmed lock holder for `lockFile`. Winning the exclusive `wx`
+ * create is necessary but not sufficient: two waiters can both decide the same lock is stale,
+ * both unlink it, and both win a `wx` in sequence (W1 creates and writes its pid; W2, still
+ * mid-takeover from the *same* staleness read, unlinks W1's fresh lock and creates its own).
+ * So after writing our pid we re-read the file back -- if it no longer names us, someone else
+ * has since taken over and we must fall back to the wait loop rather than act as holder too.
+ *
+ * `afterWrite` is a test-only seam: it runs synchronously right after the pid is written and
+ * the fd closed, but before the confirming re-read, so a test can deterministically inject a
+ * competing takeover into that exact window instead of relying on real scheduling luck.
+ *
+ * @returns {boolean} true only if this call is the confirmed sole holder
+ */
+function tryAcquireLock(lockFile, afterWrite) {
+  try {
+    const fd = fs.openSync(lockFile, 'wx');
+    fs.writeSync(fd, String(process.pid));
+    fs.closeSync(fd);
+  } catch (err) {
+    if (err.code === 'EEXIST') return false;
+    throw err;
+  }
+  if (afterWrite) afterWrite();
+  return readLockPid(lockFile) === process.pid;
 }
 
 /** A lock older than this by mtime, OR whose holder pid is no longer alive, is stale and may be taken over. */
@@ -655,15 +753,7 @@ export async function downloadAndExtractBinary(options = {}) {
       return cachedBinary;
     }
 
-    let haveLock = false;
-    try {
-      const fd = fs.openSync(lockFile, 'wx');
-      fs.writeSync(fd, String(process.pid));
-      fs.closeSync(fd);
-      haveLock = true;
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-    }
+    const haveLock = tryAcquireLock(lockFile, options.__testAfterLockWrite);
     if (haveLock) break;
 
     // Stale if the mtime is old (the 15-minute backstop) OR the holder's own pid is dead --
@@ -698,6 +788,11 @@ export async function downloadAndExtractBinary(options = {}) {
     if (installIsComplete(cacheDir, platform) && isExecutable(cachedBinary)) {
       return cachedBinary;
     }
+
+    // While holding the lock: a previous holder killed mid-extraction leaves its own
+    // pid-named temp dir behind forever otherwise -- nothing but the *next* holder's cleanup
+    // of its own dir ever touched these.
+    sweepDeadTmpExtractDirs(binDir, version);
 
     const archiveName = `agentworth-v${version}-${targetTriple}.tar.gz`;
     const url = `${releaseBaseUrl(options)}/v${version}/${archiveName}`;
@@ -743,7 +838,7 @@ export async function downloadAndExtractBinary(options = {}) {
               touchLockFile(lockFile);
               if (progress) progress.tick(done, total);
             };
-            await downloadFile(url, partPath, 5, onTick);
+            await downloadFile(url, partPath, 5, onTick, options.downloadTimeoutMs);
             const sha256Text = await downloadText(`${url}.sha256`);
             const expected = parseSha256Line(sha256Text, archiveName);
             const actual = await sha256File(partPath);
@@ -845,8 +940,15 @@ export async function downloadAndExtractBinary(options = {}) {
 
     return cachedBinary;
   } finally {
+    if (options.__testBeforeUnlock) options.__testBeforeUnlock();
+    // Only release the lock if it still names us. If it doesn't, some other process has
+    // since taken it over (the same confirm-read race tryAcquireLock guards against, just on
+    // the way out instead of the way in) -- unlinking it here would free a lock we no longer
+    // own out from under whoever now holds it.
     try {
-      fs.unlinkSync(lockFile);
+      if (readLockPid(lockFile) === process.pid) {
+        fs.unlinkSync(lockFile);
+      }
     } catch {}
   }
 }
