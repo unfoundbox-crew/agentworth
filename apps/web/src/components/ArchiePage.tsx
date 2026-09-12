@@ -235,8 +235,10 @@ export const ArchiePage: React.FC = () => {
               <h3>He works offline, on files you already have</h3>
               <p>
                 Nothing is uploaded, no model reads your transcript, and the index lives
-                beside the logs. He is digging through files you already have — nothing
-                here is talking to a server.
+                beside the logs. He is digging through files you already have. (Semantic
+                search is the one exception: it fetches a small embedding model from
+                Hugging Face the first time you use it — a one-time dependency download,
+                not telemetry. Nothing about you leaves this machine.)
               </p>
             </div>
           </section>
