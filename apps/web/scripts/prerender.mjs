@@ -164,7 +164,7 @@ const SOFTWARE = {
   operatingSystem: 'macOS, Linux',
   applicationCategory: 'DeveloperApplication',
   description:
-    'A local-first native Rust tool that reads the session logs AI coding agents leave on disk and grades each claimed outcome against files changed, tests run, commits made and CI results.',
+    'A local-first native Rust tool that reads the session logs AI coding agents leave on disk and grades each claimed outcome against files changed, tests run, commits made and CI results. Your data never leaves your machine.',
   url: `${SITE}/`,
   softwareVersion: releases[0].version,
   downloadUrl: `${REPO}/releases`,
@@ -184,7 +184,11 @@ const FAQ = {
   mainEntity: [
     [
       'Does AgentWorth upload my code or transcripts to the cloud?',
-      'No. AgentWorth is 100% local-first and offline by design. It scans dotfiles on your machine and stores an index in a local SQLite database. Nothing ever leaves your computer.',
+      'No. AgentWorth is local-first: it scans dotfiles on your machine and stores an index in a local SQLite database, and your data never leaves it. Nothing about you or your work is sent anywhere by default.',
+    ],
+    [
+      'Does AgentWorth ever talk to the network?',
+      "Two narrow, named exceptions, and neither sends anything about you. `agwt search` can use the optional fastembed feature, which downloads an embedding model from Hugging Face once, the first time you run it -- a dependency fetch, like npm install, off by default in shipped binaries. `agwt blunder --submit` is an explicit opt-in command that posts a single blunder report when you run it. Nothing else reaches the network.",
     ],
     [
       'Which AI coding agents are supported?',
@@ -210,7 +214,7 @@ pages.push({
   head: head({
     title: "AgentWorth — you're burning tokens you can't see. Archie reads the receipts.",
     description:
-      'Which model made the mistake, what it cost, which run to trust. AgentWorth reads the session logs your AI coding agents already left on disk and turns every run into a receipt: tokens, cost, blunders, and what was verified. 21 harnesses, local only, nothing uploaded.',
+      "Which model made the mistake, what it cost, which run to trust. AgentWorth reads the session logs your AI coding agents already left on disk and turns every run into a receipt: tokens, cost, blunders, and what was verified. 21 harnesses, local-first, your data never leaves your machine.",
     canonical: `${SITE}/`,
     imageAlt: 'AgentWorth — AI coding agent receipts and archaeology',
     feeds: FEEDS,
@@ -625,6 +629,9 @@ write(
 console.log('wrote blog/rss.xml and changelog/rss.xml');
 
 // ----------------------------------------------------------------- sitemap
+
+// robots.txt and sitemap.xml are generated here on every build, unconditionally --
+// there is no committed copy in public/ to go stale.
 
 // No <priority> or <changefreq>: Google ignores both. <lastmod> comes from the
 // content's own date, never the build clock — a lastmod that changes on every
