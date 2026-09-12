@@ -8,20 +8,20 @@ author: AgentWorth
 ---
 
 Every coding harness can resume a session. We read the official docs on
-2026-09-06 to find out what the agent gets back when it does. Two answers
+2026-09-12 to find out what the agent gets back when it does. Two answers
 came up, and neither carries evidence.
 
 ## Two ways to resume
 
 | Harness | What the agent receives | Checkout, tests, promises |
 | :--- | :--- | :--- |
-| Claude Code | The full transcript, or a model-written `/compact` summary plus the last few files read | The git branch goes into the system prompt at startup. Test results and open promises: not a field |
+| Claude Code | The full transcript by default, or -- past a size and idle threshold -- a choice: reload it as-is, or run `/compact` and carry forward a summary plus up to five recently read files | The git branch loads as its own block in the system prompt. Test results and open promises: not a field |
 | Gemini CLI | The full conversation, every tool call and output. Checkpointing reverts files to a git snapshot | The snapshot restores files; it does not report what passed |
-| Codex CLI | Replays the session's rollout file | The docs do not say |
-| Cursor | "Load prior context" | The docs do not say |
+| Codex CLI | `codex resume` reopens a recent chat from the current repo, or searches across local chats | The docs do not say |
+| Cursor | "Load prior context" via `--resume [thread id]` | The docs do not say |
 | OpenCode | `--continue`, `--session`, `--fork` | The docs do not say |
 
-Sources, all fetched 2026-09-06:
+Sources, all fetched 2026-09-12:
 
 - Claude Code: [sessions](https://code.claude.com/docs/en/sessions), [context window](https://code.claude.com/docs/en/context-window)
 - Gemini CLI: [session management](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/session-management.md), [checkpointing](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/checkpointing.md)
