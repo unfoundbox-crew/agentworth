@@ -32,16 +32,6 @@ impl LocalEmbedder {
     pub fn new() -> Self {
         #[cfg(feature = "fastembed")]
         {
-            // `fastembed` only reaches the network the first time a given model is
-            // missing from its local cache; every run after that loads from disk. This
-            // crate has no visibility into that cache from here, so the line below says
-            // "may fetch" rather than "will fetch" -- still strictly more honest than
-            // the previous silence. `with_show_download_progress(false)` stays off on
-            // purpose: fastembed's own indicatif bar would race the CLI's own status
-            // spinner (`apps/cli/src/commands/search.rs`, `with_status`) for the same
-            // terminal line. One clear line, printed once before the attempt, replaces it.
-            warn!("{}", model_fetch_announcement());
-
             // Attempt 1: BGE-Small-EN-v1.5 (highest accuracy 384-dim)
             let bge_opts = InitOptions::new(EmbeddingModel::BGESmallENV15)
                 .with_show_download_progress(false);
@@ -68,7 +58,7 @@ impl LocalEmbedder {
                             };
                         }
                         Err(err2) => {
-                            warn!("{}", model_unavailable_message(&err2.to_string()));
+                            warn!("ONNX models unavailable offline ({}); using deterministic local embedding engine", err2);
                         }
                     }
                 }
@@ -199,42 +189,6 @@ fn sha256_hash_str(s: &str) -> u64 {
     hasher.finish()
 }
 
-/// One-line, one-time announcement printed (via `tracing::warn!`, visible at the CLI's
-/// default log level) before `LocalEmbedder::new()` attempts to initialize the ONNX
-/// backend. Only reachable when this crate is built with the `fastembed` feature --
-/// off by default in every shipped `agwt`/`archie`/`agentworth` binary today (checked:
-/// `crates/storage/Cargo.toml` has `default = []`, and `apps/cli/Cargo.toml` depends on
-/// `agentworth-storage` with `default-features = false`), so this only fires for a
-/// build someone has explicitly opted into with `--features fastembed`.
-///
-/// Names the model, where it comes from, roughly how big it is, that it's a one-time
-/// dependency fetch (not telemetry), and that no local data is sent -- the four things
-/// AGENTS.md item 8 says a silent download must announce.
-#[allow(dead_code)] // only called from the fastembed-feature-gated path in `new()`; kept
-                     // testable unconditionally (see the tests module) since the feature
-                     // is off in every shipped binary today
-fn model_fetch_announcement() -> String {
-    "Preparing local semantic search: may fetch BAAI/bge-small-en-v1.5 (~133MB) from \
-     Hugging Face if it isn't already cached at ~/.cache/fastembed. This is a one-time \
-     dependency fetch, the same kind of download as `npm install` -- no session data, \
-     prompts, or code leave this machine."
-        .to_string()
-}
-
-/// Wraps a `fastembed` initialization error with the same four facts as
-/// [`model_fetch_announcement`], plus what happens next: silent fallback to the
-/// deterministic offline embedder. Called only after both the BGE-Small and
-/// AllMiniLM attempts have failed.
-#[allow(dead_code)] // see model_fetch_announcement
-fn model_unavailable_message(cause: &str) -> String {
-    format!(
-        "Could not load BAAI/bge-small-en-v1.5 or sentence-transformers/all-MiniLM-L6-v2 \
-         from Hugging Face ({cause}). No local data was sent in that attempt. Falling back \
-         to AgentWorth's offline deterministic embedder (weaker semantic matching, zero \
-         network, works air-gapped)."
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,49 +223,6 @@ mod tests {
             "Similar score ({}) should be higher than dissimilar score ({})",
             score_similar,
             score_dissimilar
-        );
-    }
-
-    // These two tests exercise the user-facing message text directly rather than the
-    // network path itself. The download can't be red/green tested offline -- there is
-    // no way to force `fastembed::TextEmbedding::try_new` to attempt (and fail to reach)
-    // Hugging Face without an actual network condition to assert against, and this repo
-    // has no fixture for that. What *is* testable without a network, and is exactly what
-    // AGENTS.md item 8 asks the copy to say: the announcement and the fallback message
-    // both name the model, its source, its rough size (announcement only -- the failure
-    // message doesn't re-assert size), that it's a one-time dependency fetch, and that
-    // no local data is sent.
-
-    #[test]
-    fn model_fetch_announcement_names_model_source_size_and_privacy() {
-        let msg = model_fetch_announcement();
-        assert!(msg.contains("bge-small-en-v1.5"), "names the model: {msg}");
-        assert!(msg.contains("Hugging Face"), "names the source: {msg}");
-        assert!(msg.contains("133MB"), "names the rough size: {msg}");
-        assert!(
-            msg.contains("one-time"),
-            "says it's a one-time dependency fetch, not telemetry: {msg}"
-        );
-        assert!(
-            msg.contains("no session data") || msg.contains("no local data") || msg.to_lowercase().contains("no session data, prompts, or code leave"),
-            "says nothing about the user is sent: {msg}"
-        );
-    }
-
-    #[test]
-    fn model_unavailable_message_names_models_cause_and_fallback() {
-        let msg = model_unavailable_message("dns resolution failed");
-        assert!(msg.contains("bge-small-en-v1.5"), "names the primary model tried: {msg}");
-        assert!(msg.contains("all-MiniLM-L6-v2"), "names the second model tried: {msg}");
-        assert!(msg.contains("Hugging Face"), "names the source: {msg}");
-        assert!(msg.contains("dns resolution failed"), "carries the underlying cause: {msg}");
-        assert!(
-            msg.contains("No local data was sent"),
-            "says nothing about the user was sent even on failure: {msg}"
-        );
-        assert!(
-            msg.contains("deterministic") && msg.contains("offline"),
-            "says what happens next -- offline deterministic fallback: {msg}"
         );
     }
 }

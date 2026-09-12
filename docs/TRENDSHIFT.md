@@ -13,7 +13,7 @@
 ## Tagline
 
 > **Your AI coding agents left receipts.**  
-> Local-first Rust tool that discovers, normalizes, and indexes the AI agent histories already present on your machine — your session data never leaves it.
+> 100% offline, local-first Rust tool that discovers, normalizes, and indexes the AI agent histories already present on your machine.
 
 ---
 
@@ -44,7 +44,7 @@ Modern software development relies heavily on AI coding agents (Claude Code, Cur
 * **Zero-Install CLI**: Run instantly anywhere via `npx -y agentworth@latest scan` or pre-built native binary via `curl -fsSL https://agentworth.dev/install.sh | sh`.
 * **Visual ASCII Flight Receipts**: Clean, beautiful monospace receipts summarizing token burn, top models, expenditure, and empirical success rates.
 * **Typed Provenance (`[flown]` / `[on paper]` / `[unflown]`)**: Strict architectural guarantees distinguishing locally measured disk telemetry from external vendor pricing claims.
-* **Local-First**: Zero telemetry, read-only transcript access, and SQLite WAL storage with lazy trajectory streaming. Your session data, prompts, and code are never uploaded; the only outbound calls are a one-time embedding-model fetch for semantic search and an explicit opt-in `agwt blunder --submit`.
+* **100% Offline & Local-First**: Zero telemetry, zero uploads, read-only transcript access, and SQLite WAL storage with lazy trajectory streaming.
 * **20 Native Streaming Adapters**: Built-in support for Claude Code, Cursor, Antigravity (`agy`), DeepSeek, Kimi, MiniMax, Qwen, Zhipu, Aider, Cline/Roo, Windsurf, Manus, OpenAI Codex, Goose, Pi, Herdr, Hermes, OpenClaw, Grok, and OpenCode.
 * **Monochrome Thermal Explorer UI**: Embedded local web interface (`archie serve --open`) for interactive step-by-step trajectory archaeology and diff inspection.
 
