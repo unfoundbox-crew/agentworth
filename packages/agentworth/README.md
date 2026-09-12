@@ -82,6 +82,17 @@ The launcher searches for the native binary in the following priority order:
 4. **`CARGO_TARGET_DIR`**: Custom cargo target output directory if set.
 5. **User Cargo Bin**: `~/.cargo/bin/agentworth`.
 6. **System `PATH`**: Any `agentworth` executable in your `PATH`.
+7. **Local cache**: `~/.agentworth/bin/v<version>/`, populated by an on-demand download the first time a version isn't found anywhere above.
+
+### On-demand download
+
+When no source above has the binary, the launcher downloads the matching release archive into
+`~/.agentworth/bin/v<version>/`. That download is checksum-verified against the release's
+published `.sha256` before extraction, extracted into a temporary directory and only moved into
+place once complete (so the version directory is always either fully installed or absent, never
+half-extracted), and guarded by a lock file so multiple concurrent first runs share one download
+instead of racing each other. `agentworth hook` never triggers this download -- a hook only uses
+a binary that's already present, so it can fail fast and quietly instead of blocking on a fetch.
 
 ---
 
@@ -102,6 +113,7 @@ You can also install the native AgentWorth binary directly:
 | :--- | :--- |
 | `AGENTWORTH_BIN` | Path to a specific `agentworth` binary executable. |
 | `CARGO_TARGET_DIR` | Custom Cargo target directory to search for build outputs. |
+| `AGENTWORTH_RELEASE_BASE_URL` | Overrides the GitHub Releases base URL the on-demand downloader fetches archives from. Defaults to `https://github.com/unfoundbox-crew/agentworth/releases/download`; only for testing or an internal release mirror. |
 
 ---
 

@@ -1,10 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import http from 'node:http';
 import https from 'node:https';
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+/**
+ * https everywhere in production; the test suite points the resolver at a local
+ * `http://127.0.0.1:<port>` fixture server instead of the network (no mocking of `https.get`
+ * itself), so both downloadFile and downloadText pick their transport off the URL's own
+ * protocol rather than assuming https.
+ */
+function httpGet(url, opts, cb) {
+  const client = url.startsWith('http://') ? http : https;
+  return client.get(url, opts, cb);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -247,7 +260,7 @@ export function downloadFile(url, destPath, redirects = 5, onProgress = null) {
       return reject(new Error('Too many redirects while downloading binary.'));
     }
 
-    const request = https.get(url, { headers: { 'User-Agent': 'agentworth-npm-resolver' } }, (res) => {
+    const request = httpGet(url, { headers: { 'User-Agent': 'agentworth-npm-resolver' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return downloadFile(res.headers.location, destPath, redirects - 1, onProgress).then(resolve, reject);
       }
@@ -287,6 +300,116 @@ export function downloadFile(url, destPath, redirects = 5, onProgress = null) {
   });
 }
 
+
+/**
+ * The GitHub Releases base URL archives are fetched from. Overridable with
+ * `AGENTWORTH_RELEASE_BASE_URL` (env, or `options.releaseBaseUrl`) so tests -- and anyone
+ * mirroring releases internally -- can point the launcher at a different host. The default
+ * itself never changes.
+ */
+const DEFAULT_RELEASE_BASE_URL = 'https://github.com/unfoundbox-crew/agentworth/releases/download';
+
+function releaseBaseUrl(options = {}) {
+  const fromOptions = options.releaseBaseUrl;
+  const fromEnv =
+    (options.env && options.env.AGENTWORTH_RELEASE_BASE_URL) || process.env.AGENTWORTH_RELEASE_BASE_URL;
+  const base = fromOptions || fromEnv || DEFAULT_RELEASE_BASE_URL;
+  return base.replace(/\/+$/, '');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Downloads a small text file (redirect-following, like downloadFile) and returns its body.
+ * Used for the `.sha256` sidecar, which is a handful of bytes -- no progress reporting needed.
+ *
+ * @param {string} url
+ * @param {number} [redirects=5]
+ * @returns {Promise<string>}
+ */
+export function downloadText(url, redirects = 5) {
+  return new Promise((resolve, reject) => {
+    if (redirects < 0) {
+      return reject(new Error('Too many redirects while downloading checksum file.'));
+    }
+
+    const request = httpGet(url, { headers: { 'User-Agent': 'agentworth-npm-resolver' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        return downloadText(res.headers.location, redirects - 1).then(resolve, reject);
+      }
+
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`Failed to download ${url}: HTTP ${res.statusCode}`));
+      }
+
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => resolve(data));
+      res.on('error', reject);
+    });
+
+    request.on('error', reject);
+  });
+}
+
+/**
+ * Streaming sha256 of a file on disk -- never loads the whole archive into memory.
+ *
+ * @param {string} filePath
+ * @returns {Promise<string>} lowercase hex digest
+ */
+export function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
+
+/**
+ * Pulls the hex digest out of a `sha256sum`-style checksum file (`<hex>  <filename>`, the
+ * format both `shasum -a 256` and `sha256sum` emit -- see release.yml). Only the first
+ * non-blank line is read; a sidecar always describes exactly one archive.
+ *
+ * @param {string} text
+ * @param {string} archiveName - used only to make a parse failure's error message useful
+ * @returns {string} lowercase hex digest
+ */
+export function parseSha256Line(text, archiveName) {
+  const line = String(text || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  const match = line && line.match(/^([0-9a-fA-F]{64})\s+\*?(.+)$/);
+  if (!match) {
+    throw new Error(`Could not parse checksum file for ${archiveName}: ${JSON.stringify(text).slice(0, 200)}`);
+  }
+  return match[1].toLowerCase();
+}
+
+/** The three native binaries the release tarball ships (apps/cli/Cargo.toml's [[bin]] targets). */
+function threeBinaryNames(platform) {
+  const suffix = platform === 'win32' ? '.exe' : '';
+  return ['agentworth', 'archie', 'agwt'].map((n) => `${n}${suffix}`);
+}
+
+/** True when every one of the three native binaries exists and is executable in `dir`. */
+function installIsComplete(dir, platform) {
+  return threeBinaryNames(platform).every((name) => isExecutable(path.join(dir, name)));
+}
+
+/** A lock older than this by mtime is presumed abandoned (a crashed holder) and may be taken over. */
+const LOCK_STALE_MS = 15 * 60 * 1000;
+const LOCK_POLL_MS = 500;
 
 /**
  * True when the binary at `binPath` reports `expected`. Used to stop a stale
@@ -442,53 +565,191 @@ export async function downloadAndExtractBinary(options = {}) {
     return cachedBinary;
   }
 
-  fs.mkdirSync(cacheDir, { recursive: true });
+  // The version directory itself (~/.agentworth/bin) -- one level up from the versioned
+  // cacheDir. The lock and the atomic-install temp dir both live here, never inside
+  // cacheDir, so they never get mistaken for part of the extracted install.
+  const binDir = path.dirname(cacheDir);
+  fs.mkdirSync(binDir, { recursive: true });
+  const lockFile = path.join(binDir, `v${version}.lock`);
 
-  const archiveName = `agentworth-v${version}-${targetTriple}.tar.gz`;
-  const url = `https://github.com/unfoundbox-crew/agentworth/releases/download/v${version}/${archiveName}`;
+  // One download per version: everyone racing to resolve this version either becomes the
+  // downloader (holds the lock file) or a waiter (polls until the lock is gone, then reuses
+  // whatever the downloader produced). This is what stops the hook-storm from #173 -- with
+  // several sessions open, every one of them used to start its own download of the same
+  // archive at once.
+  for (;;) {
+    if (installIsComplete(cacheDir, platform) && isExecutable(cachedBinary)) {
+      return cachedBinary;
+    }
 
-  const archivePath = path.join(cacheDir, archiveName);
-  const progress = options.silent ? null : startDownloadProgress();
+    let haveLock = false;
+    try {
+      const fd = fs.openSync(lockFile, 'wx');
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      haveLock = true;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+    }
+    if (haveLock) break;
 
-  if (progress) {
-    console.error(brandLine('*', 'resolving', `v${version}  ${targetTriple}`));
+    let stat = null;
+    try {
+      stat = fs.statSync(lockFile);
+    } catch {
+      // The lock vanished between the failed open and this stat -- another waiter's stale
+      // takeover, or the holder finishing. Loop straight back to the top and try again.
+      continue;
+    }
+    if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+      // Presumed-abandoned lock (a crashed holder). Take it over.
+      try {
+        fs.unlinkSync(lockFile);
+      } catch {}
+      continue;
+    }
+
+    await sleep(LOCK_POLL_MS);
   }
 
   try {
-    await downloadFile(url, archivePath, 5, progress ? progress.tick : null);
-  } finally {
-    if (progress) progress.done();
-  }
+    // Re-check now that we hold the lock: another process could have finished and released
+    // it in the window between our last check and acquiring it.
+    if (isExecutable(cachedBinary)) {
+      return cachedBinary;
+    }
 
-  // No --force-local here: it was a Windows-only GNU tar workaround, and Windows
-  // support was dropped in 8b837c3. BSD tar (macOS's default) doesn't recognize
-  // the flag and fails every extraction with it present -- v0.1.11 shipped this
-  // exact break. Keep it off; there's no platform left where it does anything.
-  try {
-    execFileSync('tar', ['-xzf', archivePath, '-C', cacheDir]);
-  } catch (err) {
-    throw new Error(`Failed to extract ${archiveName}: ${err.message}`);
+    fs.mkdirSync(cacheDir, { recursive: true });
+
+    const archiveName = `agentworth-v${version}-${targetTriple}.tar.gz`;
+    const url = `${releaseBaseUrl(options)}/v${version}/${archiveName}`;
+    const archivePath = path.join(cacheDir, archiveName);
+    const partPath = `${archivePath}.part`;
+
+    const progress = options.silent ? null : startDownloadProgress();
+    if (progress) {
+      console.error(brandLine('*', 'resolving', `v${version}  ${targetTriple}`));
+    }
+
+    // Download to a `.part` file and verify against the published `.sha256` sidecar before
+    // the archive name is ever used for real -- a truncated or corrupted download must never
+    // reach `tar`. One retry on mismatch or truncation; if that also fails, say so with the
+    // archive name, both hash prefixes, and the recovery command.
+    const MAX_ATTEMPTS = 2;
+    let lastErr = null;
+    let verified = false;
+    try {
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS && !verified; attempt += 1) {
+        try {
+          try {
+            if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+          } catch {}
+          await downloadFile(url, partPath, 5, progress ? progress.tick : null);
+          const sha256Text = await downloadText(`${url}.sha256`);
+          const expected = parseSha256Line(sha256Text, archiveName);
+          const actual = await sha256File(partPath);
+          if (actual !== expected) {
+            throw new Error(
+              `checksum mismatch: expected ${expected.slice(0, 12)}…, got ${actual.slice(0, 12)}…`,
+            );
+          }
+          verified = true;
+        } catch (err) {
+          lastErr = err;
+          try {
+            if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+          } catch {}
+        }
+      }
+    } finally {
+      if (progress) progress.done();
+    }
+
+    if (!verified) {
+      throw new Error(
+        `Failed to download and verify ${archiveName}: ${lastErr ? lastErr.message : 'unknown error'}\n` +
+          `Recovery: rm -rf ${tilde(cacheDir)}, then rerun.`,
+      );
+    }
+
+    fs.renameSync(partPath, archivePath);
+
+    // Extract into a temp directory next to (not inside) the final version directory, and
+    // only rename it into place once all three native binaries are confirmed present and
+    // executable. A version directory is then either complete or absent -- never the
+    // half-extracted state that left #173's truncated binary answering for every later
+    // invocation with exit 137.
+    const tmpExtractDir = path.join(binDir, `.v${version}.tmp-${process.pid}`);
+    try {
+      if (fs.existsSync(tmpExtractDir)) {
+        fs.rmSync(tmpExtractDir, { recursive: true, force: true });
+      }
+      fs.mkdirSync(tmpExtractDir, { recursive: true });
+
+      // No --force-local here: it was a Windows-only GNU tar workaround, and Windows
+      // support was dropped in 8b837c3. BSD tar (macOS's default) doesn't recognize
+      // the flag and fails every extraction with it present -- v0.1.11 shipped this
+      // exact break. Keep it off; there's no platform left where it does anything.
+      try {
+        execFileSync('tar', ['-xzf', archivePath, '-C', tmpExtractDir]);
+      } catch (err) {
+        throw new Error(`Failed to extract ${archiveName}: ${err.message}`);
+      }
+
+      if (platform !== 'win32') {
+        for (const name of threeBinaryNames(platform)) {
+          const p = path.join(tmpExtractDir, name);
+          if (fs.existsSync(p)) {
+            try {
+              fs.chmodSync(p, 0o755);
+            } catch {}
+          }
+        }
+      }
+
+      if (!installIsComplete(tmpExtractDir, platform)) {
+        throw new Error(
+          `Extracted archive ${archiveName} is missing one or more of the expected binaries ` +
+            `(${threeBinaryNames(platform).join(', ')}).`,
+        );
+      }
+
+      if (installIsComplete(cacheDir, platform)) {
+        // Another process already completed the install (shouldn't happen under the lock,
+        // but a leftover complete dir from an earlier run is not an error) -- discard ours.
+      } else {
+        if (fs.existsSync(cacheDir)) {
+          fs.rmSync(cacheDir, { recursive: true, force: true });
+        }
+        fs.renameSync(tmpExtractDir, cacheDir);
+      }
+    } finally {
+      try {
+        if (fs.existsSync(tmpExtractDir)) {
+          fs.rmSync(tmpExtractDir, { recursive: true, force: true });
+        }
+      } catch {}
+      try {
+        if (fs.existsSync(archivePath)) {
+          fs.unlinkSync(archivePath);
+        }
+      } catch {}
+    }
+
+    if (!isExecutable(cachedBinary)) {
+      throw new Error(`Downloaded binary is not executable: ${cachedBinary}`);
+    }
+
+    if (!options.silent) {
+      console.error(brandLine('*', 'installed', `${binName} in ${tilde(cacheDir)}`));
+    }
+
+    return cachedBinary;
   } finally {
     try {
-      if (fs.existsSync(archivePath)) {
-        fs.unlinkSync(archivePath);
-      }
+      fs.unlinkSync(lockFile);
     } catch {}
   }
-
-  if (process.platform !== 'win32') {
-    fs.chmodSync(cachedBinary, 0o755);
-  }
-
-  if (!isExecutable(cachedBinary)) {
-    throw new Error(`Downloaded binary is not executable: ${cachedBinary}`);
-  }
-
-  if (!options.silent) {
-    console.error(brandLine('*', 'installed', `${binName} in ${tilde(cacheDir)}`));
-  }
-
-  return cachedBinary;
 }
 
 /**
@@ -753,21 +1014,35 @@ export function buildChildEnv(baseEnv, npmVersion) {
  * @returns {number} Exit code
  */
 export function run(argv = process.argv.slice(2), options = {}) {
+  // `archie hook` runs on every tool call in every open agent session (see #173's
+  // follow-up: 1,000+ concurrent downloads from hooks alone, before the binary was even
+  // installed once). A hook has to exit fast and cannot be the thing that kicks off a
+  // 26 MB download -- it resolves from whatever is already present and nothing else.
+  const isHookInvocation = Array.isArray(argv) && argv[0] === 'hook';
+
   const resolvedArgs = resolveArguments(argv);
   let binaryResult = resolveBinary(options);
 
   // If binary not found on clean machine, attempt on-demand download from GitHub Release
-  if ((!binaryResult.found || !binaryResult.path) && options.autoDownload !== false) {
+  if ((!binaryResult.found || !binaryResult.path) && options.autoDownload !== false && !isHookInvocation) {
     try {
       const resolverModuleUrl = new URL('./resolver.js', import.meta.url).href;
       const syncDownloadScript = `
         import { downloadAndExtractBinary } from '${resolverModuleUrl}';
-        await downloadAndExtractBinary({
-          platform: ${JSON.stringify(options.platform || process.platform)},
-          arch: ${JSON.stringify(options.arch || process.arch)},
-          homeDir: ${JSON.stringify(options.homeDir || (options.env && options.env.HOME) || '')},
-          invokedAs: ${JSON.stringify(options.invokedAs || '')}
-        });
+        try {
+          await downloadAndExtractBinary({
+            platform: ${JSON.stringify(options.platform || process.platform)},
+            arch: ${JSON.stringify(options.arch || process.arch)},
+            homeDir: ${JSON.stringify(options.homeDir || (options.env && options.env.HOME) || '')},
+            invokedAs: ${JSON.stringify(options.invokedAs || '')}
+          });
+        } catch (err) {
+          // A bare throw here prints a full stack trace of the eval wrapper, which is noise
+          // on top of the actual cause -- the message alone (checksum mismatch, extraction
+          // failure, recovery step) is what a user reading this needs.
+          console.error(err && err.message ? err.message : String(err));
+          process.exitCode = 1;
+        }
       `;
       const dlResult = spawnSync(process.execPath, ['--input-type=module', '-e', syncDownloadScript], {
         stdio: 'inherit',
@@ -783,6 +1058,12 @@ export function run(argv = process.argv.slice(2), options = {}) {
   }
 
   if (!binaryResult.found || !binaryResult.path) {
+    if (isHookInvocation) {
+      // Fail fast and quiet: no download, nothing on stdout (a hook's stdout can be read as
+      // the hook's own output by the caller), one short line on stderr for anyone looking.
+      console.error(brandLine(' ', 'skip', 'no native binary yet, hook exiting'));
+      return 0;
+    }
     const message = formatMissingBinaryMessage(getPlatformKey(options.platform, options.arch));
     console.error(message);
     return 1;
