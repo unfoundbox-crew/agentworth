@@ -91,9 +91,22 @@ export function downloadLine(done, total, { cols = 80, unicode = true, lamp = 'o
 }
 
 /** `~/.agentworth/bin/v0.1.16` rather than the expanded home, so the line fits 80 columns. */
-function tilde(p) {
-  const home = os.homedir();
+function tildeFor(p, home) {
   return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+}
+
+function tilde(p) {
+  return tildeFor(p, os.homedir());
+}
+
+/**
+ * Strips every occurrence of `home` out of `str` (replaced with `~`). Used on error text that
+ * can embed a full command line or a tool's own stderr -- both can carry the cache dir's full
+ * path, and a copy-pasted error message should not carry the reporter's home directory.
+ */
+function redactHome(str, home) {
+  if (!home) return String(str);
+  return String(str).split(home).join('~');
 }
 
 /**
@@ -393,6 +406,14 @@ export function parseSha256Line(text, archiveName) {
   if (!match) {
     throw new Error(`Could not parse checksum file for ${archiveName}: ${JSON.stringify(text).slice(0, 200)}`);
   }
+  // The `sha256sum`/`shasum -a 256` line format is `<hex>  <filename>` -- a sidecar that
+  // parses but names a different file is not evidence for *this* archive's integrity (a stale
+  // cached sidecar, a mirror serving the wrong pairing). Compare basenames: some tools emit a
+  // bare filename, others the full path they hashed.
+  const namedFile = path.basename(match[2].trim());
+  if (namedFile !== archiveName) {
+    throw new Error(`Checksum file names "${namedFile}" but expected "${archiveName}"`);
+  }
   return match[1].toLowerCase();
 }
 
@@ -402,12 +423,56 @@ function threeBinaryNames(platform) {
   return ['agentworth', 'archie', 'agwt'].map((n) => `${n}${suffix}`);
 }
 
-/** True when every one of the three native binaries exists and is executable in `dir`. */
-function installIsComplete(dir, platform) {
-  return threeBinaryNames(platform).every((name) => isExecutable(path.join(dir, name)));
+/**
+ * The completeness marker written only after a checksum-verified install finishes -- contains
+ * the archive's own sha256, one newline. Presence and size can't tell a truncated binary from
+ * a good one when both happen to land at the same byte count (#173's real broken file was mode
+ * 755 and the exact size of the good one), so the marker, not the binaries themselves, is what
+ * every completeness gate actually trusts.
+ */
+function markerPath(dir) {
+  return path.join(dir, '.installed');
 }
 
-/** A lock older than this by mtime is presumed abandoned (a crashed holder) and may be taken over. */
+/** True when every one of the three native binaries is executable in `dir` AND the completeness marker is present. */
+function installIsComplete(dir, platform) {
+  return threeBinaryNames(platform).every((name) => isExecutable(path.join(dir, name))) && fs.existsSync(markerPath(dir));
+}
+
+/**
+ * True when the process named by the lock file's pid is still alive. A lock whose holder is
+ * gone is stale immediately, regardless of how fresh its mtime looks -- the pid is written but
+ * was never read before this, which is why a killed holder used to block every waiter for the
+ * full 15-minute staleness window.
+ */
+function isLockHolderAlive(lockFile) {
+  let pidText;
+  try {
+    pidText = fs.readFileSync(lockFile, 'utf8').trim();
+  } catch {
+    return false;
+  }
+  const pid = Number(pidText);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // ESRCH: no such process -- dead, stale. EPERM: it exists but we can't signal it (a
+    // different user) -- still alive, don't take it over. Anything else: be conservative.
+    return err && err.code === 'EPERM';
+  }
+}
+
+/** Refreshes the lock file's mtime so a slow but live download never ages past LOCK_STALE_MS. */
+function touchLockFile(lockFile) {
+  try {
+    const now = new Date();
+    fs.utimesSync(lockFile, now, now);
+  } catch {}
+}
+
+/** A lock older than this by mtime, OR whose holder pid is no longer alive, is stale and may be taken over. */
 const LOCK_STALE_MS = 15 * 60 * 1000;
 const LOCK_POLL_MS = 500;
 
@@ -553,6 +618,10 @@ export async function downloadAndExtractBinary(options = {}) {
   const version = options.version || getPackageVersion();
   const targetTriple = getTargetTriple(platform, arch);
   const binName = getBinaryName(platform, options.invokedAs);
+  // Used to redact the user's home directory out of any error text -- resolved once, the same
+  // value getCacheDir used to build cacheDir, so redaction always matches what's actually
+  // embedded in a path.
+  const effectiveHomeDir = options.homeDir || os.homedir();
 
   if (!targetTriple) {
     throw new Error(`Unsupported platform/architecture: ${platform}-${arch}`);
@@ -561,7 +630,11 @@ export async function downloadAndExtractBinary(options = {}) {
   const cacheDir = getCacheDir(version, options.homeDir);
   const cachedBinary = path.join(cacheDir, binName);
 
-  if (isExecutable(cachedBinary)) {
+  // Presence and mode bits alone were the whole bug: #173's truncated binary was mode 755 and
+  // the exact byte size of the good one, so `isExecutable` said yes. `installIsComplete` also
+  // requires the completeness marker, written only after a checksum-verified install -- a
+  // truncated-but-executable leftover from before this fix will not have one.
+  if (installIsComplete(cacheDir, platform) && isExecutable(cachedBinary)) {
     return cachedBinary;
   }
 
@@ -593,6 +666,10 @@ export async function downloadAndExtractBinary(options = {}) {
     }
     if (haveLock) break;
 
+    // Stale if the mtime is old (the 15-minute backstop) OR the holder's own pid is dead --
+    // the pid check catches a killed holder immediately instead of leaving every waiter
+    // blocked for the full window. A live holder touches its lock's mtime on every download
+    // tick, so a slow-but-alive download is never mistaken for abandoned by the age check.
     let stat = null;
     try {
       stat = fs.statSync(lockFile);
@@ -601,8 +678,9 @@ export async function downloadAndExtractBinary(options = {}) {
       // takeover, or the holder finishing. Loop straight back to the top and try again.
       continue;
     }
-    if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-      // Presumed-abandoned lock (a crashed holder). Take it over.
+    const staleByAge = Date.now() - stat.mtimeMs > LOCK_STALE_MS;
+    const holderGone = !isLockHolderAlive(lockFile);
+    if (staleByAge || holderGone) {
       try {
         fs.unlinkSync(lockFile);
       } catch {}
@@ -613,78 +691,88 @@ export async function downloadAndExtractBinary(options = {}) {
   }
 
   try {
-    // Re-check now that we hold the lock: another process could have finished and released
-    // it in the window between our last check and acquiring it.
-    if (isExecutable(cachedBinary)) {
+    // Re-check now that we hold the lock: another process could have finished (and left a
+    // complete, marker-bearing install) in the window between our last check and acquiring
+    // it. Only the lock holder ever reads this and only the lock holder ever touches cacheDir
+    // below -- waiters above never rm or rename it themselves, they just wait and re-check.
+    if (installIsComplete(cacheDir, platform) && isExecutable(cachedBinary)) {
       return cachedBinary;
     }
 
-    fs.mkdirSync(cacheDir, { recursive: true });
-
     const archiveName = `agentworth-v${version}-${targetTriple}.tar.gz`;
     const url = `${releaseBaseUrl(options)}/v${version}/${archiveName}`;
-    const archivePath = path.join(cacheDir, archiveName);
-    const partPath = `${archivePath}.part`;
-
-    const progress = options.silent ? null : startDownloadProgress();
-    if (progress) {
-      console.error(brandLine('*', 'resolving', `v${version}  ${targetTriple}`));
-    }
-
-    // Download to a `.part` file and verify against the published `.sha256` sidecar before
-    // the archive name is ever used for real -- a truncated or corrupted download must never
-    // reach `tar`. One retry on mismatch or truncation; if that also fails, say so with the
-    // archive name, both hash prefixes, and the recovery command.
-    const MAX_ATTEMPTS = 2;
-    let lastErr = null;
-    let verified = false;
-    try {
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS && !verified; attempt += 1) {
-        try {
-          try {
-            if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
-          } catch {}
-          await downloadFile(url, partPath, 5, progress ? progress.tick : null);
-          const sha256Text = await downloadText(`${url}.sha256`);
-          const expected = parseSha256Line(sha256Text, archiveName);
-          const actual = await sha256File(partPath);
-          if (actual !== expected) {
-            throw new Error(
-              `checksum mismatch: expected ${expected.slice(0, 12)}…, got ${actual.slice(0, 12)}…`,
-            );
-          }
-          verified = true;
-        } catch (err) {
-          lastErr = err;
-          try {
-            if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
-          } catch {}
-        }
-      }
-    } finally {
-      if (progress) progress.done();
-    }
-
-    if (!verified) {
-      throw new Error(
-        `Failed to download and verify ${archiveName}: ${lastErr ? lastErr.message : 'unknown error'}\n` +
-          `Recovery: rm -rf ${tilde(cacheDir)}, then rerun.`,
-      );
-    }
-
-    fs.renameSync(partPath, archivePath);
 
     // Extract into a temp directory next to (not inside) the final version directory, and
-    // only rename it into place once all three native binaries are confirmed present and
-    // executable. A version directory is then either complete or absent -- never the
-    // half-extracted state that left #173's truncated binary answering for every later
-    // invocation with exit 137.
+    // only rename it into place once all three native binaries plus the completeness marker
+    // are confirmed present. A version directory is then always either complete or absent --
+    // never the half-extracted state that left #173's truncated binary answering for every
+    // later invocation with exit 137. The downloaded archive and its `.part` file live inside
+    // this same temp directory too, never inside cacheDir -- cacheDir only ever holds a
+    // complete install, nothing transient.
     const tmpExtractDir = path.join(binDir, `.v${version}.tmp-${process.pid}`);
+    if (fs.existsSync(tmpExtractDir)) {
+      fs.rmSync(tmpExtractDir, { recursive: true, force: true });
+    }
+    fs.mkdirSync(tmpExtractDir, { recursive: true });
+
+    const archivePath = path.join(tmpExtractDir, archiveName);
+    const partPath = `${archivePath}.part`;
+
     try {
-      if (fs.existsSync(tmpExtractDir)) {
-        fs.rmSync(tmpExtractDir, { recursive: true, force: true });
+      const progress = options.silent ? null : startDownloadProgress();
+      if (progress) {
+        console.error(brandLine('*', 'resolving', `v${version}  ${targetTriple}`));
       }
-      fs.mkdirSync(tmpExtractDir, { recursive: true });
+
+      // Download to a `.part` file and verify against the published `.sha256` sidecar before
+      // the archive name is ever used for real -- a truncated or corrupted download must never
+      // reach `tar`. One retry on mismatch or truncation; if that also fails, say so with the
+      // archive name, both hash prefixes, and the recovery command.
+      const MAX_ATTEMPTS = 2;
+      let lastErr = null;
+      let verified = false;
+      let verifiedSha256 = null;
+      try {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS && !verified; attempt += 1) {
+          try {
+            try {
+              if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+            } catch {}
+            touchLockFile(lockFile);
+            const onTick = (done, total) => {
+              touchLockFile(lockFile);
+              if (progress) progress.tick(done, total);
+            };
+            await downloadFile(url, partPath, 5, onTick);
+            const sha256Text = await downloadText(`${url}.sha256`);
+            const expected = parseSha256Line(sha256Text, archiveName);
+            const actual = await sha256File(partPath);
+            if (actual !== expected) {
+              throw new Error(
+                `checksum mismatch: expected ${expected.slice(0, 12)}…, got ${actual.slice(0, 12)}…`,
+              );
+            }
+            verified = true;
+            verifiedSha256 = expected;
+          } catch (err) {
+            lastErr = err;
+            try {
+              if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+            } catch {}
+          }
+        }
+      } finally {
+        if (progress) progress.done();
+      }
+
+      if (!verified) {
+        throw new Error(
+          `Failed to download and verify ${archiveName}: ${lastErr ? lastErr.message : 'unknown error'}\n` +
+            `Recovery: rm -rf ${tildeFor(cacheDir, effectiveHomeDir)}, then rerun.`,
+        );
+      }
+
+      fs.renameSync(partPath, archivePath);
 
       // No --force-local here: it was a Windows-only GNU tar workaround, and Windows
       // support was dropped in 8b837c3. BSD tar (macOS's default) doesn't recognize
@@ -693,7 +781,14 @@ export async function downloadAndExtractBinary(options = {}) {
       try {
         execFileSync('tar', ['-xzf', archivePath, '-C', tmpExtractDir]);
       } catch (err) {
-        throw new Error(`Failed to extract ${archiveName}: ${err.message}`);
+        // err.message (execFileSync's "Command failed: tar ... <stderr>") embeds the full
+        // archivePath and tmpExtractDir, both under the user's home -- redact before it ever
+        // reaches a terminal or a pasted bug report.
+        throw new Error(`Failed to extract ${archiveName}: ${redactHome(err.message, effectiveHomeDir)}`);
+      } finally {
+        try {
+          if (fs.existsSync(archivePath)) fs.unlinkSync(archivePath);
+        } catch {}
       }
 
       if (platform !== 'win32') {
@@ -707,6 +802,14 @@ export async function downloadAndExtractBinary(options = {}) {
         }
       }
 
+      // Written only now, after tar succeeded and the binaries are chmod'd -- this file, not
+      // the binaries' own presence or size, is what every completeness check actually trusts.
+      try {
+        fs.writeFileSync(markerPath(tmpExtractDir), `${verifiedSha256}\n`);
+      } catch (err) {
+        throw new Error(`Failed to write install marker for ${archiveName}: ${redactHome(err.message, effectiveHomeDir)}`);
+      }
+
       if (!installIsComplete(tmpExtractDir, platform)) {
         throw new Error(
           `Extracted archive ${archiveName} is missing one or more of the expected binaries ` +
@@ -714,10 +817,11 @@ export async function downloadAndExtractBinary(options = {}) {
         );
       }
 
-      if (installIsComplete(cacheDir, platform)) {
-        // Another process already completed the install (shouldn't happen under the lock,
-        // but a leftover complete dir from an earlier run is not an error) -- discard ours.
-      } else {
+      // Only the lock holder reaches here, and it re-checked completeness above right after
+      // acquiring the lock -- so this final check is only about a leftover from a run that
+      // somehow finished outside the lock (shouldn't happen, but a complete leftover is not an
+      // error). Waiters never execute this branch at all.
+      if (!installIsComplete(cacheDir, platform)) {
         if (fs.existsSync(cacheDir)) {
           fs.rmSync(cacheDir, { recursive: true, force: true });
         }
@@ -729,19 +833,14 @@ export async function downloadAndExtractBinary(options = {}) {
           fs.rmSync(tmpExtractDir, { recursive: true, force: true });
         }
       } catch {}
-      try {
-        if (fs.existsSync(archivePath)) {
-          fs.unlinkSync(archivePath);
-        }
-      } catch {}
     }
 
-    if (!isExecutable(cachedBinary)) {
-      throw new Error(`Downloaded binary is not executable: ${cachedBinary}`);
+    if (!installIsComplete(cacheDir, platform) || !isExecutable(cachedBinary)) {
+      throw new Error(`Downloaded binary is not executable: ${tildeFor(cachedBinary, effectiveHomeDir)}`);
     }
 
     if (!options.silent) {
-      console.error(brandLine('*', 'installed', `${binName} in ${tilde(cacheDir)}`));
+      console.error(brandLine('*', 'installed', `${binName} in ${tildeFor(cacheDir, effectiveHomeDir)}`));
     }
 
     return cachedBinary;
@@ -946,11 +1045,14 @@ export function resolveBinary(options = {}) {
       };
     }
 
-    // 8. User local cache (~/.agentworth/bin/v{version}/) -- versioned by construction,
-    // nothing to check.
+    // 8. User local cache (~/.agentworth/bin/v{version}/) -- versioned by construction, but
+    // not immune to a truncated-yet-executable leftover (#173: same byte size, mode 755, just
+    // corrupt). installIsComplete also requires the completeness marker downloadAndExtractBinary
+    // only writes after a checksum-verified install, so a broken leftover from before this fix
+    // is correctly treated as not found here rather than served.
     const cacheDir = getCacheDir(expectedVersion, homeDir);
     const cachedBin = path.join(cacheDir, binName);
-    if (isExecutable(cachedBin)) {
+    if (isExecutable(cachedBin) && installIsComplete(cacheDir, platform)) {
       return {
         found: true,
         path: cachedBin,
