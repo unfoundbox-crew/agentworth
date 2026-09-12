@@ -32,6 +32,7 @@ What is left and in what order, with the lane spec for building it: `docs/ROADMA
 | `loose-ends.md` | built | #77 |
 | `market-autofix.md` | research doc, not a build item | — |
 | `mcp-server.md` | built | #56 |
+| `memory.md` | proposed 2026-09-08, measured; nothing built | #162 |
 | `questions.md` | proposed | — |
 | `spacepilot-loop.md` | direction, decided 2026-09-02; nothing built | — |
 | `suspect-commits.md` | built | #84 |
