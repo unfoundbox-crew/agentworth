@@ -9,7 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **AgentWorth is a Claude Code plugin.** The repo carries `.claude-plugin/plugin.json` and is its own marketplace (`.claude-plugin/marketplace.json`), so `/plugin marketplace add unfoundbox-crew/agentworth` then `/plugin install agentworth@agentworth` gives Claude Code the 13 read-only MCP tools (over `npx -y agentworth@<version> mcp`) and the `agentworth` skill in one step, with no `claude mcp add` and no `npx skills add`. The skill moved to `skills/agentworth/SKILL.md`, which is where the plugin loader looks; the root `SKILL.md` is a symlink to it so `npx skills add` keeps working. `claude plugin validate . --strict` passes. The release version gate now checks the plugin manifest's `version` and its pinned `npx` package version too.
+
+### Fixed
+
+- **The MCP server now introduces itself as `agentworth`** with its own version, not as `rmcp 3.2.0`. `Implementation::from_build_env()` reads the crate name at rmcp's build, not ours, so every client saw the SDK's name in `serverInfo`.
+
+---
+
+## [0.1.24] - 2026-09-12
+
+### Added
+
+- **Cursor and VS Code AI SQLite `state.vscdb` extraction.** Cursor, Trae, and other VS Code AI derivatives store their actual conversation turns and composer sessions inside SQLite databases (`state.vscdb`) under `workspaceStorage` and `globalStorage`. The Cursor adapter now automatically parses `composer.composerData`, `workbench.panel.aichat.chatdata`, and `aiService.prompts` from `ItemTable`, extracting turns, prompts, model identifiers, token usage, and file diffs with cross-platform path resolution for macOS (`Library/Application Support`), Linux (`.config`), and Windows (`AppData/Roaming`).
 
 ---
 
