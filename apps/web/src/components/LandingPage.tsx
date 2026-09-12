@@ -6,31 +6,38 @@ import { Terminal } from "./Terminal";
 
 /**
  * One machine's receipt, copied from `archie stats --json` and
- * `archie stats usage --period month --json` on the author's laptop on
- * 2026-09-04 (index of 3,981 sessions, 2026-02-15 to 2026-09-03). Nothing
- * here is illustrative. The dollar figure is the API list-price equivalent
- * of the tokens, the same basis `archie stats usage` reports; the account
- * behind most of it is a flat subscription. Verified means the session left
- * a test, build, commit or CI result somebody else can check (rung 3 and up).
+ * `archie stats usage --period all --json` on the author's laptop on
+ * 2026-09-12 (index of 4,800 sessions, 2026-02-15 to 2026-09-12). Nothing
+ * here is illustrative. The token breakdown (tokens/input/output/cache
+ * writes/cache reads) is the CLI's own raw total_tokens split, unchanged by
+ * the double-count fix in v0.1.23 -- that fix is why this total is lower
+ * than an earlier capture of this same receipt despite more sessions now
+ * being indexed. The dollar figure sums `estimated_cost_usd` across the
+ * four adapter rows from `archie stats usage --period all --by adapter
+ * --json`, which is built from `cost_weighted_tokens` (list price, cache
+ * reads weighed down to their real cost) -- the same basis `archie stats
+ * usage` reports; the account behind most of it is a flat subscription.
+ * Verified means the session left a test, build, commit or CI result
+ * somebody else can check (rung 3 and up).
  */
 const RECEIPT = {
   span: "Feb to Sep 2026",
-  sessions: "3,981",
+  sessions: "4,800",
   harnesses: "3 of 21",
-  tokens: "114.6 B",
-  input: "331 M",
-  output: "303 M",
-  cacheWrites: "2.5 B",
-  cacheReads: "111.4 B",
-  listPrice: "$48,463",
-  verified: "1,938 (48.7%)",
+  tokens: "67.7 B",
+  input: "419.5 M",
+  output: "203.0 M",
+  cacheWrites: "1.2 B",
+  cacheReads: "65.9 B",
+  listPrice: "$28,447",
+  verified: "2,265 (47.2%)",
   topModel: "claude-sonnet-5",
 };
 
 /**
  * Real output of `archie stats --no-json` and
  * `archie session list --limit 20 --no-json` on the author's laptop on
- * 2026-09-04, ANSI stripped. Numbers match RECEIPT above. Colour classes
+ * 2026-09-12, ANSI stripped. Numbers match RECEIPT above. Colour classes
  * carry the CLI's real semantics: t-accent is rungs 3-5 and VERIFIED
  * (the dashboard's own evidence ladder uses --mv-success for the same
  * state), t-dim is rungs 0-2 and asides, t-bold is headers and the
@@ -40,65 +47,65 @@ export const STATS_LINES: React.ReactNode[] = [
   <span className="term-line"><span className="t-bold">{"archie stats"}</span>{"                                       ~/.agentworth/agentworth.db"}</span>,
   <span className="term-line"><span className="t-dim">{"------------------------------------------------------------------------------"}</span></span>,
   <span className="term-line">{"\u00A0"}</span>,
-  <span className="term-line">{"  "}<span className="t-bold">{"3,981 sessions"}</span>{"           2026-02-15 -> 2026-09-03           "}<span className="t-bold">{"1,772,808 events"}</span></span>,
+  <span className="term-line">{"  "}<span className="t-bold">{"4,800 sessions"}</span>{"           2026-02-15 -> 2026-09-12           "}<span className="t-bold">{"1,827,261 events"}</span></span>,
   <span className="term-line">{"\u00A0"}</span>,
   <span className="term-line"><span className="t-bold">{"  EVIDENCE LADDER                                           SESSIONS     SHARE"}</span></span>,
   <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
-  <span className="term-line"><span className="t-accent">{"  5  CI or deployment verified ...........................       157      3.9%"}</span></span>,
-  <span className="term-line"><span className="t-accent">{"  4  commit observed .....................................     1,526     38.3%"}</span></span>,
-  <span className="term-line"><span className="t-accent">{"  3  test or build passed ................................       255      6.4%"}</span></span>,
+  <span className="term-line"><span className="t-accent">{"  5  CI or deployment verified ...........................       164      3.4%"}</span></span>,
+  <span className="term-line"><span className="t-accent">{"  4  commit observed .....................................     1,828     38.1%"}</span></span>,
+  <span className="term-line"><span className="t-accent">{"  3  test or build passed ................................       273      5.7%"}</span></span>,
   <span className="term-line"><span className="t-dim">{"  ---------------------------- the evidence line -----------------------------"}</span></span>,
-  <span className="term-line"><span className="t-dim">{"  2  artifact changed ....................................       278      7.0%"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  2  artifact changed ....................................       345      7.2%"}</span></span>,
   <span className="term-line"><span className="t-dim">{"  1  done claimed ........................................         4      0.1%"}</span></span>,
-  <span className="term-line"><span className="t-dim">{"  0  unflown .............................................     1,761     44.2%"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  0  unflown .............................................     2,186     45.5%"}</span></span>,
   <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
-  <span className="term-line"><span className="t-accent">{"     VERIFIED    rung 3 and up                                 1,938     48.7%"}</span></span>,
+  <span className="term-line"><span className="t-accent">{"     VERIFIED    rung 3 and up                                 2,265     47.2%"}</span></span>,
   <span className="term-line">{"\u00A0"}</span>,
-  <span className="term-line"><span className="t-bold">{"  TOKENS                                                          114.6B TOTAL"}</span></span>,
+  <span className="term-line"><span className="t-bold">{"  TOKENS                                                           67.7B TOTAL"}</span></span>,
   <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
-  <span className="term-line">{"  cache read  "}<span className="t-dim">{"#############################################."}</span>{"    111.4B   97.2%"}</span>,
-  <span className="term-line">{"  cache write "}<span className="t-dim">{"#............................................."}</span>{"      2.5B    2.2%"}</span>,
-  <span className="term-line">{"  input       "}<span className="t-dim">{".............................................."}</span>{"    331.0M    0.3%"}</span>,
-  <span className="term-line">{"  output      "}<span className="t-dim">{".............................................."}</span>{"    303.4M    0.3%"}</span>,
+  <span className="term-line">{"  cache read  "}<span className="t-dim">{"#############################################."}</span>{"    65.9B   97.4%"}</span>,
+  <span className="term-line">{"  cache write "}<span className="t-dim">{"#............................................."}</span>{"      1.2B    1.7%"}</span>,
+  <span className="term-line">{"  input       "}<span className="t-dim">{".............................................."}</span>{"    419.5M    0.6%"}</span>,
+  <span className="term-line">{"  output      "}<span className="t-dim">{".............................................."}</span>{"    203.0M    0.3%"}</span>,
   <span className="term-line">{"\u00A0"}</span>,
   <span className="term-line"><span className="t-bold">{"  ADAPTERS                   MODELS                     TOOLS"}</span></span>,
   <span className="term-line">{"  -------------------------  -------------------------  ----------------------"}</span>,
-  <span className="term-line">{"  claude_code    3,251  82%  sonnet-5            1,589  Bash           138,248"}</span>,
-  <span className="term-line">{"  codex            659  17%  opus-5                949  Edit            23,715"}</span>,
-  <span className="term-line">{"  opencode          71   2%  opus-4-8              338  Read            22,943"}</span>,
+  <span className="term-line">{"  claude_code    3,866  81%  sonnet-5            1,927  Bash           161,552"}</span>,
+  <span className="term-line">{"  codex            745  16%  opus-5              1,008  Edit            26,172"}</span>,
+  <span className="term-line">{"  opencode         177   4%  opus-4-8              339  Read            25,506"}</span>,
   <span className="term-line">{"\u00A0"}</span>,
   <span className="term-line"><span className="t-dim">{"  Next  "}</span><span className="t-bold">{"archie session list --limit 20"}</span>{"   the newest sessions, ladder first"}</span>,
 ];
 
 export const SESSIONS_LINES: React.ReactNode[] = [
-  <span className="term-line"><span className="t-bold">{"archie session list --limit 20"}</span>{"                        3,981 indexed - 20 shown"}</span>,
+  <span className="term-line"><span className="t-bold">{"archie session list --limit 20"}</span>{"                        4,800 indexed - 20 shown"}</span>,
   <span className="term-line"><span className="t-dim">{"------------------------------------------------------------------------------"}</span></span>,
   <span className="term-line">{"\u00A0"}</span>,
   <span className="term-line"><span className="t-bold">{"  EVIDENCE  SESSION         ADAPTER      MODEL        SCORE      DUR    TOKENS"}</span></span>,
   <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"###.."}</span>{"     agent-afe5fa..  claude_code  sonnet-5        78   9m 06s      4.4M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-aafd76..  claude_code  sonnet-5        89  39m 00s     80.7M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a1e9cb..  claude_code  sonnet-5        89  30m 44s     54.8M"}</span>,
-  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     agent-aa39b8..  claude_code  sonnet-5        33   2m 05s      2.3M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-abceb3..  claude_code  sonnet-5        89  33m 35s     71.3M"}</span>,
-  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     rollout-2026..  codex        5.6-terra       26      11s     27.1K"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-afdf29..  claude_code  sonnet-5        89  30m 12s     56.7M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-acd400..  claude_code  sonnet-5        89  32m 47s     69.4M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-ae5351..  claude_code  sonnet-5        89  28m 11s     62.1M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a73ec5..  claude_code  opus-5          90   1h 10m     57.4M"}</span>,
-  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     agent-a8dadf..  claude_code  opus-5          26  13m 45s     11.9M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a8ad37..  claude_code  opus-5          89  32m 09s     30.8M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a7ece9..  claude_code  opus-5          78   4m 30s      4.8M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a47545..  claude_code  opus-5          78   5m 20s      6.7M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a41eeb..  claude_code  sonnet-5        90  54m 38s    122.3M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"#####"}</span>{"     agent-a91551..  claude_code  sonnet-5        99  21m 56s     37.6M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a623e1..  claude_code  opus-5          76   3m 07s      2.6M"}</span>,
-  <span className="term-line">{"  "}<span className="t-dim">{"##..."}</span>{"     agent-a26c3c..  claude_code  sonnet-5        50   5m 52s      6.9M"}</span>,
-  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a1df66..  claude_code  sonnet-5        89  14m 52s     13.9M"}</span>,
-  <span className="term-line">{"  "}<span className="t-dim">{"##..."}</span>{"     agent-a1935b..  claude_code  opus-5          50  25m 19s     29.0M"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     f7009bbe-c2f..  claude_code  fable-5-1       30   1m 38s    194.8K"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a38379..  claude_code  sonnet-5        74   2m 10s      1.2M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a15d73..  claude_code  sonnet-5        82   2m 19s      1.2M"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a9b94f..  claude_code  sonnet-5        76      53s    395.8K"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     1b260767-085..  claude_code  fable-5-1       78   4m 01s    637.2K"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     ses_f6b7e8bc..  opencode     mimo-v2.5..     23       0s    105.8K"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a62803..  claude_code  sonnet-5        74   2m 09s    826.3K"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     rollout-2026..  codex        6-astra         26       9s     22.1K"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     agent-af0651..  claude_code  sonnet-5        23   2m 00s    670.5K"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a81ff7..  claude_code  sonnet-5        74   1m 11s    368.6K"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-afbc9e..  claude_code  sonnet-5        67   1m 59s      1.3M"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     fb73b39e-b68..  claude_code  fable-5-1       27   6m 47s     56.6K"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"##..."}</span>{"     agent-abeaf5..  claude_code  opus-5          54   7m 10s      2.4M"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     ses_f6b80fb8..  opencode     mimo-v2.5..     23       0s    106.1K"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     ses_f6b813ee..  opencode     mimo-v2.5..     23       0s    105.8K"}</span>,
+  <span className="term-line">{"  "}<span className="t-accent">{"####."}</span>{"     agent-a264c9..  claude_code  sonnet-5        89   4m 39s      4.0M"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     ses_f6b8fdef..  opencode     mimo-v2.5..     23       0s    105.5K"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     ses_f6b8fef4..  opencode     mimo-v2.5..     23       0s    105.5K"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     ses_f6b902f0..  opencode     mimo-v2.5..     26      15s    213.3K"}</span>,
+  <span className="term-line">{"  "}<span className="t-dim">{"....."}</span>{"     ses_f6b90479..  opencode     mimo-v2.5..     26      12s    213.9K"}</span>,
   <span className="term-line"><span className="t-dim">{"  ----------------------------------------------------------------------------"}</span></span>,
-  <span className="term-line"><span className="t-dim">{"  15 of these 20 left evidence; the rest are still claims."}</span></span>,
-  <span className="term-line"><span className="t-bold">{"  archie session show agent-a91551d9762035f6c"}</span></span>,
+  <span className="term-line"><span className="t-dim">{"  8 of these 20 left evidence; the rest are still claims."}</span></span>,
+  <span className="term-line"><span className="t-bold">{"  archie session show agent-a264c97ee564b423b"}</span></span>,
 ];
 
 const HARNESSES =
@@ -290,10 +297,10 @@ export const LandingPage: React.FC = () => {
             <Terminal
               command="archie stats"
               lines={STATS_LINES}
-              ariaLabel="A terminal running archie stats: 3,981 sessions, 114.6 B tokens, an evidence ladder from unflown to CI verified, and the adapters and models behind the totals."
+              ariaLabel="A terminal running archie stats: 4,800 sessions, 67.7 B tokens, an evidence ladder from unflown to CI verified, and the adapters and models behind the totals."
             />
             <figcaption>
-              The same laptop as the receipt above, on 2026-09-04. Three
+              The same laptop as the receipt above, on 2026-09-12. Three
               harnesses, seven months, one command.
             </figcaption>
           </figure>
