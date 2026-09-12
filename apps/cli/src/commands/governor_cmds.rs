@@ -524,7 +524,7 @@ mod tests {
         for (i, tokens) in [10u64, 20, 30, 728_000_000].into_iter().enumerate() {
             seed(
                 &storage,
-                &format!("/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/s{i}.jsonl"),
+                &format!("/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/s{i}.jsonl"),
                 &format!("sess_{i}"),
                 tokens,
             );
@@ -542,7 +542,7 @@ mod tests {
         for (i, tokens) in [10u64, 20, 30].into_iter().enumerate() {
             seed(
                 &storage,
-                &format!("/Users/saurabh/.claude/projects/-Users-saurabh-code-unfoundbox-agentworth/s{i}.jsonl"),
+                &format!("/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/s{i}.jsonl"),
                 &format!("sess_{i}"),
                 tokens,
             );

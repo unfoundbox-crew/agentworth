@@ -143,6 +143,8 @@ use the same snake_case values every other consumer expects.
 
 **Return shape:** an array of session summaries (`session_id`, `adapter`,
 `source_path`, `started_at`, `duration_seconds`, `total_tokens`,
+`cost_weighted_tokens`, `input_tokens`, `output_tokens`, `cache_read_tokens`,
+`cache_creation_tokens`,
 `total_events`, `tool_calls_count`, `models_used`, `primary_outcome`,
 `composite_score` — the `SessionSummary` fields, `crates/storage/src/lib.rs:70`)
 plus a `truncated: bool` flag (true when `repo` post-filtering or the hard
@@ -471,3 +473,12 @@ person.
   the subscriber. This wasn't called out above; it's the kind of thing that
   only surfaces once you actually try to run an MCP server on top of a CLI
   that already logs.
+
+## What the token fields mean
+
+`total_tokens` is the raw sum of the four counters, cache reads at face value,
+so on a long session it measures how big the context grew rather than what the
+session spent. Rank spend by `cost_weighted_tokens`
+(`input + output + 1.25 x cache_creation + 0.1 x cache_read`). Both, and the
+per-message-id counting that makes them correct in the first place, are
+specified in `docs/specs/token-accounting.md`.

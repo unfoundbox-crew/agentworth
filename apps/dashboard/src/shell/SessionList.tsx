@@ -57,6 +57,7 @@ type SortKey =
   | 'score_desc'
   | 'tokens_desc'
   | 'tokens_asc'
+  | 'weighted_desc'
   | 'duration_desc'
   | 'events_desc';
 
@@ -64,8 +65,9 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'started_desc', label: 'Newest first' },
   { key: 'started_asc', label: 'Oldest first' },
   { key: 'score_desc', label: 'Highest score' },
-  { key: 'tokens_desc', label: 'Most tokens' },
-  { key: 'tokens_asc', label: 'Least tokens' },
+  { key: 'tokens_desc', label: 'Most context tokens' },
+  { key: 'tokens_asc', label: 'Least context tokens' },
+  { key: 'weighted_desc', label: 'Most spend (weighted)' },
   { key: 'duration_desc', label: 'Longest duration' },
   { key: 'events_desc', label: 'Most events' },
 ];
@@ -124,6 +126,41 @@ function formatTokensCell(tokens: number): string {
 }
 
 /**
+ * The tokens column keeps showing `total_tokens` — context volume, the size the session's
+ * context grew to. That is not what the row spent: cache reads enter `total_tokens` at face
+ * value, and a session can top the raw list purely by re-reading a big cached prompt. This
+ * tooltip is where the weighted, spend-shaped figure (`cost_weighted_tokens`) surfaces instead
+ * of silently replacing the number everyone is used to scanning. Absent on a server older than
+ * the field, in which case the tooltip says only what the raw number is.
+ */
+function tokensTooltip(s: SessionSummary): string {
+  if (!s.total_tokens || s.total_tokens <= 0) return 'No tokens recorded';
+  const lines = [`${s.total_tokens.toLocaleString()} tokens — context volume (raw sum, cache reads at face value)`];
+  if (s.cost_weighted_tokens !== undefined) {
+    lines.push(
+      `${s.cost_weighted_tokens.toLocaleString()} weighted — closer to spend (input + output + 1.25× cache writes + 0.1× cache reads)`
+    );
+    if (s.cache_read_tokens) {
+      const cacheShare = Math.round((s.cache_read_tokens / s.total_tokens) * 100);
+      if (cacheShare > 0) lines.push(`${cacheShare}% of context volume is cache reads`);
+    }
+  } else {
+    lines.push('Weighted (spend-shaped) figure not reported by this server');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Flags a row whose weighted figure sits well under its raw one — the gap that made this
+ * change necessary in the first place. A dashed marker here means "most of this number is
+ * cheap cache reads, not new work"; hover for the actual weighted count.
+ */
+function isCacheInflated(s: SessionSummary): boolean {
+  if (s.cost_weighted_tokens === undefined || !s.total_tokens || s.total_tokens <= 0) return false;
+  return s.cost_weighted_tokens < s.total_tokens * 0.5;
+}
+
+/**
  * Sorts a copy of `items` by `key`. The three optional fields (score,
  * duration) always sink missing values to the end regardless of sort
  * direction — treating "no data" as zero would silently rank unscored
@@ -160,6 +197,10 @@ function sortSessions(items: SessionSummary[], key: SortKey): SessionSummary[] {
       return [...items].sort((a, b) => b.total_tokens - a.total_tokens);
     case 'tokens_asc':
       return [...items].sort((a, b) => a.total_tokens - b.total_tokens);
+    case 'weighted_desc':
+      // Absent on a server older than the field — sinks to the end like the
+      // other optional metrics rather than reading as zero spend.
+      return byNullableDesc((s) => s.cost_weighted_tokens);
     case 'events_desc':
       return [...items].sort((a, b) => b.total_events - a.total_events);
     default:
@@ -579,12 +620,24 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
                         {s.adapter}
                       </span>
                       <span className="shell-row-duration">{formatDurationCell(s.duration_seconds)}</span>
-                      <span className="shell-row-tokens">{formatTokensCell(s.total_tokens)}</span>
+                      <span
+                        className={`shell-row-tokens${isCacheInflated(s) ? ' shell-row-tokens--cache' : ''}`}
+                        title={tokensTooltip(s)}
+                      >
+                        {formatTokensCell(s.total_tokens)}
+                      </span>
                       <span className="shell-row-score">{formatScore(s.composite_score)}</span>
                     </div>
                     {density === 'comfortable' && (
-                      <div className="shell-row-preview" title={s.prompt_preview}>
-                        {s.prompt_preview || '—'}
+                      <div className="shell-row-preview-line">
+                        <span className="shell-row-preview" title={s.prompt_preview}>
+                          {s.prompt_preview || '—'}
+                        </span>
+                        {isCacheInflated(s) && (
+                          <span className="shell-row-weighted" title={tokensTooltip(s)}>
+                            {formatTokensCell(s.cost_weighted_tokens!)} weighted
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>

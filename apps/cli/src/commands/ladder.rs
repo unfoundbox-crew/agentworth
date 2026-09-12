@@ -174,6 +174,7 @@ fn render(ui: &crate::ui::Ui, result: &LadderResult, args: &LadderArgs) -> Strin
             rung: s.rung as usize,
             model: &s.model,
             tokens: s.total_tokens,
+            weighted_tokens: s.cost_weighted_tokens,
             cost_usd: s.cost_usd,
         })
         .collect();

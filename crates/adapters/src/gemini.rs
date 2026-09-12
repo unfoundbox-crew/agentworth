@@ -17,6 +17,7 @@ use walkdir::WalkDir;
 
 use crate::exit_status::backfill_shell_exit_codes;
 use crate::normalize_mcp_tool_name;
+use crate::usage_ledger::UsageLedger;
 
 /// Adapter for discovering and normalizing Google Gemini / Antigravity agent sessions.
 pub struct GeminiAdapter;
@@ -28,6 +29,13 @@ impl Default for GeminiAdapter {
 }
 
 impl GeminiAdapter {
+    /// 2: token usage is credited once per record `id` rather than once per record, and
+    /// `extract_token_usage` learned the field names Gemini CLI actually writes (`input` /
+    /// `output` / `cached` / `thoughts` / `tool` inside `tokens`). Before this, every Gemini
+    /// CLI session on this machine indexed as zero tokens despite 25M real ones; a reparse is
+    /// what makes them appear, correctly counted.
+    pub const PARSER_VERSION: i64 = 2;
+
     pub fn new() -> Self {
         Self
     }
@@ -103,6 +111,10 @@ pub fn detect_product_identity(path: &Path) -> &'static str {
 impl AgentAdapter for GeminiAdapter {
     fn name(&self) -> &'static str {
         "gemini"
+    }
+
+    fn parser_version(&self) -> i64 {
+        Self::PARSER_VERSION
     }
 
     /// `parse()` tags each session with `detect_product_identity(path)`, which returns
@@ -268,6 +280,7 @@ impl AgentAdapter for GeminiAdapter {
         let mut warnings = Vec::new();
         let mut sequence = 0u64;
         let mut last_model: Option<String> = None;
+        let mut usage_ledger = UsageLedger::default();
 
         let mut earliest_ts: Option<DateTime<Utc>> = None;
         let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -305,7 +318,7 @@ impl AgentAdapter for GeminiAdapter {
                 latest_ts = Some(timestamp);
             }
 
-            let events = parse_gemini_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+            let events = parse_gemini_record(&val, &mut sequence, timestamp, line_num, &mut last_model, &mut usage_ledger);
             trace.events.extend(events);
         }
 
@@ -421,6 +434,12 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
         .get("promptTokenCount")
         .or_else(|| usage_val.get("input_tokens"))
         .or_else(|| usage_val.get("prompt_tokens"))
+        // Gemini CLI's own `tokens` block, measured 2026-09-10 on
+        // `~/.gemini/tmp/*/chats/session-*.jsonl`:
+        // `{"input":14549,"output":70,"cached":0,"thoughts":240,"tool":0,"total":14859}`.
+        // None of the camelCase or OpenAI-shaped names above match it, so before this every
+        // Gemini CLI session on this machine indexed as zero tokens despite 25M real ones.
+        .or_else(|| usage_val.get("input"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
@@ -428,13 +447,24 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
         .get("candidatesTokenCount")
         .or_else(|| usage_val.get("output_tokens"))
         .or_else(|| usage_val.get("completion_tokens"))
+        .or_else(|| usage_val.get("output"))
         .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+        .unwrap_or(0)
+        // `thoughts` and `tool` are billed as output and are counted in Gemini's own `total`,
+        // so folding them into output_tokens keeps `TokenUsage::total()` equal to it.
+        .saturating_add(
+            usage_val
+                .get("thoughts")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+        )
+        .saturating_add(usage_val.get("tool").and_then(|v| v.as_u64()).unwrap_or(0));
 
     let cache_read_tokens = usage_val
         .get("cachedContentTokenCount")
         .or_else(|| usage_val.get("cached_tokens"))
         .or_else(|| usage_val.get("cache_read_tokens"))
+        .or_else(|| usage_val.get("cached"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
@@ -457,6 +487,7 @@ fn parse_gemini_record(
     ts: DateTime<Utc>,
     line_num: usize,
     last_model: &mut Option<String>,
+    usage_ledger: &mut UsageLedger,
 ) -> Vec<NormalizedEvent> {
     let mut events = Vec::new();
     let raw_ref = format!("line:{}", line_num);
@@ -467,7 +498,14 @@ fn parse_gemini_record(
         .or_else(|| val.get("usage"))
         .or_else(|| val.get("tokens"))
     {
-        let usage = extract_token_usage(usage_val);
+        // Gemini CLI repeats a message's whole `tokens` block on every streamed revision of
+        // that message, keyed by the record's `id` -- measured 1.90x inflation across this
+        // machine's chat logs. See `crate::usage_ledger::UsageLedger`.
+        let message_id = val
+            .get("id")
+            .and_then(|v| v.as_str())
+            .or_else(|| val.get("message").and_then(|m| m.get("id")).and_then(|v| v.as_str()));
+        let usage = usage_ledger.credit_delta(message_id, extract_token_usage(usage_val));
         if usage.total() > 0 {
             let model = val
                 .get("model")

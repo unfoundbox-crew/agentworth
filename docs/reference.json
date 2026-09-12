@@ -1,6 +1,6 @@
 {
-  "version": "0.1.22",
-  "generatedDate": "2026-09-07",
+  "version": "0.1.24",
+  "generatedDate": "2026-09-12",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -918,7 +918,7 @@
           "name": "--kind, -k",
           "positional": false,
           "required": false,
-          "help": "Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)",
+          "help": "Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage, user_turn)",
           "default": null,
           "possibleValues": []
         },
@@ -1009,6 +1009,14 @@
           "positional": false,
           "required": false,
           "help": "Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--dry-run",
+          "positional": false,
+          "required": false,
+          "help": "Print the exact redacted payload a submission would POST, and send nothing. Read this before you ever pass --submit",
           "default": "false",
           "possibleValues": []
         },

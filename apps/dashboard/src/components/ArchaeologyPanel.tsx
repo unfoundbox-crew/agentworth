@@ -52,7 +52,12 @@ export const ArchaeologyPanel: React.FC<ArchaeologyPanelProps> = ({ data }) => {
 
               <div className="space-y-0">
                 <div className="kv-row">
-                  <span className="k">Tokens burnt</span>
+                  <span
+                    className="k"
+                    title="Context volume — the raw sum of input, output and cache tokens, cache reads counted at face value. Not a spend figure; this highlight's underlying data does not yet carry the weighted (spend-shaped) number."
+                  >
+                    Context tokens
+                  </span>
                   <span className="v">{formatTokens(most_expensive_unsolved.total_tokens)}</span>
                 </div>
                 <div className="kv-row">
@@ -149,7 +154,11 @@ export const ArchaeologyPanel: React.FC<ArchaeologyPanelProps> = ({ data }) => {
 
             <div className="mt-4 pt-3 border-t border-border-soft text-xs text-muted leading-relaxed">
               <div className="flex justify-between font-semibold text-ink mb-1">
-                <span>Estimated cost</span>
+                <span
+                  title="An upper bound: blended per-model rate over total_tokens (context volume), which counts cache reads at full price. This highlight's underlying data does not yet carry the weighted (spend-shaped) figure, so the real number is lower — often far lower on a cache-heavy session."
+                >
+                  Estimated cost (upper bound)
+                </span>
                 <span className="font-mono">
                   {formatUSD(
                     estimateTokenCostUSD(

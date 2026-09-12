@@ -297,6 +297,18 @@ impl VectorStore for SqliteVectorStore {
         Ok(ids)
     }
 
+    fn session_ids_with_kind(&self, kind: ChunkKind) -> Result<HashSet<String>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt =
+            conn.prepare("SELECT DISTINCT session_id FROM trajectory_chunks WHERE kind = ?")?;
+        let mut rows = stmt.query([kind.as_str()])?;
+        let mut ids = HashSet::new();
+        while let Some(row) = rows.next()? {
+            ids.insert(row.get::<_, String>(0)?);
+        }
+        Ok(ids)
+    }
+
     fn stats(&self) -> Result<VectorStats> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 

@@ -48,7 +48,18 @@ export interface RunningSession {
 /** The strip's own summary of "today", derived from `UsageResponse.daily`. */
 export interface TodaySpend {
   total_cost_usd: number;
+  /** Raw sum of the four counters, cache reads at face value — context volume, not spend. */
   total_tokens: number;
+  /**
+   * Summed from `UsagePeriodSummary.cost_weighted_tokens`, which the SERVER computes. This
+   * deliberately does not re-derive `input + output + 1.25 x cache_creation + 0.1 x cache_read`
+   * on the client: a second copy of those multipliers in TypeScript is exactly how the Rust/TS
+   * drift in this codebase starts, and the weights are Anthropic's to change, not ours. See
+   * `docs/specs/token-accounting.md`.
+   *
+   * Older servers do not send the field. Those rows contribute 0 rather than a guess.
+   */
+  total_weighted_tokens: number;
 }
 
 export interface FleetState {
@@ -84,8 +95,9 @@ function summarizeLatestDay(usage: UsageResponse): TodaySpend | null {
     (acc, row) => ({
       total_cost_usd: acc.total_cost_usd + row.estimated_cost_usd,
       total_tokens: acc.total_tokens + row.total_tokens,
+      total_weighted_tokens: acc.total_weighted_tokens + (row.cost_weighted_tokens ?? 0),
     }),
-    { total_cost_usd: 0, total_tokens: 0 }
+    { total_cost_usd: 0, total_tokens: 0, total_weighted_tokens: 0 }
   );
 }
 

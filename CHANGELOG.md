@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AgentWorth is a Claude Code plugin.** The repo carries `.claude-plugin/plugin.json` and is its own marketplace (`.claude-plugin/marketplace.json`), so `/plugin marketplace add unfoundbox-crew/agentworth` then `/plugin install agentworth@agentworth` gives Claude Code the 13 read-only MCP tools (over `npx -y agentworth@<version> mcp`) and the `agentworth` skill in one step, with no `claude mcp add` and no `npx skills add`. The skill moved to `skills/agentworth/SKILL.md`, which is where the plugin loader looks; the root `SKILL.md` is a symlink to it so `npx skills add` keeps working. `claude plugin validate . --strict` passes. The release version gate now checks the plugin manifest's `version` and its pinned `npx` package version too.
+
+### Fixed
+
+- **The MCP server now introduces itself as `agentworth`** with its own version, not as `rmcp 3.2.0`. `Implementation::from_build_env()` reads the crate name at rmcp's build, not ours, so every client saw the SDK's name in `serverInfo`.
+
+---
+
+## [0.1.24] - 2026-09-12
+
+### Added
+
+- **Cursor and VS Code AI SQLite `state.vscdb` extraction.** Cursor, Trae, and other VS Code AI derivatives store their actual conversation turns and composer sessions inside SQLite databases (`state.vscdb`) under `workspaceStorage` and `globalStorage`. The Cursor adapter now automatically parses `composer.composerData`, `workbench.panel.aichat.chatdata`, and `aiService.prompts` from `ItemTable`, extracting turns, prompts, model identifiers, token usage, and file diffs with cross-platform path resolution for macOS (`Library/Application Support`), Linux (`.config`), and Windows (`AppData/Roaming`).
+
+---
+
+## [0.1.23] - 2026-09-10
+
+### Added
+
+- **`cost_weighted_tokens` beside `total_tokens`.** `total_tokens` adds `cache_read_tokens` at face value, so on a long session it measures how large the context grew rather than what the session spent -- 98.7% of the transcript below was cache reads of a prompt already paid for. `total_tokens` keeps that meaning for compatibility; the four counters are now exposed separately everywhere, alongside `input + output + 1.25 x cache_creation + 0.1 x cache_read` (Anthropic's published prompt-caching multipliers, verified 2026-09-10 -- not dollars, and not exact for a 1-hour cache write; a comparable weight for ranking sessions). Surfaced in `session_list`, `session_show`, `/api/traces`, `stats_usage` (new CACHE WR and WEIGHTED columns, width-gated so the 80-column table is byte-for-byte unchanged) and `stats_ladder`.
+- **`docs/specs/token-accounting.md`** -- the measurement table, the ledger's contract, why Codex is excluded, and what `cost_weighted_tokens` deliberately is not.
+- **`Redactor::for_publication()`** -- the default rules plus path-tail and forge-repo stripping, for the one path where text leaves the machine. Additive and opt-in: `Redactor::new()` is unchanged, because `repo_blame` and `session_show` exist to tell you which repo a session touched. It raises the floor rather than making a payload provably clean -- a project name inside a relative path still survives, and the test suite asserts that limit rather than claiming otherwise.
+- **The dashboard shows weighted tokens beside raw ones**, flags cache-inflated sessions, and can sort by weighted spend. `UsagePeriodSummary` and `ModelUsagePeriodSummary` gained `cost_weighted_tokens` server-side so no client re-derives the multipliers.
+
 - **`archie policy init [--repo] [--force]`.** Writes a starter `policy.toml` with the thrash and loop rules on, and a `[spend]` block left commented out, carrying this machine's own primary-session token percentiles (p50/p90/p99/max) as comments — read from the index with the new `Storage::session_token_percentiles`.
 - **`archie policy check` warns on a spend cap below your own p99.** Names the cap, the machine's (or repo's) p99, and how many already-indexed sessions would have tripped it. Still exits 0 — a warning, not an error.
 
@@ -19,9 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`PARSER_VERSION` bumps: Claude Code 2 to 3, Gemini 1 to 2, OpenCode 1 to 2.** An incremental scan reparses these sessions even though their bytes never changed. **An existing index keeps its inflated token totals until `archie scan` runs.**
+
 - **The `[spend]` example in `crates/loop/src/policy.rs`'s doc comment dropped its token number** — `[spend]` now ships commented out, pointing at `archie policy init`. A 20M-token example would have halted this machine's own 728M-token primary sessions dozens of times; the rule stands, the number is now yours to set from your own history.
 
 ### Fixed
+
+- **A streamed message's tokens are counted once, not once per record.** Claude Code writes one assistant message as several JSONL records -- one per content block, `apiBlockIndex` 0..n -- and every one repeats the same `message.usage` block verbatim. The parser summed usage per record. On a real 1.08 MB subagent transcript that read 33,777,792 tokens where the true figure is 19,294,496; across a 120-file sample of `~/.claude/projects` the machine-wide ratio was 2.194x. Gemini CLI has the same shape keyed on `id` (1.90x, measured). One shared ledger (`crates/adapters/src/usage_ledger.rs`) credits each message id at most once, last usage block wins -- only the usage is suppressed, never the record's own content, so a tool call on block 1 is still parsed. Codex is deliberately untouched: its `token_count` events are cumulative running totals and `codex.rs` already takes deltas of them. OpenCode's SQLite path gets one row per message from its primary key; its legacy file path now carries the same guard.
+- **Gemini CLI sessions no longer index as zero tokens.** `extract_token_usage` knew `promptTokenCount`-style and OpenAI-style names but not the ones Gemini actually writes -- `input` / `output` / `cached` / `thoughts` / `tool` inside a `tokens` block -- so every Gemini CLI session read as zero despite real usage. `thoughts` and `tool` fold into output, matching Gemini's own `total`.
+- **`archie session list --json` carries the token breakdown.** It builds its own JSON and never touched `SessionSummary`, so the four counters and `cost_weighted_tokens` never reached it.
+- **The maintainer's system username and a third party's project name are out of the public tree.** This repo carried one person's real machine layout in 101 places, and -- worse -- a third party's project name in shipped code and user-facing copy: `is_leaked_katana_var` was a function name and "The Missing `local` Weapon (The Katana Incident)" printed to anyone who tripped that rule. Now `is_leaked_loop_var` and "The Missing `local` Weapon", which describes what the detector actually finds. Product doc comments that addressed the maintainer by name now name the role instead. Fixture paths come from the new `agentworth_schema::fixtures` rather than literals, so the convenient option is also the safe one.
+- **`archie blunder` shows you the bytes before it posts them.** The exhibit printed to your terminal is the local view, with full absolute paths; what a submission POSTs is a redacted payload you never saw. One `redacted_payload()` now feeds both, so they cannot drift, and `--dry-run` prints exactly what would be sent and sends nothing. Submission also switched to the new `Redactor::for_publication()` -- `blunder --submit` redacts loose strings, so unlike `redact_trace` it never picked up the per-trace `repository_identity_rule`, and a captured payload still carried three repositories' names after full default redaction.
 
 - **The Herdr adapter reads the file Herdr actually writes.** It used to look for `coordination_traces`, `parent_agent_id` and `delegation_id`, fields no Herdr file has ever carried, so the real `~/.config/herdr/session.json` parsed to nothing while five fixture tests stayed green. It now decodes the v3 shape (`workspaces[].tabs[].panes{}`) as a `fleet_snapshot`: one `herdr.pane` event per pane with `pane_key` (Herdr's internal number), `pane_number` (what the user sees, from `public_pane_numbers`), cwd, label, agent name and `agent_session.value`, the harness session id that is the only key. The live pane id (`w9:pA`) is a runtime allocation, not in the file, and is never stored. Every label and agent name goes to `identity_sightings` with the time seen. Scalars decode leniently (a `"version": "3"` string, a non-numeric `active`), `active_tab` and `active` gate `focused` so one pane per file is focused, one bad workspace, tab, pane or `agent_session` costs only itself, unknown fields are ignored and a newer `version` is a warning. `PARSER_VERSION` 2. Capabilities report none of the seven. Fixture: a redacted real herdr 0.8.2 file.
 - **`install.sh` runs the binary once and explains a Gatekeeper kill.** The macOS binaries are ad-hoc signed and not notarized. A fresh `curl | sh` install runs (measured on macOS 27: valid signature, no quarantine flag); a copy that carries the flag is killed on exec with nothing but `zsh: killed`, exit 137 (measured by adding the flag; removing it clears it). The script now removes any existing file before copying (a `cp` through the npm wrapper's `agentworth` symlink would have overwritten the wrapper's JavaScript), drops the flag from what it wrote with `xattr -dh` (act on the file, not a symlink target), runs `archie --version`, and on exit 137 exactly prints the `xattr -d` line for the installed files. Other failures are reported as what they are. README carries the note.

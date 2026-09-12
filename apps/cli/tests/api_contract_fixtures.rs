@@ -106,6 +106,12 @@ fn sample_session_summary() -> SessionSummary {
         started_at: ts("2026-09-01T10:00:00Z"),
         duration_seconds: Some(482.5),
         total_tokens: 24_600,
+        // 12_000 + 3_400 + 1.25 * 1_200 + 0.1 * 8_000
+        cost_weighted_tokens: 17_700,
+        input_tokens: 12_000,
+        output_tokens: 3_400,
+        cache_read_tokens: 8_000,
+        cache_creation_tokens: 1_200,
         total_events: 42,
         tool_calls_count: 9,
         models_used: vec!["claude-sonnet-5".to_string()],
@@ -253,6 +259,8 @@ fn api_contract_usage() {
             cache_read_tokens: 90_000,
             cache_creation_tokens: 5_000,
             total_tokens: 147_000,
+            // 40_000 + 12_000 + 1.25 * 5_000 + 0.1 * 90_000
+            cost_weighted_tokens: 67_250,
             total_duration_seconds: 5_400.0,
             estimated_cost_usd: 2.15,
             cache_hit_ratio: 0.62,
@@ -267,6 +275,9 @@ fn api_contract_usage() {
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
             total_tokens: 10_000,
+            // No cache on this row, so the weighted figure equals the raw one -- which is the
+            // point of having it: the gap only opens where cache reads do.
+            cost_weighted_tokens: 10_000,
             total_duration_seconds: 900.0,
             estimated_cost_usd: 0.30,
             cache_hit_ratio: 0.0,

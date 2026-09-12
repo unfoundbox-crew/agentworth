@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agentworth",
+  "description": "AgentWorth: local-first forensics for AI-agent histories.",
+  "owner": { "name": "unfoundbox", "url": "https://agentworth.dev" },
+  "plugins": [
+    {
+      "name": "agentworth",
+      "source": "./",
+      "description": "Your agents left receipts. Token spend, verified outcomes, blunders, handoffs and AI code blame across 20+ agent histories on your machine. Native binary, zero telemetry.",
+      "category": "productivity",
+      "homepage": "https://agentworth.dev"
+    }
+  ]
+}

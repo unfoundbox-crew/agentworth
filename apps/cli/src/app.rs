@@ -765,7 +765,7 @@ struct SearchArgs {
     #[arg(long, default_value_t = 0.0)]
     min_score: f32,
 
-    /// Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage)
+    /// Filter by chunk kind (summary, error_recovery, tool_invocation, apology_panic, code_lineage, user_turn)
     #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(crate::completions::chunk_kind_candidates))]
     kind: Option<String>,
 
@@ -812,6 +812,11 @@ struct BlunderArgs {
     /// Submit redacted blunder receipts to the public Hall of Blunders at stfuopus.lol
     #[arg(short, long)]
     submit: bool,
+
+    /// Print the exact redacted payload a submission would POST, and send nothing.
+    /// Read this before you ever pass --submit.
+    #[arg(long)]
+    dry_run: bool,
 
     /// Output blunder exhibits as formatted JSON
     #[arg(long)]
@@ -1778,7 +1783,7 @@ pub fn run() -> Result<()> {
             crate::run_audit_command(a.safety, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Session(SessionCommand::Blunder(a)) => {
-            crate::run_blunder_command(a.top, a.submit, resolve_json(a.json), cli.db_path, &ui)?;
+            crate::run_blunder_command(a.top, a.submit, a.dry_run, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Session(SessionCommand::Handoff(a)) => {
             handoff_command::run_handoff_command(
@@ -2346,6 +2351,7 @@ fn run_stats_command(json: bool, db_path: Option<PathBuf>, ui: &crate::ui::Ui) -
                 "cache_read_tokens": stats.token_usage.cache_read_tokens,
                 "cache_creation_tokens": stats.token_usage.cache_creation_tokens,
                 "total_tokens": stats.token_usage.total(),
+                "cost_weighted_tokens": stats.token_usage.cost_weighted_total(),
             },
             "verdict_breakdown": {
                 "ci_or_deployment_verified": verdict.ci_or_deployment_verified,
@@ -2570,7 +2576,15 @@ fn run_traces_command(
                     "source_path": s.source_path,
                     "started_at": s.started_at,
                     "duration_seconds": s.duration_seconds,
+                    // The raw sum, cache reads at face value -- context volume, not spend.
+                    // `cost_weighted_tokens` is the one to rank by; see
+                    // `docs/specs/token-accounting.md`.
                     "total_tokens": s.total_tokens,
+                    "cost_weighted_tokens": s.cost_weighted_tokens,
+                    "input_tokens": s.input_tokens,
+                    "output_tokens": s.output_tokens,
+                    "cache_read_tokens": s.cache_read_tokens,
+                    "cache_creation_tokens": s.cache_creation_tokens,
                     "total_events": s.total_events,
                     "tool_calls_count": s.tool_calls_count,
                     "models_used": s.models_used,
@@ -2898,7 +2912,9 @@ pub(crate) fn inspect_view(
         input_tokens: tokens.input_tokens,
         output_tokens: tokens.output_tokens,
         cache_read_tokens: tokens.cache_read_tokens,
+        cache_creation_tokens: tokens.cache_creation_tokens,
         total_tokens: tokens.total(),
+        cost_weighted_tokens: tokens.cost_weighted_total(),
         models_used: trace.stats.models_used.clone(),
         tools_used: trace.stats.tools_used.iter().map(|(k, v)| (k.clone(), *v)).collect(),
         source_path: &trace.provenance.source_path,
@@ -3390,6 +3406,8 @@ fn run_usage_command(args: UsageCommandArgs) -> Result<()> {
             input: r.input_tokens,
             output: r.output_tokens,
             cache_read: r.cache_read_tokens,
+            cache_creation: r.cache_creation_tokens,
+            cost_weighted: r.cost_weighted_tokens,
             cost_usd: r.estimated_cost_usd,
             measured: r.total_tokens > 0,
         })
