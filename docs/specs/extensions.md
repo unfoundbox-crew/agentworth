@@ -32,7 +32,7 @@ in.
 | L4 | An editor extension | every file save, in the status bar | the local HTTP API | ships: `archie serve` and ten routes |
 | L5 | Declarative adapters | every harness nobody has written Rust for | the adapter trait accepting a data-driven implementation | the trait ships; a manifest loader does not |
 | L6 | Detector plugins | every session, as labels rather than as a surface | a detector interface and a sandbox | four detectors ship, none of them pluggable |
-| L7 | Discovery | everyone who has not heard of it | a topic, a registry entry, and later `archie plugin add` | the Claude Code plugin ships (`.claude-plugin/`, the repo is its own marketplace); the community-marketplace listing is submitted by hand; the topic does not exist |
+| L7 | Discovery | everyone who has not heard of it | a topic, a registry entry, and later `archie plugin add` | the Claude Code plugin ships (`.claude-plugin/`, the repo is its own marketplace) and so does the dsh bundle (`packages/dsh-plugin-agentworth`, npm `dsh-plugin-agentworth`); the community-marketplace listing and the `dsh-plugin` GitHub topic are set by hand |
 
 ## Each one, and what it can honestly do
 
