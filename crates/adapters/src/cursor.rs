@@ -27,6 +27,16 @@ impl Default for CursorAdapter {
 }
 
 impl CursorAdapter {
+    /// 2: version 1 read only Cursor's line-delimited/array JSON session files. Version 2
+    /// adds `state.vscdb` SQLite extraction (Cursor, Trae, and other VS Code AI forks store
+    /// composer/chat state in a `key`/`value` `ItemTable` inside SQLite, not JSON on disk),
+    /// plus new timestamp fields (`created_at`, `unixMs`, `lastSendTime`, `lastUpdatedAt`),
+    /// new diff fields (`suggestedDiffs`, `relativeWorkspacePath`, `code`), and a
+    /// model-invocation trigger that now also fires on a bare model name with zero token
+    /// usage. Files that already parsed under version 1 can yield different events and
+    /// token counts under version 2, so an incremental scan must reprocess them.
+    pub const PARSER_VERSION: i64 = 2;
+
     pub fn new() -> Self {
         Self
     }
@@ -273,6 +283,10 @@ fn should_skip_cursor_dir(entry: &walkdir::DirEntry) -> bool {
 impl AgentAdapter for CursorAdapter {
     fn name(&self) -> &'static str {
         "cursor"
+    }
+
+    fn parser_version(&self) -> i64 {
+        Self::PARSER_VERSION
     }
 
     fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
