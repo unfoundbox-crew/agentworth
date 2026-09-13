@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+---
+
+## [0.1.26] - 2026-09-13
+
 ### Added
 
 - **Antigravity CLI (`agy`) conversation store is indexed.** Newer Antigravity builds keep sessions in SQLite (`~/.gemini/antigravity-cli/conversations/<uuid>.db`, one DB per conversation) instead of the legacy `brain/` JSONL transcripts, and the `gemini` adapter explicitly skipped those files -- so every `agy` session was discovered-but-never-indexed. The adapter now enumerates each conversation database under the `antigravity` identity, joins the `conversation_summaries.db` index (workspace, liveness, wall-clock end) and the rolling `history.jsonl` (prompt text with real timestamps), and walks the protobuf `steps` blobs generically to emit prompt, response, and tool-call events (tool names with their JSON args preserved). The agent persona step is configuration, not history, and is skipped; unmapped step types are warnings, never guesses. Token counters exist nowhere in this store, so agy rows honestly index with zero tokens. Measured on one machine: 461 conversations, 38,322 events, 26,350 tool calls, 391 of them active in the default list.
