@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+---
+
+## [0.1.27] - 2026-09-13
+
 ### Added
 
 - **Pi adapter reads the documented v3 session format.** The parser matched a session shape pi never wrote (`task_input`/`step`/`observation` with `prompt_tokens`), so every real session file parsed to zero events and zero tokens and the index held no pi rows at all. It now reads `~/.pi/agent/sessions/--<path>--/*.jsonl` as specified: the `session` header (authoritative id, start, cwd) selects the identity, `message` entries become prompt / response (with thinking blocks) / tool-call (name plus arguments) / tool-result / shell-command (with exit codes) events, `model_change` entries drive model switches so attribution follows the session instead of the settings default, `thinking_level_change` sets effort, and `compaction` entries become compaction events. The sessions slug decodes back to the working directory for repo-anchored identities (`::pi-repo::`, mirroring opencode), falling back to the bare path for container-level checkouts. Measured on one machine: 33 pi sessions in the default list where there were zero, the largest carrying 1,978 events and 91.7M tokens with full cache breakdown.
