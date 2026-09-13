@@ -58,20 +58,24 @@ pub struct AggregateStats {
 /// can legitimately carry zero recorded tokens (an adapter that doesn't capture usage, or a
 /// model invocation whose response never reported one) without being any less real: it still
 /// needs to be findable by `agentworth audit`/`autopsy`/`blind-spots`, which query with
-/// `include_stubs: true` specifically to see this population. Only `total_tokens` (not
-/// `total_events`) is allowed to make that call.
+/// `include_stubs: true` specifically to see this population. `total_tokens` is not the only
+/// voice allowed to make that call: parsed tool calls are corroborated activity of the same
+/// order (a `ToolCall` event exists because the transcript recorded an invocation), so a
+/// tokenless session with tool calls counts as active too. Sessions with neither stay stubs.
 ///
 /// Conversations only. A `fleet_snapshot` row (`TraceKind::FleetSnapshot`: Herdr's workspace
 /// file) has no tokens by construction and is not a session at all, so it is neither a stub
 /// nor a non-stub; it is outside this population entirely and shows up only when a caller
 /// asks for that kind (`SessionFilter::kind`).
 const NON_STUB_SQL_PREDICATE: &str =
-    "kind = 'conversation' AND total_events > 1 AND total_tokens > 0";
+    "kind = 'conversation' AND total_events > 1 AND (total_tokens > 0 OR tool_calls_count > 0)";
 
 /// Just the activity half of `NON_STUB_SQL_PREDICATE`, without the `kind` term. Used where
-/// the kind is already constrained separately and only the events/tokens bar is conditional
-/// (the `include_stubs` path of `list_sessions_filtered`). Keep the two literals in lockstep.
-const NON_STUB_ACTIVITY_PREDICATE: &str = "total_events > 1 AND total_tokens > 0";
+/// the kind is already constrained separately and only the events/tokens/tools bar is
+/// conditional (the `include_stubs` path of `list_sessions_filtered`). Keep the two literals
+/// in lockstep.
+const NON_STUB_ACTIVITY_PREDICATE: &str =
+    "total_events > 1 AND (total_tokens > 0 OR tool_calls_count > 0)";
 
 /// Why an unchanged source has to be reparsed anyway. See `Storage::needs_backfill`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7476,10 +7480,23 @@ mod tests {
         real.stats.token_usage = TokenUsage::new(500, 100, 0, 0);
         storage.upsert_trace(&real).expect("upsert real");
 
+        // 4. Tokenless but tool-bearing: parsed tool calls are corroborated
+        // activity, so this is active, not a stub (the agy store carries no
+        // usage counters at all).
+        let prov4 = Provenance::new("/path/tools.jsonl", "antigravity", 100, 100, "fp_tools");
+        let mut tools = AgentWorthTrace::new("real_2", "antigravity", prov4, Utc::now());
+        tools.stats.total_events = 8;
+        tools.stats.token_usage = TokenUsage::new(0, 0, 0, 0);
+        tools.stats.tool_calls_count = 3;
+        storage.upsert_trace(&tools).expect("upsert tools");
+
         // Default: stubs filtered out
         let default_list = storage.list_sessions(50).expect("list default");
-        assert_eq!(default_list.len(), 1);
-        assert_eq!(default_list[0].session_id, "real_1");
+        assert_eq!(default_list.len(), 2);
+        let ids: std::collections::BTreeSet<_> =
+            default_list.iter().map(|s| s.session_id.clone()).collect();
+        assert!(ids.contains("real_1"));
+        assert!(ids.contains("real_2"));
 
         // Explicit include_stubs: true
         let all_list = storage
@@ -7488,7 +7505,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("list all");
-        assert_eq!(all_list.len(), 3);
+        assert_eq!(all_list.len(), 4);
     }
 
     /// A fleet snapshot (Herdr's `session.json`) has no tokens and may have one event. It is
