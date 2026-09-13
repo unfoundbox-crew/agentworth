@@ -265,12 +265,21 @@ fn test_scanner_with_all_11_adapters_end_to_end() {
     writeln!(f, r#"{{"role":"user","content":"Hi Goose"}}"#).unwrap();
     writeln!(f, r#"{{"role":"assistant","model":"claude-3-5-sonnet","usage":{{"input_tokens":100,"output_tokens":50}},"content":"Hi"}}"#).unwrap();
 
-    // 6. Pi
-    let pi_dir = temp.path().join(".pi").join("tasks");
+    // 6. Pi (v3 session file: header plus user/assistant messages with usage.
+    // Exactly 100 in + 50 out, like every other transcript here, so the
+    // 1500-token aggregate below stays put.)
+    let pi_dir = temp
+        .path()
+        .join(".pi")
+        .join("agent")
+        .join("sessions")
+        .join("--tmp-repo--");
     fs::create_dir_all(&pi_dir).unwrap();
-    let f_pi = pi_dir.join("pi.jsonl");
+    let f_pi = pi_dir.join("2026-09-13T04-53-00-066Z_0199abcd-1234-5678-abcd-000000000001.jsonl");
     let mut f = File::create(&f_pi).unwrap();
-    writeln!(f, r#"{{"type":"task_input","content":"Hi Pi"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"session","version":3,"id":"0199abcd-1234-5678-abcd-000000000001","timestamp":"2026-09-13T04:53:00.066Z","cwd":"/tmp/repo"}}"#).unwrap();
+    writeln!(f, r#"{{"type":"message","id":"a1b2c3d4","parentId":null,"timestamp":"2026-09-13T04:53:01.000Z","message":{{"role":"user","content":"Hi Pi","timestamp":1789000001000}}}}"#).unwrap();
+    writeln!(f, r#"{{"type":"message","id":"b2c3d4e5","parentId":"a1b2c3d4","timestamp":"2026-09-13T04:53:02.000Z","message":{{"role":"assistant","content":[{{"type":"text","text":"Hi"}}],"provider":"test","model":"pi-test","usage":{{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}},"stopReason":"stop","timestamp":1789000002000}}}}"#).unwrap();
     writeln!(f, r#"{{"type":"step","model":"pi-v1","usage":{{"prompt_tokens":100,"completion_tokens":50}},"content":"Hi"}}"#).unwrap();
 
     // 7. Cursor

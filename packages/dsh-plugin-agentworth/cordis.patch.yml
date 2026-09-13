@@ -16,7 +16,7 @@
         serverName: agentworth
         transport: stdio
         command: npx
-        args: ['-y', 'agentworth@0.1.26', 'mcp']
+        args: ['-y', 'agentworth@0.1.27', 'mcp']
         failOnStartupError: false
 
     - id: agentworth-skill
