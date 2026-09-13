@@ -1,17 +1,21 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use agentworth_adapter_sdk::{
-    AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
+    reuse_or_compute_fingerprint, AgentAdapter, DetectionResult, ParseResult, ScanOptions,
+    SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    extract_repository_or_workspace, AgentWorthTrace, EventPayload, FileActionType, ModelSwitch,
+    NormalizedEvent, OutcomeEvidence, OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall,
+    ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use directories::BaseDirs;
+use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 use walkdir::WalkDir;
 
@@ -108,6 +112,805 @@ pub fn detect_product_identity(path: &Path) -> &'static str {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Antigravity CLI (`agy`) conversation store.
+//
+// Newer Antigravity builds keep conversations in SQLite rather than JSONL:
+// `~/.gemini/antigravity-cli/conversations/<uuid>.db` (one database per
+// conversation; the `steps` table holds protobuf blobs) alongside a
+// `conversation_summaries.db` index (workspace, status, timestamps) and a
+// rolling `history.jsonl` of user prompts keyed by conversation id. The
+// `brain/` transcripts enumerated below are an older, separate surface;
+// without this section every `agy` session is discovered-but-never-indexed:
+// the scan counts the files while the index holds zero rows for them.
+//
+// The step payloads are length-delimited protobuf without a published schema,
+// so `parse_agy_conversation` walks the wire format generically
+// (`pb_walk_strings`) and classifies by `step_type` plus content shape: 14
+// carries the user prompt, 15 the assistant's prose, 101 a `[Message]
+// timestamp=... content=...` record with a real timestamp, 132 a tool call
+// (`call_*` id, snake_case name, JSON args), 90 the agent persona
+// (configuration, not history -- skipped). Anything else is skipped with a
+// warning rather than guessed at: formats are unstable and a wrong event is
+// worse than a missing one. Token counters exist nowhere in this store, so
+// agy rows honestly index with zero tokens.
+// ---------------------------------------------------------------------------
+
+/// Marker separating the synthetic repo-anchored identity prefix from the real
+/// locator, mirroring opencode.rs's `OPENCODE_REPO_MARKER`. Everything from
+/// the marker onward is invisible to `extract_repository_or_workspace`'s
+/// generic rules, which resolve the repo from the `<workspace>/` prefix
+/// instead of the store's own `~/.gemini/...` path; `parse()` recovers the
+/// real locator with `strip_agy_marker`. `SessionSource.path` and
+/// `Provenance.source_path` always carry this exact same string: the scanner
+/// compares them to decide what changed, so diverging them would reparse
+/// every agy session on every scan.
+const AGY_REPO_MARKER: &str = "::agy-repo::";
+
+/// Recover the real locator from a possibly-marked identity path. Without the
+/// marker (a workspace that could not be resolved at enumerate time) the whole
+/// string already is the real locator.
+#[allow(
+    clippy::string_slice,
+    reason = "idx comes from rfind() on an ASCII marker, offset by its own byte length: always a char boundary"
+)]
+fn strip_agy_marker(path_str: &str) -> &str {
+    match path_str.rfind(AGY_REPO_MARKER) {
+        Some(idx) => &path_str[idx + AGY_REPO_MARKER.len()..],
+        None => path_str,
+    }
+}
+
+/// Split a real locator into its `<db_path>#<conversation_id>` halves.
+fn split_agy_locator(identity: &str) -> Option<(&str, &str)> {
+    let tail = strip_agy_marker(identity);
+    let (db, conv) = tail.rsplit_once('#')?;
+    if db.is_empty() || conv.is_empty() {
+        return None;
+    }
+    Some((db, conv))
+}
+
+/// True when `identity` addresses an agy conversation database, marked or not.
+/// Legacy transcript paths never match: they carry no `#` locator tail.
+fn is_agy_locator(identity: &str) -> bool {
+    match split_agy_locator(identity) {
+        Some((db, conv)) => {
+            db.ends_with(".db") && db.contains("conversations") && !conv.is_empty()
+        }
+        None => false,
+    }
+}
+
+/// File or directory `name` inside `~/.gemini/antigravity-cli/`.
+fn agy_store_path(name: &str) -> Option<PathBuf> {
+    BaseDirs::new()
+        .map(|b| b.home_dir().join(".gemini").join("antigravity-cli").join(name))
+}
+
+/// One row of `conversation_summaries.db`: session-level metadata the per-step
+/// blobs do not carry (workspace, liveness, wall-clock end).
+struct AgySummary {
+    workspace: Option<String>,
+    killed: bool,
+    last_modified: Option<DateTime<Utc>>,
+}
+
+/// Parse the timestamp shapes the agy store writes: RFC 3339 inside `[Message]`
+/// records, and `"2026-09-13 04:57:26.703385+00:00"` in the summaries table.
+fn parse_agy_ts(raw: &str) -> Option<DateTime<Utc>> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    if let Ok(dt) = DateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f%:z") {
+        return Some(dt.with_timezone(&Utc));
+    }
+    None
+}
+
+/// Best-effort metadata for one conversation. `None` when the summaries index
+/// is absent or unreadable -- parsing still proceeds on the steps alone.
+fn read_agy_summary(summaries_db: &Path, conv_id: &str) -> Option<AgySummary> {
+    let conn = Connection::open_with_flags(
+        summaries_db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )
+    .ok()?;
+    let (killed, modified, workspaces): (bool, String, Option<String>) = conn
+        .query_row(
+            "SELECT killed, last_modified_time, workspace_uris \
+             FROM conversation_summaries WHERE conversation_id = ?",
+            [conv_id],
+            |row| {
+                // Each column degrades independently: a NULL workspace (the
+                // common case -- most rows carry none) must not take down
+                // the timestamps with it.
+                Ok((
+                    row.get::<_, bool>(0).unwrap_or(false),
+                    row.get::<_, String>(1).unwrap_or_default(),
+                    row.get::<_, Option<String>>(2).ok().flatten(),
+                ))
+            },
+        )
+        .ok()?;
+    let workspace = workspaces
+        .as_deref()
+        .and_then(|ws| serde_json::from_str::<Vec<String>>(ws).ok())
+        .and_then(|uris| uris.into_iter().next())
+        .map(|u| u.strip_prefix("file://").map(str::to_string).unwrap_or(u));
+    Some(AgySummary {
+        workspace,
+        killed,
+        last_modified: parse_agy_ts(&modified),
+    })
+}
+
+/// `(timestamp, user prompt)` pairs from the rolling `history.jsonl`, oldest
+/// first. Missing or unreadable history yields an empty vec; prompt events
+/// then fall back to step order without wall-clock times.
+fn read_agy_history(
+    history_path: &Path,
+    conv_id: &str,
+) -> Vec<(Option<DateTime<Utc>>, String)> {
+    let mut out = Vec::new();
+    let file = match File::open(history_path) {
+        Ok(f) => f,
+        Err(_) => return out,
+    };
+    for line in BufReader::new(file).lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let v: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("conversationId").and_then(|c| c.as_str()) != Some(conv_id) {
+            continue;
+        }
+        let display = v.get("display").and_then(|d| d.as_str()).unwrap_or("").to_string();
+        if display.is_empty() {
+            continue;
+        }
+        let ts = v.get("timestamp").and_then(|t| t.as_i64()).unwrap_or(0);
+        let dt = if ts > 0 {
+            let millis = if ts > 1_000_000_000_000 { ts } else { ts * 1000 };
+            DateTime::from_timestamp_millis(millis)
+        } else {
+            None
+        };
+        out.push((dt, display));
+    }
+    out.sort_by_key(|(dt, _)| *dt);
+    out
+}
+
+/// Read one protobuf varint at `*pos`, advancing past it. `None` on truncation
+/// or overflow -- the caller abandons this blob, it never panics.
+fn pb_varint(buf: &[u8], pos: &mut usize) -> Option<u64> {
+    let mut shift = 0u32;
+    let mut out = 0u64;
+    loop {
+        let b = *buf.get(*pos)?;
+        *pos += 1;
+        out |= ((b & 0x7f) as u64) << shift;
+        if b & 0x80 == 0 {
+            return Some(out);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return None;
+        }
+    }
+}
+
+/// Walk length-delimited protobuf wire format, collecting `(field_number,
+/// string)` pairs. Nested messages recurse: a LEN field whose bytes walk
+/// cleanly *and* yield strings contributes the inner pairs, otherwise its raw
+/// UTF-8 (when valid) is kept verbatim. Returns false the moment the bytes
+/// stop looking like protobuf, so the caller can fall back to substring
+/// scraping instead of emitting half-decoded garbage.
+fn pb_walk_strings(buf: &[u8], out: &mut Vec<(u32, String)>) -> bool {
+    let mut pos = 0usize;
+    while pos < buf.len() {
+        let tag = match pb_varint(buf, &mut pos) {
+            Some(t) => t,
+            None => return false,
+        };
+        let field = (tag >> 3) as u32;
+        match tag & 7 {
+            0 => {
+                if pb_varint(buf, &mut pos).is_none() {
+                    return false;
+                }
+            }
+            1 => {
+                pos = match pos.checked_add(8) {
+                    Some(p) => p,
+                    None => return false,
+                };
+                if pos > buf.len() {
+                    return false;
+                }
+            }
+            2 => {
+                let len = match pb_varint(buf, &mut pos) {
+                    Some(l) => l as usize,
+                    None => return false,
+                };
+                let end = match pos.checked_add(len) {
+                    Some(e) => e,
+                    None => return false,
+                };
+                if end > buf.len() {
+                    return false;
+                }
+                let slice = &buf[pos..end];
+                let mut nested = Vec::new();
+                if !slice.is_empty() && pb_walk_strings(slice, &mut nested) && !nested.is_empty()
+                {
+                    out.extend(nested);
+                } else if let Ok(s) = std::str::from_utf8(slice) {
+                    if !s.is_empty() {
+                        out.push((field, s.to_string()));
+                    }
+                }
+                pos = end;
+            }
+            5 => {
+                pos = match pos.checked_add(4) {
+                    Some(p) => p,
+                    None => return false,
+                };
+                if pos > buf.len() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Last-resort strings for a blob that fails the wire walk: printable ASCII
+/// runs, the same shape a human sees in a hexdump. Never wrong, just lossy.
+fn ascii_strings(buf: &[u8]) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
+    let mut cur = Vec::new();
+    for &b in buf {
+        if (0x20..=0x7e).contains(&b) {
+            cur.push(b);
+        } else if cur.len() >= 8 {
+            if let Ok(s) = String::from_utf8(std::mem::take(&mut cur)) {
+                out.push((0, s));
+            }
+        } else {
+            cur.clear();
+        }
+    }
+    if cur.len() >= 8 {
+        if let Ok(s) = String::from_utf8(cur) {
+            out.push((0, s));
+        }
+    }
+    out
+}
+
+/// True for hex-with-dashes session/span identifiers: 8-4-4-4-12 hex.
+fn is_uuid_like(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 36 {
+        return false;
+    }
+    for (i, c) in b.iter().enumerate() {
+        if matches!(i, 8 | 13 | 18 | 23) {
+            if *c != b'-' {
+                return false;
+            }
+        } else if !c.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
+}
+
+/// True for routing identifiers that repeat on every step and carry no
+/// conversation content: span ids, the `sessionID` key, bare numbers.
+fn is_step_noise(s: &str, conv_id: &str) -> bool {
+    if s == conv_id || s == "sessionID" || s.starts_with("bot-") {
+        return true;
+    }
+    if is_uuid_like(s) {
+        return true;
+    }
+    if !s.is_empty() && s.len() < 24 && s.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+        return true;
+    }
+    false
+}
+
+/// Split a type-101 `[Message] timestamp=<rfc3339> sender=<id>
+/// priority=<p> content=<markdown>` record. The `content=` tail runs to the
+/// end of the string; anything else is a shape change and returns None.
+/// All slicing goes through `str::get`: blob text is arbitrary UTF-8 and a
+/// mid-character split must yield None, never a panic.
+fn split_message_record(s: &str) -> Option<(Option<DateTime<Utc>>, String)> {
+    let tag = "[Message]".len();
+    let body = s.find("[Message]").and_then(|i| s.get(i + tag..))?;
+    let ts = body
+        .find("timestamp=")
+        .and_then(|i| body.get(i + "timestamp=".len()..))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(parse_agy_ts);
+    let content = body
+        .find("content=")
+        .and_then(|i| body.get(i + "content=".len()..))
+        .map(str::to_string)?;
+    Some((ts, content))
+}
+
+/// Build the identity path for one conversation: the workspace-anchored form
+/// when it resolves to a real repository through the generic rules, the bare
+/// locator otherwise. A workspace like `~/code` itself would resolve to the
+/// synthetic leaf (the `/code/` rule grabs whatever follows it), which is
+/// worse than no anchor at all -- so the candidate is validated and rejected
+/// when the leaf leaks through.
+fn agy_identity_for(workspace: Option<String>, short: &str, real_locator: &str) -> String {
+    if let Some(dir) = workspace.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
+        let candidate = format!(
+            "{}/.agy-conversation-{short}.sqlite{AGY_REPO_MARKER}{real_locator}",
+            dir.trim_end_matches('/')
+        );
+        let repo = extract_repository_or_workspace(&candidate);
+        if !repo.contains("agy-conversation") && !repo.contains(AGY_REPO_MARKER) {
+            return candidate;
+        }
+    }
+    real_locator.to_string()
+}
+
+/// True for the id-shaped tokens agy scatters through assistant steps:
+/// mixed-case alphanumerics with a separator or digit, no spaces, long enough
+/// that a plain English word rarely qualifies (`0SWmaoty3N-DxQ_kj4zgAQ`).
+/// Applied to assistant prose only -- never to user prompts or tool args.
+fn is_agy_id_token(s: &str) -> bool {
+    if s.len() < 16 || s.contains(' ') || s.contains('/') || s.contains('{') {
+        return false;
+    }
+    let has_lower = s.bytes().any(|b| b.is_ascii_lowercase());
+    let has_upper = s.bytes().any(|b| b.is_ascii_uppercase());
+    let has_extra = s.bytes().any(|b| b.is_ascii_digit() || b == b'_' || b == b'-');
+    has_lower && has_upper && has_extra
+}
+
+/// Enumerate one [`SessionSource`] per agy conversation database, scoping to
+/// `options.custom_paths` when set (tests, `--path`) and to the home store
+/// otherwise. The identity path anchors on the workspace from the summaries
+/// index so repository resolution sees a real project path; without a
+/// resolvable workspace the bare locator is used and still parses (see
+/// [`is_agy_locator`]).
+fn enumerate_agy_conversations(options: &ScanOptions) -> Vec<SessionSource> {
+    if !options.custom_paths.is_empty() {
+        let mut out = Vec::new();
+        for root in &options.custom_paths {
+            let mut conv_dirs = vec![
+                root.join("conversations"),
+                root.join(".gemini").join("antigravity-cli").join("conversations"),
+            ];
+            if root.file_name().and_then(|n| n.to_str()) == Some("conversations") {
+                conv_dirs.push(root.clone());
+            }
+            for conv_dir in conv_dirs {
+                let summaries = std::fs::canonicalize(conv_dir.join(".."))
+                    .map(|parent| parent.join("conversation_summaries.db"))
+                    .ok()
+                    .filter(|p| p.is_file());
+                out.extend(enumerate_agy_conversations_in(
+                    &conv_dir,
+                    summaries.as_deref(),
+                    options,
+                ));
+            }
+        }
+        return out;
+    }
+    let conv_dir = match agy_store_path("conversations") {
+        Some(d) => d,
+        None => return Vec::new(),
+    };
+    enumerate_agy_conversations_in(
+        &conv_dir,
+        agy_store_path("conversation_summaries.db").as_deref(),
+        options,
+    )
+}
+
+/// First workspace seen per conversation in the rolling `history.jsonl`.
+/// The summaries index leaves `workspace_uris` NULL on most rows; history
+/// records the workspace with every prompt, so this is the fallback behind
+/// [`read_agy_summary`] at enumerate time.
+fn agy_history_workspaces(history_path: &Path) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let file = match File::open(history_path) {
+        Ok(f) => f,
+        Err(_) => return map,
+    };
+    for line in BufReader::new(file).lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let v: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let (Some(conv), Some(ws)) = (
+            v.get("conversationId").and_then(|c| c.as_str()),
+            v.get("workspace").and_then(|w| w.as_str()),
+        ) else {
+            continue;
+        };
+        if ws.is_empty() {
+            continue;
+        }
+        map.entry(conv.to_string()).or_insert_with(|| ws.to_string());
+    }
+    map
+}
+
+/// Enumerate conversation databases under an explicit directory; the
+/// custom-paths branch above and the home-based default are the only callers
+/// outside tests.
+fn enumerate_agy_conversations_in(
+    conv_dir: &Path,
+    summaries_path: Option<&Path>,
+    options: &ScanOptions,
+) -> Vec<SessionSource> {
+    let mut sources = Vec::new();
+    if !conv_dir.is_dir() {
+        return sources;
+    }
+    // The rolling history file sits next to `conversations/` in every layout
+    // (store root, scoped root, fixture) and records each prompt's workspace
+    // -- the fallback when the summaries row carries none (the common case).
+    let history_workspaces = std::fs::canonicalize(conv_dir.join(".."))
+        .map(|parent| parent.join("history.jsonl"))
+        .ok()
+        .filter(|p| p.is_file())
+        .map(|p| agy_history_workspaces(&p))
+        .unwrap_or_default();
+    let entries = match std::fs::read_dir(conv_dir) {
+        Ok(e) => e,
+        Err(_) => return sources,
+    };
+    let mut dbs: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("db"))
+        .collect();
+    dbs.sort();
+    for db_path in dbs {
+        let conv_id = match db_path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let workspace = summaries_path
+            .and_then(|sp| read_agy_summary(sp, &conv_id))
+            .and_then(|sum| sum.workspace)
+            .or_else(|| history_workspaces.get(&conv_id).cloned());
+        let real_locator = format!("{}#{}", db_path.to_string_lossy(), conv_id);
+        // Chars, not bytes: `file_stem` is an arbitrary filename and byte
+        // slicing could split a character boundary and panic the scan.
+        let short: String = conv_id.chars().take(8).collect();
+        let identity = agy_identity_for(workspace, &short, &real_locator);
+        let (size, mtime) = match std::fs::metadata(&db_path) {
+            Ok(m) => (
+                m.len(),
+                m.modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            ),
+            Err(_) => continue,
+        };
+        let fingerprint = match reuse_or_compute_fingerprint(
+            &options.known_sources,
+            &identity,
+            &db_path,
+            size,
+            mtime,
+        ) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        sources.push(SessionSource {
+            path: PathBuf::from(identity),
+            adapter_name: "antigravity".to_string(),
+            file_size_bytes: size,
+            mtime_epoch_secs: mtime,
+            fingerprint,
+        });
+    }
+    sources
+}
+
+/// Parse one agy conversation database into prompt, response, and tool-call
+/// events. Thin wrapper resolving the store paths; tests call
+/// `parse_agy_conversation_with_store` with fixture paths directly.
+fn parse_agy_conversation(source: &SessionSource) -> Result<ParseResult> {
+    parse_agy_conversation_with_store(
+        source,
+        agy_store_path("conversation_summaries.db").as_deref(),
+        agy_store_path("history.jsonl").as_deref(),
+    )
+}
+
+#[allow(clippy::too_many_lines, reason = "one step_type dispatch; splitting would scatter the shape map")]
+fn parse_agy_conversation_with_store(
+    source: &SessionSource,
+    summaries_db: Option<&Path>,
+    history_path: Option<&Path>,
+) -> Result<ParseResult> {
+    let identity = source.path.to_string_lossy().to_string();
+    let (db_str, conv_id) = split_agy_locator(&identity)
+        .map(|(d, c)| (d.to_string(), c.to_string()))
+        .unwrap_or_else(|| (identity.clone(), derive_session_id(&source.path)));
+    let db_path = Path::new(&db_str);
+
+    let provenance = Provenance::new(
+        identity,
+        "antigravity",
+        source.file_size_bytes,
+        source.mtime_epoch_secs,
+        &source.fingerprint,
+    );
+    let mut trace = AgentWorthTrace::new(&conv_id, "antigravity", provenance, Utc::now());
+    let mut malformed_lines = 0;
+    let mut warnings = Vec::new();
+    let mut sequence = 0u64;
+
+    let summary = summaries_db.and_then(|sp| read_agy_summary(sp, &conv_id));
+    let mut history = history_path
+        .map(|hp| read_agy_history(hp, &conv_id))
+        .unwrap_or_default()
+        .into_iter();
+
+    let mtime_ts = DateTime::from_timestamp_secs(source.mtime_epoch_secs).unwrap_or_else(Utc::now);
+    let mut earliest: Option<DateTime<Utc>> = None;
+    let mut latest: Option<DateTime<Utc>> = None;
+    let mut last_ts = mtime_ts;
+    let mut bump = |ts: Option<DateTime<Utc>>| {
+        let ts = ts.unwrap_or(last_ts);
+        if earliest.is_none_or(|e| ts < e) {
+            earliest = Some(ts);
+        }
+        if latest.is_none_or(|l| ts > l) {
+            latest = Some(ts);
+        }
+        last_ts = ts;
+        ts
+    };
+
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    // Two passes: first collect every step's strings so the tool names
+    // invoked anywhere in the conversation are known before any assistant
+    // prose is cleaned of their echoes.
+    let mut stmt = conn.prepare("SELECT step_type, step_payload FROM steps ORDER BY idx ASC")?;
+    let raw_rows = stmt.query_map([], |row| {
+        let step_type: i64 = row.get(0)?;
+        let payload: Vec<u8> = row.get(1)?;
+        Ok((step_type, payload))
+    })?;
+    let mut steps: Vec<(i64, Vec<(u32, String)>)> = Vec::new();
+    for row in raw_rows {
+        let (step_type, payload) = match row {
+            Ok(r) => r,
+            Err(e) => {
+                malformed_lines += 1;
+                warnings.push(format!("agy step row unreadable: {e}"));
+                continue;
+            }
+        };
+        let mut fields = Vec::new();
+        if !pb_walk_strings(&payload, &mut fields) {
+            fields = ascii_strings(&payload);
+        }
+        steps.push((step_type, fields));
+    }
+    let mut tool_names = std::collections::BTreeSet::new();
+    for (step_type, fields) in &steps {
+        if *step_type != 132 {
+            continue;
+        }
+        for (_, s) in fields {
+            if !s.starts_with("call_")
+                && !(s.starts_with('{') && s.ends_with('}'))
+                && !s.contains(' ')
+                && !s.contains('/')
+                && !is_step_noise(s, &conv_id)
+            {
+                tool_names.insert(s.clone());
+            }
+        }
+    }
+    // Assistant prose keeps everything except routing noise, tool-call
+    // echoes, and id-shaped tokens. User prompts and tool args are never
+    // filtered: their exact text is the evidence.
+    let clean_assistant = |texts: &[&str], tool_names: &std::collections::BTreeSet<String>| {
+        texts
+            .iter()
+            .filter(|s| {
+                !s.starts_with("call_")
+                    && !(s.starts_with('{') && s.ends_with('}'))
+                    && !tool_names.contains(**s)
+                    && !is_agy_id_token(s)
+            })
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    for (step_type, fields) in &steps {
+        let texts: Vec<&str> = fields
+            .iter()
+            .map(|(_, s)| s.as_str())
+            .filter(|s| !is_step_noise(s, &conv_id))
+            .collect();
+
+        match step_type {
+            // Agent persona / system prompt: configuration, not history.
+            90 => {}
+            // User prompt. One history entry per user step, in order; the blob
+            // is the fallback when history never recorded this prompt.
+            14 => {
+                let (ts, content) = match history.next() {
+                    Some((hts, htext)) => (hts, htext),
+                    None => {
+                        let joined = texts.join("\n");
+                        if joined.trim().is_empty() {
+                            malformed_lines += 1;
+                            warnings.push("agy user step with no text".to_string());
+                            continue;
+                        }
+                        (None, joined)
+                    }
+                };
+                sequence += 1;
+                let ts = bump(ts);
+                trace.events.push(NormalizedEvent::new(
+                    sequence,
+                    ts,
+                    EventPayload::UserMessage { content },
+                ));
+            }
+            // Assistant prose (thinking summaries and responses share this shape;
+            // recorded as content, never claimed as thinking).
+            15 => {
+                let content = clean_assistant(&texts, &tool_names);
+                if content.trim().is_empty() {
+                    continue;
+                }
+                sequence += 1;
+                let ts = bump(None);
+                trace.events.push(NormalizedEvent::new(
+                    sequence,
+                    ts,
+                    EventPayload::AssistantMessage {
+                        content,
+                        thinking: None,
+                    },
+                ));
+            }
+            // Tool call: `call_*` id, snake_case name, JSON args.
+            132 => {
+                let call_id = texts.iter().find(|s| s.starts_with("call_")).map(|s| s.to_string());
+                let args_raw = texts
+                    .iter()
+                    .find(|s| s.starts_with('{') && s.ends_with('}'))
+                    .map(|s| s.to_string());
+                let name = texts
+                    .iter()
+                    .filter(|s| {
+                        !s.starts_with("call_")
+                            && !(s.starts_with('{') && s.ends_with('}'))
+                            && !s.contains(' ')
+                            && !s.contains('/')
+                    })
+                    .map(|s| s.to_string())
+                    .next();
+                let (Some(name), Some(args_raw)) = (name, args_raw) else {
+                    malformed_lines += 1;
+                    warnings.push("agy tool step without name/args".to_string());
+                    continue;
+                };
+                let arguments = serde_json::from_str(&args_raw).unwrap_or(Value::String(args_raw));
+                sequence += 1;
+                let ts = bump(None);
+                trace.events.push(NormalizedEvent::new(
+                    sequence,
+                    ts,
+                    EventPayload::ToolCall(ToolCall {
+                        id: call_id,
+                        name,
+                        arguments,
+                    }),
+                ));
+            }
+            // Message record with its own timestamp; otherwise assistant prose.
+            101 => {
+                let record = texts.iter().find(|s| s.contains("[Message]"));
+                match record.and_then(|r| split_message_record(r)) {
+                    Some((ts, content)) if !content.trim().is_empty() => {
+                        sequence += 1;
+                        let ts = bump(ts);
+                        trace.events.push(NormalizedEvent::new(
+                            sequence,
+                            ts,
+                            EventPayload::AssistantMessage {
+                                content,
+                                thinking: None,
+                            },
+                        ));
+                    }
+                    _ => {
+                        let joined = clean_assistant(&texts, &tool_names);
+                        if joined.trim().is_empty() {
+                            continue;
+                        }
+                        sequence += 1;
+                        let ts = bump(None);
+                        trace.events.push(NormalizedEvent::new(
+                            sequence,
+                            ts,
+                            EventPayload::AssistantMessage {
+                                content: joined,
+                                thinking: None,
+                            },
+                        ));
+                    }
+                }
+            }
+            _ => {
+                malformed_lines += 1;
+                warnings.push(format!("agy step_type {step_type} not mapped"));
+            }
+        }
+    }
+
+    if summary.as_ref().is_some_and(|s| s.killed) {
+        warnings.push("agy conversation was killed before finishing".to_string());
+    }
+    if let Some(started) =
+        earliest.or_else(|| summary.as_ref().and_then(|s| s.last_modified).map(|_| mtime_ts))
+    {
+        trace.started_at = started;
+    }
+    // The parsed steps carry sparse timestamps (only `[Message]` records and
+    // history prompts have real ones), so the summaries row's last write is
+    // the honest end -- but never earlier than the latest parsed event.
+    let ended = match (latest, summary.as_ref().and_then(|s| s.last_modified)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    };
+    if let Some(latest) = ended {
+        trace.ended_at = Some(latest);
+    }
+
+    backfill_shell_exit_codes(&mut trace.events);
+    trace.recalculate_stats();
+
+    Ok(ParseResult {
+        trace,
+        malformed_lines,
+        warnings,
+    })
+}
+
 impl AgentAdapter for GeminiAdapter {
     fn name(&self) -> &'static str {
         "gemini"
@@ -193,6 +996,21 @@ impl AgentAdapter for GeminiAdapter {
         })
     }
 
+    /// Synthetic agy identities (`::agy-repo::` marker) address a live SQLite
+    /// database, not a file at the identity path: strip the marker and check
+    /// the real locator, mirroring opencode.rs. Everything else keeps the
+    /// default file-existence check.
+    fn source_exists(&self, source: &SessionSource) -> bool {
+        let identity = source.path.to_string_lossy().to_string();
+        if is_agy_locator(&identity) {
+            if let Some((db_str, _)) = split_agy_locator(&identity) {
+                return Path::new(db_str).is_file();
+            }
+            return false;
+        }
+        source.path.exists()
+    }
+
     fn enumerate(&self, options: &ScanOptions) -> Result<Vec<SessionSource>> {
         let mut sources = Vec::new();
 
@@ -254,6 +1072,11 @@ impl AgentAdapter for GeminiAdapter {
             }
         }
 
+        // Antigravity CLI (`agy`) conversation store: SQLite, enumerated
+        // separately because each conversation needs its workspace from the
+        // summaries index before its identity path can be built.
+        sources.extend(enumerate_agy_conversations(options));
+
         // Deduplicate sources by canonical path
         sources.sort_by(|a, b| a.path.cmp(&b.path));
         sources.dedup_by(|a, b| a.path == b.path);
@@ -262,6 +1085,9 @@ impl AgentAdapter for GeminiAdapter {
     }
 
     fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
+        if is_agy_locator(&source.path.to_string_lossy()) {
+            return parse_agy_conversation(source);
+        }
         let file = File::open(&source.path)?;
         let reader = BufReader::new(file);
 
@@ -1082,6 +1908,271 @@ mod tests {
             trace.stats.tools_used.get("mcp:chrome-devtools:navigate_page"),
             Some(&1)
         );
+    }
+
+    // --- Antigravity CLI (`agy`) conversation store ---
+
+    /// Encode one protobuf varint (test fixtures only).
+    fn agy_pb_varint(mut v: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let b = (v & 0x7f) as u8;
+            v >>= 7;
+            if v == 0 {
+                out.push(b);
+                break;
+            }
+            out.push(b | 0x80);
+        }
+        out
+    }
+
+    /// Encode one protobuf length-delimited field (test fixtures only).
+    fn agy_pb_str(field_no: u32, s: &str) -> Vec<u8> {
+        let mut out = agy_pb_varint(((field_no << 3) | 2) as u64);
+        out.extend(agy_pb_varint(s.len() as u64));
+        out.extend(s.as_bytes());
+        out
+    }
+
+    fn agy_join(parts: Vec<Vec<u8>>) -> Vec<u8> {
+        parts.into_iter().flatten().collect()
+    }
+
+    /// Fixture conversation DB plus its summaries row and history file.
+    /// Returns `(db_path, summaries_path, history_path)`. Shapes mirror the
+    /// real store: uuid-keyed steps with id noise, a tool call with JSON
+    /// args, a `[Message]` record with a real timestamp, a persona step that
+    /// must be skipped, and an unmapped step type.
+    fn agy_fixture_store(dir: &Path, conv_id: &str) -> (PathBuf, PathBuf, PathBuf) {
+        use rusqlite::{params, Connection};
+
+        let conv_dir = dir.join("conversations");
+        std::fs::create_dir_all(&conv_dir).unwrap();
+        let db_path = conv_dir.join(format!("{conv_id}.db"));
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER NOT NULL DEFAULT 0, \
+             status INTEGER NOT NULL DEFAULT 0, step_payload BLOB, step_format INTEGER NOT NULL DEFAULT 0)",
+            [],
+        )
+        .unwrap();
+        let user = agy_join(vec![
+            agy_pb_str(1, "550e8400-e29b-41d4-a716-446655440000"),
+            agy_pb_str(4, "Investigate token density in agent runtimes"),
+        ]);
+        let tool = agy_join(vec![
+            agy_pb_str(1, "call_9"),
+            agy_pb_str(2, "grep_search"),
+            agy_pb_str(3, r#"{"Query":"DocIR"}"#),
+        ]);
+        let assistant = agy_join(vec![
+            agy_pb_str(1, "Considering the request, a deep dive seems necessary"),
+            // Tool-call echoes the cleaner must strip (see `clean_assistant`).
+            agy_pb_str(2, "call_9"),
+            agy_pb_str(3, "grep_search"),
+            agy_pb_str(4, "0SWmaoty3N-DxQ_kj4zgAQ"),
+        ]);
+        let message = agy_join(vec![agy_pb_str(
+            1,
+            "[Message] timestamp=2026-09-13T04:38:05Z sender=fe75ef85 priority=MESSAGE_PRIORITY_HIGH content=## Findings",
+        )]);
+        let persona = agy_join(vec![agy_pb_str(1, "[AGENT PERSONA] You are Donna")]);
+        let unknown = agy_join(vec![agy_pb_str(1, "whatever")]);
+        for (i, (step_type, payload)) in
+            [(14, user), (132, tool), (15, assistant), (101, message), (90, persona), (777, unknown)]
+                .into_iter()
+                .enumerate()
+        {
+            conn.execute(
+                "INSERT INTO steps (idx, step_type, status, step_payload) VALUES (?, ?, 3, ?)",
+                params![i as i64, step_type, payload],
+            )
+            .unwrap();
+        }
+
+        let summaries_path = dir.join("conversation_summaries.db");
+        let sums = Connection::open(&summaries_path).unwrap();
+        sums
+            .execute(
+                "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT, \
+                 agent_name TEXT, status TEXT, killed INTEGER, last_modified_time TEXT, workspace_uris TEXT)",
+                [],
+            )
+            .unwrap();
+        let workspace = dir.join("proj");
+        std::fs::create_dir_all(&workspace).unwrap();
+        sums
+            .execute(
+                "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    conv_id,
+                    "DocIR feasibility",
+                    "research",
+                    "CASCADE_RUN_STATUS_IDLE",
+                    0,
+                    "2026-09-13 05:00:00+00:00",
+                    format!("[\"file://{}\"]", workspace.to_string_lossy()),
+                ],
+            )
+            .unwrap();
+
+        let history_path = dir.join("history.jsonl");
+        std::fs::write(
+            &history_path,
+            format!(
+                "{{\"conversationId\":\"{conv_id}\",\"display\":\"Investigate token density in agent runtimes\",\"timestamp\":1789000000000,\"workspace\":\"{}\"}}\n",
+                workspace.to_string_lossy(),
+            ),
+        )
+        .unwrap();
+        (db_path, summaries_path, history_path)
+    }
+
+    #[test]
+    fn agy_wire_walk_extracts_nested_strings() {
+        let inner = agy_pb_str(2, "deep");
+        let mut outer = agy_pb_varint(((1 << 3) | 2) as u64);
+        outer.extend(agy_pb_varint(inner.len() as u64));
+        outer.extend(inner);
+        outer.extend(agy_pb_str(3, "shallow"));
+
+        let mut fields = Vec::new();
+        assert!(pb_walk_strings(&outer, &mut fields));
+        assert!(fields.contains(&(2, "deep".to_string())));
+        assert!(fields.contains(&(3, "shallow".to_string())));
+
+        let mut bad = Vec::new();
+        assert!(!pb_walk_strings(
+            b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x7f",
+            &mut bad
+        ));
+    }
+
+    #[test]
+    fn agy_parse_conversation_db() {
+        let temp = tempdir().unwrap();
+        let conv_id = "31562521-ce8f-47e0-89f8-901594ae66c6";
+        let (db_path, summaries_path, history_path) = agy_fixture_store(temp.path(), conv_id);
+        let short: String = conv_id.chars().take(8).collect();
+
+        let identity = format!(
+            "{}/.agy-conversation-{short}.sqlite{AGY_REPO_MARKER}{}#{conv_id}",
+            temp.path().join("proj").to_string_lossy(),
+            db_path.to_string_lossy(),
+        );
+        let meta = std::fs::metadata(&db_path).unwrap();
+        let source = SessionSource {
+            path: PathBuf::from(identity),
+            adapter_name: "antigravity".to_string(),
+            file_size_bytes: meta.len(),
+            mtime_epoch_secs: 1789000100,
+            fingerprint: "test".to_string(),
+        };
+        let result =
+            parse_agy_conversation_with_store(&source, Some(&summaries_path), Some(&history_path))
+                .expect("agy parse failed");
+
+        assert_eq!(result.trace.adapter, "antigravity");
+        // user + tool + assistant + [Message]: persona skipped, 777 warned.
+        assert_eq!(result.trace.events.len(), 4);
+        assert_eq!(result.malformed_lines, 1);
+
+        match &result.trace.events[0].payload {
+            EventPayload::UserMessage { content } => {
+                assert!(content.contains("Investigate token density"))
+            }
+            other => panic!("expected UserMessage, got {other:?}"),
+        }
+        match &result.trace.events[1].payload {
+            EventPayload::ToolCall(call) => {
+                assert_eq!(call.name, "grep_search");
+                assert_eq!(call.id.as_deref(), Some("call_9"));
+                assert_eq!(
+                    call.arguments.get("Query").and_then(|q| q.as_str()),
+                    Some("DocIR")
+                );
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
+        match &result.trace.events[3].payload {
+            EventPayload::AssistantMessage { content, .. } => {
+                assert!(content.contains("## Findings"))
+            }
+            other => panic!("expected AssistantMessage, got {other:?}"),
+        }
+        // The type-15 assistant event keeps its prose but drops the echoed
+        // call id, tool name, and span id.
+        match &result.trace.events[2].payload {
+            EventPayload::AssistantMessage { content, .. } => {
+                assert_eq!(content, "Considering the request, a deep dive seems necessary");
+            }
+            other => panic!("expected AssistantMessage, got {other:?}"),
+        }
+        // History timestamp starts the trace; the summaries row ends it.
+        assert_eq!(
+            result.trace.started_at,
+            DateTime::from_timestamp_millis(1789000000000).unwrap()
+        );
+        assert_eq!(result.trace.ended_at.unwrap().to_rfc3339(), "2026-09-13T05:00:00+00:00");
+    }
+
+    #[test]
+    fn agy_enumerate_anchors_identity_on_workspace() {
+        let temp = tempdir().unwrap();
+        let conv_id = "92e14033-3fe4-492d-88b1-eb388b0de6e4";
+        agy_fixture_store(temp.path(), conv_id);
+        let options = ScanOptions {
+            custom_paths: vec![],
+            force: false,
+            ..Default::default()
+        };
+        let sources = enumerate_agy_conversations_in(
+            &temp.path().join("conversations"),
+            Some(&temp.path().join("conversation_summaries.db")),
+            &options,
+        );
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].adapter_name, "antigravity");
+        let identity = sources[0].path.to_string_lossy().to_string();
+        assert!(identity.contains(AGY_REPO_MARKER));
+        assert!(identity.contains("proj/.agy-conversation-92e14033.sqlite"));
+        assert!(is_agy_locator(&identity));
+    }
+
+    #[test]
+    fn agy_enumerate_falls_back_to_history_workspace() {
+        // Most summaries rows carry NULL workspace_uris; the rolling history
+        // file records the workspace with every prompt, so enumeration must
+        // still anchor instead of emitting a bare locator.
+        let temp = tempdir().unwrap();
+        let conv_id = "92e14033-3fe4-492d-88b1-eb388b0de6e4";
+        agy_fixture_store(temp.path(), conv_id);
+        let options = ScanOptions {
+            custom_paths: vec![],
+            force: false,
+            ..Default::default()
+        };
+        let sources = enumerate_agy_conversations_in(
+            &temp.path().join("conversations"),
+            None,
+            &options,
+        );
+        assert_eq!(sources.len(), 1);
+        let identity = sources[0].path.to_string_lossy().to_string();
+        assert!(identity.contains("proj/.agy-conversation-92e14033.sqlite"));
+    }
+
+    #[test]
+    fn agy_identity_falls_back_when_workspace_is_a_container() {
+        // A workspace like `~/code` itself would resolve to the synthetic leaf
+        // through the `/code/` rule -- the bare locator is used instead.
+        let locator = "/Users/saurabh/.gemini/antigravity-cli/conversations/abc.db#abc";
+        let anchored =
+            agy_identity_for(Some("/Users/saurabh/code".to_string()), "abc", locator);
+        assert_eq!(anchored, locator);
+        assert!(!anchored.contains(AGY_REPO_MARKER));
+        assert!(is_agy_locator(&anchored));
     }
 }
 
