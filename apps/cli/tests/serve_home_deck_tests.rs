@@ -47,8 +47,8 @@ fn wait_for_port(port: u16, timeout: Duration) {
 /// A minimal blocking HTTP/1.1 GET over a raw socket -- avoids pulling reqwest's async runtime
 /// into what is otherwise a synchronous test. Returns (status code, full response text).
 fn http_get(port: u16, path: &str) -> (u16, String) {
-    let mut stream =
-        TcpStream::connect(("127.0.0.1", port)).unwrap_or_else(|e| panic!("connect to {path}: {e}"));
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .unwrap_or_else(|e| panic!("connect to {path}: {e}"));
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -89,7 +89,10 @@ fn archie_serve_home_serves_the_deck_and_upgrades_ws() {
     wait_for_port(port, Duration::from_secs(10));
 
     let (status, body) = http_get(port, "/home/");
-    assert_eq!(status, 200, "GET /home/ should be 200; full response:\n{body}");
+    assert_eq!(
+        status, 200,
+        "GET /home/ should be 200; full response:\n{body}"
+    );
     assert!(
         body.contains("id=\"root\"") && body.contains("/home/assets/"),
         "expected the built apps/home deck's index.html (id=\"root\", /home/assets/ script \

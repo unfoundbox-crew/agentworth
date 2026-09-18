@@ -16,9 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agentworth_cli::app::cli_command;
-use agentworth_cli::server::{
-    create_router, route_entries, AppState, LIVE_TAIL_CHANNEL_CAPACITY,
-};
+use agentworth_cli::server::{create_router, route_entries, AppState, LIVE_TAIL_CHANNEL_CAPACITY};
 use agentworth_core::Scanner;
 use agentworth_storage::Storage;
 use assert_cmd::cargo::CommandCargoExt;
@@ -86,10 +84,7 @@ async fn raw(app: axum::Router, method: &str, uri: &str) -> (StatusCode, String)
 
 #[test]
 fn api_route_table_snapshot() {
-    let actual: Vec<(&str, &str)> = route_entries()
-        .iter()
-        .map(|e| (e.method, e.path))
-        .collect();
+    let actual: Vec<(&str, &str)> = route_entries().iter().map(|e| (e.method, e.path)).collect();
     assert_eq!(
         actual, EXPECTED_API_ROUTES,
         "route_entries() drifted from the checked-in web_merge snapshot"
@@ -278,9 +273,7 @@ fn home_cli_404s_with_pointer_to_serve_open() {
         &port.to_string(),
     ])
     .timeout(Duration::from_secs(15));
-    cmd.assert()
-        .failure()
-        .stderr(contains("serve --open"));
+    cmd.assert().failure().stderr(contains("serve --open"));
     assert!(
         TcpStream::connect(("127.0.0.1", port)).is_err(),
         "dead `home` must not bind any port"
@@ -336,5 +329,8 @@ fn serve_home_still_serves_the_deck() {
         .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|c| c.parse().ok())
         .unwrap_or(0);
-    assert_eq!(status, 200, "GET /home/ on `serve --home` must be 200; got:\n{resp}");
+    assert_eq!(
+        status, 200,
+        "GET /home/ on `serve --home` must be 200; got:\n{resp}"
+    );
 }
