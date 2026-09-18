@@ -229,6 +229,7 @@ mod tests {
             kind: OutcomeKind::CiOrDeploymentVerified,
             summary: "Deployed to production".to_string(),
             confidence: 1.0,
+            test_provenance: None,
         }];
         let recoveries = vec![];
 

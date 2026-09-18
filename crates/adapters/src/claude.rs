@@ -720,6 +720,7 @@ fn parse_claude_record(
                                             kind: OutcomeKind::TestOrBuildPassed,
                                             summary: "Test suite executed successfully".to_string(),
                                             confidence: 0.9,
+                                            test_provenance: None,
                                         }),
                                     )
                                     .with_raw_ref(&raw_ref),
@@ -738,6 +739,7 @@ fn parse_claude_record(
                                             summary: "Git commit observed in tool output"
                                                 .to_string(),
                                             confidence: 0.85,
+                                            test_provenance: None,
                                         }),
                                     )
                                     .with_raw_ref(&raw_ref),
@@ -987,6 +989,7 @@ fn parse_claude_record(
                                 kind: OutcomeKind::TestOrBuildPassed,
                                 summary: "Test suite executed successfully".to_string(),
                                 confidence: 0.9,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),
@@ -1004,6 +1007,7 @@ fn parse_claude_record(
                                 kind: OutcomeKind::CommitObserved,
                                 summary: "Git commit observed in tool output".to_string(),
                                 confidence: 0.85,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),

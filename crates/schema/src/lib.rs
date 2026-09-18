@@ -17,7 +17,8 @@ pub use compaction::{
 pub use human::{human_prompt_text, is_human_prompt};
 pub use event::{
     CompactionEvent, EventPayload, EventType, FileActionType, HumanIntervention, ModelSwitch,
-    NormalizedEvent, OutcomeEvidence, OutcomeKind, ShellCommand, ToolCall, ToolResult,
+    NormalizedEvent, OutcomeEvidence, OutcomeKind, ShellCommand, TestOrigin, TestProvenance,
+    ToolCall, ToolResult,
 };
 pub use machine::{
     host_fingerprint, host_fingerprint_for, MachineInfo, FINGERPRINT_SALT_DEFAULT,

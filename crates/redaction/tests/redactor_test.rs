@@ -317,6 +317,7 @@ fn test_all_event_variants_redaction() {
                 "Updated /Users/alice/repo/index.ts with API key sk-proj-1234567890abcdef1234567890"
                     .to_string(),
             confidence: 0.9,
+            test_provenance: None,
         }),
     );
     let redacted = redactor.redact_event(&event);
@@ -684,6 +685,7 @@ fn test_redact_outcome_evidence_scrubs_summary() {
         kind: OutcomeKind::CommitObserved,
         summary: "committed with key sk-1234567890abcdef1234567890 in the message".to_string(),
         confidence: 0.9,
+        test_provenance: None,
     }];
 
     let redacted = redactor.redact_outcome_evidence(&evidence);
@@ -743,6 +745,7 @@ fn test_for_trace_composes_repository_redaction_across_trace_outcomes_and_recove
         kind: OutcomeKind::CommitObserved,
         summary: "fixed a bug in unfoundbox/agentworth".to_string(),
         confidence: 0.8,
+        test_provenance: None,
     }]);
     assert!(unaugmented[0].summary.contains("unfoundbox/agentworth"));
 
@@ -753,6 +756,7 @@ fn test_for_trace_composes_repository_redaction_across_trace_outcomes_and_recove
         kind: OutcomeKind::CommitObserved,
         summary: "fixed a bug in unfoundbox/agentworth".to_string(),
         confidence: 0.8,
+        test_provenance: None,
     }]);
     assert!(!redacted_outcomes[0].summary.contains("unfoundbox/agentworth"));
     assert!(redacted_outcomes[0].summary.contains("[REDACTED_REPOSITORY]"));
