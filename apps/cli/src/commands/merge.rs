@@ -883,6 +883,20 @@ mod tests {
                     value: "a".repeat(64),
                 }])
                 .unwrap();
+            // The hook-spool-serve dedup set: two claimed ids ride the merge like any
+            // other per-session rows, so a merged index never re-applies them.
+            assert!(
+                storage2
+                    .mark_hook_event_seen("evt-child-1", "sess-child", "Stop")
+                    .unwrap(),
+                "fixture setup must actually claim the id"
+            );
+            assert!(
+                storage2
+                    .mark_hook_event_seen("evt-child-2", "sess-child", "PreToolUse")
+                    .unwrap(),
+                "fixture setup must actually claim the id"
+            );
 
             // The governor's three.
             storage2
