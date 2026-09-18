@@ -4911,6 +4911,33 @@ mod grammar_tests {
         }
     }
 
+    /// web_merge (decisions-v1 row W): `web` is how `serve` is spelled twice. It must
+    /// normalize to exactly the same `Action`, flags included.
+    #[test]
+    fn web_alias_reaches_serve() {
+        assert_eq!(action(&["web"]), action(&["serve"]));
+        assert_eq!(
+            action(&["web", "--open", "--port", "4321"]),
+            action(&["serve", "--open", "--port", "4321"])
+        );
+    }
+
+    /// web_merge (decisions-v1 row W): `home` is dead but still parses, so invoking it
+    /// fails with a pointer instead of a bare clap error. It must be hidden from `--help`.
+    #[test]
+    fn home_is_hidden() {
+        let mut cmd = cli_command();
+        cmd.build();
+        let home = cmd
+            .get_subcommands()
+            .find(|s| s.get_name() == "home")
+            .expect("dead `home` spelling still parses so it can 404 with a pointer");
+        assert!(
+            home.is_hide_set(),
+            "`home` is dead; it must be hidden, with `serve --open` the live spelling"
+        );
+    }
+
     /// A bare `archie` is the cockpit, and `archie tui` is the same thing said out loud.
     /// Both must reach `Action::Tui`; the difference between them is a terminal check, not
     /// a different command.
