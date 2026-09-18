@@ -205,7 +205,7 @@ fn cli_spellings_and_lan_out() {
         "`web` must be a visible alias of `serve`; aliases: {:?}",
         serve.get_aliases().collect::<Vec<_>>()
     );
-    for flag in ["open", "port", "dist", "no-socket", "home"] {
+    for flag in ["open", "port", "dist", "no_socket", "home"] {
         assert!(
             serve.get_arguments().any(|a| a.get_id() == flag),
             "`serve` keeps --{flag}"
