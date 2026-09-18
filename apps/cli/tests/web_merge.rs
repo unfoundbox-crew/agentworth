@@ -86,7 +86,7 @@ async fn raw(app: axum::Router, method: &str, uri: &str) -> (StatusCode, String)
 
 #[test]
 fn api_route_table_snapshot() {
-    let actual: Vec<(&str, &str)] = route_entries()
+    let actual: Vec<(&str, &str)> = route_entries()
         .iter()
         .map(|e| (e.method, e.path))
         .collect();
