@@ -84,7 +84,17 @@ impl LoopRuntime {
 
     /// Applies one event. Errors are returned, never propagated to the agent: every caller
     /// logs and carries on, because a hook that fails must not become an agent's problem.
+    ///
+    /// Exactly once: an event id this index has already applied is a no-op before anything
+    /// mutates -- no sequence bump, no transition, no rewritten Stop report. The hook sends
+    /// every event at least once (spool write-ahead plus the socket fast path), and this is
+    /// what keeps that from becoming twice. The claim is recorded after the effects land, so
+    /// a kill between the two replays the (idempotent) writes rather than losing the event
+    /// to a premature claim.
     pub fn apply(&mut self, event: HookEvent) -> Result<()> {
+        if self.storage.hook_event_seen(&event.event_id)? {
+            return Ok(());
+        }
         self.rehydrate(&event.session_id);
         let transition = self.state.apply(&event);
         let session_id = event.session_id.clone();
@@ -125,7 +135,18 @@ impl LoopRuntime {
             *counter = 0;
             self.persist_state(&session_id, None)?;
         }
+        self.storage.mark_hook_event_seen(
+            &event.event_id,
+            &event.session_id,
+            event.hook_event_name.as_str(),
+        )?;
         Ok(())
+    }
+
+    /// True when this index has already applied the event -- the pre-check behind both
+    /// `apply`'s early return and the spool drain's duplicate count.
+    pub fn is_duplicate(&self, event_id: &str) -> Result<bool> {
+        self.storage.hook_event_seen(event_id)
     }
 
     /// Answers one gate request: the event is applied first, so the decision is made against a
@@ -176,6 +197,12 @@ impl LoopRuntime {
             ingest.skipped_lines += read.skipped;
             let mut all_applied = true;
             for event in read.events {
+                // A retry, a socket-plus-spool redelivery, a replay after a crash: the line
+                // is on disk twice and the effect lands once. Counted, never silently dropped.
+                if self.is_duplicate(&event.event_id)? {
+                    ingest.duplicates += 1;
+                    continue;
+                }
                 if let Err(e) = self.apply(event) {
                     all_applied = false;
                     tracing::warn!("loop: a spooled event could not be applied: {e:#}");
@@ -456,6 +483,9 @@ pub struct SpoolIngest {
     pub events: usize,
     pub skipped_lines: usize,
     pub files: usize,
+    /// Lines already applied under their event id -- retries, redeliveries, replays.
+    /// Deduplicated, not lost: `events - duplicates` is what moved the index.
+    pub duplicates: usize,
 }
 
 fn anchor_rows(anchors: &[Anchor]) -> Vec<AnchorRow> {
@@ -485,6 +515,21 @@ mod tests {
 
     fn storage() -> Arc<Storage> {
         Arc::new(Storage::open_in_memory().expect("open storage"))
+    }
+
+    fn event_with_id(
+        session: &str,
+        name: &str,
+        event_id: &str,
+        extra: serde_json::Value,
+    ) -> HookEvent {
+        let mut with_id = serde_json::json!({ "event_id": event_id });
+        if let (Some(into), Some(from)) = (with_id.as_object_mut(), extra.as_object()) {
+            for (key, item) in from {
+                into.insert(key.clone(), item.clone());
+            }
+        }
+        event(session, name, with_id)
     }
 
     fn event(session: &str, name: &str, extra: serde_json::Value) -> HookEvent {
@@ -533,6 +578,169 @@ mod tests {
         SpoolWriter::append(&spool, &during).expect("append after");
         let second = runtime.ingest_spool(&spool).expect("second drain");
         assert_eq!(second.events, 1, "nothing was lost");
+    }
+
+    /// Double delivery must be one effect: a retried Stop (same event id, as a hook
+    /// retry or a socket-plus-spool redelivery sends) bumps no sequence, rewrites no
+    /// Stop report, and moves no intent row. This is the duplicate-delivery half of the
+    /// `hook_recovery` gate: without it every retry corrupts the lifecycle it resumes.
+    #[test]
+    fn a_retried_event_id_applies_exactly_once() {
+        let storage = storage();
+        let cwd = tempfile::tempdir().expect("tempdir");
+        let cwd_json = serde_json::json!({ "cwd": cwd.path() });
+        let edit_json = serde_json::json!({
+            "cwd": cwd.path(),
+            "tool_name": "Edit",
+            "tool_use_id": "toolu_dup_1",
+            "tool_input": {"file_path": "notes.md", "old_string": "a", "new_string": "b"},
+        });
+
+        let mut runtime = LoopRuntime::new(storage.clone());
+        runtime
+            .apply(event_with_id("s1", "SessionStart", "evt-start-1", cwd_json.clone()))
+            .expect("start");
+        runtime
+            .apply(event_with_id("s1", "PreToolUse", "evt-edit-1", edit_json.clone()))
+            .expect("edit");
+        // The retry: byte-identical event, same id, as a hook retry sends it.
+        runtime
+            .apply(event_with_id("s1", "PreToolUse", "evt-edit-1", edit_json.clone()))
+            .expect("edit retry");
+        runtime
+            .apply(event_with_id("s1", "Stop", "evt-stop-1", cwd_json.clone()))
+            .expect("stop");
+
+        let live = runtime.state.get("s1").expect("the session");
+        assert_eq!(
+            live.last_seq, 3,
+            "Start + Edit + Stop is three effects; the retry is none"
+        );
+        assert_eq!(live.state, AgentState::Idle);
+
+        let intents = storage
+            .intent_paths_for_session("s1", 0)
+            .expect("intent paths");
+        assert_eq!(intents.len(), 1, "one predicted path, not two: {intents:?}");
+
+        let stop: StopReport = serde_json::from_str(
+            &storage
+                .get_agent_last_stop("s1")
+                .expect("read")
+                .expect("a stop"),
+        )
+        .expect("parses");
+        assert_eq!(stop.seq, 3, "the Stop report belongs to the first Stop");
+    }
+
+    /// Kill -9 mid-lane: no SessionEnd, no handoff, only the spool the write-ahead left
+    /// behind. A fresh process drains it and the session reads crashed-recovered -- idle at
+    /// the exact sequence, no duplicate from the retried Stop, and the compaction rounds
+    /// (`forgotten`'s source) byte-identical to before the crash.
+    #[test]
+    fn a_kill_mid_lane_recovers_crashed_recovered_with_forgotten_intact() {
+        use agentworth_schema::{
+            AgentWorthTrace, CompactionEvent, EventPayload, NormalizedEvent, Provenance,
+            COMPACT_SUMMARY_KIND,
+        };
+
+        let storage = storage();
+        let at = Utc::now();
+        let prov = Provenance::new("/tmp/killed.jsonl", "claude_code", 10, 100, "fp_killed");
+        let mut trace = AgentWorthTrace::new("s1", "claude_code", prov, at);
+        trace.events.push(NormalizedEvent::new(
+            1,
+            at,
+            EventPayload::UserMessage { content: "do the thing".to_string() },
+        ));
+        trace.events.push(NormalizedEvent::new(
+            2,
+            at,
+            EventPayload::Compaction(CompactionEvent {
+                trigger: "manual".to_string(),
+                pre_tokens: Some(700_000),
+                post_tokens: Some(21_000),
+                dropped_tokens: Some(679_000),
+                duration_ms: None,
+            }),
+        ));
+        trace.events.push(NormalizedEvent::new(
+            3,
+            at,
+            EventPayload::Custom {
+                kind: COMPACT_SUMMARY_KIND.to_string(),
+                data: serde_json::json!({"message": {"content": "summary text"}}),
+            },
+        ));
+        trace.recalculate_stats();
+        storage.upsert_trace(&trace).expect("seed the compacted session");
+        let forgotten_before = storage.get_compaction_rounds("s1").expect("rounds");
+        assert_eq!(forgotten_before.len(), 1, "the session compacted once before it died");
+
+        // The lane as the hooks left it: five events, the Stop retried once, no SessionEnd.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spool = dir.path().join("spool");
+        let cwd = tempfile::tempdir().expect("tempdir");
+        let lane = [
+            ("SessionStart", "evt-k1", serde_json::json!({ "cwd": cwd.path() })),
+            ("UserPromptSubmit", "evt-k2", serde_json::json!({ "cwd": cwd.path() })),
+            (
+                "PreToolUse",
+                "evt-k3",
+                serde_json::json!({
+                    "cwd": cwd.path(),
+                    "tool_name": "Edit",
+                    "tool_use_id": "toolu_killed_1",
+                    "tool_input": {"file_path": "notes.md"},
+                }),
+            ),
+            (
+                "PostToolUse",
+                "evt-k4",
+                serde_json::json!({
+                    "cwd": cwd.path(),
+                    "tool_name": "Edit",
+                    "tool_use_id": "toolu_killed_1",
+                    "tool_input": {"file_path": "notes.md"},
+                    "tool_response": "ok",
+                }),
+            ),
+            ("Stop", "evt-k5", serde_json::json!({ "cwd": cwd.path() })),
+            // The retry that was already in flight when the process died.
+            ("Stop", "evt-k5", serde_json::json!({ "cwd": cwd.path() })),
+        ];
+        for (name, id, extra) in lane {
+            SpoolWriter::append(&spool, &event_with_id("s1", name, id, extra)).expect("spool");
+        }
+
+        // The kill: this runtime never shuts down cleanly. A new one drains the spool.
+        let mut recovered = LoopRuntime::new(storage.clone());
+        let ingest = recovered.ingest_spool(&spool).expect("drain");
+        assert_eq!(ingest.events, 6, "six lines were on disk");
+
+        let live = recovered.state.get("s1").expect("the session came back");
+        assert_eq!(live.state, AgentState::Idle, "the Stop closed the loop");
+        assert_eq!(
+            live.last_seq, 5,
+            "five unique events are five effects; the retried Stop is none"
+        );
+
+        let forgotten_after = storage.get_compaction_rounds("s1").expect("rounds");
+        assert_eq!(
+            forgotten_after, forgotten_before,
+            "recovery replays the lane, never the compaction history"
+        );
+
+        let close = agentworth_loop::classify_close(
+            false,
+            ingest.events > 0,
+            forgotten_after == forgotten_before,
+        );
+        assert_eq!(
+            close,
+            agentworth_loop::CloseState::CrashedRecovered,
+            "no handoff, spool recovered, forgotten intact: crashed-recovered"
+        );
     }
 
     #[test]
