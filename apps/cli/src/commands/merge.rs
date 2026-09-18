@@ -161,6 +161,14 @@ const SESSION_CHILD_TABLES: &[ChildTable] = &[
         name: "trace_anchors",
         columns: &["session_id", "seq", "kind", "value"],
     },
+    // The hook-spool-serve dedup set (fleet decisions v1 section 6). Keyed by the globally
+    // unique event id rather than by session, but carried per session like every table here:
+    // a merge that dropped it would let already-applied events apply again on the merged
+    // index -- the duplicate-handoff corruption the seen-table exists to prevent.
+    ChildTable {
+        name: "seen_hook_events",
+        columns: &["event_id", "session_id", "hook_event_name", "seen_at"],
+    },
     // The governor's three (docs/specs/governor.md). `turn_usage` is a merged session's whole
     // spend history; the other two are why it was stopped and whether it still is.
     ChildTable {
