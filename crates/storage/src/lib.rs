@@ -1214,6 +1214,17 @@ impl Storage {
                 first_seen TEXT NOT NULL
             );
 
+            -- Dedup for the hook-spool-serve path (fleet decisions v1 section 6). Every
+            -- event is delivered at least once -- spool write-ahead plus the socket fast path
+            -- -- and applied exactly once: the first application claims the id, retries and
+            -- replays find it already claimed and become no-ops.
+            CREATE TABLE IF NOT EXISTS seen_hook_events (
+                event_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                hook_event_name TEXT NOT NULL,
+                seen_at TEXT NOT NULL
+            );
+
             -- Live state for the loop (docs/specs/loop.md section 1): registered / working /
             -- idle / ended, updated from Claude Code hooks rather than scanned from a tape.
             CREATE TABLE IF NOT EXISTS agent_state (
@@ -4329,6 +4340,36 @@ impl Storage {
         Ok(())
     }
 
+    /// True when this hook event id has already been applied. The hook-spool-serve path
+    /// delivers every event at least once; this is the check that keeps that from becoming
+    /// twice (a hook retry, a socket-plus-spool redelivery, a spool replay after a crash).
+    pub fn hook_event_seen(&self, event_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare("SELECT 1 FROM seen_hook_events WHERE event_id = ?1")?;
+        Ok(stmt.exists(params![event_id])?)
+    }
+
+    /// Claims a hook event id as applied. Returns true on the first application and false
+    /// when the id was already claimed -- the caller then applies nothing: no sequence bump,
+    /// no transition, no rewritten Stop report, no moved intent row. Call only after the
+    /// event's effects landed, so a kill between the effects and the claim replays the
+    /// (idempotent) writes rather than losing the event to a premature claim.
+    pub fn mark_hook_event_seen(
+        &self,
+        event_id: &str,
+        session_id: &str,
+        hook_event_name: &str,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let changed = conn.execute(
+            "INSERT INTO seen_hook_events (event_id, session_id, hook_event_name, seen_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(event_id) DO NOTHING",
+            params![event_id, session_id, hook_event_name, Utc::now().to_rfc3339()],
+        )?;
+        Ok(changed == 1)
+    }
+
     /// Store this session's last `Stop` classification, as JSON. A session with no
     /// `agent_state` row yet gets one written first by `upsert_agent_state`; this only ever
     /// updates, so it is a no-op on a session the loop has never seen.
@@ -5494,6 +5535,35 @@ pub fn default_db_dir() -> Result<PathBuf> {
 mod tests {
     use super::*;
     use agentworth_schema::{NormalizedEvent, Provenance};
+
+    /// The seen-table contract the loop's exactly-once rests on: first claim wins, every
+    /// later claim for the same id reports already-seen, and an old database without the
+    /// table still works because the schema is `CREATE TABLE IF NOT EXISTS`.
+    #[test]
+    fn test_hook_event_ids_claim_once_then_read_as_seen() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        assert!(
+            !storage.hook_event_seen("evt-1").expect("check"),
+            "nothing is seen on a fresh index"
+        );
+        assert!(
+            storage.mark_hook_event_seen("evt-1", "s1", "Stop").expect("claim"),
+            "the first application claims the id"
+        );
+        assert!(
+            storage.hook_event_seen("evt-1").expect("check"),
+            "the claim is visible"
+        );
+        assert!(
+            !storage.mark_hook_event_seen("evt-1", "s1", "Stop").expect("re-claim"),
+            "a retry, a redelivery and a replay all lose the race the same way"
+        );
+        assert!(
+            !storage.hook_event_seen("evt-never").expect("check"),
+            "unknown ids read unseen, never as an error"
+        );
+    }
+
     use chrono::Duration;
     use std::io::Write;
     use tempfile::NamedTempFile;

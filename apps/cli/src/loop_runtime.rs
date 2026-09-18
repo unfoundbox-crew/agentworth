@@ -84,7 +84,17 @@ impl LoopRuntime {
 
     /// Applies one event. Errors are returned, never propagated to the agent: every caller
     /// logs and carries on, because a hook that fails must not become an agent's problem.
+    ///
+    /// Exactly once: an event id this index has already applied is a no-op before anything
+    /// mutates -- no sequence bump, no transition, no rewritten Stop report. The hook sends
+    /// every event at least once (spool write-ahead plus the socket fast path), and this is
+    /// what keeps that from becoming twice. The claim is recorded after the effects land, so
+    /// a kill between the two replays the (idempotent) writes rather than losing the event
+    /// to a premature claim.
     pub fn apply(&mut self, event: HookEvent) -> Result<()> {
+        if self.storage.hook_event_seen(&event.event_id)? {
+            return Ok(());
+        }
         self.rehydrate(&event.session_id);
         let transition = self.state.apply(&event);
         let session_id = event.session_id.clone();
@@ -125,7 +135,18 @@ impl LoopRuntime {
             *counter = 0;
             self.persist_state(&session_id, None)?;
         }
+        self.storage.mark_hook_event_seen(
+            &event.event_id,
+            &event.session_id,
+            event.hook_event_name.as_str(),
+        )?;
         Ok(())
+    }
+
+    /// True when this index has already applied the event -- the pre-check behind both
+    /// `apply`'s early return and the spool drain's duplicate count.
+    pub fn is_duplicate(&self, event_id: &str) -> Result<bool> {
+        self.storage.hook_event_seen(event_id)
     }
 
     /// Answers one gate request: the event is applied first, so the decision is made against a
@@ -176,6 +197,12 @@ impl LoopRuntime {
             ingest.skipped_lines += read.skipped;
             let mut all_applied = true;
             for event in read.events {
+                // A retry, a socket-plus-spool redelivery, a replay after a crash: the line
+                // is on disk twice and the effect lands once. Counted, never silently dropped.
+                if self.is_duplicate(&event.event_id)? {
+                    ingest.duplicates += 1;
+                    continue;
+                }
                 if let Err(e) = self.apply(event) {
                     all_applied = false;
                     tracing::warn!("loop: a spooled event could not be applied: {e:#}");
@@ -456,6 +483,9 @@ pub struct SpoolIngest {
     pub events: usize,
     pub skipped_lines: usize,
     pub files: usize,
+    /// Lines already applied under their event id -- retries, redeliveries, replays.
+    /// Deduplicated, not lost: `events - duplicates` is what moved the index.
+    pub duplicates: usize,
 }
 
 fn anchor_rows(anchors: &[Anchor]) -> Vec<AnchorRow> {
