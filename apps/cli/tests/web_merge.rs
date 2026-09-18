@@ -102,24 +102,28 @@ fn api_route_table_snapshot() {
 #[tokio::test]
 async fn one_table_across_spellings() {
     let probes = [
-        ("GET", "/api/stats"),
-        ("GET", "/api/traces"),
-        ("GET", "/api/traces/does-not-exist"),
-        ("GET", "/api/traces/does-not-exist/events"),
-        ("GET", "/api/usage"),
-        ("GET", "/api/pacing"),
-        ("GET", "/api/blame?file=src/lib.rs"),
-        ("GET", "/api/matrix"),
-        ("GET", "/api/archaeology"),
-        ("GET", "/api/config"),
+        ("GET", "/api/stats", StatusCode::OK),
+        ("GET", "/api/traces", StatusCode::OK),
+        ("GET", "/api/traces/does-not-exist", StatusCode::NOT_FOUND),
+        (
+            "GET",
+            "/api/traces/does-not-exist/events",
+            StatusCode::NOT_FOUND,
+        ),
+        ("GET", "/api/usage", StatusCode::OK),
+        ("GET", "/api/pacing", StatusCode::OK),
+        ("GET", "/api/blame?file=src/lib.rs", StatusCode::OK),
+        ("GET", "/api/matrix", StatusCode::OK),
+        ("GET", "/api/archaeology", StatusCode::OK),
+        ("GET", "/api/config", StatusCode::OK),
     ];
-    for (method, uri) in probes {
+    for (method, uri, expected) in probes {
         let (off_status, off_body) = raw(test_router(false), method, uri).await;
         let (on_status, on_body) = raw(test_router(true), method, uri).await;
         assert_eq!(
             (off_status, on_status),
-            (StatusCode::OK, StatusCode::OK),
-            "{method} {uri} must be 200 under both deck states, served from one table"
+            (expected, expected),
+            "{method} {uri} must be {expected} under both deck states, served from one table"
         );
         assert_eq!(
             off_body, on_body,
