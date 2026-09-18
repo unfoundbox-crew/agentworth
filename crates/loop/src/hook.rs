@@ -90,6 +90,12 @@ impl From<HookEventName> for String {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HookEvent {
     pub session_id: String,
+    /// Deduplication key for the hook-spool-serve path. Minted once, at the hook, and carried
+    /// verbatim through every retry, socket redelivery and spool replay: the same id applied
+    /// twice is one effect, never two (fleet decisions v1 section 6). Payloads written before
+    /// this field existed deserialise with a fresh id, so an old spool line still replays.
+    #[serde(default = "new_event_id")]
+    pub event_id: String,
     pub hook_event_name: HookEventName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
@@ -128,6 +134,11 @@ pub struct HookEvent {
     pub raw: serde_json::Value,
 }
 
+/// One fresh id, as the hook stamps it when the payload carries none.
+pub fn new_event_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 impl HookEvent {
     /// Builds an event from the JSON on a hook's stdin and the process environment it ran in.
     pub fn from_stdin_json(
@@ -135,6 +146,11 @@ impl HookEvent {
         env: &HashMap<String, String>,
     ) -> Result<Self, serde_json::Error> {
         let mut event: HookEvent = serde_json::from_value(value.clone())?;
+        // A retry carries the id it was given the first time; only a payload that never had
+        // one gets a fresh stamp. Without this a retried Stop would look like two Stops.
+        if event.event_id.is_empty() {
+            event.event_id = new_event_id();
+        }
         event.received_at = Utc::now();
         event.pane_id = env.get(PANE_ID_ENV).filter(|v| !v.is_empty()).cloned();
         // `raw` exists so a later reader can find a field this crate did not know about. The
@@ -165,6 +181,41 @@ impl HookEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn a_payload_without_an_event_id_gets_one_minted() {
+        let value = serde_json::json!({"session_id": "s1", "hook_event_name": "Stop"});
+        let event = HookEvent::from_stdin_json(value, &HashMap::new()).expect("parses");
+        assert!(!event.event_id.is_empty(), "the hook stamps every event");
+        assert!(
+            uuid::Uuid::parse_str(&event.event_id).is_ok(),
+            "the stamp is a uuid: {}",
+            event.event_id
+        );
+    }
+
+    #[test]
+    fn a_retried_payload_keeps_the_event_id_it_arrived_with() {
+        let first = HookEvent::from_stdin_json(
+            serde_json::json!({"session_id": "s1", "hook_event_name": "Stop"}),
+            &HashMap::new(),
+        )
+        .expect("parses");
+        let retry_value = serde_json::json!({
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "event_id": first.event_id,
+        });
+        let retry = HookEvent::from_stdin_json(retry_value, &HashMap::new()).expect("parses");
+        assert_eq!(retry.event_id, first.event_id, "a retry is the same event");
+    }
+
+    #[test]
+    fn two_minted_ids_are_never_the_same() {
+        let ids: HashSet<String> = (0..100).map(|_| new_event_id()).collect();
+        assert_eq!(ids.len(), 100, "uuid v4 collision in 100 draws would be its own incident");
+    }
 
     #[test]
     fn an_unknown_event_name_parses_instead_of_failing() {

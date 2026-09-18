@@ -245,6 +245,106 @@ fn the_spool_a_scan_ingests_answers_status_anchors_and_drift() {
     );
 }
 
+/// The duplicate-delivery half of the `hook_recovery` gate, through the real binary:
+/// the same Stop (same event id, as a hook retry sends it) spooled twice applies once.
+#[test]
+fn the_same_event_id_delivered_twice_applies_once() {
+    let (home, db) = sandbox();
+    let work = home.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+
+    hook(
+        home.path(),
+        &db,
+        serde_json::json!({
+            "session_id": SESSION_A, "hook_event_name": "SessionStart",
+            "cwd": work, "event_id": "evt-dup-start",
+        }),
+    );
+    hook(
+        home.path(),
+        &db,
+        serde_json::json!({
+            "session_id": SESSION_A, "hook_event_name": "UserPromptSubmit",
+            "cwd": work, "event_id": "evt-dup-prompt",
+        }),
+    );
+    let stop = serde_json::json!({
+        "session_id": SESSION_A, "hook_event_name": "Stop",
+        "cwd": work, "event_id": "evt-dup-stop",
+    });
+    hook(home.path(), &db, stop.clone());
+    // The retry: the hook fired again before the first delivery was acknowledged.
+    hook(home.path(), &db, stop);
+
+    scan(home.path(), &db, home.path());
+
+    let status = json_out(archie(home.path(), &db).arg("agent").arg("status").arg("--json"));
+    let session = &status["sessions"][0];
+    assert_eq!(session["session_id"], SESSION_A);
+    assert_eq!(session["state"], "idle");
+    assert_eq!(
+        session["last_seq"], 3,
+        "Start + Prompt + Stop is three effects; the retried Stop is none: {session:?}"
+    );
+}
+
+/// The kill-mid-lane half of the `hook_recovery` gate: no SessionEnd, no handoff, only the
+/// spool the write-ahead left behind. A scan drains it and the session reads back idle at
+/// the exact sequence -- crashed-recovered, never a stale or doubled handoff.
+#[test]
+fn a_kill_mid_lane_spool_recovers_without_duplicates_or_loss() {
+    let (home, db) = sandbox();
+    let work = home.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let written = work.join("written.rs");
+    std::fs::write(&written, "fn main() {}\n").unwrap();
+
+    let lane = [
+        ("SessionStart", "evt-kill-1"),
+        ("UserPromptSubmit", "evt-kill-2"),
+        ("PreToolUse", "evt-kill-3"),
+        ("PostToolUse", "evt-kill-4"),
+        ("Stop", "evt-kill-5"),
+        // The retry already in flight when the process died: same id, must not double-apply.
+        ("Stop", "evt-kill-5"),
+    ];
+    for (name, id) in lane {
+        let mut payload = serde_json::json!({
+            "session_id": SESSION_A, "hook_event_name": name,
+            "cwd": work, "event_id": id,
+        });
+        if name == "PreToolUse" || name == "PostToolUse" {
+            payload["tool_name"] = serde_json::json!("Edit");
+            payload["tool_use_id"] = serde_json::json!("toolu_kill_1");
+            payload["tool_input"] = serde_json::json!({"file_path": written});
+        }
+        if name == "PostToolUse" {
+            payload["tool_response"] = serde_json::json!("ok");
+        }
+        hook(home.path(), &db, payload);
+    }
+    // No SessionEnd: the process died here. The spool is all that is left.
+
+    scan(home.path(), &db, home.path());
+    assert!(
+        std::fs::read_dir(spool_dir(home.path()))
+            .map(|dir| dir.filter_map(Result::ok).count())
+            .unwrap_or(0)
+            == 0,
+        "an ingested spool file is deleted"
+    );
+
+    let status = json_out(archie(home.path(), &db).arg("agent").arg("status").arg("--json"));
+    let session = &status["sessions"][0];
+    assert_eq!(session["session_id"], SESSION_A);
+    assert_eq!(session["state"], "idle", "the Stop closed the loop");
+    assert_eq!(
+        session["last_seq"], 5,
+        "five unique events are five effects: {session:?}"
+    );
+}
+
 #[test]
 fn the_printed_snippet_is_json_and_registers_twelve_events() {
     let (home, db) = sandbox();
