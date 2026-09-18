@@ -174,9 +174,8 @@ impl AnswerKey {
 }
 
 /// Whether herdr, required to seat any rider, is usable from here. Distinguishes "not
-/// installed" from "installed but never run" (no socket yet) -- see `home_cmd::herdr_reachable`
-/// for the same check made at `archie home` startup; this is the wire-typed twin used by
-/// `detect_env` for the deck's first-run screen.
+/// installed" from "installed but never run" (no socket yet); this is the wire-typed
+/// status used by `detect_env` for the deck's first-run screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HerdrStatus {
@@ -549,9 +548,8 @@ pub fn detect_harnesses() -> Vec<Harness> {
 }
 
 /// Whether herdr can seat a rider: on PATH at all, and its socket actually present (an
-/// installed-but-never-run herdr looks identical to a missing one otherwise). Mirrors
-/// `home_cmd::herdr_reachable`'s two-step check, kept separate because that one returns a
-/// bool for a println and this one returns the wire-typed three-way status `hello` carries.
+/// installed-but-never-run herdr looks identical to a missing one otherwise). Returns the
+/// wire-typed three-way status `hello` carries.
 pub fn detect_herdr_status() -> HerdrStatus {
     if !on_path("herdr") {
         return HerdrStatus::Missing;
