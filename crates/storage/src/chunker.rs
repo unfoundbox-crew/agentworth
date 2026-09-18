@@ -809,6 +809,7 @@ mod tests {
                 kind: OutcomeKind::TestOrBuildPassed,
                 summary: "cargo test succeeded with 12 tests passed".to_string(),
                 confidence: 0.95,
+                test_provenance: None,
             }),
         ));
 

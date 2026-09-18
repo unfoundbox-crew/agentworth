@@ -546,6 +546,7 @@ fn parse_windsurf_record(
                         kind: OutcomeKind::ArtifactChanged,
                         summary: format!("Modified file {}", path),
                         confidence: 0.85,
+                        test_provenance: None,
                     }),
                 ));
             }
@@ -640,6 +641,7 @@ fn parse_windsurf_record(
                             kind: OutcomeKind::TestOrBuildPassed,
                             summary: format!("Test command passed: {}", cmd),
                             confidence: 0.9,
+                            test_provenance: None,
                         }),
                     ));
                 }
@@ -733,6 +735,7 @@ fn parse_windsurf_record(
                         kind: OutcomeKind::DoneClaimed,
                         summary: "Cascade task completed".to_string(),
                         confidence: 0.8,
+                        test_provenance: None,
                     }),
                 )
                 .with_raw_ref(&raw_ref),

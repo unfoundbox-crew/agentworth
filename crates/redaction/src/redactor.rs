@@ -215,6 +215,8 @@ impl Redactor {
                 kind: oe.kind,
                 summary: self.redact_text_internal(&oe.summary, report),
                 confidence: oe.confidence,
+                // Provenance cites who wrote the test, never secrets: preserved verbatim.
+                test_provenance: oe.test_provenance.clone(),
             }),
             EventPayload::Error {
                 message,
@@ -375,6 +377,8 @@ impl Redactor {
                 kind: e.kind,
                 summary: self.redact_text(&e.summary),
                 confidence: e.confidence,
+                // Provenance cites who wrote the test, never secrets: preserved verbatim.
+                test_provenance: e.test_provenance.clone(),
             })
             .collect()
     }

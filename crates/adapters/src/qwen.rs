@@ -619,6 +619,7 @@ fn parse_qwen_record(
                                 kind: OutcomeKind::TestOrBuildPassed,
                                 summary: "Test suite executed successfully in Qwen session".to_string(),
                                 confidence: 0.9,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),

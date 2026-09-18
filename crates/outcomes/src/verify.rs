@@ -494,6 +494,7 @@ mod tests {
             kind,
             summary: "original claim".to_string(),
             confidence,
+            test_provenance: None,
         }
     }
 
