@@ -125,10 +125,27 @@ async fn one_table_across_spellings() {
             (expected, expected),
             "{method} {uri} must be {expected} under both deck states, served from one table"
         );
-        assert_eq!(
-            off_body, on_body,
-            "{method} {uri} must answer identically with the deck off and on"
-        );
+        // `/api/pacing` stamps `started_at`/`ended_at` off the wall clock, so two
+        // builds never byte-match there; everything else must be identical.
+        if uri == "/api/pacing" {
+            let mut off_json: serde_json::Value =
+                serde_json::from_str(&off_body).expect("pacing body is JSON");
+            let mut on_json: serde_json::Value =
+                serde_json::from_str(&on_body).expect("pacing body is JSON");
+            for key in ["started_at", "ended_at"] {
+                off_json.as_object_mut().map(|o| o.remove(key));
+                on_json.as_object_mut().map(|o| o.remove(key));
+            }
+            assert_eq!(
+                off_json, on_json,
+                "{method} {uri} must answer identically apart from timestamps"
+            );
+        } else {
+            assert_eq!(
+                off_body, on_body,
+                "{method} {uri} must answer identically with the deck off and on"
+            );
+        }
     }
 
     // The fallback signature, captured dynamically: an unregistered path proves what
