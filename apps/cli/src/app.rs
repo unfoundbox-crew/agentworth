@@ -49,8 +49,6 @@ mod asks_command;
 // Same collision, same fix again: `commands::wake` would clash with `crate::wake`.
 #[path = "commands/wake.rs"]
 mod wake_command;
-#[path = "commands/home_cmd.rs"]
-mod home_cmd;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -152,6 +150,10 @@ pub const OLD_MCP_TOOL_NAMES: &[(&str, &str)] = &[
     ("suspect_commits", "repo_suspect"),
 ];
 
+/// What `archie home` says on its way out. A const so the grammar test can assert the
+/// pointer without running the dispatcher.
+pub const HOME_GONE_MESSAGE: &str = "`archie home` is gone; use `archie serve --open`";
+
 /// `archie completions --help`. The three install lines are clap_complete's own documented
 /// ones (crate 4.6.9, verified on docs.rs 2026-09-02), which is why they source the binary
 /// rather than a committed file: the crate states that the shell code and the binary must
@@ -212,12 +214,12 @@ enum Commands {
     },
 
     /// Start the local API server and interactive explorer UI
+    #[command(visible_alias = "web")]
     Serve(ServeArgs),
 
-    /// One command for a new user: serve the built `apps/home` deck and open it. Same as
-    /// `archie serve --home`, plus: fails loudly if the deck was never built into this
-    /// binary, opens the browser at `/home/` instead of the API root, and does not treat an
-    /// already-running `archie serve` holding the loop socket as fatal
+    /// Dead spelling: `archie home` is gone; use `archie serve --open`. Still parses
+    /// (hidden) so invoking it fails with that pointer instead of a bare clap error.
+    #[command(hide = true)]
     Home(HomeArgs),
 
     /// Start the read-only MCP server over stdio, for a coding agent to query this machine's
@@ -922,12 +924,12 @@ struct ServeArgs {
 
 #[derive(clap::Args, Debug, PartialEq)]
 struct HomeArgs {
-    /// Port to bind the server to. Reuses `archie serve`'s own default, so `archie home`
-    /// and `archie serve --home` land on the same URL unless told otherwise
+    /// Dead spelling: kept so `archie home --port N` still parses and fails with the
+    /// `serve --open` pointer instead of a bare clap error. Never read.
     #[arg(short, long, default_value_t = crate::DEFAULT_PORT)]
     port: u16,
 
-    /// Do not open the default browser
+    /// Dead spelling: see `port` above.
     #[arg(long)]
     no_open: bool,
 }
@@ -1985,15 +1987,8 @@ pub fn run() -> Result<()> {
                 &ui,
             ))?;
         }
-        Action::Home(a) => {
-            home_cmd::run_home_command(
-                home_cmd::HomeCommandArgs {
-                    port: a.port,
-                    no_open: a.no_open,
-                },
-                cli.db_path,
-                &ui,
-            )?;
+        Action::Home(_) => {
+            anyhow::bail!("{HOME_GONE_MESSAGE}");
         }
         Action::Hook(None, true) => {
             crate::commands::run_gate_command(cli.verbose)?;
@@ -4860,6 +4855,9 @@ mod grammar_tests {
 
     /// The alias table and the clap tree have to describe the same set. Without this, a
     /// hidden variant could quietly exist with nothing documenting what replaced it.
+    /// `home` is exempt: it is dead, not aliased -- it parses only to 404 with the
+    /// `serve --open` pointer (see `HOME_GONE_MESSAGE`), so it has no row in
+    /// OLD_CLI_SPELLINGS and never will.
     #[test]
     fn every_hidden_command_has_a_row() {
         let mut cmd = cli_command();
@@ -4871,11 +4869,18 @@ mod grammar_tests {
             .collect();
 
         for name in &hidden {
+            if name == "home" {
+                continue;
+            }
             assert!(
                 OLD_CLI_SPELLINGS.iter().any(|(old, _)| old == name),
                 "hidden command `{name}` has no row in OLD_CLI_SPELLINGS"
             );
         }
+        assert!(
+            !OLD_CLI_SPELLINGS.iter().any(|(old, _)| *old == "home"),
+            "dead `home` must not be listed as an alias: it 404s, it does not dispatch"
+        );
         for (old, _) in OLD_CLI_SPELLINGS {
             assert!(
                 hidden.iter().any(|n| n == old),
@@ -4901,7 +4906,7 @@ mod grammar_tests {
             .collect();
 
         for expected in [
-            "session", "agent", "repo", "window", "stats", "scan", "serve", "home", "mcp",
+            "session", "agent", "repo", "window", "stats", "scan", "serve", "mcp",
             "doctor", "docs", "config", "version", "update", "completions", "merge", "tui",
         ] {
             assert!(
@@ -4909,6 +4914,43 @@ mod grammar_tests {
                 "`{expected}` should be visible in --help; visible: {visible:?}"
             );
         }
+    }
+
+    /// web_merge (decisions-v1 row W): `web` is how `serve` is spelled twice. It must
+    /// normalize to exactly the same `Action`, flags included.
+    #[test]
+    fn web_alias_reaches_serve() {
+        assert_eq!(action(&["web"]), action(&["serve"]));
+        assert_eq!(
+            action(&["web", "--open", "--port", "4321"]),
+            action(&["serve", "--open", "--port", "4321"])
+        );
+    }
+
+    /// web_merge (decisions-v1 row W): `home` is dead but still parses, so invoking it
+    /// fails with a pointer instead of a bare clap error. It must be hidden from `--help`.
+    #[test]
+    fn home_is_hidden() {
+        let mut cmd = cli_command();
+        cmd.build();
+        let home = cmd
+            .get_subcommands()
+            .find(|s| s.get_name() == "home")
+            .expect("dead `home` spelling still parses so it can 404 with a pointer");
+        assert!(
+            home.is_hide_set(),
+            "`home` is dead; it must be hidden, with `serve --open` the live spelling"
+        );
+    }
+
+    /// The dead spelling's 404 names the live one. Asserted on the const so the pointer
+    /// cannot rot while the dispatch arm that prints it stays green.
+    #[test]
+    fn home_dead_message_points_to_serve_open() {
+        assert!(
+            HOME_GONE_MESSAGE.contains("serve --open"),
+            "the `home` 404 must point at `serve --open`; got: {HOME_GONE_MESSAGE}"
+        );
     }
 
     /// A bare `archie` is the cockpit, and `archie tui` is the same thing said out loud.
