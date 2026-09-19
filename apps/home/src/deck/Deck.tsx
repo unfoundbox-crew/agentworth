@@ -11,6 +11,8 @@ import { FirstDirection } from './FirstDirection';
 import { FirstRide } from './FirstRide';
 import { useDeckKeys } from './keys';
 import type { DockHandle } from './Dock';
+import { selectionToArgs, type ModelSelection } from '../model/modelSelection';
+import { resolveCatalog } from '../model/catalog';
 
 type Flow =
   | { phase: 'none' }
@@ -103,7 +105,7 @@ export function Deck() {
     setFlow({ phase: 'firstdirection', directionId: newLocalId(), goal });
   }
 
-  function pickRider(harness: Harness, area: string) {
+  function pickRider(harness: Harness, area: string, selection?: ModelSelection) {
     if (flow.phase !== 'firstdirection') return;
     const directionId = flow.directionId;
     const direction: Omit<Direction, 'reached' | 'spentTokens' | 'state' | 'exception' | 'createdAt' | 'updatedAt'> = {
@@ -115,7 +117,14 @@ export function Deck() {
       riders: [],
     };
     gateway.send({ t: 'set_direction', direction });
-    gateway.send({ t: 'start_rider', directionId, harness: harness.id, clientId: `c-${newLocalId()}` });
+    const args = selection ? selectionToArgs(selection, resolveCatalog()) : undefined;
+    gateway.send({
+      t: 'start_rider',
+      directionId,
+      harness: harness.id,
+      ...(args ? { args } : {}),
+      clientId: `c-${newLocalId()}`,
+    });
     setFlow({ phase: 'firstride', directionId, personaId: expectedPersonaId(directionId, harness.id) });
   }
 
