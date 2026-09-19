@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Artifact, Direction, Message, Persona, Stop } from '../protocol';
 import type { Theme } from '../model/theme';
@@ -6,6 +6,8 @@ import { characterFor } from '../model/theme';
 import { useHome } from '../model/store';
 import { VirtualizedPreview } from './VirtualizedPreview';
 import { gateway } from '../ws/client';
+import { buildSessionReview, selectReviewPath } from '../model/sessionReview';
+import { SessionReview } from './SessionReview';
 
 const RUNG_LABEL: Record<string, string> = {
   said: 'said',
@@ -72,6 +74,25 @@ export function Course({
     }
   }, [latest?.artifactId, artifacts]);
 
+  const directionStops = direction ? (stops[direction.id] ?? []) : [];
+  const review = useMemo(
+    () => buildSessionReview(direction, directionStops, artifacts),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [direction, directionStops, artifacts],
+  );
+  const [reviewPath, setReviewPath] = useState<string | null>(null);
+  const reviewSelected = selectReviewPath(review, reviewPath);
+  const reviewArtifactId = Object.keys(artifacts).find((id) => {
+    const a = artifacts[id];
+    return (a.kind === 'diff' || a.kind === 'file') && (a.ref || a.title) === reviewSelected;
+  });
+
+  useEffect(() => {
+    if (reviewArtifactId && !artifacts[reviewArtifactId]?.body) {
+      gateway.send({ t: 'fetch', artifactId: reviewArtifactId });
+    }
+  }, [reviewArtifactId, artifacts]);
+
   const activePersonaIds = solo.size > 0 ? solo : null;
   const visible = messages.filter((m) => {
     if (mute.has(m.from)) return false;
@@ -115,6 +136,11 @@ export function Course({
             no evidence yet
           </div>
         )}
+      </div>
+
+      <div className="mt-4 rounded-lg border border-line bg-panel p-3">
+        <div className="text-[10px] text-muted mb-1.5">review &middot; files changed</div>
+        <SessionReview review={review} selectedPath={reviewPath} onSelect={setReviewPath} />
       </div>
 
       <div className="mt-4 rounded-lg border border-line bg-panel p-3">
