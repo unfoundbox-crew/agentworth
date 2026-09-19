@@ -4,6 +4,7 @@ import type { Artifact, Direction, Message, Persona, Stop } from '../protocol';
 import type { Theme } from '../model/theme';
 import { characterFor } from '../model/theme';
 import { useHome } from '../model/store';
+import { VirtualizedPreview } from './VirtualizedPreview';
 import { gateway } from '../ws/client';
 
 const RUNG_LABEL: Record<string, string> = {
@@ -119,9 +120,7 @@ export function Course({
       <div className="mt-4 rounded-lg border border-line bg-panel p-3">
         <div className="text-[10px] text-muted mb-1.5">evidence &middot; last stop</div>
         {latestArtifact?.body ? (
-          <pre className="bg-[var(--mv-ground)] border border-line rounded p-2.5 text-[11px] leading-relaxed text-muted whitespace-pre-wrap overflow-x-auto">
-            {latestArtifact.body}
-          </pre>
+          <VirtualizedPreview body={latestArtifact.body} />
         ) : (
           <span className="inline-block text-[10px] text-dim border border-dashed border-line rounded-full px-2.5 py-0.5">
             no evidence yet
