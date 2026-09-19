@@ -38,6 +38,7 @@ fn msg(seq: u64, content: &str) -> NormalizedEvent {
 
 fn pass_evidence() -> OutcomeEvidence {
     OutcomeEvidence {
+        test_provenance: None,
         kind: OutcomeKind::TestOrBuildPassed,
         summary: "cargo test exited 0".to_string(),
         confidence: 0.85,
@@ -46,6 +47,7 @@ fn pass_evidence() -> OutcomeEvidence {
 
 fn commit_evidence() -> OutcomeEvidence {
     OutcomeEvidence {
+        test_provenance: None,
         kind: OutcomeKind::CommitObserved,
         summary: "git commit observed".to_string(),
         confidence: 0.90,

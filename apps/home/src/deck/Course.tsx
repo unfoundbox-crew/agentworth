@@ -6,13 +6,10 @@ import { characterFor } from '../model/theme';
 import { useHome } from '../model/store';
 import { VirtualizedPreview } from './VirtualizedPreview';
 import { gateway } from '../ws/client';
-<<<<<<< HEAD
 import { buildSessionReview, selectReviewPath } from '../model/sessionReview';
 import { SessionReview } from './SessionReview';
 import { ToolCards } from './ToolCards';
-=======
 import { PanelState } from './PanelState';
->>>>>>> pr-187
 
 const RUNG_LABEL: Record<string, string> = {
   said: 'said',
@@ -159,15 +156,9 @@ export function Course({
       <div className="mt-4 rounded-lg border border-line bg-panel p-3">
         <div className="text-[10px] text-muted mb-1.5">evidence &middot; last stop</div>
         {latestArtifact?.body ? (
-<<<<<<< HEAD
           <VirtualizedPreview body={latestArtifact.body} />
-=======
-          <pre className="bg-[var(--mv-ground)] border border-line rounded p-2.5 text-[11px] leading-relaxed text-muted whitespace-pre-wrap overflow-x-auto">
-            {latestArtifact.body}
-          </pre>
         ) : latest?.artifactId ? (
           <PanelState kind="loading" title="fetching the evidence" />
->>>>>>> pr-187
         ) : (
           <PanelState kind="empty" title="no evidence yet" hint="stops land here when a rider earns a rung" />
         )}
@@ -178,7 +169,6 @@ export function Course({
         )}
       </div>
 
-<<<<<<< HEAD
       <div className="mt-4 rounded-lg border border-line bg-panel p-3">
         <div className="text-[10px] text-muted mb-1.5">tools</div>
         <ToolCards
@@ -199,10 +189,7 @@ export function Course({
         />
       </div>
 
-      {(visible.length > 0 || riderWorking) && (
-=======
       {(visible.length > 0 || riderWorking) ? (
->>>>>>> pr-187
         <div className="mt-4 rounded-lg border border-line bg-panel p-3" ref={parentRef} style={{ maxHeight: 220, overflowY: 'auto' }}>
           <div className="text-[10px] text-muted mb-1.5">stream</div>
           {virtualize ? (
