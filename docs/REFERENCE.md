@@ -158,6 +158,7 @@ What you were doing: the checkout, the newest session's task, proof, loose ends,
 | `--repo` | no | Repository/workspace key, as `session handoff`'s receipt reports it. Defaults to the key derived from `--workspace` | - | - |
 | `--redact, -r` | no | Mask secrets, paths, and this session's own repository name before printing | false | - |
 | `--json` | no | Output the wake report as JSON | false | - |
+| `--inject` | no | Read an Antigravity CLI `PreInvocation` hook payload on stdin and print the `injectSteps` wake envelope on stdout (docs/specs/wake.md, "Automation"). Only `antigravity` today: Claude Code and Codex inject through their own hook commands | - | antigravity |
 
 ### `archie session forgotten`
 
@@ -467,7 +468,7 @@ Print the hook registration snippet for a harness. Never writes a settings file
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `HARNESS` | yes | The harness to print for. Both are verified against that harness's own hooks reference (docs/specs/loop.md, docs/specs/governor.md) | - | claude, codex |
+| `HARNESS` | yes | The harness to print for. Both are verified against that harness's own hooks reference (docs/specs/loop.md, docs/specs/governor.md) | - | claude, codex, antigravity |
 | `--govern` | no | Also register the sync gates, so the governor can stop a turn. Claude Code only: the Codex snippet is gated by construction, since Codex has no batch hook | false | - |
 
 ### `archie policy`

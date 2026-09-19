@@ -180,7 +180,7 @@ One line each, from what the index shows, not from what the adapter claims.
 | :--- | :--- |
 | claude_code | **Full.** Events, tools, shell, tokens, files, outcomes. Everything else in this product is really built on this one. |
 | opencode | **Deep, undersold.** Tokens and outcomes both real; blame paths are relative, which breaks file attribution. |
-| antigravity | **Events and tools, no tokens.** 9 outcomes from 449 tool-bearing sessions (down from 48/353 at the last measurement — not chased down further this pass). Not in the capability table under this name. |
+| antigravity | **Events, tools and models, no tokens.** 9 outcomes from 449 tool-bearing sessions (down from 48/353 at the last measurement — not chased down further this pass). Not in the capability table under this name. Models since 2026-09-19: field 19 of each `gen_metadata` blob names the generating model, now read into `models_used` (see the update below). Tokens stay absent — the store has no counters. |
 | codex | **Tokens, model, effort and repo since #116; tools and outcomes still missing.** 745 of 972 rows now carry tokens post-fix and post-rescan — the "stays wrong until reparsed" caveat from the last measurement no longer applies. The adapter reads `session_meta.cwd` for the repository (the rollout path is under `~/.codex` and used to bucket every session into the home directory), `turn_context.model` and `turn_context.effort` per turn, and the `token_count` events' cumulative counters. Tool calls, prompts and outcomes are still unread: they live in `response_item` and `event_msg`/`item_completed` records nothing parses yet. |
 | gemini | **Events and tools, barely scored.** 50 rows, 44 with events, 12 now with tokens (was 0), zero outcomes. |
 | grok | **Events only, thin.** 34 sessions with events, one tool call across all of them. |
@@ -205,6 +205,17 @@ Three of these — `hermes`, `cursor`, and every row in the last group — belon
 under the same honest label: **detects the directory**. The adapter finds files
 where they are supposed to be and gets almost nothing out of them. That is a
 useful state to have shipped and it is not the same thing as support.
+
+Update 2026-09-19: `antigravity` gains models but not tokens. The
+`agy` SQLite store's `gen_metadata` table holds one blob per generated step and
+field 19 of each is the model name; the adapter read every other part of the
+store and skipped that field, so all `antigravity` rows indexed with
+`models_used: []`. Measured on this machine's store: field 19 is a clean model
+id in 3,826 of 3,854 rows (`gemini-3.7-flash` 2,786, `gemini-3.7-flash-exp-b`
+779, `gemini-3.1-pro-low` 143, `gemini-3.8-flash` 115), and the two
+control-character rows are dropped by a shape filter. Token counters appear
+nowhere in that store — `gen_metadata`, `steps` and `conversation_summaries`
+were all searched — so tokens remain the honest zero, now guarded by a test.
 
 ## What this means for the specs
 

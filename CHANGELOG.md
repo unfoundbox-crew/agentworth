@@ -9,7 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Antigravity CLI sessions carry their models, and the harness can wake them.** The `agy`
+  conversation store records the model that generated each step in field 19 of its
+  `gen_metadata` blobs; the adapter read everything else out of that store and never that
+  field, so every `antigravity` row indexed with `models_used: []` while `claude_code` and
+  `codex` rows carried theirs. The adapter now reads it (parser version 3). Token usage stays
+  honestly zero: the store has no token counters anywhere, and a test guards against a future
+  estimate. `archie session wake --inject antigravity` turns an `agy` `PreInvocation` hook
+  payload into the `injectSteps` wake envelope, and `archie hook print antigravity` prints the
+  `~/.gemini/config/hooks.json` entry that points at it. Because `agy` exposes no
+  `SessionStart` hook, an on-disk marker makes the per-invocation `PreInvocation` fire the
+  wake document exactly once per conversation; see `apps/cli/src/antigravity_hook.rs`.
+
+### Fixed
+
+- **Wake resumes the worktree you are standing in, not the newest session for the repo.**
+  `extract_repository_or_workspace` prunes the `--claude-worktrees-` suffix of a Claude Code
+  project slug on purpose, which is right for carry-forward but meant that with several agents
+  in worktrees under one repository, "newest for repo" woke agent A into whichever worktree ran
+  last. Selection now prefers sessions whose recorded `workspace.cwd` equals the checkout's git
+  root and falls back to the repo ordering only when none match
+  (`Storage::list_sessions_for_repo_preferring_workspace`).
 
 ---
 

@@ -91,7 +91,7 @@ written by a model.
 | :--- | :--- | :--- |
 | Checkout, branch, HEAD, dirty, ahead | `git` run read-only in `workspace`, one five-second deadline for the whole probe | `git_unavailable`, `not_a_git_checkout` or `git_timed_out` in `gaps`; the line says which |
 | Index scanned, source changed | `MAX(scanned_at)`; the session's `sources.mtime` against the file's mtime now | `source_unreadable` |
-| Last session | newest **primary** session for `repo` by last activity (`COALESCE(ended_at, started_at)`), subagent transcripts excluded | `no_session_for_repo` and the document stops after the checkout block; `scan_budget_exhausted` as well when the bounded scan ran out before finding one, and the document says so in its own sentence |
+| Last session | the session for `repo` that recorded this checkout as its `workspace.cwd`, newest first; falls back to the newest **primary** session for `repo` by last activity (`COALESCE(ended_at, started_at)`) when none did, subagent transcripts excluded in both cases | `no_session_for_repo` and the document stops after the checkout block; `scan_budget_exhausted` as well when the bounded scan ran out before finding one, and the document says so in its own sentence |
 | Task | `sessions.prompt_preview` | `prompt_preview_empty` |
 | Last asked | the last user message in the trace that is not a compaction summary | `no_user_message` |
 | Ran in | the `cwd` and `gitBranch` the adapter recorded from the transcript's own records | line omitted; adapters other than Claude Code do not carry it |
@@ -125,6 +125,24 @@ saves three round trips. The two facts are kept apart in the output: the
 "Checkout" line is the present, the "Ran in" line is what the last session
 recorded.
 
+### Which session, when one repo holds several worktrees
+
+`extract_repository_or_workspace` prunes the `--claude-worktrees-` suffix of a
+Claude Code project slug, so every worktree of a repository answers to one repo
+key. That is right for carry-forward, which lists and never merges, and wrong
+for wake: with four to eight agents in worktrees under
+`~/code/unfoundbox/agentworth`, "newest for repo" woke an agent in worktree A
+into whichever worktree had run last.
+
+Wake now takes the checkout the agent is standing in -- the git root, or the
+workspace it was handed when there is no git -- and prefers the sessions whose
+recorded `workspace.cwd` equals it (`Storage::list_sessions_for_repo_preferring_workspace`).
+The choice is all-or-nothing: when a match exists, no other worktree's session
+is mixed into the answer, because resuming the wrong conversation is worse than
+a shorter "Before that" block. The repo key remains the fallback for a session
+recorded from the plain checkout, which has no worktree to match, and for every
+adapter that records no cwd at all.
+
 ### Why it is not `session_carry_forward` with a smaller budget
 
 Carry-forward lists handoffs and refuses to merge them, because merging two
@@ -147,6 +165,13 @@ are correct; they answer different questions.
 - `agentworth_schema::is_subagent_transcript` names the rule in one place,
   beside `extract_repository_or_workspace`, which already knows the same
   path shape.
+- **The Antigravity CLI session-start injection.** `archie session wake
+  --inject antigravity` reads an `agy` `PreInvocation` payload and prints the
+  `injectSteps` envelope; `archie hook print antigravity` prints the
+  `~/.gemini/config/hooks.json` entry. `agy` exposes no `SessionStart` event,
+  so `PreInvocation` (which fires every turn) plus a once-per-conversation
+  marker stands in for one. That is the harness's limitation, not the tool's:
+  a dedicated session-start hook would need no marker.
 
 ## Deliberately not built
 
@@ -168,7 +193,9 @@ are correct; they answer different questions.
 - Should wake take a session id, to wake into a specific past session rather
   than the newest? Not yet: `session_handoff` does that, and the two would
   drift. Revisit if the newest-primary rule picks the wrong session in
-  practice.
+  practice. It did, once: several agents in worktrees under one repo key made
+  "newest for repo" the wrong rule, and the checkout is now the first
+  tiebreak (see "Which session, when one repo holds several worktrees").
 - The `~300 token` target. Measured on the fixture the markdown is under 30
   lines; the token count depends on path lengths and is reported in the PR,
   not promised here.

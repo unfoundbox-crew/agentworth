@@ -223,6 +223,14 @@ pub struct SessionSummary {
     /// `agentworth_schema::TraceStats::compaction_tokens_dropped` for how it's computed.
     #[serde(default)]
     pub compaction_tokens_dropped: u64,
+    /// The working directory the session itself recorded (`metadata.workspace.cwd`), when the
+    /// adapter captured one. This is the worktree the agent actually stood in, which
+    /// `extract_repository_or_workspace` deliberately collapses to one repo key -- so it is the
+    /// only thing that can tell two sessions of the same repository apart
+    /// (`Storage::list_sessions_for_repo_preferring_workspace`). `None` for every query that
+    /// does not select the aliased `metadata` column, and for adapters that record no cwd.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_cwd: Option<String>,
 }
 
 /// One bucket of `Storage::get_compaction_outcome_correlation`'s result: a session count for
@@ -4022,7 +4030,7 @@ impl Storage {
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
                    sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
                    sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
-                   sessions.cache_creation_tokens
+                   sessions.cache_creation_tokens, sessions.metadata AS workspace_metadata
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE ({NON_STUB_SQL_PREDICATE})
@@ -4053,6 +4061,95 @@ impl Storage {
         Ok(RepoSessionPage {
             scan_exhausted: sessions.len() < limit && scanned >= REPO_SCAN_BUDGET,
             sessions,
+        })
+    }
+
+    /// Like [`Self::list_sessions_for_repo`], but when one or more sessions for `repo`
+    /// recorded a `workspace.cwd` equal to `workspace`, returns those and only those, newest
+    /// first. Falls back to the plain repo ordering when none match.
+    ///
+    /// **Why this exists.** `extract_repository_or_workspace` prunes the `--claude-worktrees-`
+    /// suffix of a Claude Code project slug, so every worktree of a repository answers to one
+    /// repo key. With four to eight agents in worktrees under `~/code/unfoundbox/agentworth`,
+    /// "newest for repo" returns whichever agent happened to run last -- not the agent standing
+    /// in *this* worktree. The repo key is still the right fallback (a session from the plain
+    /// checkout has no worktree to match), but the checkout the agent is standing in must win
+    /// first, or wake resumes the wrong conversation entirely.
+    ///
+    /// The scan cannot stop at `limit` the way `list_sessions_for_repo` does: the matching
+    /// session may be older than `limit` newer ones from other worktrees. It walks the same
+    /// `REPO_SCAN_BUDGET` window and only stops early once `limit` matches have been found.
+    pub fn list_sessions_for_repo_preferring_workspace(
+        &self,
+        repo: &str,
+        workspace: &str,
+        limit: usize,
+        include_subagents: bool,
+    ) -> Result<RepoSessionPage> {
+        if limit == 0 {
+            return Ok(RepoSessionPage {
+                sessions: Vec::new(),
+                scan_exhausted: false,
+            });
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&format!(
+            r#"
+            SELECT sessions.session_id, sessions.adapter, sessions.source_path, sessions.started_at,
+                   sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
+                   sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
+                   sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens, sessions.metadata AS workspace_metadata
+            FROM sessions
+            LEFT JOIN sources ON sessions.source_path = sources.source_path
+            WHERE ({NON_STUB_SQL_PREDICATE})
+            ORDER BY COALESCE(sessions.ended_at, sessions.started_at) DESC
+            LIMIT {REPO_SCAN_BUDGET}
+            "#
+        ))?;
+
+        let mut rows = stmt.query([])?;
+        let mut preferred = Vec::new();
+        let mut fallback = Vec::new();
+        let mut scanned = 0usize;
+
+        while let Some(row) = rows.next()? {
+            scanned += 1;
+            let source_path: String = row.get(2)?;
+            if extract_repository_or_workspace(&source_path) != repo {
+                continue;
+            }
+            if !include_subagents && is_subagent_transcript(&source_path) {
+                continue;
+            }
+            let summary = row_to_session_summary(row)?;
+            let matches = summary
+                .workspace_cwd
+                .as_deref()
+                .is_some_and(|cwd| same_workspace(cwd, workspace));
+            if matches {
+                preferred.push(summary);
+                if preferred.len() >= limit {
+                    break;
+                }
+            } else if fallback.len() < limit {
+                // Keep a fallback page in case no session's cwd matches. A match can still
+                // appear later, so this can never break the loop -- see the doc comment.
+                fallback.push(summary);
+            }
+        }
+
+        // All-or-nothing: if any session recorded this exact worktree, never mix another
+        // worktree's sessions into the answer. Fewer rows is better than the wrong session.
+        let sessions = if preferred.is_empty() { fallback } else { preferred };
+        let scan_exhausted = sessions.len() < limit && scanned >= REPO_SCAN_BUDGET;
+
+        Ok(RepoSessionPage {
+            sessions,
+            scan_exhausted,
         })
     }
     /// Record (or replace) one session's risk signals. Idempotent, so a rescan overwrites
@@ -5462,6 +5559,21 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
 
     let models_used = serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default();
 
+    // Read by alias, not index: only the repo lookups select `metadata AS workspace_metadata`,
+    // so every other caller of this mapper gets `None` rather than a column-order dependency.
+    let workspace_cwd = row
+        .get::<_, Option<String>>("workspace_metadata")
+        .ok()
+        .flatten()
+        .and_then(|raw| normalize_metadata(Some(raw)))
+        .and_then(|value| {
+            value
+                .get("workspace")
+                .and_then(|workspace| workspace.get("cwd"))
+                .and_then(|cwd| cwd.as_str())
+                .map(str::to_string)
+        });
+
     Ok(SessionSummary {
         session_id,
         adapter,
@@ -5484,6 +5596,7 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
         source_mtime_epoch_secs,
         compaction_count: compaction_count as usize,
         compaction_tokens_dropped: compaction_tokens_dropped as u64,
+        workspace_cwd,
     })
 }
 
@@ -5508,6 +5621,25 @@ pub fn normalize_metadata(raw: Option<String>) -> Option<serde_json::Value> {
         Ok(value) => Some(value),
         // Not JSON at all: hand back what is actually stored rather than dropping it.
         Err(_) => Some(serde_json::Value::String(raw)),
+    }
+}
+
+/// True when two working-directory strings name the same directory.
+///
+/// Equal after trimming a trailing slash, or equal once both resolve through the filesystem
+/// (`/tmp` on macOS is a symlink to `/private/tmp`). A path that no longer exists cannot be
+/// canonicalized and stays a string comparison -- never an error, because a worktree whose
+/// directory is gone is still a fact about which session to prefer.
+fn same_workspace(a: &str, b: &str) -> bool {
+    fn trim(s: &str) -> &str {
+        s.trim_end_matches('/')
+    }
+    if trim(a) == trim(b) {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
     }
 }
 
@@ -8411,6 +8543,56 @@ mod tests {
             storage.last_scanned_at().expect("last scanned").is_some(),
             "four upserts must leave a scanned_at behind"
         );
+    }
+
+    /// The bug: with four to eight agents in worktrees under one repo key, "newest for repo"
+    /// answers with another worktree's session. The recorded `workspace.cwd` must win first,
+    /// even when a session from a different worktree is newer.
+    #[test]
+    fn test_list_sessions_for_repo_prefers_the_recorded_worktree_over_recency() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base = Utc::now();
+        let root = "/Users/x/code/unfoundbox/agentworth";
+        let wt_a = format!("{root}/.claude/worktrees/wt-a");
+        let wt_b = format!("{root}/.claude/worktrees/wt-b");
+
+        // Same repo key for all three. Worktree B is newest, then the plain checkout, then A.
+        let seeds = [
+            ("a", format!("{wt_a}/sess-a.jsonl"), wt_a.clone(), 0),
+            ("root", format!("{root}/sess-root.jsonl"), root.to_string(), 60),
+            ("b", format!("{wt_b}/sess-b.jsonl"), wt_b.clone(), 120),
+        ];
+        for (id, path, cwd, offset) in seeds {
+            let prov = Provenance::new(path, "claude_code", 100, 1, format!("fp_{id}"));
+            let mut trace =
+                AgentWorthTrace::new(id, "claude_code", prov, base + Duration::seconds(offset));
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            trace.metadata = serde_json::json!({ "workspace": { "cwd": cwd } });
+            storage.upsert_trace(&trace).expect("seed session");
+        }
+
+        let page = storage
+            .list_sessions_for_repo_preferring_workspace("unfoundbox/agentworth", &wt_a, 10, false)
+            .expect("workspace lookup");
+        let ids: Vec<&str> = page.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["a"],
+            "the worktree the agent stands in wins over a newer session from another worktree"
+        );
+
+        // A directory no session recorded falls back to the plain repo ordering.
+        let page = storage
+            .list_sessions_for_repo_preferring_workspace(
+                "unfoundbox/agentworth",
+                &format!("{root}/.claude/worktrees/wt-c"),
+                10,
+                false,
+            )
+            .expect("fallback lookup");
+        let ids: Vec<&str> = page.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["b", "root", "a"], "fallback keeps newest-first repo order");
     }
 
     #[test]
