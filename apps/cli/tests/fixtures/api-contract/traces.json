@@ -15,7 +15,7 @@
     ],
     "output_tokens": 3400,
     "primary_outcome": "commit_observed",
-    "prompt_preview": "Fix the dashboard coverage matrix.",
+    "prompt_preview": "Fix the home deck coverage strip.",
     "session_id": "sess_fixture_0001",
     "source_mtime_epoch_secs": 1772000000,
     "source_path": "/Users/example/.claude/projects/demo/sess_fixture_0001.jsonl",

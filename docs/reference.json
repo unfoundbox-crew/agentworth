@@ -1,6 +1,6 @@
 {
   "version": "0.1.27",
-  "generatedDate": "2026-09-18",
+  "generatedDate": "2026-09-19",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -1551,14 +1551,6 @@
           "possibleValues": []
         },
         {
-          "name": "--dist",
-          "positional": false,
-          "required": false,
-          "help": "Optional path to custom web frontend dist directory",
-          "default": null,
-          "possibleValues": []
-        },
-        {
           "name": "--no-socket",
           "positional": false,
           "required": false,
@@ -1571,6 +1563,28 @@
           "positional": false,
           "required": false,
           "help": "Start the gateway behind `apps/home` (a WebSocket at /ws) alongside the HTTP API. Unix-only: it dials herdr's own Unix socket for live presence. See `apps/cli/src/server/home_gateway.rs`",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie home",
+      "about": "One command for a new user: serve the built `apps/home` deck and open it. Same as `archie serve --home`, plus: fails loudly if the deck was never built into this binary, opens the browser at `/home/` instead of the API root, and does not treat an already-running `archie serve` holding the loop socket as fatal",
+      "args": [
+        {
+          "name": "--port, -p",
+          "positional": false,
+          "required": false,
+          "help": "Port to bind the server to. Reuses `archie serve`'s own default, so `archie home` and `archie serve --home` land on the same URL unless told otherwise",
+          "default": "3000",
+          "possibleValues": []
+        },
+        {
+          "name": "--no-open",
+          "positional": false,
+          "required": false,
+          "help": "Do not open the default browser",
           "default": "false",
           "possibleValues": []
         }

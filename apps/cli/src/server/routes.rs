@@ -19,7 +19,6 @@ use anyhow::Result;
 use axum::extract::{Path, Query, State};
 use axum::http::{Request, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::IntoResponse;
 use axum::routing::{get, post, MethodRouter};
 use axum::{body::Body, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -35,14 +34,13 @@ use crate::app::config;
 
 use super::archaeology::{compute_archaeology_highlights, ArchaeologyHighlights};
 use super::live_tail::LiveTailEvent;
-use super::static_files::{serve_home_deck, serve_static_or_spa};
+use super::static_files::{serve_fallback, serve_home_deck, serve_root};
 
 /// Shared application state across API handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub storage: Arc<Storage>,
     pub scanner: Arc<Scanner>,
-    pub dist_dir: Option<PathBuf>,
     /// Sender side of the live-tail filesystem-event broadcast. Each SSE connection calls
     /// `.subscribe()` for its own receiver; cloning the sender itself is cheap.
     pub live_tail: broadcast::Sender<LiveTailEvent>,
@@ -50,10 +48,6 @@ pub struct AppState {
     /// (`super::home`). `None` makes `/ws` answer 404 instead of upgrading.
     #[cfg(unix)]
     pub home: Option<super::home::HomeHandle>,
-    /// Whether `--home` was passed. Platform-independent, unlike `home` above (the WebSocket
-    /// gateway is unix-only): the deck's static assets under `/home` serve on every platform,
-    /// they just have no live presence to show without the gateway.
-    pub home_deck_enabled: bool,
 }
 
 /// Query parameters for listing and filtering indexed traces.
@@ -166,7 +160,7 @@ pub struct EventsPageQuery {
     pub limit: Option<usize>,
 }
 
-/// Response for `GET /api/traces/:id/events` -- just the event slice, for a dashboard to fetch
+/// Response for `GET /api/traces/:id/events` -- just the event slice, for a client to fetch
 /// lazily after the initial `/api/traces/:id` load.
 #[derive(Debug, Clone, Serialize)]
 pub struct EventsPageResponse {
@@ -386,7 +380,7 @@ pub fn route_entries() -> Vec<RouteEntry> {
 /// The server binds to loopback and holds one person's whole session history, so `Any`
 /// was wrong: every page that person visits could read `/api/traces` and, since
 /// `/api/config`, write their preferences too. Only a page served from this machine
-/// gets through -- which still covers the dashboard's own origin and the Vite dev
+/// gets through -- which still covers the deck's own origin and the Vite dev
 /// server on another port. Same-origin requests carry no `Origin` header at all and
 /// never reach this.
 fn is_local_origin(origin: &axum::http::HeaderValue) -> bool {
@@ -410,22 +404,6 @@ fn is_local_origin(origin: &axum::http::HeaderValue) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "[::1]")
 }
 
-/// Answers `/home` and `/home/*` with the embedded deck when `--home` was passed, or 404 with
-/// a one-line explanation otherwise -- same shape as `home::gateway::ws_handler` for `/ws`,
-/// so a request against a plain `archie serve` (no `--home`) gets a clear answer instead of
-/// silently falling through to the dashboard's SPA fallback.
-async fn serve_home_deck_or_404(enabled: bool, req: Request<Body>) -> axum::response::Response {
-    if enabled {
-        serve_home_deck(req).await.into_response()
-    } else {
-        (
-            StatusCode::NOT_FOUND,
-            "the home deck is not enabled; `archie home` is gone -- start `archie serve --home`, or `archie serve --open` to open the browser",
-        )
-            .into_response()
-    }
-}
-
 /// Builds the complete Axum router with all API routes, CORS, tracing, and static fallback.
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
@@ -438,43 +416,35 @@ pub fn create_router(state: AppState) -> Router {
         api_routes = api_routes.route(entry.path, entry.handler);
     }
 
-    let dist_dir_for_fallback = state.dist_dir.clone();
-
     let router = Router::new().nest("/api", api_routes);
     #[cfg(unix)]
     let router = router.merge(super::home::router());
 
-    // Three routes, not two: axum 0.7's `/home/*path` wildcard does not match the bare
+    // `/` serves the home deck shell when built, else the JSON API root (never legacy
+    // HTML -- the v0.1.27 dashboard is gone from this binary).
+    //
+    // Three deck routes, not two: axum 0.7's `/home/*path` wildcard does not match the bare
     // `/home/` request a browser actually sends (empty capture after the slash falls through
     // to `.fallback()` instead of matching) -- measured directly against this router, not
     // assumed from the docs. `/home` (no trailing slash) and `/home/*path` (an inner SPA
     // route) both still need their own registrations.
-    let home_deck_enabled = state.home_deck_enabled;
     let router = router
+        .route("/", get(|| async { serve_root().await }))
         .route(
             "/home",
-            get(move |req: Request<Body>| async move {
-                serve_home_deck_or_404(home_deck_enabled, req).await
-            }),
+            get(|req: Request<Body>| async move { serve_home_deck(req).await }),
         )
         .route(
             "/home/",
-            get(move |req: Request<Body>| async move {
-                serve_home_deck_or_404(home_deck_enabled, req).await
-            }),
+            get(|req: Request<Body>| async move { serve_home_deck(req).await }),
         )
         .route(
             "/home/*path",
-            get(move |req: Request<Body>| async move {
-                serve_home_deck_or_404(home_deck_enabled, req).await
-            }),
+            get(|req: Request<Body>| async move { serve_home_deck(req).await }),
         );
 
     router
-        .fallback(move |req: Request<Body>| {
-            let dist_clone = dist_dir_for_fallback.clone();
-            async move { serve_static_or_spa(dist_clone, req).await }
-        })
+        .fallback(|req: Request<Body>| async move { serve_fallback(req).await })
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         // gzip + brotli, negotiated per-request off the client's `Accept-Encoding` -- the
@@ -486,7 +456,7 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Maps a stored `primary_outcome` value to the snake_case key the web dashboard's
+/// Maps a stored `primary_outcome` value to the snake_case key API clients'
 /// `OutcomeDistribution` type expects.
 ///
 /// `agentworth_outcomes::outcome_kind_name` now writes the snake_case form directly (it defers
@@ -708,7 +678,7 @@ async fn get_trace_by_id_handler(
     }))
 }
 
-/// GET /api/traces/:id/events -> just the paginated event slice, for a dashboard to fetch
+/// GET /api/traces/:id/events -> just the paginated event slice, for a client to fetch
 /// lazily after the initial `/api/traces/:id` load instead of ever re-fetching the (potentially
 /// huge) trace metadata/score/outcomes just to page through events.
 async fn get_trace_events_handler(
@@ -1429,7 +1399,6 @@ async fn post_export_handler(
         })?,
     };
 
-
     Ok(Json(ExportResponse {
         session_id: id,
         format: format.to_string(),
@@ -1486,11 +1455,9 @@ mod tests {
         let state = AppState {
             storage,
             scanner,
-            dist_dir: None,
             live_tail: live_tail_tx,
             #[cfg(unix)]
             home: None,
-            home_deck_enabled: false,
         };
 
         let response = get_stats_handler(State(state))
@@ -1612,11 +1579,9 @@ mod tests {
         let state = AppState {
             storage,
             scanner,
-            dist_dir: None,
             live_tail: live_tail_tx,
             #[cfg(unix)]
             home: None,
-            home_deck_enabled: false,
         };
 
         let response = get_stats_handler(State(state))

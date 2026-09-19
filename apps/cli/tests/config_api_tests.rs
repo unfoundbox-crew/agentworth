@@ -26,11 +26,9 @@ fn test_app() -> axum::Router {
     create_router(AppState {
         storage,
         scanner,
-        dist_dir: None,
         live_tail,
         #[cfg(unix)]
         home: None,
-        home_deck_enabled: false,
     })
 }
 
