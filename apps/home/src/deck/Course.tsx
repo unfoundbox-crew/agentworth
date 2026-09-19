@@ -8,6 +8,7 @@ import { VirtualizedPreview } from './VirtualizedPreview';
 import { gateway } from '../ws/client';
 import { buildSessionReview, selectReviewPath } from '../model/sessionReview';
 import { SessionReview } from './SessionReview';
+import { ToolCards } from './ToolCards';
 
 const RUNG_LABEL: Record<string, string> = {
   said: 'said',
@@ -157,6 +158,26 @@ export function Course({
             {RUNG_LABEL[latest.rung]} &middot; {latest.from}
           </div>
         )}
+      </div>
+
+      <div className="mt-4 rounded-lg border border-line bg-panel p-3">
+        <div className="text-[10px] text-muted mb-1.5">tools</div>
+        <ToolCards
+          messages={visible.filter((m) => m.kind === 'work')}
+          artifacts={artifacts}
+          direction={direction}
+          riderPresence={rider?.presence}
+          onRetry={(entry) => {
+            if (!direction) return;
+            gateway.send({
+              t: 'steer',
+              directionId: direction.id,
+              text: `retry: ${entry.ref}`,
+              mode: 'now',
+              mentions: [],
+            });
+          }}
+        />
       </div>
 
       {(visible.length > 0 || riderWorking) && (
