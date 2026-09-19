@@ -1,4 +1,5 @@
 pub mod app;
+pub mod antigravity_hook;
 pub mod asks;
 pub mod commands;
 pub mod completions;

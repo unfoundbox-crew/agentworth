@@ -318,7 +318,22 @@ pub fn load_wake(
     let workspace_str = workspace.to_string_lossy().to_string();
     let index_last_updated = storage.last_scanned_at().unwrap_or(None);
 
-    let page = storage.list_sessions_for_repo(repo, SECTION_ROWS, false)?;
+    // Prefer the session that ran in *this* checkout over the newest session for the repo.
+    // `extract_repository_or_workspace` collapses every worktree to one key, so the repo key
+    // alone would wake a worktree A agent into whichever worktree ran last (see
+    // `Storage::list_sessions_for_repo_preferring_workspace`). The git root is the string a
+    // session records as its own cwd; when there is no checkout, the workspace we were handed
+    // is the only candidate.
+    let selection_workspace = match &checkout {
+        CheckoutProbe::Found(found) => found.root.clone(),
+        _ => workspace_str.clone(),
+    };
+    let page = storage.list_sessions_for_repo_preferring_workspace(
+        repo,
+        &selection_workspace,
+        SECTION_ROWS,
+        false,
+    )?;
     let Some((newest, prior)) = page.sessions.split_first() else {
         let mut report =
             build_wake_without_session(repo, checkout, &workspace_str, index_last_updated);

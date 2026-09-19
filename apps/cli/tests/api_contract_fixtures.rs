@@ -121,6 +121,7 @@ fn sample_session_summary() -> SessionSummary {
         source_mtime_epoch_secs: Some(1_772_000_000),
         compaction_count: 0,
         compaction_tokens_dropped: 0,
+        workspace_cwd: None,
     }
 }
 

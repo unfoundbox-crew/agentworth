@@ -38,7 +38,11 @@ impl GeminiAdapter {
     /// `output` / `cached` / `thoughts` / `tool` inside `tokens`). Before this, every Gemini
     /// CLI session on this machine indexed as zero tokens despite 25M real ones; a reparse is
     /// what makes them appear, correctly counted.
-    pub const PARSER_VERSION: i64 = 2;
+    ///
+    /// 3: Antigravity CLI (`agy`) sessions read the model that generated each step out of the
+    /// conversation store's `gen_metadata` table, so `models_used` is no longer empty for them.
+    /// Token usage is unchanged -- the store has no counters (see the agy section below).
+    pub const PARSER_VERSION: i64 = 3;
 
     pub fn new() -> Self {
         Self
@@ -636,6 +640,49 @@ fn enumerate_agy_conversations_in(
     sources
 }
 
+/// The protobuf field `gen_metadata` uses for the model that generated a step.
+///
+/// Verified against this machine's store (2026-09-19): field 19 carries a clean model id in
+/// 3,826 of 3,854 rows -- `gemini-3.7-flash`, `gemini-3.7-flash-exp-b`, `gemini-3.8-flash`,
+/// `gemini-3.1-pro-low` -- and the field number is stable across every conversation DB
+/// sampled. A handful of rows carry an empty or non-text value there; `is_agy_model_name`
+/// drops those rather than indexing a control character as a model.
+const AGY_MODEL_FIELD: u32 = 19;
+
+/// Plausible model-name shape: non-empty printable ASCII, bounded length. The store's field 19
+/// is the model field, so a value that fails this is a decode artifact, not a model.
+fn is_agy_model_name(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_graphic())
+}
+
+/// Distinct models the conversation store recorded, in first-seen order.
+///
+/// `gen_metadata` holds one blob per generated step; field 19 of each is the model name. This
+/// is the only model source the agy store has -- there are no per-step token counters beside
+/// it -- so an absent `gen_metadata` table or an unreadable blob yields an empty list and the
+/// session indexes with no models, never with a guessed one.
+fn read_agy_models(conn: &Connection) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare("SELECT data FROM gen_metadata") else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map([], |row| row.get::<_, Vec<u8>>(0)) else {
+        return Vec::new();
+    };
+    let mut models = Vec::new();
+    for row in rows.flatten() {
+        let mut fields = Vec::new();
+        if !pb_walk_strings(&row, &mut fields) {
+            continue;
+        }
+        for (field, value) in fields {
+            if field == AGY_MODEL_FIELD && is_agy_model_name(&value) && !models.contains(&value) {
+                models.push(value);
+            }
+        }
+    }
+    models
+}
+
 /// Parse one agy conversation database into prompt, response, and tool-call
 /// events. Thin wrapper resolving the store paths; tests call
 /// `parse_agy_conversation_with_store` with fixture paths directly.
@@ -903,6 +950,15 @@ fn parse_agy_conversation_with_store(
 
     backfill_shell_exit_codes(&mut trace.events);
     trace.recalculate_stats();
+
+    // The store names the model that generated each step but carries no token counters. Set
+    // `models_used` from the store's own field so antigravity rows carry the model parity
+    // claude_code and codex do; token usage stays exactly zero because there is nothing to
+    // read (docs/capability-matrix.md, "antigravity: events and tools, no tokens").
+    let models = read_agy_models(&conn);
+    if !models.is_empty() {
+        trace.stats.models_used = models;
+    }
 
     Ok(ParseResult {
         trace,
@@ -1991,6 +2047,31 @@ mod tests {
             .unwrap();
         }
 
+        // One generation-metadata blob per generated step, mirroring the real store: the model
+        // that generated the step is field 19 (see `AGY_MODEL_FIELD`), followed by unrelated
+        // metadata. A control-character value and a real model both appear so the shape filter
+        // is exercised, not just the field number.
+        conn.execute(
+            "CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB, size INTEGER NOT NULL DEFAULT 0)",
+            [],
+        )
+        .unwrap();
+        for (i, model) in [(0, "gemini-3.7-flash"), (1, "gemini-3.8-flash"), (2, "\u{8}\u{1}")]
+            .into_iter()
+        {
+            let blob = agy_join(vec![
+                agy_pb_str(4, "ebd119fadcf91b99"),
+                agy_pb_str(AGY_MODEL_FIELD, model),
+                agy_pb_str(20, "request_id"),
+                agy_pb_str(1, "used_non_gemini_model"),
+            ]);
+            conn.execute(
+                "INSERT INTO gen_metadata (idx, data, size) VALUES (?, ?, ?)",
+                params![i as i64, blob, 0i64],
+            )
+            .unwrap();
+        }
+
         let summaries_path = dir.join("conversation_summaries.db");
         let sums = Connection::open(&summaries_path).unwrap();
         sums
@@ -2115,6 +2196,51 @@ mod tests {
             DateTime::from_timestamp_millis(1789000000000).unwrap()
         );
         assert_eq!(result.trace.ended_at.unwrap().to_rfc3339(), "2026-09-13T05:00:00+00:00");
+    }
+
+    /// Parse the shared fixture store as one agy conversation, resolving the identity the way
+    /// enumeration would.
+    fn agy_parse_fixture(temp: &Path, conv_id: &str) -> ParseResult {
+        let (db_path, summaries_path, history_path) = agy_fixture_store(temp, conv_id);
+        let short: String = conv_id.chars().take(8).collect();
+        let identity = format!(
+            "{}/.agy-conversation-{short}.sqlite{AGY_REPO_MARKER}{}#{conv_id}",
+            temp.join("proj").to_string_lossy(),
+            db_path.to_string_lossy(),
+        );
+        let source = SessionSource {
+            path: PathBuf::from(identity),
+            adapter_name: "antigravity".to_string(),
+            file_size_bytes: 1,
+            mtime_epoch_secs: 1789000100,
+            fingerprint: "test".to_string(),
+        };
+        parse_agy_conversation_with_store(&source, Some(&summaries_path), Some(&history_path))
+            .expect("agy parse failed")
+    }
+
+    /// Before this, every agy session indexed with `models_used: []` while claude_code and
+    /// codex carried models: the store names the model per step (field 19 of `gen_metadata`)
+    /// and the adapter never read it. The control-character row must not become a model.
+    #[test]
+    fn agy_parse_reads_models_from_gen_metadata() {
+        let temp = tempdir().unwrap();
+        let result = agy_parse_fixture(temp.path(), "31562521-ce8f-47e0-89f8-901594ae66c6");
+        assert_eq!(
+            result.trace.stats.models_used,
+            vec!["gemini-3.7-flash".to_string(), "gemini-3.8-flash".to_string()],
+            "field 19 of gen_metadata is the model, in first-seen order, control bytes dropped"
+        );
+    }
+
+    /// The store has no token counters. The adapter must not invent them, and this guard keeps a
+    /// future change from quietly estimating: `docs/capability-matrix.md` says so in prose, and
+    /// this says it in a test.
+    #[test]
+    fn agy_tokens_stay_zero_because_the_store_has_none() {
+        let temp = tempdir().unwrap();
+        let result = agy_parse_fixture(temp.path(), "31562521-ce8f-47e0-89f8-901594ae66c6");
+        assert_eq!(result.trace.stats.token_usage.total(), 0);
     }
 
     #[test]

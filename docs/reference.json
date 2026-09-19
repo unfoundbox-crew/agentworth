@@ -1,6 +1,6 @@
 {
   "version": "0.1.27",
-  "generatedDate": "2026-09-13",
+  "generatedDate": "2026-09-19",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -621,6 +621,16 @@
           "help": "Output the wake report as JSON",
           "default": "false",
           "possibleValues": []
+        },
+        {
+          "name": "--inject",
+          "positional": false,
+          "required": false,
+          "help": "Read an Antigravity CLI `PreInvocation` hook payload on stdin and print the `injectSteps` wake envelope on stdout (docs/specs/wake.md, \"Automation\"). Only `antigravity` today: Claude Code and Codex inject through their own hook commands",
+          "default": null,
+          "possibleValues": [
+            "antigravity"
+          ]
         }
       ]
     },
@@ -1629,7 +1639,8 @@
           "default": null,
           "possibleValues": [
             "claude",
-            "codex"
+            "codex",
+            "antigravity"
           ]
         },
         {
