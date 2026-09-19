@@ -3,6 +3,7 @@ import { ThemeToggle } from '@ui/ThemeToggle';
 import { useHome, orderDirections, dispatch } from '../model/store';
 import { characterFor } from '../model/theme';
 import { gateway } from '../ws/client';
+import { ConnectionBar } from './ConnectionBar';
 import type { AnswerKey, Direction, Persona } from '../protocol';
 
 function useElapsedMinutes(since: string): number {
@@ -43,6 +44,7 @@ export function Alert() {
   const personas = useHome((s) => s.personas);
   const directions = useHome((s) => s.directions);
   const theme = useHome((s) => s.theme);
+  const connection = useHome((s) => s.connection);
 
   const ordered = orderDirections(Object.values(directions));
   const exceptions = ordered.filter((d): d is Direction & { exception: NonNullable<Direction['exception']> } => !!d.exception);
@@ -94,7 +96,7 @@ export function Alert() {
       </div>
 
       <div
-        className="absolute left-1/2 -translate-x-1/2 top-[35%] w-[560px] rounded-lg bg-panel border border-line p-5 enter"
+        className="deck-card absolute left-1/2 -translate-x-1/2 top-[35%] rounded-lg bg-panel border border-line p-5 enter"
         style={{ borderLeft: '2px solid var(--mv-warn)' }}
       >
         <div className="text-[13px] text-ink font-medium">{current.goal}</div>
@@ -116,6 +118,7 @@ export function Alert() {
                 key={o.key}
                 type="button"
                 onClick={() => answer(o.key)}
+                aria-label={`answer ${o.label}`}
                 className="border border-line rounded-md px-2.5 py-1.5 text-xs text-text bg-transparent hover:bg-[var(--mv-surface-2)]"
               >
                 {o.label}
@@ -124,6 +127,7 @@ export function Alert() {
           <button
             type="button"
             onClick={openPane}
+            aria-label="open the pane"
             className="border border-line rounded-md px-3 py-1.5 text-xs text-text bg-transparent hover:bg-[var(--mv-surface-2)]"
           >
             open the pane
@@ -143,8 +147,14 @@ export function Alert() {
         </div>
       </div>
 
+      {connection !== 'open' && (
+        <div className="absolute left-1/2 -translate-x-1/2 top-[35%] mt-[196px] w-[560px] max-w-[calc(100vw-48px)] text-center">
+          <ConnectionBar connection={connection} />
+        </div>
+      )}
+
       {others > 0 && (
-        <div className="absolute left-1/2 -translate-x-1/2 top-[35%] mt-[210px] w-[560px] text-center text-[11px] text-dim">
+        <div className="absolute left-1/2 -translate-x-1/2 top-[35%] mt-[210px] w-[560px] max-w-[calc(100vw-48px)] text-center text-[11px] text-dim">
           {others} others riding fine
         </div>
       )}

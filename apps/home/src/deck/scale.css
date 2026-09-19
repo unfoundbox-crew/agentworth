@@ -1,0 +1,123 @@
+/*
+ * Deck type + spacing scale: the single token source for apps/home.
+ * Every panel (cruise / alert / consoles / review / cards / dialogs) sizes
+ * from these vars -- no one-off px values in new code. Values match the
+ * shipped look; this file only names them once.
+ */
+:root {
+  /* Type: mono deck, 10px meta -> 24px first-run prompt. */
+  --deck-text-xs: 10px;
+  --deck-text-sm: 11px;
+  --deck-text-base: 12px;
+  --deck-text-md: 13px;
+  --deck-text-lg: 15px;
+  --deck-text-xl: 24px;
+  --deck-leading: 1.6;
+  --deck-leading-snug: 1.4;
+
+  /* Spacing rhythm: 4px base. */
+  --deck-s1: 4px;
+  --deck-s2: 8px;
+  --deck-s3: 12px;
+  --deck-s4: 16px;
+  --deck-s5: 20px;
+  --deck-s6: 24px;
+
+  /* Panel geometry. */
+  --deck-panel-w: 560px;
+  --deck-wide-w: 720px;
+  --deck-strip-w: 300px;
+  --deck-seats-w: 260px;
+  --deck-radius: 8px;
+  --deck-radius-sm: 6px;
+  --deck-edge: 28px; /* ambient rail */
+
+  /* Motion: one easing, short durations. Streaming rows never animate. */
+  --deck-ease: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+  --deck-t-in: var(--motion-fast, 120ms);
+  --deck-t-out: var(--motion-exit, 120ms);
+}
+
+/* Shared designed panel states -- centered, quiet, honest. */
+.deck-panel-state {
+  padding: var(--deck-s4);
+  text-align: center;
+}
+.deck-panel-state-title {
+  font-size: var(--deck-text-sm);
+  line-height: var(--deck-leading);
+  color: var(--mv-muted);
+}
+.deck-panel-state-hint {
+  margin-top: var(--deck-s1);
+  font-size: var(--deck-text-xs);
+  line-height: var(--deck-leading-snug);
+  color: var(--mv-faint);
+}
+div[role="alert"].deck-panel-state > .deck-panel-state-title {
+  color: var(--mv-warn);
+}
+
+/* Gateway connectivity strip: one line, no layout shift. */
+.deck-connection {
+  font-size: var(--deck-text-xs);
+  color: var(--mv-muted);
+  text-align: center;
+  padding: var(--deck-s1) var(--deck-s3);
+  border-bottom: 1px solid var(--mv-border);
+}
+.deck-connection-lost {
+  color: var(--mv-warn);
+}
+
+/* Responsive panel widths: fixed on desktop, fluid at 390px. */
+.deck-card {
+  width: var(--deck-panel-w);
+  max-width: calc(100vw - 48px);
+}
+.deck-card-wide {
+  width: var(--deck-wide-w);
+  max-width: calc(100vw - 48px);
+}
+
+/* Consoles three-column -> stacked under 860px. */
+.consoles-grid {
+  display: grid;
+  overflow: hidden;
+  grid-template-columns: var(--deck-strip-w) 1fr var(--deck-seats-w);
+}
+@media (max-width: 860px) {
+  .consoles-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
+    overflow-y: auto;
+  }
+  .consoles-grid > div {
+    border-right: none !important;
+    border-left: none !important;
+    border-bottom: 1px solid var(--mv-border);
+    overflow: visible !important;
+  }
+}
+
+/* Dock wraps instead of clipping at 390px. */
+@media (max-width: 560px) {
+  .dock-bar {
+    flex-wrap: wrap !important;
+  }
+  .dock-bar input {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+}
+
+/* First ride side-by-side -> stacked at narrow widths. */
+@media (max-width: 640px) {
+  .firstride-cols {
+    flex-direction: column;
+    overflow-y: auto !important;
+  }
+  .firstride-side {
+    width: 100% !important;
+  }
+}

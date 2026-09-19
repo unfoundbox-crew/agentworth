@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { ThemeToggle } from '@ui/ThemeToggle';
+import { useHome } from '../model/store';
+import { ConnectionBar } from './ConnectionBar';
 import type { HomeEnv } from '../protocol';
 
 /**
@@ -10,6 +12,7 @@ import type { HomeEnv } from '../protocol';
  */
 export function FirstRun({ env, onSubmit }: { env: HomeEnv; onSubmit(goal: string): void }) {
   const [text, setText] = useState('');
+  const connection = useHome((s) => s.connection);
 
   function submit() {
     const goal = text.trim();
@@ -33,9 +36,15 @@ export function FirstRun({ env, onSubmit }: { env: HomeEnv; onSubmit(goal: strin
             if (e.key === 'Enter') submit();
           }}
           placeholder="What are we building?"
+          aria-label="What are we building?"
           className="w-full bg-transparent outline-none border-b border-line pb-3 text-center text-2xl text-text placeholder:text-dim"
         />
-        <div className="mt-4 text-[13px] text-dim">type it, press enter</div>
+        <div className="mt-4 text-[13px] text-muted">type it, press enter</div>
+        {connection !== 'open' && (
+          <div className="mt-2">
+            <ConnectionBar connection={connection} />
+          </div>
+        )}
 
         {env.herdr === 'ok' ? (
           env.harnesses.length > 0 && (

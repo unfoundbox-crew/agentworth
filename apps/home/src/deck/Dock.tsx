@@ -66,8 +66,9 @@ export const Dock = forwardRef<DockHandle, { direction: Direction | undefined; p
       setTimeout(() => setJustSent(false), 1000);
     }
 
+    const idle = !direction;
     return (
-      <div className="relative col-start-1 border-t border-line bg-panel px-3 py-2.5 flex items-center gap-2.5" aria-label="dock">
+      <div className="dock-bar relative col-start-1 border-t border-line bg-panel px-3 py-2.5 flex items-center gap-2.5" aria-label="dock">
         {showMentions && (
           <div className="absolute bottom-full left-3 mb-1 rounded-md border border-line bg-panel py-1 shadow-lg">
             {personas.map((p) => (
@@ -93,6 +94,8 @@ export const Dock = forwardRef<DockHandle, { direction: Direction | undefined; p
           ref={inputRef}
           value={text}
           readOnly={justSent}
+          disabled={idle}
+          aria-label={direction ? `steer ${direction.goal}` : 'steer the selected direction'}
           onChange={(e) => {
             setText(e.target.value);
             setShowMentions(e.target.value.endsWith('@'));
@@ -106,10 +109,12 @@ export const Dock = forwardRef<DockHandle, { direction: Direction | undefined; p
             justSent && 'opacity-60',
           )}
         />
-        <div className="flex border border-line rounded-md overflow-hidden shrink-0">
+        <div className="flex border border-line rounded-md overflow-hidden shrink-0" role="group" aria-label="steer timing">
           <button
             type="button"
             onClick={() => setMode('now')}
+            aria-pressed={mode === 'now'}
+            aria-label="steer now"
             className={clsx('px-3 py-1.5 text-[13px]', mode === 'now' ? 'bg-accent text-[var(--mv-accent-contrast)]' : 'text-muted')}
           >
             now
@@ -117,6 +122,8 @@ export const Dock = forwardRef<DockHandle, { direction: Direction | undefined; p
           <button
             type="button"
             onClick={() => setMode('after')}
+            aria-pressed={mode === 'after'}
+            aria-label="steer after this step"
             className={clsx('px-3 py-1.5 text-[13px]', mode === 'after' ? 'bg-accent text-[var(--mv-accent-contrast)]' : 'text-muted')}
           >
             after this step
