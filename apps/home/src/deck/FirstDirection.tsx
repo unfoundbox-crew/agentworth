@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { ThemeToggle } from '@ui/ThemeToggle';
 import type { Harness, HomeEnv, Rung } from '../protocol';
+import { ModelDialog } from './ModelDialog';
+import { loadBrowserSelection, saveBrowserSelection, type ModelSelection } from '../model/modelSelection';
 
 const RUNG_DOTS: Record<Rung, string> = {
   said: '●○○○○',
@@ -30,16 +32,23 @@ export function FirstDirection({
 }: {
   goal: string;
   env: HomeEnv;
-  onPick(harness: Harness, area: string): void;
+  onPick(harness: Harness, area: string, selection?: ModelSelection): void;
 }) {
   const [area, setArea] = useState(env.repo ?? env.cwd);
   const [focusIndex, setFocusIndex] = useState(0);
+  const [openFor, setOpenFor] = useState<string | null>(null);
   const done: Rung = 'test';
   const harnesses = env.harnesses;
 
-  function pick(index: number) {
+  function openModels(index: number) {
     const h = harnesses[index];
-    if (h) onPick(h, area);
+    if (h) setOpenFor(h.id);
+  }
+
+  function choose(harness: Harness, selection: ModelSelection) {
+    saveBrowserSelection(selection);
+    setOpenFor(null);
+    onPick(harness, area, selection);
   }
 
   return (
@@ -91,14 +100,16 @@ export function FirstDirection({
               onKeyDown={(e) => {
                 if (e.key === 'ArrowRight') setFocusIndex((i) => (i + 1) % harnesses.length);
                 else if (e.key === 'ArrowLeft') setFocusIndex((i) => (i - 1 + harnesses.length) % harnesses.length);
-                else if (e.key === 'Enter') pick(focusIndex);
+                else if (e.key === 'Enter') openModels(focusIndex);
               }}
             >
               {harnesses.map((h, i) => (
                 <button
                   key={h.id}
                   type="button"
-                  onClick={() => pick(i)}
+                  data-action="open-model-select"
+                  data-harness={h.id}
+                  onClick={() => openModels(i)}
                   onFocus={() => setFocusIndex(i)}
                   className="rounded-md px-4 py-2 text-[13px]"
                   style={
@@ -121,6 +132,19 @@ export function FirstDirection({
       </div>
 
       <div className="absolute left-6 right-6 bottom-14 border-t border-line" />
+
+      {openFor ? (
+        <ModelDialog
+          harnessId={openFor}
+          open
+          onClose={() => setOpenFor(null)}
+          onSelect={(sel) => {
+            const h = harnesses.find((x) => x.id === openFor);
+            if (h) choose(h, sel);
+          }}
+          selected={loadBrowserSelection(openFor)}
+        />
+      ) : null}
     </div>
   );
 }
