@@ -420,7 +420,7 @@ async fn serve_home_deck_or_404(enabled: bool, req: Request<Body>) -> axum::resp
     } else {
         (
             StatusCode::NOT_FOUND,
-            "the home deck is not enabled; start `archie serve --home` or `archie home`",
+            "the home deck is not enabled; `archie home` is gone -- start `archie serve --home`, or `archie serve --open` to open the browser",
         )
             .into_response()
     }
