@@ -1,9 +1,12 @@
-//! The offline path: one JSONL file per session, appended to when nothing is listening.
+//! The write-ahead log: one JSONL file per session, appended to before anything else.
 //!
-//! `docs/specs/loop.md` puts the spool on the critical path, not beside it. The hook connects to
-//! the socket with a small budget; when there is no socket, or no time, it appends here and exits
-//! zero. The agent is never slowed and never sees an error, and `archie scan` ingests the spool
-//! later like any other raw history.
+//! `docs/specs/loop.md` puts the spool on the critical path, not beside it. The hook appends
+//! here FIRST and only then tries the socket: the acknowledgement (exit 0) means the line is
+//! on disk, so a kill -9 anywhere after it loses nothing. `archie serve` drains the spool at
+//! startup and `archie scan` ingests it like any other raw history, and both deduplicate on
+//! the event id, so the socket fast path and the spool never double-apply.
+//!
+//! The agent is never slowed and never sees an error.
 //!
 //! Reading is forgiving on purpose. A line half-written when a machine lost power is skipped and
 //! counted, because losing one event is cheaper than refusing to read the session.
@@ -18,6 +21,9 @@ pub struct SpoolWriter;
 
 impl SpoolWriter {
     /// Appends one event to `<dir>/<session_id>.jsonl`, creating the directory if needed.
+    ///
+    /// Durable before it returns: the line is fsynced, so a caller that acknowledges after
+    /// this resolves (the hook's exit 0) has write-ahead behind it, not a page cache.
     pub fn append(dir: &Path, event: &HookEvent) -> Result<PathBuf> {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("creating spool directory {}", dir.display()))?;
@@ -31,6 +37,8 @@ impl SpoolWriter {
             .with_context(|| format!("opening spool file {}", path.display()))?;
         file.write_all(line.as_bytes())
             .with_context(|| format!("appending to {}", path.display()))?;
+        file.sync_all()
+            .with_context(|| format!("fsyncing {}", path.display()))?;
         Ok(path)
     }
 }
@@ -166,6 +174,20 @@ mod tests {
         assert_eq!(read.skipped, 1);
         assert_eq!(read.events.len(), 2);
         assert_eq!(read.events[1].hook_event_name, HookEventName::Stop);
+    }
+
+    #[test]
+    fn an_appended_event_keeps_its_event_id_through_the_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let first = event("s1", "SessionStart");
+        let path = SpoolWriter::append(dir.path(), &first).expect("append");
+        let read = SpoolReader::read_file(&path).expect("read");
+        assert_eq!(read.events.len(), 1);
+        assert_eq!(
+            read.events[0].event_id, first.event_id,
+            "a retry reads back the same id it wrote"
+        );
+        assert!(!read.events[0].event_id.is_empty());
     }
 
     #[test]

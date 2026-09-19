@@ -2190,10 +2190,17 @@ fn run_scan_command(
     match crate::loop_runtime::ingest_default_spool(storage.clone()) {
         Ok(ingest) if ingest.events > 0 => {
             if !json {
-                println!(
-                    "Loop: ingested {} hook event(s) from the spool",
-                    ingest.events
-                );
+                if ingest.duplicates > 0 {
+                    println!(
+                        "Loop: ingested {} hook event(s) from the spool ({} duplicate(s) deduplicated)",
+                        ingest.events, ingest.duplicates
+                    );
+                } else {
+                    println!(
+                        "Loop: ingested {} hook event(s) from the spool",
+                        ingest.events
+                    );
+                }
             }
         }
         Ok(_) => {}
