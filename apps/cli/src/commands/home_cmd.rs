@@ -45,7 +45,6 @@ pub fn run_home_command(args: HomeCommandArgs, db_path: Option<std::path::PathBu
     print_herdr_status_line();
 
     let storage = super::open_storage(db_path)?;
-    let dist_dir = crate::server::resolve_dist_dir(None)?;
 
     #[cfg(unix)]
     let loop_socket = !another_server_already_owns_the_loop();
@@ -68,7 +67,7 @@ pub fn run_home_command(args: HomeCommandArgs, db_path: Option<std::path::PathBu
         }
         // `open_browser: false` here -- the spawn above already opens `/home/`, and
         // `start_server`'s own opener would otherwise race it to open the bare API root too.
-        crate::server::start_server(storage, port, false, dist_dir, loop_socket, true, ui).await
+        crate::server::start_server(storage, port, false, loop_socket, true, ui).await
     })
 }
 

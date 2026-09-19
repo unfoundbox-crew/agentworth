@@ -1,6 +1,6 @@
 {
   "version": "0.1.27",
-  "generatedDate": "2026-09-13",
+  "generatedDate": "2026-09-19",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -1548,14 +1548,6 @@
           "required": false,
           "help": "Automatically open the Web UI in the default browser",
           "default": "false",
-          "possibleValues": []
-        },
-        {
-          "name": "--dist",
-          "positional": false,
-          "required": false,
-          "help": "Optional path to custom web frontend dist directory",
-          "default": null,
           "possibleValues": []
         },
         {

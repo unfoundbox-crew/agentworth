@@ -281,8 +281,8 @@ fn the_serve_banner_holds_the_grid_without_binding_a_port() {
     assert!(out.contains("http://localhost:3000/api/stats"), "{out}");
     assert!(out.contains("http://localhost:3000/api/traces"), "{out}");
     assert!(out.contains("Ctrl+C"), "the screen never says how to stop it:\n{out}");
-    // The product calls it the dashboard. The old banner called it an Explorer Server.
-    assert!(out.contains("DASHBOARD"), "{out}");
+    // The product calls it the home deck. Older banners called it a dashboard, then an Explorer Server.
+    assert!(out.contains("HOME DECK"), "{out}");
     assert!(!out.contains("Explorer"), "{out}");
 }
 
