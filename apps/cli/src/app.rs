@@ -438,7 +438,7 @@ enum HookCommand {
     Print {
         /// The harness to print for. Both are verified against that harness's own hooks
         /// reference (docs/specs/loop.md, docs/specs/governor.md)
-        #[arg(value_parser = ["claude", "codex"])]
+        #[arg(value_parser = ["claude", "codex", "antigravity"])]
         harness: String,
 
         /// Also register the sync gates, so the governor can stop a turn. Claude Code only:
@@ -1060,6 +1060,12 @@ struct WakeArgs {
     /// Output the wake report as JSON
     #[arg(long)]
     json: bool,
+
+    /// Read an Antigravity CLI `PreInvocation` hook payload on stdin and print the
+    /// `injectSteps` wake envelope on stdout (docs/specs/wake.md, "Automation"). Only
+    /// `antigravity` today: Claude Code and Codex inject through their own hook commands
+    #[arg(long, value_parser = ["antigravity"], value_name = "HARNESS")]
+    inject: Option<String>,
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
@@ -1799,14 +1805,18 @@ pub fn run() -> Result<()> {
             )?;
         }
         Action::Session(SessionCommand::Wake(a)) => {
-            wake_command::run_wake_command(
-                a.workspace,
-                a.repo,
-                a.redact,
-                resolve_json(a.json),
-                cli.db_path,
-                &ui,
-            )?;
+            if a.inject.as_deref() == Some("antigravity") {
+                crate::antigravity_hook::run_antigravity_inject(a.redact, cli.db_path)?;
+            } else {
+                wake_command::run_wake_command(
+                    a.workspace,
+                    a.repo,
+                    a.redact,
+                    resolve_json(a.json),
+                    cli.db_path,
+                    &ui,
+                )?;
+            }
         }
         Action::Session(SessionCommand::Drift(a)) => {
             crate::commands::run_session_drift_command(
@@ -2005,7 +2015,8 @@ pub fn run() -> Result<()> {
             match harness.as_str() {
                 "claude" => crate::commands::print_claude_snippet(govern)?,
                 "codex" => crate::commands::print_codex_snippet()?,
-                other => anyhow::bail!("no hook snippet for {other}; `claude` and `codex` are the harnesses"),
+                "antigravity" => crate::antigravity_hook::print_antigravity_snippet()?,
+                other => anyhow::bail!("no hook snippet for {other}; `claude`, `codex` and `antigravity` are the harnesses"),
             }
         }
         Action::Policy(PolicyCommand::Init(a)) => {

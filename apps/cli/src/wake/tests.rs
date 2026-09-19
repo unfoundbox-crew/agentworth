@@ -633,3 +633,104 @@ fn a_session_nothing_moved_under_keeps_the_line_out() {
         "no drift, no line: {markdown}"
     );
 }
+
+/// The founder's bug. With four to eight agents in worktrees under one repo key, wake from
+/// worktree A resumed whichever other worktree's agent ran last. The session that recorded
+/// *this* worktree must win over a newer session that recorded a different one.
+#[test]
+fn wake_from_a_worktree_resumes_that_worktrees_session_not_the_newest() {
+    use agentworth_adapter_sdk::{
+        AgentAdapter, DetectionResult, ParseResult, SessionSource,
+    };
+    use agentworth_schema::{NormalizedEvent, TokenUsage};
+    use std::sync::Arc;
+
+    struct FakeClaude;
+
+    impl AgentAdapter for FakeClaude {
+        fn name(&self) -> &'static str {
+            "claude_code"
+        }
+
+        // The seeded source paths do not exist on disk; presence is defined by the index here.
+        fn source_exists(&self, _source: &SessionSource) -> bool {
+            true
+        }
+
+        fn detect(
+            &self,
+            _options: &agentworth_adapter_sdk::ScanOptions,
+        ) -> anyhow::Result<DetectionResult> {
+            Ok(DetectionResult {
+                adapter_name: "claude_code",
+                is_present: false,
+                discovered_roots: vec![],
+                confidence: 0.0,
+            })
+        }
+
+        fn enumerate(
+            &self,
+            _options: &agentworth_adapter_sdk::ScanOptions,
+        ) -> anyhow::Result<Vec<SessionSource>> {
+            Ok(vec![])
+        }
+
+        fn parse(&self, source: &SessionSource) -> anyhow::Result<ParseResult> {
+            let session_id = source.path.file_stem().unwrap().to_string_lossy().to_string();
+            let prov = Provenance::new(
+                source.path.to_string_lossy().to_string(),
+                self.name(),
+                source.file_size_bytes,
+                source.mtime_epoch_secs,
+                &source.fingerprint,
+            );
+            let mut trace = AgentWorthTrace::new(&session_id, self.name(), prov, Utc::now());
+            trace.events.push(NormalizedEvent::new(
+                1,
+                Utc::now(),
+                EventPayload::UserMessage { content: "hi".to_string() },
+            ));
+            trace.recalculate_stats();
+            Ok(ParseResult { trace, malformed_lines: 0, warnings: vec![] })
+        }
+    }
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/x".to_string());
+    let root = format!("{home}/code/unfoundbox/agentworth");
+    let wt_a = format!("{root}/.claude/worktrees/wt-a");
+    let wt_b = format!("{root}/.claude/worktrees/wt-b");
+
+    let storage = Arc::new(agentworth_storage::Storage::open_in_memory().expect("open storage"));
+    // B starts ten minutes after A, so plain newest-for-repo returns B.
+    for (id, cwd, offset) in [("sess-a", wt_a.clone(), 0i64), ("sess-b", wt_b.clone(), 600)] {
+        let path = format!("{cwd}/{id}.jsonl");
+        let prov = Provenance::new(path, "claude_code", 100, 1, format!("fp_{id}"));
+        let mut trace = AgentWorthTrace::new(
+            id,
+            "claude_code",
+            prov,
+            scanned_at() + Duration::seconds(offset),
+        );
+        trace.stats.total_events = 5;
+        trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+        trace.metadata = serde_json::json!({ "workspace": { "cwd": cwd } });
+        storage.upsert_trace(&trace).expect("seed session");
+    }
+
+    let scanner = Scanner::with_adapters(vec![Box::new(FakeClaude)], Arc::clone(&storage));
+    let report = load_wake(
+        &storage,
+        &scanner,
+        "unfoundbox/agentworth",
+        std::path::Path::new(&wt_a),
+        WakeOptions { include_raw: true },
+    )
+    .expect("wake from worktree A");
+
+    assert_eq!(
+        report.session.as_ref().map(|s| s.session_id.as_str()),
+        Some("sess-a"),
+        "wake must resume the session that ran in this worktree, never a newer one from another"
+    );
+}
