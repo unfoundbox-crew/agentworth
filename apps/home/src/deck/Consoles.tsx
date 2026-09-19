@@ -5,6 +5,7 @@ import { Strips } from './Strips';
 import { Course } from './Course';
 import { Seats } from './Seats';
 import { Dock, type DockHandle } from './Dock';
+import { ConnectionBar } from './ConnectionBar';
 
 /** Consoles: strips, course, seats, and the dock. Opened by picking a direction; Escape closes it. */
 export function Consoles({ dockRef }: { dockRef: RefObject<DockHandle> }) {
@@ -16,6 +17,7 @@ export function Consoles({ dockRef }: { dockRef: RefObject<DockHandle> }) {
   const selectedDirection = useHome((s) => s.selectedDirection);
   const mute = useHome((s) => s.mute);
   const solo = useHome((s) => s.solo);
+  const connection = useHome((s) => s.connection);
 
   const ordered = orderDirections(Object.values(directions));
   const current = selectedDirection ? directions[selectedDirection] : undefined;
@@ -25,7 +27,7 @@ export function Consoles({ dockRef }: { dockRef: RefObject<DockHandle> }) {
   const reborn = Object.values(personas).filter((p) => p.presence === 'unknown').length;
 
   return (
-    <div className="col-start-1 row-span-4 grid h-full" style={{ gridTemplateRows: '32px 1fr auto' }}>
+    <div className="col-start-1 row-span-4 grid h-full" style={{ gridTemplateRows: 'auto auto 1fr auto' }}>
       <div className="flex items-center gap-2.5 px-5 border-b border-line" aria-label="status">
         <span className="font-sans text-xs font-medium text-dim">home</span>
         <div className="flex-1" />
@@ -41,7 +43,8 @@ export function Consoles({ dockRef }: { dockRef: RefObject<DockHandle> }) {
         <ThemeToggle />
       </div>
 
-      <div className="grid overflow-hidden" style={{ gridTemplateColumns: '300px 1fr 260px' }}>
+      <ConnectionBar connection={connection} />
+      <div className="consoles-grid">
         <div className="border-r border-line overflow-hidden">
           <Strips
             directions={ordered}

@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { PanelState } from './PanelState';
 import type { Direction, Persona } from '../protocol';
 import type { Theme } from '../model/theme';
 import { characterFor } from '../model/theme';
@@ -24,6 +25,14 @@ export function Strips({
   selectedId: string | null;
   onSelect(directionId: string): void;
 }) {
+  if (directions.length === 0) {
+    return (
+      <div className="h-full overflow-y-auto p-3 flex flex-col justify-center" aria-label="strips">
+        <PanelState kind="empty" title="no directions yet" hint="press / for one" />
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto p-3 flex flex-col gap-2" aria-label="strips">
       {directions.map((d, i) => {
@@ -34,6 +43,8 @@ export function Strips({
             key={d.id}
             type="button"
             onClick={() => onSelect(d.id)}
+            aria-current={selectedId === d.id ? true : undefined}
+            aria-label={`${d.goal} · ${exception ? d.exception!.reason : d.state}`}
             className={clsx(
               'text-left rounded-md border bg-panel px-3 py-2 transition-colors',
               exception ? 'border-line' : 'border-[var(--mv-border-soft)] opacity-70',
