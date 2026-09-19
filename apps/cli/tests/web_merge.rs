@@ -3,8 +3,9 @@
 //!
 //! - `archie serve`, `serve --open`, and the `web` alias all build the server from the
 //!   same `create_router` table (snapshot below); `--open` only opens the browser.
-//! - The dead `home` spelling 404s with a pointer to `serve --open`, on the CLI and on
-//!   the `/home*` HTTP paths served without the deck.
+//! - The dead `home` CLI spelling 404s with a pointer to `serve --open`. The `/home*`
+//!   HTTP paths are the deck's own routes and always serve the deck shell (or a
+//!   `deck was not built` 404) -- the v0.1.27 dashboard is gone from this binary.
 //! - LAN is out: `serve` exposes no host/bind flag and the server binds loopback only.
 //! - `include_raw` over non-loopback has no HTTP code path (`include_raw` exists only on
 //!   MCP stdio tools; the HTTP server binds 127.0.0.1 with no flag to change that), so
@@ -49,18 +50,16 @@ const EXPECTED_API_ROUTES: &[(&str, &str)] = &[
 /// gateway. Everything else falls through to the dashboard SPA fallback.
 const EXPECTED_NON_API_PATHS: &[&str] = &["/home", "/home/", "/home/any/inner/route", "/ws"];
 
-fn test_router(home_deck_enabled: bool) -> axum::Router {
+fn test_router() -> axum::Router {
     let storage = Arc::new(Storage::open_in_memory().expect("open in-memory storage"));
     let scanner = Arc::new(Scanner::new(storage.clone()));
     let (live_tail_tx, _rx) = tokio::sync::broadcast::channel(LIVE_TAIL_CHANNEL_CAPACITY);
     let state = AppState {
         storage: storage.clone(),
         scanner: scanner.clone(),
-        dist_dir: None,
         live_tail: live_tail_tx,
         #[cfg(unix)]
         home: None,
-        home_deck_enabled,
     };
     create_router(state)
 }
@@ -113,74 +112,85 @@ async fn one_table_across_spellings() {
         ("GET", "/api/config", StatusCode::OK),
     ];
     for (method, uri, expected) in probes {
-        let (off_status, off_body) = raw(test_router(false), method, uri).await;
-        let (on_status, on_body) = raw(test_router(true), method, uri).await;
+        // Two independently built routers: the table has no per-spelling or per-deck
+        // state, so the same probe answers identically on both.
+        let (a_status, a_body) = raw(test_router(), method, uri).await;
+        let (_b_status, b_body) = raw(test_router(), method, uri).await;
         assert_eq!(
-            (off_status, on_status),
-            (expected, expected),
-            "{method} {uri} must be {expected} under both deck states, served from one table"
+            a_status, expected,
+            "{method} {uri} must be {expected}, served from one table"
         );
         // `/api/pacing` stamps `started_at`/`ended_at` off the wall clock, so two
         // builds never byte-match there; everything else must be identical.
         if uri == "/api/pacing" {
-            let mut off_json: serde_json::Value =
-                serde_json::from_str(&off_body).expect("pacing body is JSON");
-            let mut on_json: serde_json::Value =
-                serde_json::from_str(&on_body).expect("pacing body is JSON");
+            let mut a_json: serde_json::Value =
+                serde_json::from_str(&a_body).expect("pacing body is JSON");
+            let mut b_json: serde_json::Value =
+                serde_json::from_str(&b_body).expect("pacing body is JSON");
             for key in ["started_at", "ended_at"] {
-                off_json.as_object_mut().map(|o| o.remove(key));
-                on_json.as_object_mut().map(|o| o.remove(key));
+                a_json.as_object_mut().map(|o| o.remove(key));
+                b_json.as_object_mut().map(|o| o.remove(key));
             }
             assert_eq!(
-                off_json, on_json,
+                a_json, b_json,
                 "{method} {uri} must answer identically apart from timestamps"
             );
         } else {
             assert_eq!(
-                off_body, on_body,
-                "{method} {uri} must answer identically with the deck off and on"
+                a_body, b_body,
+                "{method} {uri} must answer identically across builds"
             );
         }
     }
 
-    // The fallback signature, captured dynamically: an unregistered path proves what
-    // "no such route" looks like on this build (dist None, deck unbuilt or not).
-    let (fallback_status, fallback_body) =
-        raw(test_router(false), "GET", "/api/no-such-route-xyz").await;
-    for near_miss in ["/hom", "/homee", "/api/trace", "/api/scans"] {
-        let (status, body) = raw(test_router(false), "GET", near_miss).await;
-        assert_eq!(
-            (status, body),
-            (fallback_status, fallback_body.clone()),
-            "{near_miss} must fall through to the SPA fallback, not a registered route"
-        );
-    }
-
-    // Every non-/api path in the snapshot is registered: none of them may answer with
-    // the fallback signature.
-    for path in EXPECTED_NON_API_PATHS {
-        let (status, body) = raw(test_router(false), "GET", path).await;
+    // SPA fallback and registered deck routes are indistinguishable once the deck is
+    // built in (both serve the shell), so assert the contract that matters: an
+    // unregistered path and every non-/api path answer 200 (deck built) or an honest
+    // 404 (deck not built), never a 5xx, never the removed dashboard. `/ws` rejects a
+    // plain GET without an upgrade.
+    let mut paths: Vec<&str> = vec!["/hom", "/homee", "/api/trace", "/api/scans", "/api/no-such-route-xyz"];
+    paths.extend_from_slice(EXPECTED_NON_API_PATHS);
+    for path in paths {
+        let (status, body) = raw(test_router(), "GET", path).await;
         assert!(
-            (status, body.clone()) != (fallback_status, fallback_body.clone()),
-            "{path} must be a registered route, not the fallback"
+            !body.contains("Your agents left receipts"),
+            "{path} must never serve the removed v0.1.27 dashboard"
+        );
+        if path == "/ws" {
+            assert!(
+                status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND,
+                "/ws must reject a plain GET (400) or 404 without the gateway; got {status}"
+            );
+            continue;
+        }
+        assert!(
+            status.is_success() || status == StatusCode::NOT_FOUND,
+            "{path} must be 200 (deck built) or 404 (deck not built), never {status}"
         );
     }
 }
 
-/// `home` is dead: without the deck, `/home*` 404s with a pointer to `serve --open`.
+/// `/home*` is the deck's own route now (v0.1.27 dashboard removed): it serves the deck
+/// shell when built, or a `deck was not built` 404. It must never serve legacy HTML and
+/// never fall through to the JSON fallback.
 #[tokio::test]
-async fn home_paths_404_with_pointer_to_serve_open() {
+async fn home_paths_serve_the_deck_or_an_honest_404() {
     for path in ["/home", "/home/", "/home/any/inner/route"] {
-        let (status, body) = raw(test_router(false), "GET", path).await;
-        assert_eq!(
-            status,
-            StatusCode::NOT_FOUND,
-            "GET {path} without the deck must be 404"
+        let (status, body) = raw(test_router(), "GET", path).await;
+        assert!(
+            status == StatusCode::OK || status == StatusCode::NOT_FOUND,
+            "GET {path} must be 200 (deck built) or 404 (deck not built); got {status}"
         );
         assert!(
-            body.contains("serve --open"),
-            "GET {path} 404 must point at `serve --open`; got: {body}"
+            !body.contains("Your agents left receipts"),
+            "GET {path} must never serve the removed v0.1.27 dashboard"
         );
+        if status == StatusCode::NOT_FOUND {
+            assert!(
+                body.contains("deck was not built"),
+                "a 404 on {path} must say the deck was not built; got: {body}"
+            );
+        }
     }
 }
 
@@ -200,7 +210,7 @@ fn cli_spellings_and_lan_out() {
         "`web` must be a visible alias of `serve`; aliases: {:?}",
         serve.get_aliases().collect::<Vec<_>>()
     );
-    for flag in ["open", "port", "dist", "no_socket", "home"] {
+    for flag in ["open", "port", "no_socket", "home"] {
         assert!(
             serve.get_arguments().any(|a| a.get_id() == flag),
             "`serve` keeps --{flag}"
