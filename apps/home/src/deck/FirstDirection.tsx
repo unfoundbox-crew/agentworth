@@ -50,7 +50,7 @@ export function FirstDirection({
       </div>
 
       <div
-        className="absolute left-1/2 top-[19%] -translate-x-1/2 w-[720px] rounded-lg bg-panel border border-line p-4 enter"
+        className="deck-card-wide absolute left-1/2 top-[19%] -translate-x-1/2 rounded-lg bg-panel border border-line p-4 enter"
         style={{ borderLeft: '4px solid var(--mv-accent)' }}
       >
         <div className="text-[15px] font-medium text-ink">{goal}</div>
@@ -59,8 +59,9 @@ export function FirstDirection({
             area:{' '}
             <input
               value={area}
+              aria-label="area this direction owns"
               onChange={(e) => setArea(e.target.value)}
-              className="bg-transparent outline-none border-b border-dashed border-line text-text w-64"
+              className="bg-transparent outline-none border-b border-dashed border-line text-text w-64 max-w-full"
             />
           </div>
           <div>
@@ -72,7 +73,7 @@ export function FirstDirection({
         </div>
       </div>
 
-      <div className="absolute left-1/2 top-[38%] -translate-x-1/2 w-[720px] text-center">
+      <div className="deck-card-wide absolute left-1/2 top-[38%] -translate-x-1/2 text-center">
         <div className="text-[13px] text-dim">who rides?</div>
 
         {env.herdr !== 'ok' ? (

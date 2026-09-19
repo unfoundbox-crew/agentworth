@@ -3,6 +3,8 @@ import type { Direction, Persona } from '../protocol';
 import type { Theme } from '../model/theme';
 import { characterFor } from '../model/theme';
 import { Dock, type DockHandle } from './Dock';
+import { useHome } from '../model/store';
+import { ConnectionBar } from './ConnectionBar';
 import type { RefObject } from 'react';
 
 /**
@@ -23,17 +25,19 @@ export function FirstRide({
   dockRef: RefObject<DockHandle>;
 }) {
   const character = persona ? characterFor(theme, persona.role) : undefined;
+  const connection = useHome((s) => s.connection);
 
   return (
-    <div className="col-start-1 row-span-4 grid h-full" style={{ gridTemplateRows: '32px 1fr auto' }}>
-      <div className="flex items-center gap-2.5 px-5 border-b border-line">
+    <div className="col-start-1 row-span-4 grid h-full" style={{ gridTemplateRows: 'auto 1fr auto' }}>
+      <div className="flex items-center gap-2.5 px-5 border-b border-line min-h-[32px]">
         <span className="font-sans text-xs font-medium text-dim">home</span>
         <div className="flex-1" />
         <ThemeToggle />
       </div>
+      <ConnectionBar connection={connection} />
 
-      <div className="p-5 flex gap-5 overflow-hidden">
-        <div className="w-[360px] shrink-0 flex flex-col gap-4">
+      <div className="firstride-cols p-5 flex gap-5 overflow-hidden">
+        <div className="firstride-side w-[360px] max-w-full shrink-0 flex flex-col gap-4">
           <div
             className="rounded-md border border-line bg-panel px-3.5 py-2.5 enter"
             style={{ borderLeft: '4px solid var(--mv-accent)' }}

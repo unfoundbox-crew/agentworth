@@ -1,4 +1,5 @@
 @import '@ui/tokens.css';
+@import './deck/scale.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -11,8 +12,9 @@
  * the shared tokens as canon and DESIGN.md's table as superseded prose.
  */
 :root {
-  --t-in: 120ms;
-  --t-out: 80ms;
+  /* Motion runs through the deck scale: one easing, short durations. */
+  --t-in: var(--deck-t-in);
+  --t-out: var(--deck-t-out);
 }
 
 html, body, #root { height: 100%; }
@@ -28,18 +30,18 @@ body {
 * { scrollbar-width: thin; scrollbar-color: var(--mv-border) transparent; }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-.presence-working { animation: pulse 2s ease-in-out infinite; }
+.presence-working { animation: pulse 2s var(--deck-ease) infinite; }
 @media (prefers-reduced-motion: reduce) {
   .presence-working { animation: none; opacity: 0.7; }
 }
 
 @keyframes ambient-flow { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
-.ambient-active { animation: ambient-flow 2s ease-in-out infinite; }
+.ambient-active { animation: ambient-flow 2s var(--deck-ease) infinite; }
 @media (prefers-reduced-motion: reduce) {
   .ambient-active { animation: none; opacity: 0.55; }
 }
 
-.enter { animation: fade-in var(--t-in) ease-out; }
+.enter { animation: fade-in var(--deck-t-in) var(--deck-ease); }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .enter { animation: none; }
@@ -85,4 +87,26 @@ body {
 .theme-toggle button[aria-pressed="true"] {
   background: var(--mv-surface-3);
   color: var(--mv-ink);
+}
+
+/* Focus visibility: one ring for every interactive element. */
+:where(button, input, a, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
+  border-radius: 4px;
+}
+.theme-toggle button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
+}
+/* Disabled dock input is honest about it. */
+.dock-bar input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Narrow widths stack sanely; cards never clip at 390px. */
+@media (max-width: 640px) {
+  .deck-card, .deck-card-wide {
+    border-radius: var(--deck-radius);
+  }
 }

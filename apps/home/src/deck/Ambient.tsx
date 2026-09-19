@@ -12,10 +12,12 @@ export function Ambient() {
   const working = Object.values(personas).filter((p) => p.presence === 'working').length;
   return (
     <aside
-      aria-label="ambient"
+      aria-label="fleet activity"
+      role="status"
       className="row-span-4 col-start-2 border-l border-line bg-panel flex items-end justify-center pb-2"
     >
       <svg
+        aria-hidden="true"
         width="18"
         height="100%"
         viewBox="0 0 18 700"
