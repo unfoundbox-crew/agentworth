@@ -904,10 +904,6 @@ struct ServeArgs {
     #[arg(long)]
     open: bool,
 
-    /// Optional path to custom web frontend dist directory
-    #[arg(long)]
-    dist: Option<PathBuf>,
-
     /// Do not listen on the loop's Unix socket. Hook events then take the spool, and
     /// `archie scan` ingests them (docs/specs/loop.md section 1)
     #[arg(long)]
@@ -1973,16 +1969,9 @@ pub fn run() -> Result<()> {
         }
         Action::Serve(a) => {
             let storage = open_storage(cli.db_path)?;
-            let dist_path = crate::server::resolve_dist_dir(a.dist)?;
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(crate::start_server(
-                storage,
-                a.port,
-                a.open,
-                dist_path,
-                !a.no_socket,
-                a.home,
-                &ui,
+                storage, a.port, a.open, !a.no_socket, a.home, &ui,
             ))?;
         }
         Action::Home(a) => {

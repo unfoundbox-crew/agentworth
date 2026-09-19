@@ -2,7 +2,7 @@
   {
     "action": "edit",
     "adapter": "claude_code",
-    "file_path": "apps/dashboard/src/components/CoverageMatrix.tsx",
+    "file_path": "apps/home/src/deck/Strips.tsx",
     "model": "claude-sonnet-5",
     "models_used": [
       "claude-sonnet-5"

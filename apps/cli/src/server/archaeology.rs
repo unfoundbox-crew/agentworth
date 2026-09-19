@@ -93,7 +93,7 @@ pub fn compute_archaeology_highlights(
     // Safe to remove for the same reasons as get_stats_handler: this pulls lightweight
     // SessionSummary rows (no event payloads), get_aggregate_stats above already scans the
     // same table unbounded, the response is fixed-shape highlights (not the session list), and
-    // both callers (dashboard, legacy static UI) fetch this once per page load or explicit
+    // both callers (the home deck, the CLI) fetch this once per page load or explicit
     // rescan, never on a poll. It also doesn't touch the expensive part of this function:
     // full-trace loading stays capped at the <=40 sessions picked as candidates below,
     // regardless of how many summaries this scan returns.

@@ -2,8 +2,8 @@ name: CI
 
 # Path-aware: a docs-only PR shouldn't pay for a Rust build, and a Rust-only PR
 # shouldn't pay for the marketing site. rust-embed means the reverse doesn't
-# hold -- any dashboard (or shared packages/ui) change has to retest Rust too,
-# since the dashboard build is compiled into the binary.
+# hold -- any home deck (or shared packages/ui) change has to retest Rust too,
+# since the deck build is compiled into the binary.
 #
 # push to main always runs the full set (no filtering) as a post-merge gate,
 # regardless of what changed in the merge commit.
@@ -31,7 +31,6 @@ jobs:
     # the job graph stays uniform.
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
-      dashboard: ${{ steps.filter.outputs.dashboard }}
       web: ${{ steps.filter.outputs.web }}
       launcher: ${{ steps.filter.outputs.launcher }}
     steps:
@@ -44,7 +43,6 @@ jobs:
             rust:
               - 'crates/**'
               - 'apps/cli/**'
-              - 'apps/dashboard/**'
               - 'apps/home/**'
               - 'packages/ui/**'
               - 'Cargo.toml'
@@ -55,9 +53,6 @@ jobs:
               # "docs-only" and skip Rust CI entirely.
               - 'docs/REFERENCE.md'
               - 'docs/reference.json'
-            dashboard:
-              - 'apps/dashboard/**'
-              - 'packages/ui/**'
             web:
               - 'apps/web/**'
               - 'packages/ui/**'
@@ -101,59 +96,37 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: 'apps/dashboard/package-lock.json'
+          cache-dependency-path: 'apps/home/package-lock.json'
 
-      # Order matters: the dashboard is compiled into the binary via rust-embed,
+      # Order matters: the home deck is compiled into the binary via rust-embed,
       # so it has to exist before cargo runs. This mirrors release.yml exactly --
       # if the order is wrong here, it is wrong there too.
-      - name: Build dashboard
-        working-directory: apps/dashboard
-        run: npm ci && npm run build
-
-      # Same reason as the dashboard above: apps/home is compiled into the binary too
-      # (apps/cli/src/server/static_files.rs, `HomeDeckAssets`), served under `/home` by
-      # `archie serve --home` / `archie home`. Must exist before cargo builds.
+      # `npm run build` already runs `tsc` (see apps/home/package.json).
       - name: Build home deck
         working-directory: apps/home
         run: npm ci && npm run build
 
-      # `npm run build` already runs `tsc` (see apps/dashboard/package.json), so this is
-      # redundant with the step above in practice -- it's kept as its own named step so a
-      # Rust/TS API contract drift (apps/dashboard/src/types/contract.test.ts, see
-      # apps/dashboard/README.md) fails CI with an unambiguous label instead of buried inside
-      # a generic "Build dashboard" failure.
-      - name: Dashboard typecheck (Rust/TS API contract)
-        working-directory: apps/dashboard
-        run: npm run typecheck
-
-      - name: Assert the dashboard will be embedded
+      - name: Assert the deck will be embedded
         run: |
-          test -f apps/dashboard/dist/index.html \
-            || { echo "::error::apps/dashboard/dist/index.html missing — the binary would ship without a UI"; exit 1; }
           test -f apps/home/dist/index.html \
             || { echo "::error::apps/home/dist/index.html missing — archie home would ship with no deck"; exit 1; }
 
       - name: Build workspace
         run: cargo build --workspace --bin agentworth --bin archie
 
-      # Proves the dashboard and the home deck are actually inside the binary rather than
-      # merely built next to it. The dashboard check is the one whose absence let that bug
-      # ship; the home-deck grep matches its baked-in `base: '/home/'` asset prefix
+      # Proves the home deck is actually inside the binary rather than merely built next
+      # to it. The grep matches its baked-in `base: '/home/'` asset prefix
       # (apps/home/vite.config.ts), which only appears in this file if the built HTML made
       # it into the embed.
-      - name: Assert the dashboard and home deck are inside the binary
+      - name: Assert the home deck is inside the binary
         shell: bash
         run: |
           BIN=target/debug/archie
-          grep -q "AgentWorth" "$BIN" \
-            || { echo "::error::no dashboard markup found in the binary"; exit 1; }
           grep -q "/home/assets/" "$BIN" \
             || { echo "::error::no home deck markup found in the binary"; exit 1; }
           echo "binary size: $(du -h "$BIN" | cut -f1)"
 
-      # Must run after the dashboard build above — rust-embed needs
-      # apps/dashboard/dist to exist, and apps/cli's static-file tests read
-      # from it directly.
+      # Must run after the deck build above — rust-embed needs apps/home/dist to exist.
       - name: Run workspace tests
         run: cargo test --workspace
 
@@ -219,16 +192,11 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: 'apps/dashboard/package-lock.json'
+          cache-dependency-path: 'apps/home/package-lock.json'
 
       # clippy --all-targets compiles apps/cli, whose build.rs and rust-embed
-      # folder need a real dashboard/dist to exist -- same ordering constraint
+      # folder need a real home deck dist to exist -- same ordering constraint
       # as the build job above.
-      - name: Build dashboard
-        working-directory: apps/dashboard
-        run: npm ci && npm run build
-
-      # Same ordering constraint: apps/home is a second rust-embed folder.
       - name: Build home deck
         working-directory: apps/home
         run: npm ci && npm run build

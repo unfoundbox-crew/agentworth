@@ -1,15 +1,15 @@
 //! Rust -> TypeScript API contract fixtures.
 //!
 //! AGENTS.md item 2 ("Things you cannot learn from the code") names Rust/TypeScript drift as
-//! the recurring bug class on this dashboard: three independent field-name mismatches shipped
+//! the recurring bug class on this product's web clients: three independent field-name mismatches shipped
 //! in one day because nothing forced the two sides to agree. This test is the half of the loop
 //! that lives in Rust.
 //!
-//! For each API response type the dashboard consumes, this builds one concrete, representative
+//! For each API response type an API client consumes, this builds one concrete, representative
 //! value using the *real* Rust struct (not `serde_json::json!()` -- a struct literal is what
 //! makes a field rename a compile error here, not just a silent reformat), serializes it, and
 //! compares it against a checked-in JSON fixture under
-//! `apps/dashboard/src/types/__fixtures__/`. A shape change either fails to compile (a field was
+//! `apps/cli/tests/fixtures/api-contract/`. A shape change either fails to compile (a field was
 //! added/removed/renamed) or fails the value comparison (serialization changed) until the
 //! fixture is regenerated.
 //!
@@ -19,11 +19,7 @@
 //! UPDATE_API_FIXTURES=1 cargo test -p agentworth-cli api_contract
 //! ```
 //!
-//! Then run `npm run typecheck` in apps/dashboard/ -- `contract.test.ts` imports these same
-//! fixtures and asserts each one `satisfies` its TypeScript type, so a TS type that didn't
-//! move with the Rust change fails loudly instead of silently reading `undefined`.
-//!
-//! Not every route dashboard TS models is covered here. `GET /api/stats` returns a hand-built
+//! Not every route an API client models is covered here. `GET /api/stats` returns a hand-built
 //! `serde_json::Value` (apps/cli/src/server/routes.rs::get_stats_handler) whose shape does not
 //! match the `AggregateStats` struct at all -- it nests `date_range`, replaces the fixed
 //! `outcome_distribution` struct with a dynamic `BTreeMap`, and adds `average_composite_score`
@@ -58,9 +54,9 @@ fn ts(s: &str) -> DateTime<Utc> {
 }
 
 fn fixtures_dir() -> PathBuf {
-    // CARGO_MANIFEST_DIR is apps/cli; fixtures live under the dashboard's own types dir so
-    // the TS side imports them with a plain relative path.
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../dashboard/src/types/__fixtures__")
+    // CARGO_MANIFEST_DIR is apps/cli; fixtures live beside the tests so no web app has to
+    // exist for the API shape snapshots to be checked in.
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/api-contract")
 }
 
 /// Writes (if `UPDATE_API_FIXTURES=1`) or checks one fixture. Comparison is on parsed
@@ -89,7 +85,7 @@ fn assert_fixture<T: serde::Serialize>(name: &str, value: &T) {
 
     assert_eq!(
         actual, expected,
-        "\n{name}.json is stale.\nRun `UPDATE_API_FIXTURES=1 cargo test -p agentworth-cli api_contract` to regenerate it,\nthen run `npm run typecheck` in apps/dashboard/ to see what the TS side needs.",
+        "\n{name}.json is stale.\nRun `UPDATE_API_FIXTURES=1 cargo test -p agentworth-cli api_contract` to regenerate it.",
     );
 }
 
@@ -117,7 +113,7 @@ fn sample_session_summary() -> SessionSummary {
         models_used: vec!["claude-sonnet-5".to_string()],
         primary_outcome: Some("commit_observed".to_string()),
         composite_score: Some(0.81),
-        prompt_preview: Some("Fix the dashboard coverage matrix.".to_string()),
+        prompt_preview: Some("Fix the home deck coverage strip.".to_string()),
         source_mtime_epoch_secs: Some(1_772_000_000),
         compaction_count: 0,
         compaction_tokens_dropped: 0,
@@ -167,7 +163,7 @@ fn sample_trace() -> AgentWorthTrace {
                 sequence: 0,
                 timestamp: ts("2026-09-01T10:00:00Z"),
                 payload: EventPayload::UserMessage {
-                    content: "Fix the dashboard coverage matrix.".to_string(),
+                    content: "Fix the home deck coverage strip.".to_string(),
                 },
                 raw_ref: None,
             },
@@ -176,7 +172,7 @@ fn sample_trace() -> AgentWorthTrace {
                 sequence: 1,
                 timestamp: ts("2026-09-01T10:00:05Z"),
                 payload: EventPayload::FileAction {
-                    path: "apps/dashboard/src/components/CoverageMatrix.tsx".to_string(),
+                    path: "apps/home/src/deck/Strips.tsx".to_string(),
                     action: FileActionType::Edit,
                     diff: Some("- item.tokens === \"yes\"\n+ item.token_accounting".to_string()),
                     lines_changed: Some(6),
@@ -358,7 +354,7 @@ fn api_contract_blame() {
         models_used: vec!["claude-sonnet-5".to_string()],
         total_tokens: 24_600,
         tool_calls_count: 9,
-        file_path: "apps/dashboard/src/components/CoverageMatrix.tsx".to_string(),
+        file_path: "apps/home/src/deck/Strips.tsx".to_string(),
         action: "edit".to_string(),
         modified_at: ts("2026-09-01T10:00:05Z"),
         model: Some("claude-sonnet-5".to_string()),
