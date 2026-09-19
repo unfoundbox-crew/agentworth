@@ -876,6 +876,7 @@ fn parse_pi_entry(
                             kind: OutcomeKind::TestOrBuildPassed,
                             summary: "Test suite executed successfully in Pi step".to_string(),
                             confidence: 0.9,
+                            test_provenance: None,
                         }),
                     )
                     .with_raw_ref(&raw_ref),
@@ -893,6 +894,7 @@ fn parse_pi_entry(
                             kind: OutcomeKind::CommitObserved,
                             summary: "Git commit observed in Pi tool output".to_string(),
                             confidence: 0.85,
+                            test_provenance: None,
                         }),
                     )
                     .with_raw_ref(&raw_ref),

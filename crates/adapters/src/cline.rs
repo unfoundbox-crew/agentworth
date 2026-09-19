@@ -625,6 +625,7 @@ fn parse_cline_record(
                         kind: OutcomeKind::ArtifactChanged,
                         summary: format!("Wrote to {}", path),
                         confidence: 0.85,
+                        test_provenance: None,
                     }),
                 ));
             } else if tool_name == "replaceInFile" || tool_name == "apply_diff" || tool_name == "editFile" {
@@ -659,6 +660,7 @@ fn parse_cline_record(
                         kind: OutcomeKind::ArtifactChanged,
                         summary: format!("Edited {}", path),
                         confidence: 0.85,
+                        test_provenance: None,
                     }),
                 ));
             } else if tool_name == "executeCommand" || tool_name == "execute_command" {
@@ -754,6 +756,7 @@ fn parse_cline_record(
                         kind: OutcomeKind::ArtifactChanged,
                         summary: format!("Wrote to {}", path),
                         confidence: 0.85,
+                        test_provenance: None,
                     }),
                 ));
             } else {
@@ -862,6 +865,7 @@ fn parse_cline_record(
                     kind: OutcomeKind::TestOrBuildPassed,
                     summary: "Build / test command passed".to_string(),
                     confidence: 0.9,
+                    test_provenance: None,
                 }),
             ));
         }
@@ -878,6 +882,7 @@ fn parse_cline_record(
                     kind: OutcomeKind::DoneClaimed,
                     summary: if text_str.is_empty() { "Task completed".to_string() } else { text_str.clone() },
                     confidence: 0.8,
+                    test_provenance: None,
                 }),
             )
             .with_raw_ref(&raw_ref),

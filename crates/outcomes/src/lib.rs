@@ -20,7 +20,10 @@ pub use compaction_diff::{
 };
 pub use loose_ends::{find_loose_ends, find_loose_ends_in_trace, loose_ends_prompt, LooseEnd};
 pub use mode_gate::{evaluate_mode_gate, extract_commits, extract_test_passes, find_bypass, Bypass, Mode, ModeGateResult, ModeObserved, observe_mode};
-pub use outcome::{outcome_kind_name, outcome_rank, OutcomeDetector, OutcomeHierarchyDetector};
+pub use outcome::{
+    outcome_kind_name, outcome_rank, promotion_eligible, OutcomeDetector,
+    OutcomeHierarchyDetector,
+};
 pub use recovery::{RecoveryDetector, RecoverySignal};
 pub use verify::VerificationNote;
 
@@ -305,6 +308,7 @@ mod tests {
                 kind: OutcomeKind::TestOrBuildPassed,
                 summary: "All unit tests pass".to_string(),
                 confidence: 0.85,
+                test_provenance: None,
             }),
         ));
 

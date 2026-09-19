@@ -548,6 +548,7 @@ fn parse_aider_markdown(
                         kind: OutcomeKind::ArtifactChanged,
                         summary: format!("Applied diff edit to {}", target_path),
                         confidence: 0.85,
+                        test_provenance: None,
                     }),
                 ));
                 continue;
@@ -602,6 +603,7 @@ fn parse_aider_markdown(
                                     kind: OutcomeKind::TestOrBuildPassed,
                                     summary: format!("Command passed: {}", cmd_line),
                                     confidence: 0.9,
+                                    test_provenance: None,
                                 }),
                             ));
                         }
@@ -722,6 +724,7 @@ fn parse_aider_markdown(
                             kind: OutcomeKind::CommitObserved,
                             summary: format!("Git commit {}", commit_line),
                             confidence: 0.95,
+                            test_provenance: None,
                         }),
                     )
                     .with_raw_ref(format!("line:{}", raw_line_num)),
@@ -760,6 +763,7 @@ fn parse_aider_markdown(
                         kind: OutcomeKind::ArtifactChanged,
                         summary: format!("Applied edit to {}", target_path),
                         confidence: 0.85,
+                        test_provenance: None,
                     }),
                 ));
                 continue;
@@ -913,6 +917,7 @@ fn parse_aider_json_record(
                 kind: OutcomeKind::ArtifactChanged,
                 summary: format!("Modified {}", path),
                 confidence: 0.85,
+                test_provenance: None,
             }),
         ));
     }
@@ -928,6 +933,7 @@ fn parse_aider_json_record(
                     kind: OutcomeKind::CommitObserved,
                     summary: format!("Commit {}", commit),
                     confidence: 0.95,
+                    test_provenance: None,
                 }),
             )
             .with_raw_ref(&raw_ref),
@@ -965,6 +971,7 @@ fn parse_aider_json_record(
                             kind: OutcomeKind::TestOrBuildPassed,
                             summary: format!("Passed command: {}", cmd),
                             confidence: 0.9,
+                            test_provenance: None,
                         }),
                     ));
                 }

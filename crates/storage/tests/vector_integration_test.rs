@@ -95,6 +95,7 @@ fn test_vector_engine_end_to_end_indexing_and_semantic_retrieval() {
             kind: OutcomeKind::TestOrBuildPassed,
             summary: "npm test passed with 8 component assertions".to_string(),
             confidence: 1.0,
+            test_provenance: None,
         }),
     ));
 

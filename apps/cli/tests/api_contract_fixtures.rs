@@ -308,6 +308,7 @@ fn api_contract_trace_detail() {
             kind: OutcomeKind::CommitObserved,
             summary: "git commit abc123 observed".to_string(),
             confidence: 0.9,
+            test_provenance: None,
         }],
         recoveries: vec![],
         events_total: 2,
