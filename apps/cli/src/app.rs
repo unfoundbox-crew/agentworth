@@ -876,11 +876,13 @@ struct RiskArgs {
 /// resolve against the loop's own index (`agent_state`) instead.
 #[derive(clap::Args, Debug, PartialEq, Default)]
 struct LoopSessionArgs {
-    /// The session, by full id or a unique prefix. Defaults to the most recently active one
+    /// The session, by full id or a unique prefix. `anchors` defaults to the most recently
+    /// active session; `drift` and `burn` default to this one, named by the harness
     #[arg(value_name = "SESSION_ID")]
     session_id: Option<String>,
 
-    /// The most recently active session, which is also the default
+    /// The most recently active session on this machine, whoever it belongs to. This is
+    /// `anchors`'s default; for `drift` and `burn` it overrides their "this session" default
     #[arg(long)]
     last: bool,
 
@@ -1819,6 +1821,7 @@ pub fn run() -> Result<()> {
         Action::Session(SessionCommand::Drift(a)) => {
             crate::commands::run_session_drift_command(
                 if a.last { None } else { a.session_id },
+                a.last,
                 resolve_json(a.json),
                 cli.db_path,
                 &ui,
@@ -1827,6 +1830,7 @@ pub fn run() -> Result<()> {
         Action::Session(SessionCommand::Burn(a)) => {
             crate::commands::run_session_burn_command(
                 if a.last { None } else { a.session_id },
+                a.last,
                 resolve_json(a.json),
                 cli.db_path,
                 &ui,

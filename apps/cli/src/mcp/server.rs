@@ -709,7 +709,7 @@ impl AgentWorthMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let storage = self.storage.clone();
         let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
-            let session = crate::commands::loop_cmds::resolve_loop_session(
+            let session = crate::commands::loop_cmds::resolve_self_session(
                 &storage,
                 params.session_id.as_deref(),
             )?;
@@ -738,7 +738,7 @@ impl AgentWorthMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let storage = self.storage.clone();
         let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
-            let session = crate::commands::loop_cmds::resolve_loop_session(
+            let session = crate::commands::loop_cmds::resolve_self_session(
                 &storage,
                 params.session_id.as_deref(),
             )?;

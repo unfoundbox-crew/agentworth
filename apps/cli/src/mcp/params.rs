@@ -344,16 +344,18 @@ pub struct AgentStatusParams {}
 /// Parameters for the `session_drift` tool (`docs/specs/loop.md` section 1).
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SessionDriftParams {
-    /// The session, by full id or a unique prefix. Defaults to the most recently active
-    /// session in the loop's own index, which is the caller itself in the normal case.
+    /// The session, by full id or a unique prefix. Defaults to the calling session, taken
+    /// from the harness's own environment variable; where no harness named one, to the most
+    /// recently active session in the loop's own index.
     pub session_id: Option<String>,
 }
 
 /// Parameters for the `session_burn` tool (`docs/specs/governor.md`).
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SessionBurnParams {
-    /// The session, by full id or a unique prefix. Defaults to the most recently active
-    /// session in the loop's own index, which is the caller itself in the normal case.
+    /// The session, by full id or a unique prefix. Defaults to the calling session, taken
+    /// from the harness's own environment variable; where no harness named one, to the most
+    /// recently active session in the loop's own index.
     pub session_id: Option<String>,
 }
 

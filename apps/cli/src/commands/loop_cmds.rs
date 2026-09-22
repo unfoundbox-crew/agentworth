@@ -190,6 +190,66 @@ pub fn resolve_loop_session(storage: &Storage, session_id: Option<&str>) -> Resu
     }
 }
 
+/// Environment variables a harness sets to name the session it is running, in the order we
+/// trust them. One entry today; the list exists so a second harness is an addition here
+/// rather than a restructure. Only variables whose exact name has been verified belong in it.
+const SELF_SESSION_ENV_VARS: &[&str] = &["CLAUDE_CODE_SESSION_ID"];
+
+/// The session id the harness named for this process, if any.
+fn self_session_from_env() -> Option<String> {
+    SELF_SESSION_ENV_VARS.iter().find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+/// Resolves the session for a verb whose contract is *this* session -- `session burn`,
+/// `session drift` -- rather than "the newest one on the machine".
+///
+/// `resolve_loop_session`'s `None` arm answers with the newest row by `updated_at`, which on a
+/// machine running several agents at once is whichever unrelated session last fired a hook.
+/// Correct for `session anchors`, whose `--help` promises exactly that; wrong for a verb whose
+/// help says "this session", which is how three consecutive self-lookups returned three
+/// different ids, none of them the caller.
+///
+/// So: an explicit id behaves exactly as before, and otherwise the harness's own variable
+/// wins when it names a session the loop index knows. Failing both, we fall back to
+/// newest-by-`updated_at` -- archie run outside a harness, or before this session's first hook
+/// event has landed, must keep answering as it does today rather than hard-failing.
+pub fn resolve_self_session(storage: &Storage, session_id: Option<&str>) -> Result<String> {
+    resolve_self_session_with(storage, session_id, self_session_from_env().as_deref())
+}
+
+/// `resolve_self_session` with the harness variable passed in, so tests can exercise both
+/// arms without mutating the process environment under a threaded test runner.
+pub(crate) fn resolve_self_session_with(
+    storage: &Storage,
+    session_id: Option<&str>,
+    env_session: Option<&str>,
+) -> Result<String> {
+    if session_id.is_some() {
+        return resolve_loop_session(storage, session_id);
+    }
+    if let Some(wanted) = env_session {
+        let rows = storage.list_agent_states(STATUS_LIMIT)?;
+        if let Some(row) = rows.iter().find(|row| row.session_id == wanted) {
+            return Ok(row.session_id.clone());
+        }
+        // Prefix tolerance, for a harness that exports a shortened id.
+        let matches: Vec<&str> = rows
+            .iter()
+            .map(|row| row.session_id.as_str())
+            .filter(|id| id.starts_with(wanted))
+            .collect();
+        if let [one] = matches.as_slice() {
+            return Ok((*one).to_string());
+        }
+    }
+    resolve_loop_session(storage, None)
+}
+
 fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
     match db_path {
         Some(path) => Ok(Arc::new(Storage::open_path(&path)?)),
@@ -233,12 +293,19 @@ pub fn run_agent_status_command(json_out: bool, db_path: Option<PathBuf>, _ui: &
 
 pub fn run_session_drift_command(
     session_id: Option<String>,
+    newest: bool,
     json_out: bool,
     db_path: Option<PathBuf>,
     _ui: &Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
-    let session = resolve_loop_session(&storage, session_id.as_deref())?;
+    // `--last` asks for the machine's newest session by name, so it keeps the old resolver;
+    // the bare default means "me", which is what `resolve_self_session` answers.
+    let session = if newest {
+        resolve_loop_session(&storage, None)?
+    } else {
+        resolve_self_session(&storage, session_id.as_deref())?
+    };
     let value = session_drift_json(&storage, &session)?;
     if json_out {
         println!("{}", serde_json::to_string_pretty(&value)?);
@@ -318,4 +385,109 @@ pub fn run_session_anchors_command(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentworth_storage::AgentStateRow;
+    use chrono::Duration;
+
+    const OLDER: &str = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+    const NEWER: &str = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
+
+    /// Two sessions, `NEWER` more recently active than `OLDER` -- the concurrent-fleet shape
+    /// that made the bug: an unrelated session fires a hook and becomes "the newest".
+    fn two_sessions() -> Storage {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let now = Utc::now();
+        for (id, ago) in [(OLDER, 600i64), (NEWER, 5)] {
+            storage
+                .upsert_agent_state(&AgentStateRow {
+                    session_id: id.to_string(),
+                    state: "idle".to_string(),
+                    since: now - Duration::seconds(ago),
+                    pane_id: None,
+                    cwd: Some("/tmp/repo".to_string()),
+                    git_head: None,
+                    last_seq: 1,
+                    updated_at: now - Duration::seconds(ago),
+                })
+                .expect("upsert agent state");
+        }
+        storage
+    }
+
+    #[test]
+    fn the_harness_variable_beats_a_newer_unrelated_session() {
+        let storage = two_sessions();
+        assert_eq!(
+            resolve_self_session_with(&storage, None, Some(OLDER)).expect("resolve"),
+            OLDER,
+            "the caller's own id must win over a session that merely reported in later"
+        );
+    }
+
+    #[test]
+    fn the_harness_variable_is_honoured_as_a_prefix_too() {
+        let storage = two_sessions();
+        assert_eq!(
+            resolve_self_session_with(&storage, None, Some(&OLDER[..8])).expect("resolve"),
+            OLDER
+        );
+    }
+
+    #[test]
+    fn no_harness_variable_falls_back_to_newest_by_updated_at() {
+        let storage = two_sessions();
+        assert_eq!(
+            resolve_self_session_with(&storage, None, None).expect("resolve"),
+            NEWER,
+            "with nothing naming the caller, today's behaviour has to survive unchanged"
+        );
+    }
+
+    #[test]
+    fn a_harness_variable_the_index_has_never_seen_falls_back_rather_than_failing() {
+        let storage = two_sessions();
+        assert_eq!(
+            resolve_self_session_with(&storage, None, Some("cccccccc-3333-4333-8333-cccccccccccc"))
+                .expect("resolve"),
+            NEWER,
+            "archie before this session's first hook lands must still answer, not error"
+        );
+    }
+
+    #[test]
+    fn an_explicit_id_still_wins_over_the_harness_variable() {
+        let storage = two_sessions();
+        assert_eq!(
+            resolve_self_session_with(&storage, Some(NEWER), Some(OLDER)).expect("resolve"),
+            NEWER
+        );
+        // And the explicit arm keeps `resolve_loop_session`'s errors word for word.
+        let err = resolve_self_session_with(&storage, Some("zz"), Some(OLDER))
+            .expect_err("no session starts with zz");
+        assert!(err
+            .to_string()
+            .contains("no session in the loop index starts with zz"));
+    }
+
+    #[test]
+    fn the_real_env_var_is_wired_through() {
+        let storage = two_sessions();
+        std::env::set_var("CLAUDE_CODE_SESSION_ID", OLDER);
+        let got = resolve_self_session(&storage, None);
+        std::env::remove_var("CLAUDE_CODE_SESSION_ID");
+        assert_eq!(got.expect("resolve"), OLDER);
+    }
+
+    /// `anchors` keeps the old resolver, and the old resolver keeps its old answer: the
+    /// newest session, whoever it belongs to. That is `anchors`'s documented contract, not
+    /// the bug.
+    #[test]
+    fn anchors_resolver_still_answers_newest_first() {
+        let storage = two_sessions();
+        assert_eq!(resolve_loop_session(&storage, None).expect("resolve"), NEWER);
+    }
 }

@@ -111,12 +111,19 @@ fn window_name(minutes: Option<i64>) -> String {
 
 pub fn run_session_burn_command(
     session_id: Option<String>,
+    newest: bool,
     json_out: bool,
     db_path: Option<PathBuf>,
     _ui: &Ui,
 ) -> Result<()> {
     let storage = open_storage(db_path)?;
-    let session = crate::commands::loop_cmds::resolve_loop_session(&storage, session_id.as_deref())?;
+    // `--last` asks for the machine's newest session by name, so it keeps the old resolver;
+    // the bare default means "me", which is what `resolve_self_session` answers.
+    let session = if newest {
+        crate::commands::loop_cmds::resolve_loop_session(&storage, None)?
+    } else {
+        crate::commands::loop_cmds::resolve_self_session(&storage, session_id.as_deref())?
+    };
     let value = session_burn_json(&storage, &session)?;
     if json_out {
         println!("{}", serde_json::to_string_pretty(&value)?);
