@@ -163,21 +163,23 @@ fn calls_in(lines: &[&str]) -> Vec<Call> {
             continue;
         }
 
-        let mut from = 0;
-        while let Some(hit) = line[from..].find(GUARDED) {
-            let at = from + hit;
+        // `match_indices` and `get` rather than slicing: the workspace denies
+        // `clippy::string_slice`, and nothing here needs to assume a char boundary.
+        for (at, _) in line.match_indices(GUARDED) {
             let after = at + GUARDED.len();
-            from = after;
-
-            let before = line[..at].trim_end().trim_end_matches(|c: char| {
-                c.is_alphanumeric() || c == '_' || c == ':'
-            });
+            let (Some(prefix), Some(rest)) = (line.get(..at), line.get(after..)) else {
+                continue;
+            };
 
             // A definition (`pub fn extract_repository_or_workspace(`) is not a use.
-            if line[..at].trim_end().ends_with("fn") {
+            if prefix.trim_end().ends_with("fn") {
                 continue;
             }
-            let argument = if line[after..].starts_with('(') {
+            let before = prefix
+                .trim_end()
+                .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == ':');
+
+            let argument = if rest.starts_with('(') {
                 argument_from(lines, index, after + 1)
             } else if before.ends_with('(') {
                 // Passed as a value into something like `.map(...)`. Anything else -- an
@@ -212,7 +214,7 @@ fn argument_from(lines: &[&str], index: usize, start: usize) -> String {
     let mut offset = start;
 
     for line in lines.iter().skip(index).take(12) {
-        for ch in line[offset.min(line.len())..].chars() {
+        for ch in line.get(offset..).unwrap_or("").chars() {
             match ch {
                 '(' => depth += 1,
                 ')' => {
