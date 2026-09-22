@@ -449,7 +449,10 @@ async fn serve_home_deck_or_404(enabled: bool, req: Request<Body>) -> axum::resp
     } else {
         (
             StatusCode::NOT_FOUND,
-            "the home deck is not enabled; start `archie serve --home` or `archie home`",
+            // `archie home` used to be the other half of this sentence. It is a dead
+            // spelling now (removed in 6e4bd1a, "home dies with pointer"), so pointing a
+            // user at it would send them to a 404 from a 404.
+            "the home deck is not enabled; start `archie serve --home`",
         )
             .into_response()
     }

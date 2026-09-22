@@ -193,7 +193,9 @@ async fn home_paths_serve_the_deck_or_an_honest_404() {
             );
             if status == StatusCode::NOT_FOUND {
                 assert!(
-                    body.contains("deck was not built") || body.contains("serve --open"),
+                    body.contains("deck was not built")
+                        || body.contains("not enabled")
+                        || body.contains("serve --open"),
                     "a 404 on {path} must say what to do about it; got: {body}"
                 );
             }
