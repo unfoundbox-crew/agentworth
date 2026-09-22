@@ -3,8 +3,10 @@
 //!
 //! - `archie serve`, `serve --open`, and the `web` alias all build the server from the
 //!   same `create_router` table (snapshot below); `--open` only opens the browser.
-//! - The dead `home` spelling 404s with a pointer to `serve --open`, on the CLI and on
-//!   the `/home*` HTTP paths served without the deck.
+//! - The dead `home` CLI spelling 404s with a pointer to `serve --open`. The `/home*` HTTP
+//!   paths are the deck's own route (PR #188) and serve the deck shell or an honest 404;
+//!   `/` is the dashboard, restored after PR #182 removed it by mistake. No route ever
+//!   answers with `static_files.rs`'s `FALLBACK_HTML` placeholder.
 //! - LAN is out: `serve` exposes no host/bind flag and the server binds loopback only.
 //! - `include_raw` over non-loopback has no HTTP code path (`include_raw` exists only on
 //!   MCP stdio tools; the HTTP server binds 127.0.0.1 with no flag to change that), so
@@ -169,20 +171,33 @@ async fn one_table_across_spellings() {
     }
 }
 
-/// `home` is dead: without the deck, `/home*` 404s with a pointer to `serve --open`.
+/// `/home*` is the deck's own route (PR #188), which is independent of the dashboard
+/// living at `/`: it serves the deck shell when built, or an honest 404 otherwise.
+///
+/// The `Your agents left receipts` assertion is the one that matters here. That string is
+/// `static_files.rs`'s `FALLBACK_HTML` -- the placeholder served when a dist folder is
+/// empty at compile time. Mistaking it for the real dashboard is what got apps/dashboard
+/// deleted in PR #182, so no route may ever answer with it while pretending to be an app.
 #[tokio::test]
-async fn home_paths_404_with_pointer_to_serve_open() {
-    for path in ["/home", "/home/", "/home/any/inner/route"] {
-        let (status, body) = raw(test_router(false), "GET", path).await;
-        assert_eq!(
-            status,
-            StatusCode::NOT_FOUND,
-            "GET {path} without the deck must be 404"
-        );
-        assert!(
-            body.contains("serve --open"),
-            "GET {path} 404 must point at `serve --open`; got: {body}"
-        );
+async fn home_paths_serve_the_deck_or_an_honest_404() {
+    for enabled in [false, true] {
+        for path in ["/home", "/home/", "/home/any/inner/route"] {
+            let (status, body) = raw(test_router(enabled), "GET", path).await;
+            assert!(
+                status == StatusCode::OK || status == StatusCode::NOT_FOUND,
+                "GET {path} must be 200 (deck built) or 404; got {status}"
+            );
+            assert!(
+                !body.contains("Your agents left receipts"),
+                "GET {path} must never serve the FALLBACK_HTML placeholder; got: {body}"
+            );
+            if status == StatusCode::NOT_FOUND {
+                assert!(
+                    body.contains("deck was not built") || body.contains("serve --open"),
+                    "a 404 on {path} must say what to do about it; got: {body}"
+                );
+            }
+        }
     }
 }
 
