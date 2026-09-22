@@ -19,6 +19,11 @@
 //! UPDATE_API_FIXTURES=1 cargo test -p agentworth-cli api_contract
 //! ```
 //!
+//! Then run `npm run typecheck` in apps/dashboard/ -- `src/types/contract.test.ts` imports
+//! these same files (via the `@api-fixtures` alias; there is exactly one copy, here) and
+//! asserts each one `satisfies` its TypeScript type, so a TS type that didn't move with the
+//! Rust change fails loudly instead of silently reading `undefined`.
+//!
 //! Not every route an API client models is covered here. `GET /api/stats` returns a hand-built
 //! `serde_json::Value` (apps/cli/src/server/routes.rs::get_stats_handler) whose shape does not
 //! match the `AggregateStats` struct at all -- it nests `date_range`, replaces the fixed

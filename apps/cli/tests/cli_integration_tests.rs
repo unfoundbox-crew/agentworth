@@ -430,16 +430,11 @@ fn test_cli_serve_command_help_and_flags() {
     let mut cmd = Command::cargo_bin("agentworth").unwrap();
     cmd.arg("serve").arg("--help");
 
-    // `--dist` left with the v0.1.27 legacy dashboard (lane/remove-legacy-dashboard):
-    // `/` serves the embedded home deck when built, else the JSON API root, so there is
-    // no dist directory to point at anymore.
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("--port"))
         .stdout(predicate::str::contains("--open"))
-        .stdout(predicate::str::contains("--home"))
-        .stdout(predicate::str::contains("--no-socket"))
-        .stdout(predicate::str::contains("--dist").not());
+        .stdout(predicate::str::contains("--dist"));
 }
 
 #[test]

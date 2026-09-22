@@ -447,6 +447,7 @@ Start the local API server and interactive explorer UI
 |---|---|---|---|---|
 | `--port, -p` | no | Port to bind the server to | 3000 | - |
 | `--open` | no | Automatically open the Web UI in the default browser | false | - |
+| `--dist` | no | Optional path to custom web frontend dist directory | - | - |
 | `--no-socket` | no | Do not listen on the loop's Unix socket. Hook events then take the spool, and `archie scan` ingests them (docs/specs/loop.md section 1) | false | - |
 | `--home` | no | Start the gateway behind `apps/home` (a WebSocket at /ws) alongside the HTTP API. Unix-only: it dials herdr's own Unix socket for live presence. See `apps/cli/src/server/home_gateway.rs` | false | - |
 

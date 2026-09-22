@@ -1561,6 +1561,14 @@
           "possibleValues": []
         },
         {
+          "name": "--dist",
+          "positional": false,
+          "required": false,
+          "help": "Optional path to custom web frontend dist directory",
+          "default": null,
+          "possibleValues": []
+        },
+        {
           "name": "--no-socket",
           "positional": false,
           "required": false,
