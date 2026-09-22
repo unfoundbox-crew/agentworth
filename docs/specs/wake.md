@@ -199,10 +199,29 @@ are correct; they answer different questions.
 - The `~300 token` target. Measured on the fixture the markdown is under 30
   lines; the token count depends on path lengths and is reported in the PR,
   not promised here.
-- The repo key. `extract_repository_or_workspace` gives two answers for one
-  checkout: the workspace path `~/code/motionvector` yields `motionvector`,
-  while the Claude Code or Antigravity project slug for that same directory
-  yields `code/motionvector`. Wake defaults `repo` from the workspace path
-  and the index was keyed from the slug, so a repo that sits directly under
-  `code/` finds no session unless `repo` is passed. Align the two
-  derivations so the same directory always yields the same key.
+## The repo key (resolved)
+
+`extract_repository_or_workspace` used to give two answers for one checkout:
+the workspace path `~/code/motionvector` yielded `motionvector`, while the
+Claude Code or Antigravity project slug for that same directory yielded
+`code/motionvector`. Wake defaulted `repo` from the workspace path and the
+index was keyed from the slug, so a repo sitting directly under `code/` found
+no session unless `repo` was passed.
+
+The two are no longer two parsers kept in step by hand. A **directory** — a
+live cwd, a `--workspace`, a recorded agent cwd, a checkout root — now goes
+through `agentworth_schema::repo_key_for_dir`, which resolves the git
+checkout root on disk, canonicalizes it (symlinks, `..`, `.`) and derives the
+key from the canonical root's last two components. That is the same shape
+rule 1 already derived from a decoded slug, so the two agree by construction
+rather than by luck, and two spellings of one directory cannot diverge.
+
+`extract_repository_or_workspace` stays for the input it was written for —
+a session's `source_path`, a file — and as the named fallback for a directory
+that is no longer on disk, so historical sessions for moved or deleted repos
+are not orphaned.
+
+A linked worktree at `<repo>/.claude/worktrees/<name>` is its own checkout,
+so the root walk stops there; the key truncates at the first hidden
+component, folding it back onto the repository that owns it — the same fold
+rule 1 applies to a slug's `--` suffix.

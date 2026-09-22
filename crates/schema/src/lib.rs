@@ -24,7 +24,10 @@ pub use machine::{
     host_fingerprint, host_fingerprint_for, MachineInfo, FINGERPRINT_SALT_DEFAULT,
     FINGERPRINT_SALT_ENV, FINGERPRINT_SALT_ENV_LEGACY,
 };
-pub use provenance::{extract_repository_or_workspace, is_subagent_transcript, Provenance};
+pub use provenance::{
+    canonical_repo_root, extract_repository_or_workspace, is_subagent_transcript, repo_display_label,
+    repo_key_for_dir, repo_key_for_dir_str, repo_key_from_root, Provenance,
+};
 pub use text::{preview, tail_chars, truncate_chars};
 pub use tokens::TokenUsage;
 pub use trace::{AgentWorthTrace, IdentitySighting, TraceKind, TraceStats};

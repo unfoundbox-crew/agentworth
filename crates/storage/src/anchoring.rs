@@ -48,12 +48,24 @@ pub(crate) fn normalize_root(repo_root: &str) -> String {
 
 /// The `org/repo` identity of a checkout directory, in the same shape
 /// `extract_repository_or_workspace` derives from a session's `source_path` — which is what it
-/// has to be compared against. Appending `/.git` makes the directory look like the file paths
-/// that function was written for, so `/Users/x/code/unfoundbox/agentworth` and a session
-/// transcript under `~/.claude/projects/-Users-x-code-unfoundbox-agentworth/` both reduce to
+/// has to be compared against.
+///
+/// `repo_key_for_dir` resolves the git checkout root on disk and keys off that, so
+/// `/Users/x/code/unfoundbox/agentworth` and a session transcript under
+/// `~/.claude/projects/-Users-x-code-unfoundbox-agentworth/` both reduce to
 /// `unfoundbox/agentworth`.
+///
+/// When the directory is gone (a moved or deleted repo), fall back to the old trick of
+/// appending `/.git` so the directory looks like the file paths the string heuristic was
+/// written for. That fallback is still wrong for a repo checked out directly under `code/`
+/// with no parent org — it answers `motionvector/.git` — which is exactly why the on-disk
+/// resolution comes first.
 pub(crate) fn repo_identity(repo_root: &str) -> String {
-    extract_repository_or_workspace(&format!("{}/.git", normalize_root(repo_root)))
+    let root = normalize_root(repo_root);
+    match agentworth_schema::canonical_repo_root(std::path::Path::new(&root)) {
+        Some(resolved) => agentworth_schema::repo_key_from_root(&resolved),
+        None => extract_repository_or_workspace(&format!("{root}/.git")),
+    }
 }
 
 /// Classify one recorded path against one repository, and return the path relative to that

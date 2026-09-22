@@ -279,6 +279,54 @@ fn a_repo_with_no_indexed_session_still_gets_the_checkout_block() {
     );
 }
 
+/// The bug behind every bogus "No session for this repo in the index": `archie session wake`
+/// keyed the live cwd with `extract_repository_or_workspace`, which is written for a
+/// transcript path. For a repository checked out directly under `code/` with nothing beneath
+/// it, the live key came out one component short of the indexed key -- `"motionvector"` vs
+/// `"code/motionvector"` -- and the lookup matched nothing while the index held a thousand
+/// sessions for that exact repo.
+///
+/// Both inputs must now answer the same string. The live side goes through the checkout root
+/// on disk; the indexed side is the decoded slug, unchanged.
+#[test]
+fn live_cwd_and_indexed_slug_key_the_same_repo() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path().join("code/motionvector");
+    std::fs::create_dir_all(repo.join(".git")).expect("mkdir .git");
+
+    let live = agentworth_schema::repo_key_for_dir(&repo);
+    let indexed = agentworth_schema::extract_repository_or_workspace(
+        "/Users/saurabh/.claude/projects/-Users-saurabh-code-motionvector/9f2c.jsonl",
+    );
+
+    assert_eq!(live, "code/motionvector");
+    assert_eq!(
+        live, indexed,
+        "wake looks the session up by this key; if the two disagree it reports zero sessions"
+    );
+}
+
+/// The same repo reached through a symlink, or spelled with `..`, is the same repo. This is
+/// what canonicalizing buys over any amount of string parsing.
+#[test]
+fn a_symlinked_or_dot_dot_spelling_of_the_checkout_keys_the_same() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path().join("code/motionvector");
+    std::fs::create_dir_all(repo.join(".git")).expect("mkdir .git");
+    std::fs::create_dir_all(repo.join("src")).expect("mkdir src");
+
+    let direct = agentworth_schema::repo_key_for_dir(&repo);
+    let dotted = agentworth_schema::repo_key_for_dir(&repo.join("src").join(".."));
+    assert_eq!(direct, dotted);
+
+    #[cfg(unix)]
+    {
+        let link = tmp.path().join("shortcut");
+        std::os::unix::fs::symlink(&repo, &link).expect("symlink");
+        assert_eq!(direct, agentworth_schema::repo_key_for_dir(&link));
+    }
+}
+
 #[test]
 fn a_checkout_that_could_not_be_read_says_which_way_it_failed() {
     for (probe, expected, expected_gap) in [

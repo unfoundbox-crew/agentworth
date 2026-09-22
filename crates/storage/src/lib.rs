@@ -5607,6 +5607,11 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
 /// here so existing callers importing it from `agentworth_storage` don't need to change.
 pub use agentworth_schema::extract_repository_or_workspace;
 
+/// The directory-shaped counterpart to [`extract_repository_or_workspace`]: the key for a live
+/// `cwd`, a `--workspace`, or a checkout root, resolved through the git checkout root on disk
+/// rather than guessed from the string. Re-exported for the same reason as its neighbour.
+pub use agentworth_schema::{repo_key_for_dir, repo_key_for_dir_str};
+
 /// Read `sessions.metadata` back as a value. SQL NULL, the empty string, and the literal
 /// four-character string "null" written by every scan before the NULL fix all mean the same
 /// thing: this session carries no metadata.
