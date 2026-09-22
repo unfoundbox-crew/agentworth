@@ -14,7 +14,7 @@ use agentworth_adapter_sdk::SessionSource;
 use agentworth_core::Scanner;
 use agentworth_outcomes::{Ask, AskStatus};
 use agentworth_redaction::Redactor;
-use agentworth_schema::{extract_repository_or_workspace, repo_key_for_dir, AgentWorthTrace};
+use agentworth_schema::{repo_key_for_dir, AgentWorthTrace};
 use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, TimeZone, Utc};

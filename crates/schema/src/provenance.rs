@@ -149,36 +149,44 @@ pub fn repo_key_for_dir_str(dir: &str) -> String {
 /// disk or is not inside a checkout.
 ///
 /// Walks up looking for a `.git` entry rather than shelling out to `git rev-parse
-/// --show-toplevel`: same answer for every layout this product sees (`.git` is a directory in a
-/// normal checkout and a file in a linked worktree or a submodule), no child process, and it
+/// --show-toplevel`: same answer for every layout this product sees, no child process, and it
 /// works in a unit test with no `git` on `PATH`.
+///
+/// **A linked worktree resolves to the repository that owns it.** Git spells the difference
+/// out on disk: a main checkout has `.git` as a *directory*, while a linked worktree (this
+/// repo keeps them at `<repo>/.claude/worktrees/<name>`) has `.git` as a *file* pointing at the
+/// real git dir. So a `.git` file is remembered as a fallback and the walk continues; the first
+/// `.git` directory above it wins. That matches what
+/// [`extract_repository_or_workspace`]'s rule 1 does when it prunes a slug's `--` worktree
+/// suffix, so a worktree and its parent share one key.
+///
+/// The signal is the *type of the `.git` entry*, never the name of a directory. An earlier
+/// draft folded at the first dot-prefixed path component instead, which also fired on any
+/// hidden *ancestor* — `/tmp/.tmp<rand>/code/motionvector` keyed as `tmp`, and so would a real
+/// repo under `~/.local/src/`.
 pub fn canonical_repo_root(dir: &Path) -> Option<PathBuf> {
     let start = std::fs::canonicalize(dir).ok()?;
+    let mut linked_worktree: Option<PathBuf> = None;
     let mut current: Option<&Path> = Some(start.as_path());
     while let Some(candidate) = current {
-        if candidate.join(".git").exists() {
+        let dot_git = candidate.join(".git");
+        if dot_git.is_dir() {
             return Some(candidate.to_path_buf());
+        }
+        if dot_git.is_file() && linked_worktree.is_none() {
+            linked_worktree = Some(candidate.to_path_buf());
         }
         current = candidate.parent();
     }
-    None
+    // A worktree (or submodule) whose owning checkout is not one of its ancestors. It is still
+    // a checkout, so it keys as itself rather than as nothing.
+    linked_worktree
 }
 
 /// The key a canonical checkout root reduces to: its last two path components.
-///
-/// A linked worktree lives at `<repo>/.claude/worktrees/<name>` and is its own checkout, so the
-/// walk above stops there. Truncating at the first hidden component folds it back onto the
-/// repository that owns it — the same thing [`extract_repository_or_workspace`]'s rule 1 does
-/// when it prunes a slug's `--` worktree suffix, so a worktree and its parent share one key.
 pub fn repo_key_from_root(root: &Path) -> String {
     let as_str = root.to_string_lossy().replace('\\', "/");
-    let all: Vec<&str> = as_str.split('/').filter(|c| !c.is_empty()).collect();
-    let end = all
-        .iter()
-        .enumerate()
-        .find(|(i, c)| *i > 0 && c.starts_with('.'))
-        .map_or(all.len(), |(i, _)| i);
-    let components = &all[..end];
+    let components: Vec<&str> = as_str.split('/').filter(|c| !c.is_empty()).collect();
     match components.len() {
         0 => "unknown".to_string(),
         1 => components[0].to_string(),
@@ -321,16 +329,44 @@ mod tests {
 
     /// A linked worktree at `<repo>/.claude/worktrees/<name>` is its own checkout, but it must
     /// key as the repository it belongs to — the same fold rule 1 applies to a slug's `--`
-    /// suffix.
+    /// suffix. Git's own on-disk signal does the folding: the worktree's `.git` is a *file*,
+    /// the owning checkout's is a *directory*.
     #[test]
     fn test_worktree_keys_as_its_parent_repository() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let worktree = checkout(
-            &tmp,
-            "code/unfoundbox/agentworth/.claude/worktrees/agent-a63e",
-            "code/unfoundbox/agentworth/.claude/worktrees/agent-a63e",
-        );
+        let repo = checkout(&tmp, "code/unfoundbox/agentworth", "code/unfoundbox/agentworth");
+        let worktree = repo.join(".claude/worktrees/agent-a63e");
+        std::fs::create_dir_all(&worktree).expect("mkdir worktree");
+        std::fs::write(
+            worktree.join(".git"),
+            "gitdir: /code/unfoundbox/agentworth/.git/worktrees/agent-a63e\n",
+        )
+        .expect("write gitfile");
+
         assert_eq!(repo_key_for_dir(&worktree), "unfoundbox/agentworth");
+        assert_eq!(repo_key_for_dir(&worktree), repo_key_for_dir(&repo));
+    }
+
+    /// The fold must key off the *type of the `.git` entry*, never off a dot-prefixed directory
+    /// name. A name-based rule also fires on a hidden **ancestor**, which is how
+    /// `/tmp/.tmp<rand>/code/motionvector` once keyed as `tmp` — and would do the same to a
+    /// real repo cloned under `~/.local/src/`.
+    #[test]
+    fn test_a_hidden_ancestor_does_not_truncate_the_key() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = checkout(&tmp, ".local/src/code/motionvector", ".local/src/code/motionvector");
+        assert_eq!(repo_key_for_dir(&repo), "code/motionvector");
+    }
+
+    /// A worktree whose owning checkout is not one of its ancestors still keys as a checkout.
+    #[test]
+    fn test_a_detached_worktree_keys_as_itself() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let worktree = tmp.path().join("scratch/loose-worktree");
+        std::fs::create_dir_all(&worktree).expect("mkdir");
+        std::fs::write(worktree.join(".git"), "gitdir: /elsewhere/.git/worktrees/x\n")
+            .expect("write gitfile");
+        assert_eq!(repo_key_for_dir(&worktree), "scratch/loose-worktree");
     }
 
     /// A directory that is not on disk any more — a moved or deleted repo, which is most
