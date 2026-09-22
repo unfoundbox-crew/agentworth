@@ -296,7 +296,7 @@ fn live_cwd_and_indexed_slug_key_the_same_repo() {
 
     let live = agentworth_schema::repo_key_for_dir(&repo);
     let indexed = agentworth_schema::extract_repository_or_workspace(
-        "/Users/saurabh/.claude/projects/-Users-saurabh-code-motionvector/9f2c.jsonl",
+        "/Users/dev/.claude/projects/-Users-dev-code-motionvector/9f2c.jsonl",
     );
 
     assert_eq!(live, "code/motionvector");

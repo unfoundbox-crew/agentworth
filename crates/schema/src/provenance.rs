@@ -273,7 +273,7 @@ mod tests {
 
         let live = repo_key_for_dir(&cwd);
         let indexed = extract_repository_or_workspace(
-            "/Users/saurabh/.claude/projects/-Users-saurabh-code-motionvector/abc.jsonl",
+            "/Users/dev/.claude/projects/-Users-dev-code-motionvector/abc.jsonl",
         );
 
         assert_eq!(live, "code/motionvector");
@@ -287,7 +287,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let cwd = checkout(&tmp, "code/motionvector", "code/motionvector");
         assert_eq!(
-            extract_repository_or_workspace("/Users/saurabh/code/motionvector"),
+            extract_repository_or_workspace("/Users/dev/code/motionvector"),
             "motionvector",
             "the string heuristic's answer, kept here so the regression is visible"
         );
@@ -375,7 +375,7 @@ mod tests {
     /// historical data — falls back to the string heuristic rather than being orphaned.
     #[test]
     fn test_missing_directory_falls_back_to_the_string_heuristic() {
-        let gone = Path::new("/Users/saurabh/code/unfoundbox/agentworth-deleted-9f2c");
+        let gone = Path::new("/Users/dev/code/unfoundbox/agentworth-deleted-9f2c");
         assert_eq!(
             repo_key_for_dir(gone),
             // repo-key-gate: allow -- asserting the fallback's own answer.
