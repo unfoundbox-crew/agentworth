@@ -136,6 +136,8 @@ pub fn extract_repository_or_workspace(source_path: &str) -> String {
 pub fn repo_key_for_dir(dir: &Path) -> String {
     match canonical_repo_root(dir) {
         Some(root) => repo_key_from_root(&root),
+        // repo-key-gate: allow -- this IS the documented fallback. `dir` is not on disk, so
+        // there is no checkout root to resolve and the string heuristic is all that is left.
         None => extract_repository_or_workspace(&dir.to_string_lossy()),
     }
 }
@@ -376,6 +378,7 @@ mod tests {
         let gone = Path::new("/Users/saurabh/code/unfoundbox/agentworth-deleted-9f2c");
         assert_eq!(
             repo_key_for_dir(gone),
+            // repo-key-gate: allow -- asserting the fallback's own answer.
             extract_repository_or_workspace(&gone.to_string_lossy())
         );
     }
@@ -389,6 +392,7 @@ mod tests {
         std::fs::create_dir_all(&plain).expect("mkdir");
         assert_eq!(
             repo_key_for_dir(&plain),
+            // repo-key-gate: allow -- asserting the fallback's own answer.
             extract_repository_or_workspace(&plain.to_string_lossy())
         );
     }

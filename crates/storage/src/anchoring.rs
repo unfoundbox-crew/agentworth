@@ -64,6 +64,8 @@ pub(crate) fn repo_identity(repo_root: &str) -> String {
     let root = normalize_root(repo_root);
     match agentworth_schema::canonical_repo_root(std::path::Path::new(&root)) {
         Some(resolved) => agentworth_schema::repo_key_from_root(&resolved),
+        // repo-key-gate: allow -- the gone-from-disk fallback. Appending `/.git` is what makes
+        // a directory look like the transcript paths the string heuristic was written for.
         None => extract_repository_or_workspace(&format!("{root}/.git")),
     }
 }
