@@ -327,6 +327,47 @@ fn a_symlinked_or_dot_dot_spelling_of_the_checkout_keys_the_same() {
     }
 }
 
+/// The contract `Storage::list_sessions_for_repo_preferring_workspace` (PR #188) rests on:
+/// **every worktree of a repository answers to one repo key**, so that the repo filter leaves
+/// all of a repo's worktree sessions in the candidate set and `workspace.cwd` is what picks
+/// between them. If the live key resolved a worktree to itself, that filter would drop every
+/// sibling worktree's session and the preference would have nothing left to prefer.
+///
+/// So all four spellings of one repository must key the same: the plain checkout, a live
+/// worktree cwd, the repo's transcript slug, and a worktree's transcript slug (which rule 1
+/// folds at `--`). Selection between them is `workspace.cwd`'s job, not the key's.
+#[test]
+fn every_worktree_of_a_repo_answers_to_one_key_so_workspace_cwd_can_choose() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path().join("code/unfoundbox/agentworth");
+    std::fs::create_dir_all(repo.join(".git")).expect("mkdir .git");
+    let worktree = repo.join(".claude/worktrees/agent-a63e");
+    std::fs::create_dir_all(&worktree).expect("mkdir worktree");
+    std::fs::write(worktree.join(".git"), "gitdir: /x/.git/worktrees/agent-a63e\n")
+        .expect("write gitfile");
+
+    let from_checkout = agentworth_schema::repo_key_for_dir(&repo);
+    let from_worktree = agentworth_schema::repo_key_for_dir(&worktree);
+    let from_repo_slug = agentworth_schema::extract_repository_or_workspace(
+        "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/a.jsonl",
+    );
+    let from_worktree_slug = agentworth_schema::extract_repository_or_workspace(
+        "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth--claude-worktrees-agent-a63e/b.jsonl",
+    );
+
+    assert_eq!(from_checkout, "unfoundbox/agentworth");
+    for (name, key) in [
+        ("live worktree cwd", &from_worktree),
+        ("repo transcript slug", &from_repo_slug),
+        ("worktree transcript slug", &from_worktree_slug),
+    ] {
+        assert_eq!(
+            *key, from_checkout,
+            "{name} must share the repo key, or the workspace_cwd preference loses its candidates"
+        );
+    }
+}
+
 #[test]
 fn a_checkout_that_could_not_be_read_says_which_way_it_failed() {
     for (probe, expected, expected_gap) in [
