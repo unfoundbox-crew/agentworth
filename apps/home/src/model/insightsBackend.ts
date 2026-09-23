@@ -118,6 +118,11 @@ export interface RawInsights {
   tool_buckets_detail: { key: string; count: number }[];
   coverage_flags: { dimension: string; status: string; signal: string }[];
   deferred: { dimension: string; reason: string }[];
+  /** Human-turn blocks (insights data lane). Optional: a payload from before the
+   * turn-data lane omits them, and the empty-state path stays exactly as honest. */
+  day_hour?: { dow: number; hour: number; turns: number }[];
+  friction?: { trigger: string; turns: number }[];
+  vocabulary?: { term: string; mentions: number }[];
 }
 
 /* ---------- dev-only warnings: at most once per key ---------- */
