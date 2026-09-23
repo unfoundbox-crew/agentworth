@@ -1716,6 +1716,22 @@
           "help": "Output the full insights payload as formatted JSON",
           "default": "false",
           "possibleValues": []
+        },
+        {
+          "name": "--since",
+          "positional": false,
+          "required": false,
+          "help": "Window start (UTC RFC3339); inclusive",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--until",
+          "positional": false,
+          "required": false,
+          "help": "Window end (same format); exclusive. Defaults to the index's newest usable session",
+          "default": null,
+          "possibleValues": []
         }
       ]
     },

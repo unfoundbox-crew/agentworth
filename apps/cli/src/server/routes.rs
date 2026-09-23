@@ -786,12 +786,34 @@ async fn get_pacing_handler(
 }
 
 /// GET /api/insights -> the deterministic machine-insights payload; same JSON the
-/// `agentworth insights --json` command prints (agentworth_storage::insights).
+/// `agentworth insights --json` command prints (agentworth_storage::insights). `?since=&until=`
+/// optionally narrows the whole population to a half-open `started_at` window (UTC RFC3339);
+/// `?since=` without `?until=` extends to the data horizon, and the deltas block then compares
+/// against the preceding window of equal length.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InsightsQuery {
+    pub since: Option<String>,
+    pub until: Option<String>,
+}
+
 async fn get_insights_handler(
     State(state): State<AppState>,
+    Query(query): Query<InsightsQuery>,
 ) -> Result<Json<agentworth_storage::insights::Insights>, (StatusCode, Json<serde_json::Value>)> {
+    let window = match agentworth_storage::insights::parse_window(query.since, query.until) {
+        Ok(w) => w,
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("Bad window: {}", e) })),
+            ))
+        }
+    };
     let storage = state.storage.clone();
-    let insights_res = tokio::task::spawn_blocking(move || storage.get_insights())
+    let insights_res = tokio::task::spawn_blocking(move || match &window {
+        Some(w) => storage.get_insights_windowed(w),
+        None => storage.get_insights(),
+    })
         .await
         .map_err(|e| {
             (

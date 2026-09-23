@@ -12,7 +12,13 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::ui::Ui;
 
-pub fn run_insights_command(json: bool, db_path: Option<PathBuf>, ui: &Ui) -> Result<()> {
+pub fn run_insights_command(
+    json: bool,
+    since: Option<String>,
+    until: Option<String>,
+    db_path: Option<PathBuf>,
+    ui: &Ui,
+) -> Result<()> {
     let db = match db_path {
         Some(p) => p,
         None => agentworth_storage::default_db_dir().map(|dir| dir.join("agentworth.db"))?,
@@ -33,7 +39,11 @@ pub fn run_insights_command(json: bool, db_path: Option<PathBuf>, ui: &Ui) -> Re
         .with_context(|| format!("cannot open index read-only at {}", db.display()))?;
         // Zero busy timeout: this read reports the index, it does not wait for its writer.
         conn.busy_timeout(std::time::Duration::from_millis(0)).ok();
-        agentworth_storage::compute_insights(&conn)
+        let window = agentworth_storage::insights::parse_window(since, until)?;
+        match window {
+            Some(w) => agentworth_storage::compute_insights(&conn, Some(&w)),
+            None => agentworth_storage::compute_insights(&conn, None),
+        }
     })?;
 
     if json {
@@ -57,6 +67,25 @@ fn print_human_summary(insights: &agentworth_storage::insights::Insights) {
         "Tool calls witnessed: {} · File touches: {}",
         vol.tool_calls_witnessed, insights.file_modifications.total
     );
+    if !insights.deltas.window.since.is_empty() {
+        println!(
+            "Window: {} … {} → previous {} … {}",
+            insights.deltas.window.since.get(..10).unwrap_or(&insights.deltas.window.since),
+            insights.deltas.window.until.get(..10).unwrap_or(&insights.deltas.window.until),
+            insights
+                .deltas
+                .previous_window
+                .as_ref()
+                .map(|p| p.since.get(..10).unwrap_or(&p.since))
+                .unwrap_or("-"),
+            insights
+                .deltas
+                .previous_window
+                .as_ref()
+                .map(|p| p.until.get(..10).unwrap_or(&p.until))
+                .unwrap_or("-"),
+        );
+    }
     println!(
         "Verified outcomes: {} ({:.1}% usable)",
         insights.verified.sessions, insights.verified.share_pct

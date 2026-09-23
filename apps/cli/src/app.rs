@@ -942,6 +942,12 @@ struct InsightsArgs {
     /// Output the full insights payload as formatted JSON
     #[arg(long)]
     json: bool,
+    /// Window start (UTC RFC3339); inclusive
+    #[arg(long)]
+    since: Option<String>,
+    /// Window end (same format); exclusive. Defaults to the index's newest usable session
+    #[arg(long)]
+    until: Option<String>,
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
@@ -1659,7 +1665,7 @@ pub fn run() -> Result<()> {
             run_scan_command(a.paths, a.force, a.include_stubs, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Insights(a) => {
-            insights::run_insights_command(resolve_json(a.json), cli.db_path, &ui)?;
+            insights::run_insights_command(resolve_json(a.json), a.since, a.until, cli.db_path, &ui)?;
         }
         Action::Stats { action: None, args } => {
             run_stats_command(resolve_json(args.json), cli.db_path, &ui)?;

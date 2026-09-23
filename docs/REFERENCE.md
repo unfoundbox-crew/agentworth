@@ -520,6 +520,8 @@ Machine agent work in one deterministic report: usable sessions, tool calls, fil
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
 | `--json` | no | Output the full insights payload as formatted JSON | false | - |
+| `--since` | no | Window start (UTC RFC3339); inclusive | - | - |
+| `--until` | no | Window end (same format); exclusive. Defaults to the index's newest usable session | - | - |
 
 ### `archie doctor`
 
