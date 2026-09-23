@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agentworth_core::Scanner;
-use agentworth_schema::extract_repository_or_workspace;
+use agentworth_schema::repo_key_for_dir;
 use agentworth_storage::Storage;
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -123,7 +123,11 @@ pub fn inject_for_payload(
         }
     }
 
-    let repo = extract_repository_or_workspace(&workspace.to_string_lossy());
+    // A directory, resolved from the hook payload's `workspacePaths`/`cwd`, so it keys through
+    // the checkout root like every other directory caller. `extract_repository_or_workspace`
+    // is written for a session's transcript path and keys a repo checked out directly under
+    // `code/` one component short of what the index holds.
+    let repo = repo_key_for_dir(&workspace);
     let report = load_wake(
         storage,
         scanner,

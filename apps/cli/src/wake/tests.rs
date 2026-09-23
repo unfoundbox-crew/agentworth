@@ -279,6 +279,95 @@ fn a_repo_with_no_indexed_session_still_gets_the_checkout_block() {
     );
 }
 
+/// The bug behind every bogus "No session for this repo in the index": `archie session wake`
+/// keyed the live cwd with `extract_repository_or_workspace`, which is written for a
+/// transcript path. For a repository checked out directly under `code/` with nothing beneath
+/// it, the live key came out one component short of the indexed key -- `"motionvector"` vs
+/// `"code/motionvector"` -- and the lookup matched nothing while the index held a thousand
+/// sessions for that exact repo.
+///
+/// Both inputs must now answer the same string. The live side goes through the checkout root
+/// on disk; the indexed side is the decoded slug, unchanged.
+#[test]
+fn live_cwd_and_indexed_slug_key_the_same_repo() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path().join("code/motionvector");
+    std::fs::create_dir_all(repo.join(".git")).expect("mkdir .git");
+
+    let live = agentworth_schema::repo_key_for_dir(&repo);
+    let indexed = agentworth_schema::extract_repository_or_workspace(
+        "/Users/dev/.claude/projects/-Users-dev-code-motionvector/9f2c.jsonl",
+    );
+
+    assert_eq!(live, "code/motionvector");
+    assert_eq!(
+        live, indexed,
+        "wake looks the session up by this key; if the two disagree it reports zero sessions"
+    );
+}
+
+/// The same repo reached through a symlink, or spelled with `..`, is the same repo. This is
+/// what canonicalizing buys over any amount of string parsing.
+#[test]
+fn a_symlinked_or_dot_dot_spelling_of_the_checkout_keys_the_same() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path().join("code/motionvector");
+    std::fs::create_dir_all(repo.join(".git")).expect("mkdir .git");
+    std::fs::create_dir_all(repo.join("src")).expect("mkdir src");
+
+    let direct = agentworth_schema::repo_key_for_dir(&repo);
+    let dotted = agentworth_schema::repo_key_for_dir(&repo.join("src").join(".."));
+    assert_eq!(direct, dotted);
+
+    #[cfg(unix)]
+    {
+        let link = tmp.path().join("shortcut");
+        std::os::unix::fs::symlink(&repo, &link).expect("symlink");
+        assert_eq!(direct, agentworth_schema::repo_key_for_dir(&link));
+    }
+}
+
+/// The contract `Storage::list_sessions_for_repo_preferring_workspace` (PR #188) rests on:
+/// **every worktree of a repository answers to one repo key**, so that the repo filter leaves
+/// all of a repo's worktree sessions in the candidate set and `workspace.cwd` is what picks
+/// between them. If the live key resolved a worktree to itself, that filter would drop every
+/// sibling worktree's session and the preference would have nothing left to prefer.
+///
+/// So all four spellings of one repository must key the same: the plain checkout, a live
+/// worktree cwd, the repo's transcript slug, and a worktree's transcript slug (which rule 1
+/// folds at `--`). Selection between them is `workspace.cwd`'s job, not the key's.
+#[test]
+fn every_worktree_of_a_repo_answers_to_one_key_so_workspace_cwd_can_choose() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path().join("code/unfoundbox/agentworth");
+    std::fs::create_dir_all(repo.join(".git")).expect("mkdir .git");
+    let worktree = repo.join(".claude/worktrees/agent-a63e");
+    std::fs::create_dir_all(&worktree).expect("mkdir worktree");
+    std::fs::write(worktree.join(".git"), "gitdir: /x/.git/worktrees/agent-a63e\n")
+        .expect("write gitfile");
+
+    let from_checkout = agentworth_schema::repo_key_for_dir(&repo);
+    let from_worktree = agentworth_schema::repo_key_for_dir(&worktree);
+    let from_repo_slug = agentworth_schema::extract_repository_or_workspace(
+        "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth/a.jsonl",
+    );
+    let from_worktree_slug = agentworth_schema::extract_repository_or_workspace(
+        "/Users/x/.claude/projects/-Users-x-code-unfoundbox-agentworth--claude-worktrees-agent-a63e/b.jsonl",
+    );
+
+    assert_eq!(from_checkout, "unfoundbox/agentworth");
+    for (name, key) in [
+        ("live worktree cwd", &from_worktree),
+        ("repo transcript slug", &from_repo_slug),
+        ("worktree transcript slug", &from_worktree_slug),
+    ] {
+        assert_eq!(
+            *key, from_checkout,
+            "{name} must share the repo key, or the workspace_cwd preference loses its candidates"
+        );
+    }
+}
+
 #[test]
 fn a_checkout_that_could_not_be_read_says_which_way_it_failed() {
     for (probe, expected, expected_gap) in [

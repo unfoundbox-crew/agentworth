@@ -14,7 +14,7 @@ use agentworth_adapter_sdk::SessionSource;
 use agentworth_core::Scanner;
 use agentworth_outcomes::{Ask, AskStatus};
 use agentworth_redaction::Redactor;
-use agentworth_schema::{extract_repository_or_workspace, AgentWorthTrace};
+use agentworth_schema::{repo_key_for_dir, AgentWorthTrace};
 use agentworth_storage::{SessionFilter, SessionOrderBy, Storage};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -139,9 +139,7 @@ fn resolve_and_load(
     // still say which of the two it used -- `resolve_last`'s own message is aimed at a
     // person reading past a not-found screen, not at this receipt-shaped resolution line.
     if wants_last {
-        let repo = std::env::current_dir()
-            .ok()
-            .map(|d| extract_repository_or_workspace(&d.to_string_lossy()));
+        let repo = std::env::current_dir().ok().map(|d| repo_key_for_dir(&d));
         if let Some(repo) = repo.as_deref() {
             if let Some(summary) = storage
                 .list_sessions_for_repo(repo, 1, false)?
