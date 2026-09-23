@@ -17,6 +17,10 @@ import {
   type InsightsWindow,
   type ModelSortKey,
 } from '../model/insights';
+import {
+  applyDimensionFilter,
+  hasDimensionFilter,
+} from '../model/insightsBackend';
 
 /**
  * Insights — the deck's observability view. Datadog grammar, deck brand
@@ -29,8 +33,8 @@ import {
  * Every number carries a one-line so-what. Thin coverage says so honestly:
  * no invented data, no zero-filled grids, colour only where earned.
  *
- * The endpoint is a parallel Rust lane (GET /api/insights?since=&until=);
- * this panel builds against the contract and the mock server in src/mock.
+ * The wire shape is the Rust backend (#191, GET /api/insights); every field
+ * name is adapted in ../model/insightsBackend.ts — the one mapping layer.
  */
 
 const DOW = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -490,10 +494,20 @@ export function InsightsBody({ data, filter, onFilter, detailsOpen, onToggleDeta
   drawerOpen: boolean;
   onToggleDrawer: () => void;
 }) {
-  const { current, previous } = data;
-  const adapterOptions = useMemo(() => current.by_adapter.map((a) => a.adapter), [current]);
-  const modelOptions = useMemo(() => current.models.map((m) => m.model), [current]);
-  const repoOptions = useMemo(() => current.repos.map((r) => r.repo), [current]);
+  const { current: rawCurrent, previous: rawPrevious } = data;
+  // Dimension filters (adapter/model/repo) are not backend query params (#191
+  // serves only since/until); they narrow per-row widgets here. With any
+  // dimension filter set, Δ hides rather than comparing a narrowed number to
+  // an unfiltered base — the header note says so on-screen.
+  const filtered = hasDimensionFilter(filter);
+  const current = useMemo(() => applyDimensionFilter(rawCurrent, filter), [rawCurrent, filter]);
+  const previous = useMemo(
+    () => (filtered ? null : rawPrevious),
+    [filtered, rawPrevious],
+  );
+  const adapterOptions = useMemo(() => rawCurrent.by_adapter.map((a) => a.adapter), [rawCurrent]);
+  const modelOptions = useMemo(() => rawCurrent.models.map((m) => m.model), [rawCurrent]);
+  const repoOptions = useMemo(() => rawCurrent.repos.map((r) => r.repo), [rawCurrent]);
 
   return (
     <div className="h-full overflow-y-auto" aria-label="insights">
@@ -501,8 +515,12 @@ export function InsightsBody({ data, filter, onFilter, detailsOpen, onToggleDeta
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div className="flex items-baseline gap-3">
             <span className="text-[13px] text-ink tracking-tight">insights</span>
-            <span className="text-[10px] text-dim" title={`window ${data.since} → ${data.until}`}>
+            <span
+              className="text-[10px] text-dim"
+              title={`window ${data.since} → ${data.until}`}
+            >
               {filter.web}{data.since && ` · since ${data.since.slice(0, 10)}`}
+              {filtered && ' · row filters narrow the tables; aggregates stay machine-wide'}
             </span>
           </div>
           <FilterBar filter={filter} onFilter={onFilter} options={{ adapters: adapterOptions, models: modelOptions, repos: repoOptions }} />

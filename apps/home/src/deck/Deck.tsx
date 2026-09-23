@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useHome, orderDirections, dispatch } from '../model/store';
+import { parseInsightsDeepLink, syncInsightsHash } from '../model/insights';
 import { gateway } from '../ws/client';
 import type { Direction, Harness } from '../protocol';
 import { Cruise } from './Cruise';
@@ -52,7 +53,22 @@ export function Deck() {
   const consoleOpen = useHome((s) => s.consoleOpen);
   const dockRef = useRef<DockHandle>(null);
   const [flow, setFlow] = useState<Flow>({ phase: 'none' });
-  const [insightsOpen, setInsightsOpen] = useState(false);
+  // Deep link: `…/#insights` opens the insights phase, same state the `i` key
+  // drives (keys.ts owns the keyboard; the URL is only a second entry path).
+  const [insightsOpen, setInsightsOpen] = useState(() => (typeof window === 'undefined' ? false : parseInsightsDeepLink(window.location.hash)));
+
+  // Mirror phase → URL, so i, Escape and the deep link all leave the same hash behind.
+  useEffect(() => {
+    syncInsightsHash(insightsOpen);
+  }, [insightsOpen]);
+
+  // A pasted/back-navigated #insights opens or leaves the phase without stealing focus.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onHash = () => setInsightsOpen(parseInsightsDeepLink(window.location.hash));
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   const ordered = orderDirections(Object.values(directions));
   const active = ordered.filter((d) => d.state !== 'done');
