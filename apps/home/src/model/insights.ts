@@ -5,6 +5,10 @@
  * parallel; this file is the contract to build against. If the real route
  * renames a field, change it here and nowhere else.
  *
+ * Reconciled (fix/insights-contract-reconcile): the Rust payload (#191) is the
+ * wire authority and is adapted, never renamed — the mapping lives in
+ * insightsBackend.ts, the one module between GET /api/insights and these types.
+ *
  * Contract notes, so the mock and the real endpoint produce the same shape:
  * - ONE response carries the selected window (`current`) and the matching
  *   previous window (`previous`, same shape or null). Δ and sparklines render
@@ -17,6 +21,8 @@
  * Vocabulary (apps/home/DESIGN.md): rung 0 is "unflown" — absence of
  * evidence, never danger — and colour is spent only where earned.
  */
+
+import { isBackendShape, mapInsights } from './insightsBackend';
 
 export const LADDER = [
   { outcome: 'no_outcome_evidence', label: 'unflown' },
@@ -115,11 +121,15 @@ export function sinceFor(web: WebDuration, nowMs: number): string | null {
 export function serializeFilter(f: InsightsFilter): string {
   const since = sinceFor(f.web, Date.now());
   const params = new URLSearchParams();
-  if (since) params.set('since', since);
-  params.set('until', new Date().toISOString());
-  if (f.adapter) params.set('adapter', f.adapter);
-  if (f.model) params.set('model', f.model);
-  if (f.repo) params.set('repo', f.repo);
+  // The backend (GET /api/insights, `parse_window`) rejects `until` without
+  // `since`, so the pair is only sent for a windowed preset; "all" sends
+  // nothing. adapter/model/repo are not backend query params (#191 serves the
+  // same payload shape as MCP) — those narrow per-row widgets in
+  // insightsBackend.applyDimensionFilter, never as a fabricated server filter.
+  if (since) {
+    params.set('since', since);
+    params.set('until', new Date().toISOString());
+  }
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
@@ -127,6 +137,11 @@ export function serializeFilter(f: InsightsFilter): string {
 /**
  * One GET to /api/insights with the current global filter. Errors throw; the
  * caller decides how they surface as designed panels.
+ *
+ * The payload routes through insightsBackend.mapInsights — the ONE mapping
+ * layer from the Rust wire shape (#191) onto the deck's UI types. The dev mock
+ * still serves the pre-#191 window shape, so an already-deck-shaped payload
+ * passes through unchanged until the mock regenerates from the real contract.
  */
 export async function fetchInsights(
   filter: InsightsFilter = DEFAULT_FILTER,
@@ -136,7 +151,9 @@ export async function fetchInsights(
   });
   if (response.status === 404) throw new Error('insights endpoint is not on this build yet');
   if (!response.ok) throw new Error(`insights returned HTTP ${response.status}`);
-  return validateShape(await response.json());
+  const parsed: unknown = await response.json();
+  if (isBackendShape(parsed)) return mapInsights(parsed);
+  return validateShape(parsed as Partial<Insights>);
 }
 
 /**
@@ -152,6 +169,30 @@ function validateShape(parsed: Partial<Insights>): Insights {
 
 export function isRealInsights(data: Insights | null): data is Insights {
   return !!data && Array.isArray(data.current.kpis) && data.current.kpis.length > 0;
+}
+
+/* ---------- deep link (#insights), in parity with the i / Escape keyboard flow ---------- */
+
+/** The hash fragment that opens the insights phase: `…/#insights`. */
+export const INSIGHTS_HASH = '#insights';
+
+/** Pure parse so the deck's mount-time read is testable without window semantics. */
+export function parseInsightsDeepLink(hash: string | null | undefined): boolean {
+  return hash === INSIGHTS_HASH;
+}
+
+/**
+ * Keep the URL in sync with the phase: no navigation, replaceState only, so
+ * back/forward stays the browser's own. The `i`/Escape keyboard flow is
+ * untouched — this only mirrors what `i` and the deep link both produce.
+ */
+export function syncInsightsHash(open: boolean): void {
+  if (typeof window === 'undefined') return;
+  const next = open ? INSIGHTS_HASH : '';
+  const now = window.location.hash === next;
+  if (now) return;
+  const url = window.location.pathname + window.location.search + next;
+  window.history.replaceState(null, '', url);
 }
 
 /* ---------- numbers ---------- */
@@ -171,18 +212,32 @@ export function verifiedRate(win: InsightsWindow): number {
   return (verified / win.claimed) * 100;
 }
 
-/** One line, biggest movers vs the previous window, for the callout strip. */
+/**
+ * One line, biggest movers vs the previous window, for the callout strip.
+ * The verified-rate move prefers the backend's `deltas.verified_outcome_rate`
+ * pair (mapped onto the 'verified' KPI): the mapped previous window carries no
+ * per-rung ladder, and comparing a filtered number against an unfiltered base
+ * would fake a mover. When both windows carry a real ladder (mock shape, old
+ * fixture), the ladder math stays.
+ */
 export function topMovers(cur: InsightsWindow, prev: InsightsWindow | null): string {
   if (!prev) return `${cur.claimed.toLocaleString()} sessions in this window · no previous window to compare yet`;
   const parts: string[] = [];
 
+  const prevHasLadder = prev.ladder.some(
+    (r) => r.outcome === 'test_or_build_passed' || r.outcome === 'commit_observed' || r.outcome === 'ci_or_deployment_verified',
+  );
   const rate = verifiedRate(cur);
-  const prevRate = verifiedRate(prev);
-  const rateMove = rate - prevRate;
-  if (Math.abs(rateMove) >= 0.05) {
-    parts.push(
-      `verified outcomes ${rateMove > 0 ? 'up' : 'down'} ${Math.abs(rateMove).toFixed(1)} pts (${rate.toFixed(1)}%)`,
-    );
+  const prevRate = prevHasLadder
+    ? verifiedRate(prev)
+    : prev.kpis.find((k) => k.key === 'verified')?.value ?? null;
+  if (prevRate != null) {
+    const rateMove = rate - prevRate;
+    if (Math.abs(rateMove) >= 0.05) {
+      parts.push(
+        `verified outcomes ${rateMove > 0 ? 'up' : 'down'} ${Math.abs(rateMove).toFixed(1)} pts (${rate.toFixed(1)}%)`,
+      );
+    }
   }
 
   const frac = cur.friction.reduce((s, r) => s + r.sessions, 0);

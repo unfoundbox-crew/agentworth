@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-23T10:47:34+00:00",
+  "window": {
+    "sessions": {
+      "min_started_at": "2025-06-02T08:00:00.000+00:00",
+      "max_started_at": "2026-09-23T09:30:00.000+00:00"
+    }
+  },
+  "filter": {
+    "since": "2026-08-24T10:47:34+00:00",
+    "until": "2026-09-23T10:47:34+00:00"
+  },
+  "deltas": {
+    "window": { "since": "2026-08-24T10:47:34.000+00:00", "until": "2026-09-23T10:47:34.000+00:00" },
+    "previous_window": { "since": "2026-07-26T10:47:34.000+00:00", "until": "2026-08-24T10:47:34.000+00:00" },
+    "usable_sessions": { "current": 500, "previous": 420, "delta": 80, "delta_pct": 19.0476 },
+    "verified_outcome_rate": { "current": 37.6, "previous": 26.8, "delta": 10.8, "delta_pct": 40.3 },
+    "tool_calls_per_turn_strict": { "current": 5.35, "previous": 4.9, "delta": 0.45, "delta_pct": 9.18 },
+    "token_burn": { "current": 94100000000, "previous": 88200000000, "delta": 5900000000, "delta_pct": 6.6893 },
+    "friction_rate": {
+      "current": null,
+      "previous": null,
+      "delta": null,
+      "delta_pct": null,
+      "reason": "friction classification needs per-turn text, which the index does not store; see deferred: friction_triggers"
+    }
+  },
+  "population": {
+    "sessions_raw": 10188,
+    "sessions_conversation_multi_event": 4210,
+    "sessions_excluded_pre_2020": 0,
+    "sessions_with_tool_inventory": 390,
+    "usable_sessions": 500
+  },
+  "volume": {
+    "usable_sessions": 500,
+    "tool_calls_witnessed": 31422,
+    "human_turns_index_proxy": 5873,
+    "assistant_messages": 6109,
+    "total_tokens": 94100000000
+  },
+  "by_adapter": [
+    { "adapter": "claude_code", "sessions": 268, "tool_calls": 17100, "human_turns": 3200, "input_output_tokens": 57300000000 },
+    { "adapter": "codex", "sessions": 140, "tool_calls": 8900, "human_turns": 1750, "input_output_tokens": 24100000000 },
+    { "adapter": "gemini", "sessions": 96, "tool_calls": 5422, "human_turns": 923, "input_output_tokens": 12700000000 }
+  ],
+  "ladder": [
+    { "outcome": "no_outcome_evidence", "sessions": 180, "total_tokens": 1800000000 },
+    { "outcome": "done_claimed", "sessions": 40, "total_tokens": 400000000 },
+    { "outcome": "artifact_changed", "sessions": 90, "total_tokens": 3100000000 },
+    { "outcome": "test_or_build_passed", "sessions": 55, "total_tokens": 4200000000 },
+    { "outcome": "commit_observed", "sessions": 100, "total_tokens": 38600000000 },
+    { "outcome": "ci_or_deployment_verified", "sessions": 33, "total_tokens": 46000000000 }
+  ],
+  "verified": { "sessions": 188, "total_tokens": 88800000000, "share_pct": 37.6 },
+  "no_evidence_small_sessions": 12,
+  "calls_per_turn": { "strict": 5.35, "heavy_session_average": 4.8 },
+  "calls_per_turn_by_adapter": [
+    { "adapter": "claude_code", "calls_per_turn": 5.34, "tool_calls": 17100, "human_turns": 3200 },
+    { "adapter": "codex", "calls_per_turn": 5.09, "tool_calls": 8900, "human_turns": 1750 }
+  ],
+  "turn_buckets": [
+    { "bucket": "0", "label": "0 (background)", "sessions": 40 },
+    { "bucket": "1", "label": "1 (one-shot)", "sessions": 60 },
+    { "bucket": "2", "label": "2", "sessions": 80 },
+    { "bucket": "3-5", "label": "3-5", "sessions": 120 },
+    { "bucket": "6-20", "label": "6-20", "sessions": 100 },
+    { "bucket": "21-50", "label": "21-50", "sessions": 60 },
+    { "bucket": ">50", "label": ">50", "sessions": 40 }
+  ],
+  "file_modifications": {
+    "total": 7512,
+    "sessions_with_file_mods": 330,
+    "by_action": [
+      { "key": "write", "count": 5200 },
+      { "key": "edit", "count": 1800 }
+    ],
+    "worktrees": { "total": 900, "sessions": 140 }
+  },
+  "top_repos": [
+    { "repo": "demo/webapp", "file_touches": 6111, "sessions": 88 },
+    { "repo": "demo/engine", "file_touches": 4310, "sessions": 61 }
+  ],
+  "top_sessions": [
+    {
+      "session_id": "sess-demo-1",
+      "adapter": "claude_code",
+      "started_at": "2026-09-11T10:00:00.000+00:00",
+      "total_tokens": 517143256,
+      "total_events": 6109,
+      "tool_calls": 3100,
+      "human_turns": 55,
+      "duration_hours": 1.2769,
+      "source_path": "/index/demo/sessions/sess-demo-1.jsonl",
+      "primary_outcome": "commit_observed",
+      "repo_label": "demo"
+    }
+  ],
+  "session_size_buckets": [
+    { "bucket": "<10M", "label": "< 10M", "sessions": 214 },
+    { "bucket": "10-50M", "label": "10-50M", "sessions": 160 },
+    { "bucket": "50-200M", "label": "50-200M", "sessions": 88 },
+    { "bucket": ">200M", "label": "> 200M", "sessions": 38 }
+  ],
+  "models": [
+    { "model": "model-a", "sessions": 190, "total_tokens": 21300000000, "cache_read_tokens": 4750000000, "cache_creation_tokens": 310000000, "input_tokens": 3100000000, "output_tokens": 71200000000 },
+    { "model": "model-b", "sessions": 120, "total_tokens": 9800000000, "cache_read_tokens": 2100000000, "cache_creation_tokens": 120000000, "input_tokens": 1200000000, "output_tokens": 12000000000 }
+  ],
+  "models_totals": { "total_tokens": 94100000000, "cache_read_tokens": 68600000000, "cache_read_share_pct": 72.9 },
+  "series": {
+    "monthly_by_adapter": [
+      { "month": "2026-08", "adapter": "claude_code", "sessions": 240 },
+      { "month": "2026-09", "adapter": "claude_code", "sessions": 260 }
+    ],
+    "sessions_by_month": [
+      { "month": "2026-08", "sessions": 420 },
+      { "month": "2026-09", "sessions": 500 }
+    ],
+    "daily": [
+      { "date": "2026-09-19", "sessions": 9 },
+      { "date": "2026-09-20", "sessions": 12 },
+      { "date": "2026-09-21", "sessions": 14 },
+      { "date": "2026-09-22", "sessions": 11 },
+      { "date": "2026-09-23", "sessions": 17 }
+    ],
+    "outcome_by_month": [
+      { "month": "2026-09", "outcome": "no_outcome_evidence", "sessions": 180 },
+      { "month": "2026-09", "outcome": "commit_observed", "sessions": 100 }
+    ],
+    "verified_by_month": [
+      { "month": "2026-08", "sessions": 168 },
+      { "month": "2026-09", "sessions": 188 }
+    ]
+  },
+  "tool_buckets": { "shell_edit": 5200, "file_edit": 1800, "read_explore": 3100, "web_browser": 900, "agent_task": 700, "other": 120 },
+  "tool_buckets_detail": [
+    { "key": "Bash", "count": 5200 },
+    { "key": "Edit", "count": 1800 }
+  ],
+  "coverage_flags": [
+    { "dimension": "execution", "status": "real_data", "signal": "sessions.tool_calls_count + tools_used inventory" },
+    { "dimension": "product", "status": "thin_coverage", "signal": "turn-level intent classification is outside the index" }
+  ],
+  "deferred": [
+    { "dimension": "human_turn_word_counts", "reason": "per-turn word counts live in a separate prompt-insights turn cache; the index stores no per-turn text" },
+    { "dimension": "friction_triggers", "reason": "friction-turn classification needs per-turn text; the index stores none" },
+    { "dimension": "intent_categories", "reason": "intent-category counts need per-turn text and a classifier; the index stores neither" },
+    { "dimension": "time_of_day_histogram", "reason": "the hour-of-day x day-of-week heatmap needs per-turn timestamps; the index stores one started_at per session" },
+    { "dimension": "vocabulary_mentions", "reason": "vocabulary mention counts need the raw turn text, which the index intentionally does not duplicate" }
+  ]
+}
