@@ -801,6 +801,78 @@ Where every agent on this machine is right now: one row per session the loop has
 
 </details>
 
+### `insights_get`
+
+The deterministic machine-insights payload over this index -- the exact contract `agentworth insights --json` and /api/insights serve, never a hand-rolled variant: population, volume, by_adapter, ladder, verified, calls_per_turn, turn_buckets, file_modifications, top_repos, top_sessions, session_size_buckets, models, models_totals, series, tool_buckets and tool_buckets_detail, plus the human-turn blocks day_hour, friction and vocabulary, deltas, coverage_flags and the deferred list with its reasons. Optional since/until narrow the window (`until` requires `since`); absent both is all-time. Aggregates only -- no transcript text is ever returned, so there is no include_raw. Zero-data blocks come back empty with the reason in `deferred`, never zero-filled.
+
+| Param | Required | Type | Description |
+|---|---|---|---|
+| `since` | no | string or null | RFC 3339 timestamp; only sessions (and stored human turns) starting at or after<br>this instant. Optional; omit for all-time. |
+| `until` | no | string or null | RFC 3339 timestamp; requires `since` -- a window needs a start. |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "since": {
+      "description": "RFC 3339 timestamp; only sessions (and stored human turns) starting at or after\nthis instant. Optional; omit for all-time.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "until": {
+      "description": "RFC 3339 timestamp; requires `since` -- a window needs a start.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `insights_summary`
+
+The compact insights surface: one headline row per KPI -- population, volume, verified share, calls_per_turn strict, friction rate and top trigger, the day_hour peak cell, and the deferred list -- projected from the same payload `insights_get` returns, so the two can never disagree. The series, top lists, vocabulary rows and full turn blocks stay in `insights_get`. Optional since/until as there. Aggregates only -- no transcript text is ever returned, so there is no include_raw.
+
+| Param | Required | Type | Description |
+|---|---|---|---|
+| `since` | no | string or null | RFC 3339 timestamp; only sessions (and stored human turns) starting at or after<br>this instant. Optional; omit for all-time. |
+| `until` | no | string or null | RFC 3339 timestamp; requires `since` -- a window needs a start. |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "since": {
+      "description": "RFC 3339 timestamp; only sessions (and stored human turns) starting at or after\nthis instant. Optional; omit for all-time.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "until": {
+      "description": "RFC 3339 timestamp; requires `since` -- a window needs a start.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
 ### `repo_blame`
 
 Find sessions whose recorded file modifications match a substring of file_path -- AI Code Blame, the same query /api/blame makes. Returned paths are redacted.
