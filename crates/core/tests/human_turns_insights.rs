@@ -8,8 +8,7 @@ use agentworth_core::turns::{ingest_human_turns, TurnIngestSummary};
 use agentworth_schema::fixtures;
 use agentworth_storage::insights::parse_window;
 use agentworth_storage::Storage;
-use chrono::{FixedOffset, TimeZone, Utc};
-use std::fs;
+use chrono::FixedOffset;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -17,152 +16,8 @@ use tempfile::TempDir;
 /// 15:30 the same local day; 20:00Z on Feb 5 lands 01:00 on Feb 6 — one day-shift cell.
 const OFFSET_SECS: i32 = 5 * 3600;
 
-fn epoch_ms(y: i32, m: u32, d: u32, h: u32, min: u32) -> i64 {
-    Utc.with_ymd_and_hms(y, m, d, h, min, 0)
-        .unwrap()
-        .timestamp_millis()
-}
-
-fn iso(y: i32, m: u32, d: u32, h: u32, min: u32) -> String {
-    format!(
-        "{}+00:00",
-        Utc.with_ymd_and_hms(y, m, d, h, min, 0)
-            .unwrap()
-            .format("%Y-%m-%dT%H:%M:%S")
-    )
-}
-
-fn claude_history_record(text: &str, ts_ms: i64, session: &str) -> String {
-    format!(
-        r#"{{"display":{text},"pastedContents":{{}},"timestamp":{ts_ms},"sessionId":{session},"project":"proj"}}"#,
-        text = serde_json::to_string(text).unwrap(),
-        ts_ms = ts_ms,
-        session = serde_json::to_string(session).unwrap(),
-    )
-}
-
-fn claude_transcript_record_text(text: &str, ts_ms: i64) -> String {
-    format!(
-        r#"{{"type":"user","message":{{"role":"user","content":{text}}},"timestamp":{ts_ms}}}"#,
-        text = serde_json::to_string(text).unwrap(),
-        ts_ms = ts_ms,
-    )
-}
-
-fn claude_transcript_tool_result(ts_ms: i64) -> String {
-    format!(
-        r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","content":"1 file changed"}}]}},"timestamp":{ts_ms}}}"#,
-        ts_ms = ts_ms,
-    )
-}
-
-fn agy_history_record(text: &str, ts_iso: &str, conv: &str) -> String {
-    format!(
-        r#"{{"display":{text},"timestamp":"{ts_iso}","conversationId":{conv}}}"#,
-        text = serde_json::to_string(text).unwrap(),
-        ts_iso = ts_iso,
-        conv = serde_json::to_string(conv).unwrap(),
-    )
-}
-
-fn agy_brain_record(text: &str, ts_iso: &str) -> String {
-    format!(
-        r#"{{"type":"USER_INPUT","content":{text},"created_at":"{ts_iso}"}}"#,
-        text = serde_json::to_string(&format!("<USER_REQUEST>{text}</USER_REQUEST>", text = text))
-            .unwrap(),
-        ts_iso = ts_iso,
-    )
-}
-
-/// One synthetic turn-bearing home, per the fixtures module's fake identity. Written at the
-/// layout `HumanTurnIngestor::rooted` reads: `<root>/claude-home/...` and
-/// `<root>/gemini-home/antigravity-cli/...`.
 fn write_fixtures(root: &Path) {
-    let claude_home = root.join("claude-home");
-    let projects = claude_home
-        .join("projects")
-        .join(fixtures::claude_project_dir(fixtures::REPO));
-    fs::create_dir_all(&projects).unwrap();
-
-    // Turn 1: loop trigger; Turn 2: context_amnesia + vocabulary, and duplicated verbatim
-    // into the project transcript (same ms clock + same prefix) to prove cross-source dedup;
-    // one task-notification envelope (degrades); one tool-result user record (degrades);
-    // one malformed line.
-    fs::write(
-        claude_home.join("history.jsonl"),
-        [
-            claude_history_record(
-                "stop looping again, fix the rust bug",
-                epoch_ms(2026, 2, 5, 10, 30),
-                "sess-hist-1",
-            ),
-            claude_history_record(
-                "you forgot the doppler mcp receipts",
-                epoch_ms(2026, 2, 5, 20, 0),
-                "sess-hist-1",
-            ),
-            claude_history_record(
-                "<task-notification>the loop ran to completion</task-notification>",
-                epoch_ms(2026, 2, 5, 21, 0),
-                "not-real-uuid",
-            ),
-            "not json at all".to_string(),
-        ]
-        .join("\n")
-            + "\n",
-    )
-    .unwrap();
-
-    // Project transcript: a non-user assistant record, the duplicate turn-2 record, a
-    // tool-result user record that must degrade under the content rule.
-    let project_session = "11111111-1111-4111-8111-111111111111";
-    fs::write(
-        projects.join(format!("{project_session}.jsonl")),
-        [
-            r#"{"type":"assistant","message":{"content":[]}}"#.to_string(),
-            claude_transcript_record_text(
-                "you forgot the doppler mcp receipts",
-                epoch_ms(2026, 2, 5, 20, 0),
-            ),
-            claude_transcript_tool_result(epoch_ms(2026, 2, 5, 22, 0)),
-        ]
-        .join("\n")
-            + "\n",
-    )
-    .unwrap();
-
-    // Antigravity: its own history (one friction turn with vocabulary, one record of the
-    // wrong shape to degrade) and one brain transcript with a USER_INPUT turn.
-    let agy_home = root.join("gemini-home").join("antigravity-cli");
-    fs::create_dir_all(&agy_home).unwrap();
-    fs::write(
-        agy_home.join("history.jsonl"),
-        [
-            agy_history_record(
-                "that fake file does not exist at all",
-                &iso(2026, 2, 6, 18, 0),
-                "conv-fix-2",
-            ),
-            r#"{"conversationId":"conv-2","content":"the wrong record shape never parses"}"#
-                .to_string(),
-        ]
-        .join("\n")
-            + "\n",
-    )
-    .unwrap();
-    let brain_session = "22222222-2222-4222-8222-222222222222";
-    fs::create_dir_all(agy_home.join("brain").join(brain_session)).unwrap();
-    fs::write(
-        agy_home
-            .join("brain")
-            .join(brain_session)
-            .join("transcript.jsonl"),
-        agy_brain_record(
-            "the cargo receipts, truth checked now",
-            &iso(2026, 2, 6, 20, 0),
-        ) + "\n",
-    )
-    .unwrap();
+    fixtures::write_human_turns_fixture(root);
 }
 
 fn run_ingest(root: &Path, storage: &Storage) -> TurnIngestSummary {

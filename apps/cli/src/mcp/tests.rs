@@ -7,7 +7,9 @@ use chrono::Utc;
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
-use super::params::{OutcomeRateParams, SessionGetParams, SessionsFindParams, SESSION_GET_DEFAULT_EVENTS_LIMIT};
+use super::params::{
+    OutcomeRateParams, SessionGetParams, SessionsFindParams, SESSION_GET_DEFAULT_EVENTS_LIMIT,
+};
 use super::server::AgentWorthMcpServer;
 
 /// Builds `n` minimal single-line Claude Code "user message" events, one per line, so a real
@@ -78,7 +80,13 @@ fn empty_sessions_find_params(limit: usize) -> SessionsFindParams {
 }
 
 fn seed_non_stub_session(storage: &Storage, session_id: &str, source_path: &str) {
-    let prov = Provenance::new(source_path, "claude_code", 100, 12345, format!("fp_{session_id}"));
+    let prov = Provenance::new(
+        source_path,
+        "claude_code",
+        100,
+        12345,
+        format!("fp_{session_id}"),
+    );
     let mut trace = AgentWorthTrace::new(session_id, "claude_code", prov, Utc::now());
     // Non-stub per `NON_STUB_SQL_PREDICATE`: total_events > 1 AND total_tokens > 0.
     trace.stats.total_events = 5;
@@ -413,10 +421,7 @@ fn seed_claimed_session(
         .expect("seed claimed session");
 }
 
-fn outcome_rate_params(
-    group_by: &str,
-    min_n: Option<usize>,
-) -> serde_json::Value {
+fn outcome_rate_params(group_by: &str, min_n: Option<usize>) -> serde_json::Value {
     serde_json::json!({ "group_by": group_by, "since": null, "until": null, "min_n": min_n })
 }
 
@@ -540,7 +545,10 @@ async fn test_outcome_rate_end_to_end_suppression_and_reason() {
         .unwrap();
     let value = call_result_json(result);
 
-    assert_eq!(value["suppressed_groups"], 1, "repo-b's n=2 must be suppressed under min_n=3");
+    assert_eq!(
+        value["suppressed_groups"], 1,
+        "repo-b's n=2 must be suppressed under min_n=3"
+    );
 
     let rows = value["rows"].as_array().unwrap();
     let repo_a = rows
@@ -550,7 +558,10 @@ async fn test_outcome_rate_end_to_end_suppression_and_reason() {
     assert_eq!(repo_a["n"], 3);
     assert_eq!(repo_a["verified"], 2);
     assert!((repo_a["rate"].as_f64().unwrap() - (2.0 / 3.0)).abs() < 1e-9);
-    assert!(rows.iter().all(|r| r["key"] != "org-b/repo-b"), "suppressed rows must not appear");
+    assert!(
+        rows.iter().all(|r| r["key"] != "org-b/repo-b"),
+        "suppressed rows must not appear"
+    );
 
     let repo_c = rows
         .iter()
@@ -578,19 +589,39 @@ use super::params::{CarryForwardParams, SessionHandoffParams};
 /// Written to a real `projects/-Users-...` directory so `extract_repository_or_workspace`
 /// derives a stable repo key from it, which is what `session_carry_forward` queries on.
 fn write_fixture_session(dir: &std::path::Path, session_id: &str, day: &str) -> std::path::PathBuf {
-    let project = dir.join("projects").join("-Users-x-code-unfoundbox-agentworth");
+    let project = dir
+        .join("projects")
+        .join("-Users-x-code-unfoundbox-agentworth");
     std::fs::create_dir_all(&project).expect("create project dir");
 
     let lines = [
-        format!(r#"{{"type":"user","timestamp":"{day}T14:02:00Z","content":"port the loose-ends detector to Rust"}}"#),
-        format!(r#"{{"type":"assistant","timestamp":"{day}T14:03:00Z","model":"claude-opus-5","usage":{{"input_tokens":500,"output_tokens":120,"cache_read_input_tokens":200,"cache_creation_input_tokens":50}},"content":[{{"type":"text","text":"We decided to keep the exit-code index out of SQLite for now."}}]}}"#),
-        format!(r#"{{"type":"assistant","timestamp":"{day}T14:05:00Z","content":[{{"type":"tool_use","id":"t1","name":"Edit","input":{{"file_path":"crates/storage/src/lib.rs","old_string":"a","new_string":"b"}}}}]}}"#),
-        format!(r#"{{"type":"assistant","timestamp":"{day}T14:07:00Z","content":[{{"type":"tool_use","id":"t2","name":"Bash","input":{{"command":"cargo test -p agentworth-storage"}}}}]}}"#),
-        format!(r#"{{"type":"user","timestamp":"{day}T14:08:00Z","content":[{{"type":"tool_result","tool_use_id":"t2","content":"test result: ok. 12 passed; 0 failed"}}]}}"#),
-        format!(r#"{{"type":"assistant","timestamp":"{day}T14:09:00Z","content":[{{"type":"tool_use","id":"t3","name":"Bash","input":{{"command":"git commit -m 'feat: repo-scoped lookup'"}}}}]}}"#),
-        format!(r#"{{"type":"user","timestamp":"{day}T14:10:00Z","content":[{{"type":"tool_result","tool_use_id":"t3","content":"[main 9f3e1a2] feat: repo-scoped lookup"}}]}}"#),
-        format!(r#"{{"type":"assistant","timestamp":"{day}T14:12:00Z","content":[{{"type":"text","text":"I'll delete the stale worktree sk-ant-abcdefghijklmnopqrstuvwxyz012345 before the next scan."}}]}}"#),
-        format!(r#"{{"type":"user","timestamp":"{day}T14:13:00Z","content":"thanks, stop there"}}"#),
+        format!(
+            r#"{{"type":"user","timestamp":"{day}T14:02:00Z","content":"port the loose-ends detector to Rust"}}"#
+        ),
+        format!(
+            r#"{{"type":"assistant","timestamp":"{day}T14:03:00Z","model":"claude-opus-5","usage":{{"input_tokens":500,"output_tokens":120,"cache_read_input_tokens":200,"cache_creation_input_tokens":50}},"content":[{{"type":"text","text":"We decided to keep the exit-code index out of SQLite for now."}}]}}"#
+        ),
+        format!(
+            r#"{{"type":"assistant","timestamp":"{day}T14:05:00Z","content":[{{"type":"tool_use","id":"t1","name":"Edit","input":{{"file_path":"crates/storage/src/lib.rs","old_string":"a","new_string":"b"}}}}]}}"#
+        ),
+        format!(
+            r#"{{"type":"assistant","timestamp":"{day}T14:07:00Z","content":[{{"type":"tool_use","id":"t2","name":"Bash","input":{{"command":"cargo test -p agentworth-storage"}}}}]}}"#
+        ),
+        format!(
+            r#"{{"type":"user","timestamp":"{day}T14:08:00Z","content":[{{"type":"tool_result","tool_use_id":"t2","content":"test result: ok. 12 passed; 0 failed"}}]}}"#
+        ),
+        format!(
+            r#"{{"type":"assistant","timestamp":"{day}T14:09:00Z","content":[{{"type":"tool_use","id":"t3","name":"Bash","input":{{"command":"git commit -m 'feat: repo-scoped lookup'"}}}}]}}"#
+        ),
+        format!(
+            r#"{{"type":"user","timestamp":"{day}T14:10:00Z","content":[{{"type":"tool_result","tool_use_id":"t3","content":"[main 9f3e1a2] feat: repo-scoped lookup"}}]}}"#
+        ),
+        format!(
+            r#"{{"type":"assistant","timestamp":"{day}T14:12:00Z","content":[{{"type":"text","text":"I'll delete the stale worktree sk-ant-abcdefghijklmnopqrstuvwxyz012345 before the next scan."}}]}}"#
+        ),
+        format!(
+            r#"{{"type":"user","timestamp":"{day}T14:13:00Z","content":"thanks, stop there"}}"#
+        ),
     ];
 
     let path = project.join(format!("{session_id}.jsonl"));
@@ -680,16 +711,36 @@ async fn test_session_handoff_assembles_the_whole_document_from_a_real_transcrip
     assert!(markdown.contains("unfoundbox/agentworth"), "{markdown}");
     assert!(markdown.contains("rung 4, commit_observed"), "{markdown}");
     assert!(markdown.contains("crates/storage/src/lib.rs"), "{markdown}");
-    assert!(markdown.contains("cargo test -p agentworth-storage"), "{markdown}");
-    assert!(markdown.contains("out of SQLite"), "the stated decision is quoted: {markdown}");
-    assert!(markdown.contains("delete the stale worktree"), "the dropped commitment: {markdown}");
+    assert!(
+        markdown.contains("cargo test -p agentworth-storage"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("out of SQLite"),
+        "the stated decision is quoted: {markdown}"
+    );
+    assert!(
+        markdown.contains("delete the stale worktree"),
+        "the dropped commitment: {markdown}"
+    );
     assert!(markdown.contains("## Not in this handoff"), "{markdown}");
-    assert!(markdown.contains(&format!("session {id}")), "the receipt names the session");
-    assert!(markdown.lines().count() <= 60, "the default budget is 60 lines");
+    assert!(
+        markdown.contains(&format!("session {id}")),
+        "the receipt names the session"
+    );
+    assert!(
+        markdown.lines().count() <= 60,
+        "the default budget is 60 lines"
+    );
 
     // `prompt_preview` is not filled by the scanner yet, so the one line a handoff most needs
     // is a stated gap rather than a guess.
-    let gaps: Vec<&str> = value["gaps"].as_array().unwrap().iter().map(|g| g.as_str().unwrap()).collect();
+    let gaps: Vec<&str> = value["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g.as_str().unwrap())
+        .collect();
     assert!(gaps.contains(&"prompt_preview_empty"), "{gaps:?}");
     assert_eq!(value["receipt"]["redacted"], false);
 }
@@ -718,10 +769,16 @@ async fn test_session_handoff_is_redacted_by_default() {
         !markdown.contains("unfoundbox/agentworth"),
         "the session's own repository identity must be masked by default:\n{markdown}"
     );
-    assert!(markdown.contains("delete the stale worktree"), "the claim itself survives");
+    assert!(
+        markdown.contains("delete the stale worktree"),
+        "the claim itself survives"
+    );
     assert_eq!(value["receipt"]["redacted"], true);
     assert!(
-        !value["receipt"]["source_path"].as_str().unwrap().contains("unfoundbox/agentworth"),
+        !value["receipt"]["source_path"]
+            .as_str()
+            .unwrap()
+            .contains("unfoundbox/agentworth"),
         "the receipt's own path is redacted too, on the same redactor instance"
     );
 }
@@ -776,7 +833,10 @@ async fn test_carry_forward_returns_the_last_n_newest_first() {
         handoffs[0]["receipt"]["session_id"], "cccccccc-0000-0000-0000-000000000003",
         "newest first"
     );
-    assert_eq!(handoffs[1]["receipt"]["session_id"], "bbbbbbbb-0000-0000-0000-000000000002");
+    assert_eq!(
+        handoffs[1]["receipt"]["session_id"],
+        "bbbbbbbb-0000-0000-0000-000000000002"
+    );
     assert!(value["unreadable"].as_array().unwrap().is_empty());
     assert_eq!(value["scan_exhausted"], false);
 }
@@ -784,7 +844,9 @@ async fn test_carry_forward_returns_the_last_n_newest_first() {
 /// Seeds a subagent transcript for `parent_id`, at
 /// `<project>/<parent_id>/subagents/agent-abc.jsonl`, started after the parent.
 fn seed_subagent_session(storage: &Storage, dir: &std::path::Path, parent_id: &str, day: &str) {
-    let project = dir.join("projects").join("-Users-x-code-unfoundbox-agentworth");
+    let project = dir
+        .join("projects")
+        .join("-Users-x-code-unfoundbox-agentworth");
     let subagents_dir = project.join(parent_id).join("subagents");
     std::fs::create_dir_all(&subagents_dir).expect("create subagents dir");
     let path = subagents_dir.join("agent-abc123.jsonl");
@@ -863,7 +925,10 @@ async fn test_carry_forward_excludes_subagents_by_default() {
     );
     let handoffs = value["handoffs"].as_array().unwrap();
     assert_eq!(handoffs.len(), 2, "include_subagents=true brings it back");
-    assert_eq!(handoffs[0]["receipt"]["session_id"], "agent-abc123", "newest first");
+    assert_eq!(
+        handoffs[0]["receipt"]["session_id"], "agent-abc123",
+        "newest first"
+    );
 }
 
 #[tokio::test]
@@ -939,7 +1004,9 @@ use super::params::ForgottenContextParams;
 /// `user` record with `isCompactSummary: true`. Round 1 drops two decision-shaped sentences,
 /// one of which the summary restates; round 2 drops one more and restates nothing.
 fn write_compacted_session(dir: &std::path::Path, session_id: &str) -> std::path::PathBuf {
-    let project = dir.join("projects").join("-Users-x-code-unfoundbox-agentworth");
+    let project = dir
+        .join("projects")
+        .join("-Users-x-code-unfoundbox-agentworth");
     std::fs::create_dir_all(&project).expect("create project dir");
 
     let lines = [
@@ -967,9 +1034,14 @@ fn seed_compacted_session(storage: &Storage, dir: &std::path::Path, session_id: 
     let path = write_compacted_session(dir, session_id);
     let adapter = agentworth_adapters::ClaudeCodeAdapter::new();
     let source = SessionSource::from_path(&path, adapter.name()).expect("source");
-    let mut trace = adapter.parse(&source).expect("parse compacted fixture").trace;
+    let mut trace = adapter
+        .parse(&source)
+        .expect("parse compacted fixture")
+        .trace;
     trace.session_id = session_id.to_string();
-    storage.upsert_trace(&trace).expect("seed compacted session");
+    storage
+        .upsert_trace(&trace)
+        .expect("seed compacted session");
 }
 
 fn forgotten_params(session_id: &str) -> ForgottenContextParams {
@@ -1023,7 +1095,10 @@ async fn test_forgotten_context_diffs_a_two_round_session_end_to_end() {
     let forgotten = value["forgotten"].as_array().unwrap();
     assert_eq!(forgotten.len(), 2);
     assert_eq!(forgotten[0]["round"], 2, "newest first");
-    assert!(forgotten[0]["text"].as_str().unwrap().contains("0.6 Jaccard"));
+    assert!(forgotten[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("0.6 Jaccard"));
     assert_eq!(forgotten[1]["round"], 1);
     assert!(
         forgotten[1]["text"].as_str().unwrap().contains("because"),
@@ -1301,7 +1376,11 @@ async fn test_suspect_commits_rejects_a_non_repo_path() {
         .repo_suspect(Parameters(serde_json::from_value(params).unwrap()))
         .await
         .expect_err("a non-repo path must be rejected");
-    assert!(err.message.contains("git repository"), "got: {}", err.message);
+    assert!(
+        err.message.contains("git repository"),
+        "got: {}",
+        err.message
+    );
 }
 
 /// `stats_ladder` answers with all three blocks, and defaults to the shared sample floor
@@ -1343,7 +1422,10 @@ async fn test_stats_ladder_returns_three_blocks_and_the_shared_floor() {
         .unwrap();
     let value = call_result_json(result);
 
-    assert_eq!(value["min_n"], 20, "the floor comes from storage, not from here");
+    assert_eq!(
+        value["min_n"], 20,
+        "the floor comes from storage, not from here"
+    );
     assert_eq!(value["period"], "all");
     assert_eq!(value["cost_basis"], "api_list_price_equivalent");
     assert_eq!(value["total_sessions"], 3);
@@ -1511,4 +1593,432 @@ async fn test_session_wake_is_redacted_by_default() {
         raw_markdown.contains("unfoundbox/agentworth"),
         "include_raw opts back in:\n{raw_markdown}"
     );
+}
+
+// ---- insights fixtures (the seed set, shared by the insights tests) -------------------
+
+use agentworth_schema::{EventPayload, NormalizedEvent, ToolCall};
+
+/// The two synthetic sessions the `/api/insights` golden test pins its numbers to, seeded so
+/// the tools and the HTTP route serve the same goldens from one shared contract.
+fn seed_insights_sessions(storage: &Storage, at: &dyn Fn(i32, u32, u32) -> chrono::DateTime<Utc>) {
+    use agentworth_schema::{AgentWorthTrace, FileActionType, Provenance, TokenUsage};
+
+    let mut seq = 0u64;
+    let mut a = AgentWorthTrace::new(
+        "sess-a",
+        "claude_code",
+        agentworth_schema::Provenance::new(
+            agentworth_schema::fixtures::claude_transcript(
+                agentworth_schema::fixtures::REPO,
+                "sess-a",
+            ),
+            "claude_code",
+            1024,
+            1,
+            "fp-a",
+        ),
+        at(2026, 6, 1),
+    );
+    for _ in 0..3 {
+        seq += 1;
+        a.events.push(NormalizedEvent::new(
+            seq,
+            at(2026, 6, 1),
+            EventPayload::UserMessage {
+                content: "turn".into(),
+            },
+        ));
+    }
+    for name in ["Bash", "Bash", "Bash", "Read", "Read", "Write"] {
+        seq += 1;
+        a.events.push(NormalizedEvent::new(
+            seq,
+            at(2026, 6, 1),
+            EventPayload::ToolCall(ToolCall {
+                id: None,
+                name: name.to_string(),
+                arguments: serde_json::json!({}),
+            }),
+        ));
+    }
+    for path in ["alpha/src.rs", "alpha/lib.rs"] {
+        seq += 1;
+        a.events.push(NormalizedEvent::new(
+            seq,
+            at(2026, 6, 1),
+            EventPayload::FileAction {
+                path: path.into(),
+                action: FileActionType::Write,
+                diff: None,
+                lines_changed: Some(1),
+            },
+        ));
+    }
+    seq += 1;
+    a.events.push(NormalizedEvent::new(
+        seq,
+        at(2026, 6, 1),
+        EventPayload::ModelInvocation {
+            model: "model-x".into(),
+            token_usage: TokenUsage::new(1_000, 100, 3_000, 200),
+            cost_usd: None,
+            latency_ms: None,
+            effort: None,
+        },
+    ));
+    a.recalculate_stats();
+    storage
+        .upsert_session(&a, Some("commit_observed"), Some(0.9), 1)
+        .unwrap();
+
+    let mut b = AgentWorthTrace::new(
+        "sess-b",
+        "codex",
+        Provenance::new(
+            agentworth_schema::fixtures::codex_rollout("2026-09-15", "sess-b"),
+            "codex",
+            512,
+            2,
+            "fp-b",
+        ),
+        at(2026, 9, 15),
+    );
+    seq = 0;
+    seq += 1;
+    b.events.push(NormalizedEvent::new(
+        seq,
+        at(2026, 9, 15),
+        EventPayload::UserMessage {
+            content: "do it".into(),
+        },
+    ));
+    for name in ["run_touch_files", "View"] {
+        seq += 1;
+        b.events.push(NormalizedEvent::new(
+            seq,
+            at(2026, 9, 15),
+            EventPayload::ToolCall(ToolCall {
+                id: None,
+                name: name.to_string(),
+                arguments: serde_json::json!({}),
+            }),
+        ));
+    }
+    b.recalculate_stats();
+    storage.upsert_session(&b, None, None, 1).unwrap();
+}
+
+/// Writes the shared synthetic turn home, ingests it through the real ingestor at the
+/// pinned +05:00 offset the turn-lane goldens are computed against, and keeps the temp dir
+/// alive as long as the returned guard is held.
+/// Writes the shared synthetic turn home and ingests it through the real ingestor at the
+/// pinned +05:00 offset the turn-lane goldens are computed against. The returned temp dir
+/// must stay alive as long as the storage is queried (the ingest paths are gone after that,
+/// but the turns are rows already -- the guard is for re-ingest paths only).
+fn seed_human_turns(storage: &Storage) -> tempfile::TempDir {
+    use agentworth_adapters::human_turns::HumanTurnIngestor;
+    use agentworth_core::turns::ingest_human_turns;
+    use chrono::FixedOffset;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    agentworth_schema::fixtures::write_human_turns_fixture(dir.path());
+    let ingestor = HumanTurnIngestor::rooted(dir.path(), FixedOffset::east_opt(5 * 3600).unwrap());
+    ingest_human_turns(&ingestor, storage, false).unwrap();
+    dir
+}
+
+// ---- insights tests: the failing tests first, per the TDD brief -----------------------
+
+use super::params::{InsightsGetParams, InsightsSummaryParams};
+
+fn insights_params(since: Option<&str>, until: Option<&str>) -> InsightsGetParams {
+    serde_json::from_value(serde_json::json!({ "since": since, "until": until })).unwrap()
+}
+
+fn insights_summary_params(since: Option<&str>, until: Option<&str>) -> InsightsSummaryParams {
+    serde_json::from_value(serde_json::json!({ "since": since, "until": until })).unwrap()
+}
+
+/// The goldens one full-fixture payload carries (one KPI per metric; the corresponding
+/// `/api/insights` golden test pins the rest).
+/// The exact key set the full payload must carry: the serialized `Insights` struct, so one
+/// contract serves the deck, the CLI, /api/insights, and MCP with no hand-rolled variant.
+const EXPECTED_KEYS: [&str; 28] = [
+    "schema_version",
+    "generated_at",
+    "window",
+    "filter",
+    "deltas",
+    "population",
+    "volume",
+    "by_adapter",
+    "ladder",
+    "verified",
+    "no_evidence_small_sessions",
+    "calls_per_turn",
+    "calls_per_turn_by_adapter",
+    "turn_buckets",
+    "file_modifications",
+    "top_repos",
+    "top_sessions",
+    "session_size_buckets",
+    "models",
+    "models_totals",
+    "series",
+    "tool_buckets",
+    "tool_buckets_detail",
+    "day_hour",
+    "friction",
+    "vocabulary",
+    "coverage_flags",
+    "deferred",
+];
+
+#[tokio::test]
+async fn insights_tools_are_listed_and_described() {
+    let tools = AgentWorthMcpServer::tool_router().list_all();
+    for name in ["insights_get", "insights_summary"] {
+        let tool = tools.iter().find(|t| t.name == name).unwrap_or_else(|| {
+            panic!(
+                "tools/list missing {name}: got {:?}",
+                tools.iter().map(|t| t.name.to_string()).collect::<Vec<_>>()
+            )
+        });
+        assert!(
+            tool.description
+                .as_ref()
+                .map(|d| !d.is_empty())
+                .unwrap_or(false),
+            "{name} must carry a non-empty description"
+        );
+    }
+}
+
+fn assert_key_set(value: &Value, expected: &[&str]) {
+    let keys: Vec<&str> = value
+        .as_object()
+        .expect("payload should be a JSON object")
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
+    let mut a = keys.clone();
+    a.sort_unstable();
+    let mut b = expected.to_vec();
+    b.sort_unstable();
+    assert_eq!(
+        a, b,
+        "payload key set drifted from the contract\n got: {keys:?}\n want: {expected:?}"
+    );
+}
+
+#[tokio::test]
+async fn insights_get_returns_the_exact_full_payload_contract() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    seed_insights_sessions(&storage, &use_utc);
+    let _turn_dir = seed_human_turns(&storage);
+    let server = AgentWorthMcpServer::new(storage);
+
+    let result = server
+        .insights_get(Parameters(insights_params(None, None)))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+
+    assert_key_set(&value, &EXPECTED_KEYS);
+    assert_eq!(value["schema_version"], 2);
+    assert_eq!(value["population"]["usable_sessions"], 2);
+    assert_eq!(value["volume"]["tool_calls_witnessed"], 8);
+    assert_eq!(value["calls_per_turn"]["strict"], 2.0);
+    assert_eq!(value["verified"]["sessions"], 1);
+    assert_eq!(value["verified"]["share_pct"], 50.0);
+    assert_eq!(value["file_modifications"]["total"], 2);
+    // The turn-data blocks are real fields now (#194): not deferred.
+    assert_eq!(value["day_hour"].as_array().unwrap().len(), 4);
+    assert_eq!(value["friction"].as_array().unwrap().len(), 3);
+    assert_eq!(value["vocabulary"].as_array().unwrap().len(), 6);
+    let dims: Vec<&str> = value["deferred"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["dimension"].as_str().unwrap())
+        .collect();
+    assert!(
+        dims.contains(&"intent_categories"),
+        "intent categories stay deferred: {dims:?}"
+    );
+    assert!(!dims.contains(&"friction_triggers"));
+    assert!(!dims.contains(&"time_of_day_histogram"));
+    assert!(!dims.contains(&"vocabulary_mentions"));
+}
+
+#[tokio::test]
+async fn insights_get_narrows_the_requested_window() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    seed_insights_sessions(&storage, &use_utc);
+    let _turn_dir = seed_human_turns(&storage);
+    let server = AgentWorthMcpServer::new(storage);
+
+    let result = server
+        .insights_get(Parameters(insights_params(
+            Some("2026-02-06T00:00:00Z"),
+            Some("2026-02-07T00:00:00Z"),
+        )))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+
+    // The window applies to sessions and turns with the same half-open rule.
+    assert_eq!(value["population"]["usable_sessions"], 0);
+    // The filter echoes the normalization the contract applies (millis, +00:00).
+    assert_eq!(value["filter"]["since"], "2026-02-06T00:00:00.000+00:00");
+    assert_eq!(value["day_hour"].as_array().unwrap().len(), 2);
+    let fric: Vec<&str> = value["friction"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["trigger"].as_str().unwrap())
+        .collect();
+    assert_eq!(fric, vec!["hallucination_pushback"]);
+    let vocab: Vec<(&str, i64)> = value["vocabulary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["term"].as_str().unwrap(), r["mentions"].as_i64().unwrap()))
+        .collect();
+    assert!(vocab.contains(&("receipts", 1)), "{vocab:?}");
+    assert!(vocab.contains(&("cargo", 1)));
+    assert!(vocab.contains(&("truth", 1)));
+    // Deltas read the preceding equal-length window, not zero-filled.
+    assert_eq!(value["deltas"]["friction_rate"]["current"], 50.0);
+    assert_eq!(value["deltas"]["friction_rate"]["previous"], 100.0);
+}
+
+#[tokio::test]
+async fn insights_summary_is_the_compact_contract() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    seed_insights_sessions(&storage, &use_utc);
+    let _turn_dir = seed_human_turns(&storage);
+    let server = AgentWorthMcpServer::new(storage);
+
+    let result = server
+        .insights_summary(Parameters(insights_summary_params(None, None)))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+
+    assert_key_set(
+        &value,
+        &[
+            "window",
+            "population",
+            "volume",
+            "verified",
+            "calls_per_turn_strict",
+            "calls_per_turn_heavy_session_average",
+            "friction",
+            "day_hour",
+            "deferred",
+        ],
+    );
+    assert_eq!(value["volume"]["usable_sessions"], 2);
+    assert_eq!(value["verified"]["sessions"], 1);
+    assert_eq!(value["verified"]["share_pct"], 50.0);
+    assert_eq!(value["calls_per_turn_strict"], 2.0);
+    assert_eq!(value["friction"]["total_turns"], 3);
+    assert_eq!(value["friction"]["rate_pct"], 75.0);
+    // Too big for a summary: no full blocks ship. day_hour is the peak summary, and the
+    // vocabulary term rows stay in the full payload only.
+    let keys: Vec<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
+    assert!(!keys.contains(&"series"), "summary never ships the series");
+    assert!(!keys.contains(&"top_repos"));
+    assert!(!keys.contains(&"vocabulary"));
+}
+
+#[tokio::test]
+async fn insights_get_on_an_empty_index_returns_honest_empties() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let result = server
+        .insights_get(Parameters(insights_params(None, None)))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+
+    assert_eq!(value["population"]["usable_sessions"], 0);
+    assert_eq!(value["volume"]["tool_calls_witnessed"], 0);
+    assert!(value["day_hour"].as_array().unwrap().is_empty());
+    assert!(value["friction"].as_array().unwrap().is_empty());
+    assert!(value["vocabulary"].as_array().unwrap().is_empty());
+    let dims: Vec<&str> = value["deferred"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["dimension"].as_str().unwrap())
+        .collect();
+    for expected in [
+        "friction_triggers",
+        "time_of_day_histogram",
+        "vocabulary_mentions",
+        "intent_categories",
+    ] {
+        assert!(
+            dims.contains(&expected),
+            "deferred missing {expected}: {dims:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn insights_get_until_without_since_is_a_typed_error() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let err = match server
+        .insights_get(Parameters(insights_params(
+            None,
+            Some("2026-02-07T00:00:00Z"),
+        )))
+        .await
+    {
+        Ok(r) => panic!("a window surface cannot defer `until` alone, got {:?}", r),
+        Err(e) => e,
+    };
+    assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    let text = &err.message;
+    assert!(
+        text.contains("since"),
+        "the error must name the rule: {text}"
+    );
+}
+
+#[tokio::test]
+async fn insights_get_rejects_a_bad_rfc3339_window_typed() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let server = AgentWorthMcpServer::new(storage);
+
+    let err = match server
+        .insights_get(Parameters(insights_params(Some("not a date"), None)))
+        .await
+    {
+        Ok(r) => panic!("bad window param must be an error, got {:?}", r),
+        Err(e) => e,
+    };
+    assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    let text = &err.message;
+    assert!(
+        text.contains("since"),
+        "the error must name the bad parameter: {text}"
+    );
+}
+
+fn use_utc(y: i32, m: u32, d: u32) -> chrono::DateTime<Utc> {
+    use chrono::TimeZone;
+    Utc.with_ymd_and_hms(y, m, d, 10, 0, 0).unwrap()
 }

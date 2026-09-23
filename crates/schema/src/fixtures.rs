@@ -89,6 +89,117 @@ pub fn synthetic_claude_history_path() -> String {
     format!("{}/claude-home/history.jsonl", synthetic_turn_home())
 }
 
+/// Writes the turn-bearing synthetic home `HumanTurnIngestor::rooted` reads, under
+/// `<root>/claude-home` and `<root>/gemini-home/antigravity-cli`. The same golden fixture
+/// set the turn-lane test pins its counts to, so every consumer (core insights test, MCP
+/// insights tests) asserts against one built shape: 4 stored turns, 1 deduped duplicate,
+/// 5 degrades, taxonomy classes and vocabulary counts those tests pin.
+pub fn write_human_turns_fixture(root: &std::path::Path) {
+    use chrono::{TimeZone, Utc};
+
+    let epoch_ms = |y: i32, m: u32, d: u32, h: u32, min: u32| -> i64 {
+        Utc.with_ymd_and_hms(y, m, d, h, min, 0)
+            .unwrap()
+            .timestamp_millis()
+    };
+    let iso = |y: i32, m: u32, d: u32, h: u32, min: u32| {
+        format!(
+            "{}+00:00",
+            Utc.with_ymd_and_hms(y, m, d, h, min, 0)
+                .unwrap()
+                .format("%Y-%m-%dT%H:%M:%S")
+        )
+    };
+    use std::fs;
+
+    let claude_home = root.join("claude-home");
+    let projects = claude_home.join("projects").join(claude_project_dir(REPO));
+    fs::create_dir_all(&projects).unwrap();
+
+    fs::write(
+        claude_home.join("history.jsonl"),
+        [
+            format!(
+                r#"{{"display":{},"pastedContents":{{}},"timestamp":{},"sessionId":{},"project":"proj"}}"#,
+                serde_json::to_string("stop looping again, fix the rust bug").unwrap(),
+                epoch_ms(2026, 2, 5, 10, 30),
+                serde_json::to_string("sess-hist-1").unwrap(),
+            ),
+            format!(
+                r#"{{"display":{},"pastedContents":{{}},"timestamp":{},"sessionId":{},"project":"proj"}}"#,
+                serde_json::to_string("you forgot the doppler mcp receipts").unwrap(),
+                epoch_ms(2026, 2, 5, 20, 0),
+                serde_json::to_string("sess-hist-1").unwrap(),
+            ),
+            format!(
+                r#"{{"display":{},"pastedContents":{{}},"timestamp":{},"sessionId":{},"project":"proj"}}"#,
+                serde_json::to_string("<task-notification>the loop ran to completion</task-notification>")
+                    .unwrap(),
+                epoch_ms(2026, 2, 5, 21, 0),
+                serde_json::to_string("not-real-uuid").unwrap(),
+            ),
+            "not json at all".to_string(),
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+
+    let project_session = "11111111-1111-4111-8111-111111111111";
+    fs::write(
+        projects.join(format!("{project_session}.jsonl")),
+        [
+            r#"{"type":"assistant","message":{"content":[]}}"#.to_string(),
+            format!(
+                r#"{{"type":"user","message":{{"role":"user","content":{}}},"timestamp":{}}}"#,
+                serde_json::to_string("you forgot the doppler mcp receipts").unwrap(),
+                epoch_ms(2026, 2, 5, 20, 0),
+            ),
+            format!(
+                r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","content":"1 file changed"}}]}},"timestamp":{}}}"#,
+                epoch_ms(2026, 2, 5, 22, 0),
+            ),
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+
+    let agy_home = root.join("gemini-home").join("antigravity-cli");
+    fs::create_dir_all(&agy_home).unwrap();
+    fs::write(
+        agy_home.join("history.jsonl"),
+        [
+            format!(
+                r#"{{"display":{},"timestamp":"{}","conversationId":{}}}"#,
+                serde_json::to_string("that fake file does not exist at all").unwrap(),
+                iso(2026, 2, 6, 18, 0),
+                serde_json::to_string("conv-fix-2").unwrap(),
+            ),
+            r#"{"conversationId":"conv-2","content":"the wrong record shape never parses"}"#
+                .to_string(),
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+    let brain_session = "22222222-2222-4222-8222-222222222222";
+    fs::create_dir_all(agy_home.join("brain").join(brain_session)).unwrap();
+    let brain_text = "the cargo receipts, truth checked now";
+    fs::write(
+        agy_home
+            .join("brain")
+            .join(brain_session)
+            .join("transcript.jsonl"),
+        format!(
+            r#"{{"type":"USER_INPUT","content":{},"created_at":"{}"}}"#,
+            serde_json::to_string(&format!("<USER_REQUEST>{brain_text}</USER_REQUEST>")).unwrap(),
+            iso(2026, 2, 6, 20, 0),
+        ) + "\n",
+    )
+    .unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,7 +221,10 @@ mod tests {
         // The decoder in `provenance.rs` turns `-Users-dev-code-example-repo` back into a
         // path; if this encoding drifts, every Claude fixture silently stops representing what
         // the adapter actually sees.
-        assert_eq!(claude_project_dir("example-repo"), "-Users-dev-code-example-repo");
+        assert_eq!(
+            claude_project_dir("example-repo"),
+            "-Users-dev-code-example-repo"
+        );
     }
 
     #[test]
