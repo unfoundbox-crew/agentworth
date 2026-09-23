@@ -2,6 +2,7 @@ mod anchoring;
 pub mod insights;
 pub mod chunker;
 pub mod embedder;
+pub mod human_turns;
 pub mod pricing;
 pub mod vector;
 
@@ -1355,6 +1356,56 @@ impl Storage {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            -- Human-turn derived features (insights data lane). NOT raw prompts: each row is
+            -- the derived features of one human turn -- classification, counts, clock, and a
+            -- bounded dedup signature -- so the insights payload's hour-by-weekday heatmap,
+            -- friction-by-trigger and vocabulary blocks read an owned table instead of a
+            -- separate prototype cache. See agentworth-adapter-sdk / adapters::human_turns for
+            -- the sources and taxonomy.
+            CREATE TABLE IF NOT EXISTS human_turns (
+                turn_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                session_id TEXT,
+                turn_index INTEGER NOT NULL,
+                timestamp_ms INTEGER NOT NULL,
+                epoch_secs REAL NOT NULL,
+                local_hour INTEGER NOT NULL,
+                local_date TEXT NOT NULL,
+                word_count INTEGER NOT NULL,
+                char_count INTEGER NOT NULL,
+                friction_type TEXT NOT NULL,
+                dedup_sig TEXT NOT NULL UNIQUE,
+                -- Per-turn bounded mention counts as JSON [[term, uses], ...] -- derived at
+                -- parse time from the static taxonomy and carried INSIDE the row, so a merge
+                -- (which copies child-table rows wholesale) keeps the vocabulary block
+                -- working without its own table.
+                vocab_json TEXT NOT NULL DEFAULT '[]'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_human_turns_date ON human_turns(local_date);
+            CREATE INDEX IF NOT EXISTS idx_human_turns_ts ON human_turns(timestamp_ms);
+            CREATE INDEX IF NOT EXISTS idx_human_turns_friction ON human_turns(friction_type);
+
+            -- Per-source-file fingerprint record for the turn lane, same conventions as
+            -- `sources`: unchanged (size, mtime, fingerprint) files skip re-parsing.
+            CREATE TABLE IF NOT EXISTS human_turn_sources (
+                source_path TEXT PRIMARY KEY,
+                source_label TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                mtime INTEGER NOT NULL,
+                fingerprint TEXT NOT NULL,
+                turns_indexed INTEGER NOT NULL,
+                scanned_at TEXT NOT NULL
+            );
+
+            -- The ingestion pipeline version. A bump means derived outputs changed for files
+            -- that did not, so the orchestrator wipes and re-ingests everything once.
+            CREATE TABLE IF NOT EXISTS human_turn_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                ingestion_version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             "#,
         )?;
 
@@ -2160,6 +2211,54 @@ impl Storage {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
         Ok(n as usize)
+    }
+
+    /// Human-turn tables (insights data lane). One batch at a time; the `dedup_sig` unique key
+    /// makes re-ingesting an unchanged turn a no-op instead of a double count. Delegates to
+    /// `human_turns::insert_human_turn_batch`.
+    pub fn insert_human_turn_batch(
+        &self,
+        turns: &[human_turns::HumanTurnRow],
+    ) -> Result<(usize, usize)> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::insert_human_turn_batch(&conn, turns)
+    }
+
+    pub fn record_human_turn_source(
+        &self,
+        src: &human_turns::HumanTurnSourceRow,
+        scanned_at: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::record_human_turn_source(&conn, src, scanned_at)
+    }
+
+    pub fn known_human_turn_sources(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (i64, i64, String)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::known_human_turn_sources(&conn)
+    }
+
+    /// Total stored human-turn rows; zero means the lane has never ingested anything.
+    pub fn human_turn_total(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::human_turn_total(&conn)
+    }
+
+    pub fn human_turn_ingestion_version(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::human_turn_ingestion_version(&conn)
+    }
+
+    pub fn set_human_turn_ingestion_version(&self, version: i64, now: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::set_human_turn_ingestion_version(&conn, version, now)
+    }
+
+    pub fn wipe_human_turn_data(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::wipe_human_turn_data(&conn)
     }
 
     /// Every name ever seen attached to `session_id`, oldest first sighting first. Names are

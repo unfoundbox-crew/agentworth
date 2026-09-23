@@ -3042,6 +3042,7 @@ fn print_scan_summary(summary: &ScanSummary, ui: &crate::ui::Ui) {
         pruned: summary.stub_sessions_removed,
         total_tokens: summary.aggregate_stats.token_usage.total(),
         adapters: ranked(&summary.aggregate_stats.sessions_by_adapter, 5),
+        human_turns: summary.human_turns.total_turns(),
     };
     print!("{}", crate::ui::views::scan_summary(ui, &view));
 }

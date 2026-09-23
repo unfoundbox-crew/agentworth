@@ -58,11 +58,12 @@ describe('insights backend mapping (#191 payload -> #192 UI types)', () => {
     expect(MAPPED.current.models[0].cr_perc).toBeCloseTo((4750000000 / 21300000000) * 100, 2);
   });
 
-  it('structurally deferred metrics map to empty arrays, never zero-filled data', () => {
-    expect(MAPPED.current.friction).toEqual([]);
-    expect(MAPPED.current.day_hour).toEqual([]);
-    expect(MAPPED.current.vocabulary).toEqual([]);
-    expect(RAW.deferred.map((d) => d.dimension)).toContain('friction_triggers');
+  it('structurally deferred metrics map to empty arrays when the turn blocks are stripped, never zero-filled', () => {
+    const stripped: RawInsights = { ...RAW, friction: undefined, day_hour: undefined, vocabulary: undefined };
+    const mapped = mapInsights(stripped);
+    expect(mapped.current.friction).toEqual([]);
+    expect(mapped.current.day_hour).toEqual([]);
+    expect(mapped.current.vocabulary).toEqual([]);
   });
 
   it('synthesizes previous KPIs from the deltas block, so Δ works by key', () => {
@@ -117,5 +118,39 @@ describe('insights backend mapping (#191 payload -> #192 UI types)', () => {
   it('window echo: since falls back to data span, until prefers the echoed filter value', () => {
     expect(MAPPED.since).toBe('2026-08-24T10:47:34+00:00');
     expect(MAPPED.until).toBe('2026-09-23T10:47:34+00:00');
+  });
+});
+
+describe('insights turn-data lane (human_turns blocks)', () => {
+  it('maps filled day_hour / friction / vocabulary rows through to the UI types', () => {
+    const filled: RawInsights = {
+      ...RAW,
+      deferred: RAW.deferred.filter(
+        (d) => !['friction_triggers', 'time_of_day_histogram', 'vocabulary_mentions'].includes(d.dimension),
+      ),
+      day_hour: [{ dow: 4, hour: 15, turns: 12 }, { dow: 0, hour: 1, turns: 3 }],
+      friction: [{ trigger: 'loop_interruption', turns: 7 }, { trigger: 'context_amnesia', turns: 2 }],
+      vocabulary: [{ term: 'receipts', mentions: 148 }, { term: 'docir', mentions: 19 }],
+    };
+    const mapped = mapInsights(filled);
+    expect(mapped.current.day_hour).toEqual([
+      { dow: 4, hour: 15, sessions: 12 },
+      { dow: 0, hour: 1, sessions: 3 },
+    ]);
+    expect(mapped.current.friction).toEqual([
+      { trigger: 'loop_interruption', sessions: 7 },
+      { trigger: 'context_amnesia', sessions: 2 },
+    ]);
+    expect(mapped.current.vocabulary).toEqual([
+      { term: 'receipts', sessions: 148 },
+      { term: 'docir', sessions: 19 },
+    ]);
+  });
+
+  it('keeps the empty path for a payload before the turn lane: the mock fixture is pre-lane', () => {
+    const fixture: RawInsights = JSON.parse(JSON.stringify(backendFixture));
+    expect(fixture.day_hour).toBeUndefined();
+    expect(fixture.friction).toBeUndefined();
+    expect(fixture.vocabulary).toBeUndefined();
   });
 });

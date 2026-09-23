@@ -189,9 +189,12 @@ function mapCurrent(raw: RawInsights): InsightsWindow {
     return { outcome: r.outcome as OutcomeKind, sessions: r.sessions, tb: toB(r.total_tokens) };
   });
 
-  // friction and the hour×day heatmap are structurally deferred by the index
-  // (payload.deferred names them); empty, never zero-filled.
+  // friction and the hour×day heatmap are real fields once the turn-data lane has ingested:
+  // the Rust core fills them from human_turns (classified with the same six-trigger taxonomy
+  // the prototype used). When the turn lane has nothing yet, the fields are absent or empty
+  // AND the deferred list names the gap; the tiles stay empty and never zero-filled.
   if (deferredNames.has('friction_triggers')) warnOnce('friction', 'index defers friction classification — friction widgets stay empty, never zero-filled');
+  else if (!raw.friction?.length) warnOnce('friction-quiet', 'no friction rows in this window — quiet, not unmeasured');
   if (deferredNames.has('time_of_day_histogram')) warnOnce('day_hour', 'index stores one started_at per session — the hour×day heatmap stays empty, never zero-filled');
   if (deferredNames.has('vocabulary_mentions')) warnOnce('vocabulary', 'per-turn text is not indexed — repeated vocabulary stays empty');
 
@@ -199,8 +202,8 @@ function mapCurrent(raw: RawInsights): InsightsWindow {
     claimed: raw.population.usable_sessions,
     kpis,
     ladder,
-    friction: [],
-    day_hour: [],
+    friction: (raw.friction ?? []).map((r) => ({ trigger: r.trigger, sessions: r.turns })),
+    day_hour: (raw.day_hour ?? []).map((c) => ({ dow: c.dow, hour: c.hour, sessions: c.turns })),
     by_adapter: raw.by_adapter.map((a) => ({ adapter: a.adapter, sessions: a.sessions, tokens_tb: toB(a.input_output_tokens) })),
     models: raw.models.map((m) => ({
       model: m.model,
@@ -213,7 +216,7 @@ function mapCurrent(raw: RawInsights): InsightsWindow {
     })),
     buckets: raw.session_size_buckets.map((b) => ({ label: b.label, sessions: b.sessions })),
     repos: raw.top_repos.map((r) => ({ repo: r.repo, sessions: r.sessions, events: r.file_touches })),
-    vocabulary: [],
+    vocabulary: (raw.vocabulary ?? []).map((v) => ({ term: v.term, sessions: v.mentions })),
     big_sessions: raw.top_sessions.map((s) => ({
       adapter: s.adapter,
       date: s.started_at.slice(0, 10),

@@ -19,6 +19,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
+pub mod turns;
+
 /// Summary report returned after completing a scan run.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScanSummary {
@@ -44,6 +46,10 @@ pub struct ScanSummary {
     /// longer passes any registered adapter's current detection, removed during this
     /// scan. Only computed on a full (unscoped) scan -- see `run_scan`.
     pub stub_sessions_removed: usize,
+    /// The human-turn ingestion lane (insights data lane) runs with every scan; these are its
+    /// numbers. Zeroes when no turn sources exist locally — an absence, never a fabrication.
+    #[serde(default)]
+    pub human_turns: turns::TurnIngestSummary,
 }
 
 /// Scanner orchestrator that coordinates adapters, parsing, and SQLite storage.
@@ -476,6 +482,22 @@ impl Scanner {
         let aggregate_stats = self.storage.get_aggregate_stats(true)?;
         let total_indexed_sessions = self.storage.total_row_count()?;
 
+        // Human-turn ingestion (insights data lane) runs with every scan — the session facts
+        // and per-turn facts share one index and one fingerprint stall, so a scan leaves the
+        // insights payload's turn blocks as fresh as its session blocks. A failure here warns
+        // and leaves the turn tables as the last good one left them; it never fails a scan.
+        let human_turns = match turns::ingest_human_turns(
+            &agentworth_adapters::human_turns::HumanTurnIngestor::from_system(),
+            self.storage(),
+            options.force,
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Human-turn ingestion failed: {}", e);
+                turns::TurnIngestSummary::default()
+            }
+        };
+
         Ok(ScanSummary {
             discovered_sources: total,
             scanned_sessions,
@@ -487,6 +509,7 @@ impl Scanner {
             total_indexed_sessions,
             aggregate_stats,
             stub_sessions_removed,
+            human_turns,
         })
     }
 }

@@ -21,6 +21,14 @@
   "backfilled_sessions": 0,
   "discovered_sources": 120,
   "errors_encountered": 0,
+  "human_turns": {
+    "errors": 0,
+    "sources_found": 0,
+    "sources_skipped_unchanged": 0,
+    "turns_deduplicated": 0,
+    "turns_degraded": 0,
+    "turns_inserted": 0
+  },
   "reparsed_sessions": 0,
   "scanned_sessions": 4,
   "skipped_unchanged": 116,

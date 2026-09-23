@@ -1467,6 +1467,8 @@ pub struct ScanView {
     pub pruned: usize,
     pub total_tokens: u64,
     pub adapters: Vec<(String, usize)>,
+    /// Human turns the insights lane ingested this scan (inserted + deduplicated).
+    pub human_turns: usize,
 }
 
 pub fn scan_summary(ui: &Ui, v: &ScanView) -> String {
@@ -1551,6 +1553,16 @@ pub fn scan_summary(ui: &Ui, v: &ScanView) -> String {
             &compact(v.total_tokens),
             ui.width(),
             Role::Verified,
+        ),
+    );
+    push(
+        &mut out,
+        ui,
+        ui.leaders(
+            "  human turns indexed",
+            &thousands(v.human_turns as u64),
+            ui.width(),
+            Role::Value,
         ),
     );
     for (name, count) in v.adapters.iter().take(5) {
