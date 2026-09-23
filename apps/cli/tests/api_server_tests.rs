@@ -1059,3 +1059,130 @@ async fn test_api_traces_includes_primary_outcome_and_composite_score() {
     assert!(unscored["composite_score"].is_null());
 }
 
+
+/// `GET /api/insights` — the deterministic machine-insights payload over a synthetic fixture
+/// index. Seeds one usable verified session (claude_code, three turns, six tool calls across
+/// Bash/Read/Write, two file writes under /code/org/alpha) and one usable one-shot codex session
+/// with no outcome evidence, then holds the real HTTP route to the same golden numbers
+/// `compute_insights`'s own unit test asserts — through the route, because the deck fetches the
+/// route, not the function.
+#[tokio::test]
+async fn test_api_insights_golden_counts_over_synthetic_index() {
+    let (app, storage, _) = setup_test_app();
+    use chrono::TimeZone;
+    let at = |y, m, d| Utc.with_ymd_and_hms(y, m, d, 10, 0, 0).unwrap();
+    let mut seq = 0u64;
+
+    let mut a = AgentWorthTrace::new(
+        "sess-a",
+        "claude_code",
+        Provenance::new("/home/dev/code/org/alpha/log.jsonl", "claude_code", 1024, 1, "fp-a"),
+        at(2026, 6, 1),
+    );
+    for _ in 0..3 {
+        seq += 1;
+        a.events.push(NormalizedEvent::new(
+            seq,
+            at(2026, 6, 1),
+            EventPayload::UserMessage { content: "turn".into() },
+        ));
+    }
+    for name in ["Bash", "Bash", "Bash", "Read", "Read", "Write"] {
+        seq += 1;
+        a.events.push(NormalizedEvent::new(
+            seq,
+            at(2026, 6, 1),
+            EventPayload::ToolCall(agentworth_schema::ToolCall {
+                id: None,
+                name: name.to_string(),
+                arguments: serde_json::json!({}),
+            }),
+        ));
+    }
+    for path in ["/home/dev/code/org/alpha/src.rs", "/home/dev/code/org/alpha/lib.rs"] {
+        seq += 1;
+        a.events.push(NormalizedEvent::new(
+            seq,
+            at(2026, 6, 1),
+            EventPayload::FileAction {
+                path: path.into(),
+                action: FileActionType::Write,
+                diff: None,
+                lines_changed: Some(1),
+            },
+        ));
+    }
+    seq += 1;
+    a.events.push(NormalizedEvent::new(
+        seq,
+        at(2026, 6, 1),
+        EventPayload::ModelInvocation {
+            model: "model-x".into(),
+            token_usage: TokenUsage::new(1_000, 100, 3_000, 200),
+            cost_usd: None,
+            latency_ms: None,
+            effort: None,
+        },
+    ));
+    a.recalculate_stats();
+    storage.upsert_session(&a, Some("commit_observed"), Some(0.9), 1).unwrap();
+
+    let mut b = AgentWorthTrace::new(
+        "sess-b",
+        "codex",
+        Provenance::new("/tmp/somewhere/b-rollout-1.jsonl", "codex", 512, 2, "fp-b"),
+        at(2026, 9, 15),
+    );
+    seq = 0;
+    seq += 1;
+    b.events.push(NormalizedEvent::new(
+        seq,
+        at(2026, 9, 15),
+        EventPayload::UserMessage { content: "do it".into() },
+    ));
+    for name in ["run_touch_files", "View"] {
+        seq += 1;
+        b.events.push(NormalizedEvent::new(
+            seq,
+            at(2026, 9, 15),
+            EventPayload::ToolCall(agentworth_schema::ToolCall {
+                id: None,
+                name: name.to_string(),
+                arguments: serde_json::json!({}),
+            }),
+        ));
+    }
+    b.recalculate_stats();
+    storage.upsert_session(&b, None, None, 1).unwrap();
+
+    let (status, insights) = request_json(app, "GET", "/api/insights", None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert_eq!(insights["schema_version"], 1);
+    assert_eq!(insights["population"]["usable_sessions"], 2);
+    assert_eq!(insights["population"]["sessions_raw"], 2);
+    assert_eq!(insights["volume"]["tool_calls_witnessed"], 8);
+    assert_eq!(insights["volume"]["human_turns_index_proxy"], 4);
+    assert_eq!(insights["calls_per_turn"]["strict"], 2.0);
+    assert_eq!(insights["calls_per_turn"]["heavy_session_average"], 2.0);
+    assert_eq!(insights["verified"]["sessions"], 1);
+    assert_eq!(insights["verified"]["share_pct"], 50.0);
+    assert_eq!(insights["file_modifications"]["total"], 2);
+    assert_eq!(insights["top_repos"][0]["repo"], "org");
+    assert_eq!(insights["top_sessions"][0]["session_id"], "sess-a");
+    assert_eq!(insights["top_sessions"][0]["repo_label"], "org");
+    let dims = insights["deferred"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["dimension"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(dims.contains(&"friction_triggers"));
+    assert!(dims.contains(&"time_of_day_histogram"));
+    assert!(dims.contains(&"vocabulary_mentions"));
+
+    let min = insights["window"]["sessions"]["min_started_at"].as_str().unwrap();
+    let max = insights["window"]["sessions"]["max_started_at"].as_str().unwrap();
+    assert!(min.starts_with("2026-06-01"), "got {min}");
+    assert!(max.starts_with("2026-09-15"), "got {max}");
+}

@@ -332,6 +332,13 @@ pub fn route_entries() -> Vec<RouteEntry> {
         },
         RouteEntry {
             method: "GET",
+            path: "/insights",
+            description: "The deterministic machine-insights payload: usable sessions, tool calls, evidence ladder, per-model burn, biggest sessions (same JSON as `agentworth insights --json`)",
+            query_params: &[],
+            handler: get(get_insights_handler),
+        },
+        RouteEntry {
+            method: "GET",
             path: "/archaeology",
             description: "Archaeology highlights across the whole index",
             query_params: &[],
@@ -776,6 +783,31 @@ async fn get_pacing_handler(
     })?;
 
     Ok(Json(pacing))
+}
+
+/// GET /api/insights -> the deterministic machine-insights payload; same JSON the
+/// `agentworth insights --json` command prints (agentworth_storage::insights).
+async fn get_insights_handler(
+    State(state): State<AppState>,
+) -> Result<Json<agentworth_storage::insights::Insights>, (StatusCode, Json<serde_json::Value>)> {
+    let storage = state.storage.clone();
+    let insights_res = tokio::task::spawn_blocking(move || storage.get_insights())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Task joining failed: {}", e) })),
+            )
+        })?;
+
+    let insights = insights_res.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed computing insights: {}", e) })),
+        )
+    })?;
+
+    Ok(Json(insights))
 }
 
 /// GET /api/blame?file=<path> -> file change lineage matching session histories

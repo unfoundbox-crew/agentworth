@@ -1,6 +1,6 @@
 {
   "version": "0.1.27",
-  "generatedDate": "2026-09-19",
+  "generatedDate": "2026-09-23",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -1706,6 +1706,20 @@
       ]
     },
     {
+      "path": "archie insights",
+      "about": "Machine agent work in one deterministic report: usable sessions, tool calls, file touches, the evidence ladder, per-model burn, biggest sessions. Read-only; `--json` emits the full payload (same JSON as GET /api/insights)",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the full insights payload as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "archie doctor",
       "about": "Check local environment, adapter discoveries, and SQLite database health",
       "args": [
@@ -2049,6 +2063,12 @@
       "method": "GET",
       "path": "/api/matrix",
       "description": "Adapter extraction coverage and capabilities matrix",
+      "queryParams": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/insights",
+      "description": "The deterministic machine-insights payload: usable sessions, tool calls, evidence ladder, per-model burn, biggest sessions (same JSON as `agentworth insights --json`)",
       "queryParams": []
     },
     {
