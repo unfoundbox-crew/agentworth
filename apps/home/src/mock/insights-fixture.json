@@ -1,0 +1,2372 @@
+{
+ "generated_at": "2026-09-23T10:47:34+00:00",
+ "since": "2026-08-24T10:47:34+00:00",
+ "until": "2026-09-23T10:47:34+00:00",
+ "current": {
+  "claimed": 482,
+  "kpis": [
+   {
+    "key": "verified",
+    "label": "verified outcome rate",
+    "value": 31.4,
+    "unit": "%"
+   },
+   {
+    "key": "sessions",
+    "label": "sessions",
+    "value": 482,
+    "series": [
+     15,
+     22,
+     29,
+     36,
+     15,
+     22,
+     29,
+     36,
+     15,
+     22,
+     29,
+     36,
+     15,
+     22,
+     29,
+     36,
+     15,
+     22,
+     29,
+     36,
+     15,
+     22,
+     29,
+     36,
+     15,
+     22,
+     29,
+     36,
+     15,
+     22
+    ]
+   },
+   {
+    "key": "events",
+    "label": "events",
+    "value": 31422,
+    "series": [
+     840,
+     910,
+     980,
+     1010,
+     1120,
+     1080,
+     1042.5,
+     1150,
+     1190,
+     1110,
+     1060,
+     1210,
+     1240,
+     1170,
+     1150,
+     1190,
+     1160,
+     1200,
+     1190,
+     1150,
+     1130,
+     1170,
+     1220,
+     1190,
+     1160,
+     1180,
+     1210,
+     1200,
+     1170,
+     1190
+    ]
+   },
+   {
+    "key": "turns",
+    "label": "turns",
+    "value": 5873
+   },
+   {
+    "key": "tokens",
+    "label": "tokens",
+    "value": 94.1,
+    "unit": "B"
+   },
+   {
+    "key": "friction",
+    "label": "friction rate",
+    "value": 18.6,
+    "unit": "%"
+   }
+  ],
+  "ladder": [
+   {
+    "outcome": "no_outcome_evidence",
+    "sessions": 161,
+    "tb": 1.8
+   },
+   {
+    "outcome": "done_claimed",
+    "sessions": 41,
+    "tb": 0.4
+   },
+   {
+    "outcome": "artifact_changed",
+    "sessions": 88,
+    "tb": 3.1
+   },
+   {
+    "outcome": "test_or_build_passed",
+    "sessions": 52,
+    "tb": 4.2
+   },
+   {
+    "outcome": "commit_observed",
+    "sessions": 107,
+    "tb": 38.6
+   },
+   {
+    "outcome": "ci_or_deployment_verified",
+    "sessions": 33,
+    "tb": 46
+   }
+  ],
+  "friction": [
+   {
+    "trigger": "loop_interruption",
+    "sessions": 61
+   },
+   {
+    "trigger": "autonomy_nudge",
+    "sessions": 44
+   },
+   {
+    "trigger": "hallucination_pushback",
+    "sessions": 21
+   },
+   {
+    "trigger": "context_amnesia",
+    "sessions": 8
+   },
+   {
+    "trigger": "sandbox_error",
+    "sessions": 2
+   }
+  ],
+  "day_hour": [
+   [
+    {
+     "dow": 0,
+     "hour": 0,
+     "sessions": 0
+    },
+    {
+     "dow": 0,
+     "hour": 1,
+     "sessions": 2
+    },
+    {
+     "dow": 0,
+     "hour": 2,
+     "sessions": 3
+    },
+    {
+     "dow": 0,
+     "hour": 3,
+     "sessions": 6
+    },
+    {
+     "dow": 0,
+     "hour": 4,
+     "sessions": 10
+    },
+    {
+     "dow": 0,
+     "hour": 5,
+     "sessions": 9
+    },
+    {
+     "dow": 0,
+     "hour": 6,
+     "sessions": 14
+    },
+    {
+     "dow": 0,
+     "hour": 7,
+     "sessions": 17
+    },
+    {
+     "dow": 0,
+     "hour": 8,
+     "sessions": 21
+    },
+    {
+     "dow": 0,
+     "hour": 9,
+     "sessions": 24
+    },
+    {
+     "dow": 0,
+     "hour": 10,
+     "sessions": 18
+    },
+    {
+     "dow": 0,
+     "hour": 11,
+     "sessions": 22
+    },
+    {
+     "dow": 0,
+     "hour": 12,
+     "sessions": 22
+    },
+    {
+     "dow": 0,
+     "hour": 13,
+     "sessions": 21
+    },
+    {
+     "dow": 0,
+     "hour": 14,
+     "sessions": 20
+    },
+    {
+     "dow": 0,
+     "hour": 15,
+     "sessions": 15
+    },
+    {
+     "dow": 0,
+     "hour": 16,
+     "sessions": 19
+    },
+    {
+     "dow": 0,
+     "hour": 17,
+     "sessions": 18
+    },
+    {
+     "dow": 0,
+     "hour": 18,
+     "sessions": 18
+    },
+    {
+     "dow": 0,
+     "hour": 19,
+     "sessions": 20
+    },
+    {
+     "dow": 0,
+     "hour": 20,
+     "sessions": 16
+    },
+    {
+     "dow": 0,
+     "hour": 21,
+     "sessions": 14
+    },
+    {
+     "dow": 0,
+     "hour": 22,
+     "sessions": 11
+    },
+    {
+     "dow": 0,
+     "hour": 23,
+     "sessions": 7
+    }
+   ],
+   [
+    {
+     "dow": 1,
+     "hour": 0,
+     "sessions": 1
+    },
+    {
+     "dow": 1,
+     "hour": 1,
+     "sessions": 2
+    },
+    {
+     "dow": 1,
+     "hour": 2,
+     "sessions": 2
+    },
+    {
+     "dow": 1,
+     "hour": 3,
+     "sessions": 5
+    },
+    {
+     "dow": 1,
+     "hour": 4,
+     "sessions": 8
+    },
+    {
+     "dow": 1,
+     "hour": 5,
+     "sessions": 13
+    },
+    {
+     "dow": 1,
+     "hour": 6,
+     "sessions": 18
+    },
+    {
+     "dow": 1,
+     "hour": 7,
+     "sessions": 14
+    },
+    {
+     "dow": 1,
+     "hour": 8,
+     "sessions": 18
+    },
+    {
+     "dow": 1,
+     "hour": 9,
+     "sessions": 20
+    },
+    {
+     "dow": 1,
+     "hour": 10,
+     "sessions": 25
+    },
+    {
+     "dow": 1,
+     "hour": 11,
+     "sessions": 28
+    },
+    {
+     "dow": 1,
+     "hour": 12,
+     "sessions": 18
+    },
+    {
+     "dow": 1,
+     "hour": 13,
+     "sessions": 18
+    },
+    {
+     "dow": 1,
+     "hour": 14,
+     "sessions": 17
+    },
+    {
+     "dow": 1,
+     "hour": 15,
+     "sessions": 20
+    },
+    {
+     "dow": 1,
+     "hour": 16,
+     "sessions": 24
+    },
+    {
+     "dow": 1,
+     "hour": 17,
+     "sessions": 15
+    },
+    {
+     "dow": 1,
+     "hour": 18,
+     "sessions": 15
+    },
+    {
+     "dow": 1,
+     "hour": 19,
+     "sessions": 17
+    },
+    {
+     "dow": 1,
+     "hour": 20,
+     "sessions": 21
+    },
+    {
+     "dow": 1,
+     "hour": 21,
+     "sessions": 18
+    },
+    {
+     "dow": 1,
+     "hour": 22,
+     "sessions": 9
+    },
+    {
+     "dow": 1,
+     "hour": 23,
+     "sessions": 6
+    }
+   ],
+   [
+    {
+     "dow": 2,
+     "hour": 0,
+     "sessions": 1
+    },
+    {
+     "dow": 2,
+     "hour": 1,
+     "sessions": 2
+    },
+    {
+     "dow": 2,
+     "hour": 2,
+     "sessions": 3
+    },
+    {
+     "dow": 2,
+     "hour": 3,
+     "sessions": 6
+    },
+    {
+     "dow": 2,
+     "hour": 4,
+     "sessions": 7
+    },
+    {
+     "dow": 2,
+     "hour": 5,
+     "sessions": 11
+    },
+    {
+     "dow": 2,
+     "hour": 6,
+     "sessions": 15
+    },
+    {
+     "dow": 2,
+     "hour": 7,
+     "sessions": 19
+    },
+    {
+     "dow": 2,
+     "hour": 8,
+     "sessions": 23
+    },
+    {
+     "dow": 2,
+     "hour": 9,
+     "sessions": 17
+    },
+    {
+     "dow": 2,
+     "hour": 10,
+     "sessions": 21
+    },
+    {
+     "dow": 2,
+     "hour": 11,
+     "sessions": 24
+    },
+    {
+     "dow": 2,
+     "hour": 12,
+     "sessions": 24
+    },
+    {
+     "dow": 2,
+     "hour": 13,
+     "sessions": 23
+    },
+    {
+     "dow": 2,
+     "hour": 14,
+     "sessions": 14
+    },
+    {
+     "dow": 2,
+     "hour": 15,
+     "sessions": 17
+    },
+    {
+     "dow": 2,
+     "hour": 16,
+     "sessions": 20
+    },
+    {
+     "dow": 2,
+     "hour": 17,
+     "sessions": 20
+    },
+    {
+     "dow": 2,
+     "hour": 18,
+     "sessions": 19
+    },
+    {
+     "dow": 2,
+     "hour": 19,
+     "sessions": 14
+    },
+    {
+     "dow": 2,
+     "hour": 20,
+     "sessions": 18
+    },
+    {
+     "dow": 2,
+     "hour": 21,
+     "sessions": 15
+    },
+    {
+     "dow": 2,
+     "hour": 22,
+     "sessions": 12
+    },
+    {
+     "dow": 2,
+     "hour": 23,
+     "sessions": 7
+    }
+   ],
+   [
+    {
+     "dow": 3,
+     "hour": 0,
+     "sessions": 1
+    },
+    {
+     "dow": 3,
+     "hour": 1,
+     "sessions": 1
+    },
+    {
+     "dow": 3,
+     "hour": 2,
+     "sessions": 3
+    },
+    {
+     "dow": 3,
+     "hour": 3,
+     "sessions": 5
+    },
+    {
+     "dow": 3,
+     "hour": 4,
+     "sessions": 9
+    },
+    {
+     "dow": 3,
+     "hour": 5,
+     "sessions": 14
+    },
+    {
+     "dow": 3,
+     "hour": 6,
+     "sessions": 12
+    },
+    {
+     "dow": 3,
+     "hour": 7,
+     "sessions": 16
+    },
+    {
+     "dow": 3,
+     "hour": 8,
+     "sessions": 19
+    },
+    {
+     "dow": 3,
+     "hour": 9,
+     "sessions": 22
+    },
+    {
+     "dow": 3,
+     "hour": 10,
+     "sessions": 27
+    },
+    {
+     "dow": 3,
+     "hour": 11,
+     "sessions": 19
+    },
+    {
+     "dow": 3,
+     "hour": 12,
+     "sessions": 20
+    },
+    {
+     "dow": 3,
+     "hour": 13,
+     "sessions": 19
+    },
+    {
+     "dow": 3,
+     "hour": 14,
+     "sessions": 19
+    },
+    {
+     "dow": 3,
+     "hour": 15,
+     "sessions": 22
+    },
+    {
+     "dow": 3,
+     "hour": 16,
+     "sessions": 17
+    },
+    {
+     "dow": 3,
+     "hour": 17,
+     "sessions": 17
+    },
+    {
+     "dow": 3,
+     "hour": 18,
+     "sessions": 16
+    },
+    {
+     "dow": 3,
+     "hour": 19,
+     "sessions": 19
+    },
+    {
+     "dow": 3,
+     "hour": 20,
+     "sessions": 23
+    },
+    {
+     "dow": 3,
+     "hour": 21,
+     "sessions": 12
+    },
+    {
+     "dow": 3,
+     "hour": 22,
+     "sessions": 10
+    },
+    {
+     "dow": 3,
+     "hour": 23,
+     "sessions": 6
+    }
+   ],
+   [
+    {
+     "dow": 4,
+     "hour": 0,
+     "sessions": 1
+    },
+    {
+     "dow": 4,
+     "hour": 1,
+     "sessions": 2
+    },
+    {
+     "dow": 4,
+     "hour": 2,
+     "sessions": 3
+    },
+    {
+     "dow": 4,
+     "hour": 3,
+     "sessions": 4
+    },
+    {
+     "dow": 4,
+     "hour": 4,
+     "sessions": 8
+    },
+    {
+     "dow": 4,
+     "hour": 5,
+     "sessions": 12
+    },
+    {
+     "dow": 4,
+     "hour": 6,
+     "sessions": 16
+    },
+    {
+     "dow": 4,
+     "hour": 7,
+     "sessions": 20
+    },
+    {
+     "dow": 4,
+     "hour": 8,
+     "sessions": 16
+    },
+    {
+     "dow": 4,
+     "hour": 9,
+     "sessions": 19
+    },
+    {
+     "dow": 4,
+     "hour": 10,
+     "sessions": 23
+    },
+    {
+     "dow": 4,
+     "hour": 11,
+     "sessions": 26
+    },
+    {
+     "dow": 4,
+     "hour": 12,
+     "sessions": 26
+    },
+    {
+     "dow": 4,
+     "hour": 13,
+     "sessions": 16
+    },
+    {
+     "dow": 4,
+     "hour": 14,
+     "sessions": 16
+    },
+    {
+     "dow": 4,
+     "hour": 15,
+     "sessions": 18
+    },
+    {
+     "dow": 4,
+     "hour": 16,
+     "sessions": 22
+    },
+    {
+     "dow": 4,
+     "hour": 17,
+     "sessions": 22
+    },
+    {
+     "dow": 4,
+     "hour": 18,
+     "sessions": 13
+    },
+    {
+     "dow": 4,
+     "hour": 19,
+     "sessions": 16
+    },
+    {
+     "dow": 4,
+     "hour": 20,
+     "sessions": 19
+    },
+    {
+     "dow": 4,
+     "hour": 21,
+     "sessions": 16
+    },
+    {
+     "dow": 4,
+     "hour": 22,
+     "sessions": 13
+    },
+    {
+     "dow": 4,
+     "hour": 23,
+     "sessions": 5
+    }
+   ],
+   [
+    {
+     "dow": 5,
+     "hour": 0,
+     "sessions": 0
+    },
+    {
+     "dow": 5,
+     "hour": 1,
+     "sessions": 0
+    },
+    {
+     "dow": 5,
+     "hour": 2,
+     "sessions": 1
+    },
+    {
+     "dow": 5,
+     "hour": 3,
+     "sessions": 2
+    },
+    {
+     "dow": 5,
+     "hour": 4,
+     "sessions": 4
+    },
+    {
+     "dow": 5,
+     "hour": 5,
+     "sessions": 4
+    },
+    {
+     "dow": 5,
+     "hour": 6,
+     "sessions": 6
+    },
+    {
+     "dow": 5,
+     "hour": 7,
+     "sessions": 7
+    },
+    {
+     "dow": 5,
+     "hour": 8,
+     "sessions": 9
+    },
+    {
+     "dow": 5,
+     "hour": 9,
+     "sessions": 11
+    },
+    {
+     "dow": 5,
+     "hour": 10,
+     "sessions": 8
+    },
+    {
+     "dow": 5,
+     "hour": 11,
+     "sessions": 9
+    },
+    {
+     "dow": 5,
+     "hour": 12,
+     "sessions": 9
+    },
+    {
+     "dow": 5,
+     "hour": 13,
+     "sessions": 9
+    },
+    {
+     "dow": 5,
+     "hour": 14,
+     "sessions": 9
+    },
+    {
+     "dow": 5,
+     "hour": 15,
+     "sessions": 6
+    },
+    {
+     "dow": 5,
+     "hour": 16,
+     "sessions": 8
+    },
+    {
+     "dow": 5,
+     "hour": 17,
+     "sessions": 8
+    },
+    {
+     "dow": 5,
+     "hour": 18,
+     "sessions": 8
+    },
+    {
+     "dow": 5,
+     "hour": 19,
+     "sessions": 9
+    },
+    {
+     "dow": 5,
+     "hour": 20,
+     "sessions": 7
+    },
+    {
+     "dow": 5,
+     "hour": 21,
+     "sessions": 6
+    },
+    {
+     "dow": 5,
+     "hour": 22,
+     "sessions": 4
+    },
+    {
+     "dow": 5,
+     "hour": 23,
+     "sessions": 3
+    }
+   ],
+   [
+    {
+     "dow": 6,
+     "hour": 0,
+     "sessions": 0
+    },
+    {
+     "dow": 6,
+     "hour": 1,
+     "sessions": 1
+    },
+    {
+     "dow": 6,
+     "hour": 2,
+     "sessions": 1
+    },
+    {
+     "dow": 6,
+     "hour": 3,
+     "sessions": 2
+    },
+    {
+     "dow": 6,
+     "hour": 4,
+     "sessions": 3
+    },
+    {
+     "dow": 6,
+     "hour": 5,
+     "sessions": 5
+    },
+    {
+     "dow": 6,
+     "hour": 6,
+     "sessions": 8
+    },
+    {
+     "dow": 6,
+     "hour": 7,
+     "sessions": 6
+    },
+    {
+     "dow": 6,
+     "hour": 8,
+     "sessions": 8
+    },
+    {
+     "dow": 6,
+     "hour": 9,
+     "sessions": 9
+    },
+    {
+     "dow": 6,
+     "hour": 10,
+     "sessions": 11
+    },
+    {
+     "dow": 6,
+     "hour": 11,
+     "sessions": 12
+    },
+    {
+     "dow": 6,
+     "hour": 12,
+     "sessions": 8
+    },
+    {
+     "dow": 6,
+     "hour": 13,
+     "sessions": 8
+    },
+    {
+     "dow": 6,
+     "hour": 14,
+     "sessions": 7
+    },
+    {
+     "dow": 6,
+     "hour": 15,
+     "sessions": 9
+    },
+    {
+     "dow": 6,
+     "hour": 16,
+     "sessions": 11
+    },
+    {
+     "dow": 6,
+     "hour": 17,
+     "sessions": 6
+    },
+    {
+     "dow": 6,
+     "hour": 18,
+     "sessions": 6
+    },
+    {
+     "dow": 6,
+     "hour": 19,
+     "sessions": 7
+    },
+    {
+     "dow": 6,
+     "hour": 20,
+     "sessions": 9
+    },
+    {
+     "dow": 6,
+     "hour": 21,
+     "sessions": 8
+    },
+    {
+     "dow": 6,
+     "hour": 22,
+     "sessions": 4
+    },
+    {
+     "dow": 6,
+     "hour": 23,
+     "sessions": 2
+    }
+   ]
+  ],
+  "by_adapter": [
+   {
+    "adapter": "claude_code",
+    "sessions": 268,
+    "tokens_tb": 57.3
+   },
+   {
+    "adapter": "codex",
+    "sessions": 104,
+    "tokens_tb": 12.8
+   },
+   {
+    "adapter": "antigravity",
+    "sessions": 62,
+    "tokens_tb": 8.1
+   },
+   {
+    "adapter": "opencode",
+    "sessions": 34,
+    "tokens_tb": 9.6
+   },
+   {
+    "adapter": "gemini",
+    "sessions": 14,
+    "tokens_tb": 6.3
+   }
+  ],
+  "models": [
+   {
+    "model": "claude-sonnet-5",
+    "sessions": 190,
+    "tb": 21.3,
+    "cr_perc": 22.4,
+    "it": 3.1,
+    "ot": 71.2
+   },
+   {
+    "model": "claude-opus-5",
+    "sessions": 88,
+    "tb": 27.6,
+    "cr_perc": 26.9,
+    "it": 0.8,
+    "ot": 79.4
+   },
+   {
+    "model": "claude-haiku-4-5",
+    "sessions": 51,
+    "tb": 0.9,
+    "cr_perc": 0.4,
+    "it": 0,
+    "ot": 1.7
+   },
+   {
+    "model": "claude-fable-5",
+    "sessions": 41,
+    "tb": 9.2,
+    "cr_perc": 9.3,
+    "it": 0.5,
+    "ot": 24.1
+   },
+   {
+    "model": "codex-auto-review",
+    "sessions": 37,
+    "tb": 0.4,
+    "cr_perc": 0,
+    "it": 42.1,
+    "ot": 0.4
+   },
+   {
+    "model": "gpt-5.6-sol",
+    "sessions": 33,
+    "tb": 3.6,
+    "cr_perc": 0,
+    "it": 115.2,
+    "ot": 11.4
+   },
+   {
+    "model": "gpt-5.6-terra",
+    "sessions": 24,
+    "tb": 1.3,
+    "cr_perc": 0,
+    "it": 39.8,
+    "ot": 3.8
+   },
+   {
+    "model": "muse-spark-1.3",
+    "sessions": 18,
+    "tb": 1.2,
+    "cr_perc": 0,
+    "it": 117.4,
+    "ot": 2.3
+   }
+  ],
+  "buckets": [
+   {
+    "label": "< 10M",
+    "sessions": 214
+   },
+   {
+    "label": "10-50M",
+    "sessions": 152
+   },
+   {
+    "label": "50-200M",
+    "sessions": 81
+   },
+   {
+    "label": "> 200M",
+    "sessions": 35
+   }
+  ],
+  "repos": [
+   {
+    "repo": "demo/webapp",
+    "sessions": 88,
+    "events": 6211
+   },
+   {
+    "repo": "demo/rustkit",
+    "sessions": 51,
+    "events": 4802
+   },
+   {
+    "repo": "demo/deck",
+    "sessions": 40,
+    "events": 3051
+   },
+   {
+    "repo": "demo/infra",
+    "sessions": 30,
+    "events": 2400
+   },
+   {
+    "repo": "demo/skills",
+    "sessions": 22,
+    "events": 1834
+   },
+   {
+    "repo": "demo/bench",
+    "sessions": 18,
+    "events": 1520
+   }
+  ],
+  "vocabulary": [
+   {
+    "term": "before pushing",
+    "sessions": 214
+   },
+   {
+    "term": "verification",
+    "sessions": 183
+   },
+   {
+    "term": "receipt",
+    "sessions": 148
+   },
+   {
+    "term": "fixture",
+    "sessions": 121
+   },
+   {
+    "term": "coverage",
+    "sessions": 97
+   },
+   {
+    "term": "drill-down",
+    "sessions": 64
+   },
+   {
+    "term": "cold start",
+    "sessions": 38
+   },
+   {
+    "term": "skeleton",
+    "sessions": 26
+   }
+  ],
+  "big_sessions": [
+   {
+    "adapter": "claude_code",
+    "date": "2026-09-11",
+    "tokens": 517143256,
+    "events": 6109,
+    "repo": "demo/webapp"
+   },
+   {
+    "adapter": "codex",
+    "date": "2026-09-08",
+    "tokens": 214256072,
+    "events": 3120,
+    "repo": "demo/rustkit"
+   },
+   {
+    "adapter": "antigravity",
+    "date": "2026-09-17",
+    "tokens": 96541043,
+    "events": 1740,
+    "repo": "demo/deck"
+   },
+   {
+    "adapter": "claude_code",
+    "date": "2026-09-02",
+    "tokens": 81120216,
+    "events": 1508,
+    "repo": "demo/infra"
+   }
+  ]
+ },
+ "previous": {
+  "claimed": 404,
+  "kpis": [
+   {
+    "key": "verified",
+    "label": "verified outcome rate",
+    "value": 26.8,
+    "unit": "%"
+   },
+   {
+    "key": "sessions",
+    "label": "sessions",
+    "value": 404
+   },
+   {
+    "key": "events",
+    "label": "events",
+    "value": 24973
+   },
+   {
+    "key": "turns",
+    "label": "turns",
+    "value": 4711
+   },
+   {
+    "key": "tokens",
+    "label": "tokens",
+    "value": 71.2,
+    "unit": "B"
+   },
+   {
+    "key": "friction",
+    "label": "friction rate",
+    "value": 22,
+    "unit": "%"
+   }
+  ],
+  "ladder": [
+   {
+    "outcome": "no_outcome_evidence",
+    "sessions": 158,
+    "tb": 1.4
+   },
+   {
+    "outcome": "done_claimed",
+    "sessions": 38,
+    "tb": 0.3
+   },
+   {
+    "outcome": "artifact_changed",
+    "sessions": 70,
+    "tb": 2.2
+   },
+   {
+    "outcome": "test_or_build_passed",
+    "sessions": 39,
+    "tb": 3
+   },
+   {
+    "outcome": "commit_observed",
+    "sessions": 78,
+    "tb": 28.1
+   },
+   {
+    "outcome": "ci_or_deployment_verified",
+    "sessions": 21,
+    "tb": 36.2
+   }
+  ],
+  "friction": [
+   {
+    "trigger": "loop_interruption",
+    "sessions": 70
+   },
+   {
+    "trigger": "autonomy_nudge",
+    "sessions": 52
+   },
+   {
+    "trigger": "hallucination_pushback",
+    "sessions": 24
+   },
+   {
+    "trigger": "context_amnesia",
+    "sessions": 7
+   },
+   {
+    "trigger": "sandbox_error",
+    "sessions": 3
+   }
+  ],
+  "day_hour": [
+   {
+    "0": {
+     "dow": 0,
+     "hour": 0,
+     "sessions": 0
+    },
+    "1": {
+     "dow": 0,
+     "hour": 1,
+     "sessions": 2
+    },
+    "2": {
+     "dow": 0,
+     "hour": 2,
+     "sessions": 3
+    },
+    "3": {
+     "dow": 0,
+     "hour": 3,
+     "sessions": 6
+    },
+    "4": {
+     "dow": 0,
+     "hour": 4,
+     "sessions": 10
+    },
+    "5": {
+     "dow": 0,
+     "hour": 5,
+     "sessions": 9
+    },
+    "6": {
+     "dow": 0,
+     "hour": 6,
+     "sessions": 14
+    },
+    "7": {
+     "dow": 0,
+     "hour": 7,
+     "sessions": 17
+    },
+    "8": {
+     "dow": 0,
+     "hour": 8,
+     "sessions": 21
+    },
+    "9": {
+     "dow": 0,
+     "hour": 9,
+     "sessions": 24
+    },
+    "10": {
+     "dow": 0,
+     "hour": 10,
+     "sessions": 18
+    },
+    "11": {
+     "dow": 0,
+     "hour": 11,
+     "sessions": 22
+    },
+    "12": {
+     "dow": 0,
+     "hour": 12,
+     "sessions": 22
+    },
+    "13": {
+     "dow": 0,
+     "hour": 13,
+     "sessions": 21
+    },
+    "14": {
+     "dow": 0,
+     "hour": 14,
+     "sessions": 20
+    },
+    "15": {
+     "dow": 0,
+     "hour": 15,
+     "sessions": 15
+    },
+    "16": {
+     "dow": 0,
+     "hour": 16,
+     "sessions": 19
+    },
+    "17": {
+     "dow": 0,
+     "hour": 17,
+     "sessions": 18
+    },
+    "18": {
+     "dow": 0,
+     "hour": 18,
+     "sessions": 18
+    },
+    "19": {
+     "dow": 0,
+     "hour": 19,
+     "sessions": 20
+    },
+    "20": {
+     "dow": 0,
+     "hour": 20,
+     "sessions": 16
+    },
+    "21": {
+     "dow": 0,
+     "hour": 21,
+     "sessions": 14
+    },
+    "22": {
+     "dow": 0,
+     "hour": 22,
+     "sessions": 11
+    },
+    "23": {
+     "dow": 0,
+     "hour": 23,
+     "sessions": 7
+    },
+    "sessions": 0
+   },
+   {
+    "0": {
+     "dow": 1,
+     "hour": 0,
+     "sessions": 1
+    },
+    "1": {
+     "dow": 1,
+     "hour": 1,
+     "sessions": 2
+    },
+    "2": {
+     "dow": 1,
+     "hour": 2,
+     "sessions": 2
+    },
+    "3": {
+     "dow": 1,
+     "hour": 3,
+     "sessions": 5
+    },
+    "4": {
+     "dow": 1,
+     "hour": 4,
+     "sessions": 8
+    },
+    "5": {
+     "dow": 1,
+     "hour": 5,
+     "sessions": 13
+    },
+    "6": {
+     "dow": 1,
+     "hour": 6,
+     "sessions": 18
+    },
+    "7": {
+     "dow": 1,
+     "hour": 7,
+     "sessions": 14
+    },
+    "8": {
+     "dow": 1,
+     "hour": 8,
+     "sessions": 18
+    },
+    "9": {
+     "dow": 1,
+     "hour": 9,
+     "sessions": 20
+    },
+    "10": {
+     "dow": 1,
+     "hour": 10,
+     "sessions": 25
+    },
+    "11": {
+     "dow": 1,
+     "hour": 11,
+     "sessions": 28
+    },
+    "12": {
+     "dow": 1,
+     "hour": 12,
+     "sessions": 18
+    },
+    "13": {
+     "dow": 1,
+     "hour": 13,
+     "sessions": 18
+    },
+    "14": {
+     "dow": 1,
+     "hour": 14,
+     "sessions": 17
+    },
+    "15": {
+     "dow": 1,
+     "hour": 15,
+     "sessions": 20
+    },
+    "16": {
+     "dow": 1,
+     "hour": 16,
+     "sessions": 24
+    },
+    "17": {
+     "dow": 1,
+     "hour": 17,
+     "sessions": 15
+    },
+    "18": {
+     "dow": 1,
+     "hour": 18,
+     "sessions": 15
+    },
+    "19": {
+     "dow": 1,
+     "hour": 19,
+     "sessions": 17
+    },
+    "20": {
+     "dow": 1,
+     "hour": 20,
+     "sessions": 21
+    },
+    "21": {
+     "dow": 1,
+     "hour": 21,
+     "sessions": 18
+    },
+    "22": {
+     "dow": 1,
+     "hour": 22,
+     "sessions": 9
+    },
+    "23": {
+     "dow": 1,
+     "hour": 23,
+     "sessions": 6
+    },
+    "sessions": 0
+   },
+   {
+    "0": {
+     "dow": 2,
+     "hour": 0,
+     "sessions": 1
+    },
+    "1": {
+     "dow": 2,
+     "hour": 1,
+     "sessions": 2
+    },
+    "2": {
+     "dow": 2,
+     "hour": 2,
+     "sessions": 3
+    },
+    "3": {
+     "dow": 2,
+     "hour": 3,
+     "sessions": 6
+    },
+    "4": {
+     "dow": 2,
+     "hour": 4,
+     "sessions": 7
+    },
+    "5": {
+     "dow": 2,
+     "hour": 5,
+     "sessions": 11
+    },
+    "6": {
+     "dow": 2,
+     "hour": 6,
+     "sessions": 15
+    },
+    "7": {
+     "dow": 2,
+     "hour": 7,
+     "sessions": 19
+    },
+    "8": {
+     "dow": 2,
+     "hour": 8,
+     "sessions": 23
+    },
+    "9": {
+     "dow": 2,
+     "hour": 9,
+     "sessions": 17
+    },
+    "10": {
+     "dow": 2,
+     "hour": 10,
+     "sessions": 21
+    },
+    "11": {
+     "dow": 2,
+     "hour": 11,
+     "sessions": 24
+    },
+    "12": {
+     "dow": 2,
+     "hour": 12,
+     "sessions": 24
+    },
+    "13": {
+     "dow": 2,
+     "hour": 13,
+     "sessions": 23
+    },
+    "14": {
+     "dow": 2,
+     "hour": 14,
+     "sessions": 14
+    },
+    "15": {
+     "dow": 2,
+     "hour": 15,
+     "sessions": 17
+    },
+    "16": {
+     "dow": 2,
+     "hour": 16,
+     "sessions": 20
+    },
+    "17": {
+     "dow": 2,
+     "hour": 17,
+     "sessions": 20
+    },
+    "18": {
+     "dow": 2,
+     "hour": 18,
+     "sessions": 19
+    },
+    "19": {
+     "dow": 2,
+     "hour": 19,
+     "sessions": 14
+    },
+    "20": {
+     "dow": 2,
+     "hour": 20,
+     "sessions": 18
+    },
+    "21": {
+     "dow": 2,
+     "hour": 21,
+     "sessions": 15
+    },
+    "22": {
+     "dow": 2,
+     "hour": 22,
+     "sessions": 12
+    },
+    "23": {
+     "dow": 2,
+     "hour": 23,
+     "sessions": 7
+    },
+    "sessions": 0
+   },
+   {
+    "0": {
+     "dow": 3,
+     "hour": 0,
+     "sessions": 1
+    },
+    "1": {
+     "dow": 3,
+     "hour": 1,
+     "sessions": 1
+    },
+    "2": {
+     "dow": 3,
+     "hour": 2,
+     "sessions": 3
+    },
+    "3": {
+     "dow": 3,
+     "hour": 3,
+     "sessions": 5
+    },
+    "4": {
+     "dow": 3,
+     "hour": 4,
+     "sessions": 9
+    },
+    "5": {
+     "dow": 3,
+     "hour": 5,
+     "sessions": 14
+    },
+    "6": {
+     "dow": 3,
+     "hour": 6,
+     "sessions": 12
+    },
+    "7": {
+     "dow": 3,
+     "hour": 7,
+     "sessions": 16
+    },
+    "8": {
+     "dow": 3,
+     "hour": 8,
+     "sessions": 19
+    },
+    "9": {
+     "dow": 3,
+     "hour": 9,
+     "sessions": 22
+    },
+    "10": {
+     "dow": 3,
+     "hour": 10,
+     "sessions": 27
+    },
+    "11": {
+     "dow": 3,
+     "hour": 11,
+     "sessions": 19
+    },
+    "12": {
+     "dow": 3,
+     "hour": 12,
+     "sessions": 20
+    },
+    "13": {
+     "dow": 3,
+     "hour": 13,
+     "sessions": 19
+    },
+    "14": {
+     "dow": 3,
+     "hour": 14,
+     "sessions": 19
+    },
+    "15": {
+     "dow": 3,
+     "hour": 15,
+     "sessions": 22
+    },
+    "16": {
+     "dow": 3,
+     "hour": 16,
+     "sessions": 17
+    },
+    "17": {
+     "dow": 3,
+     "hour": 17,
+     "sessions": 17
+    },
+    "18": {
+     "dow": 3,
+     "hour": 18,
+     "sessions": 16
+    },
+    "19": {
+     "dow": 3,
+     "hour": 19,
+     "sessions": 19
+    },
+    "20": {
+     "dow": 3,
+     "hour": 20,
+     "sessions": 23
+    },
+    "21": {
+     "dow": 3,
+     "hour": 21,
+     "sessions": 12
+    },
+    "22": {
+     "dow": 3,
+     "hour": 22,
+     "sessions": 10
+    },
+    "23": {
+     "dow": 3,
+     "hour": 23,
+     "sessions": 6
+    },
+    "sessions": 0
+   },
+   {
+    "0": {
+     "dow": 4,
+     "hour": 0,
+     "sessions": 1
+    },
+    "1": {
+     "dow": 4,
+     "hour": 1,
+     "sessions": 2
+    },
+    "2": {
+     "dow": 4,
+     "hour": 2,
+     "sessions": 3
+    },
+    "3": {
+     "dow": 4,
+     "hour": 3,
+     "sessions": 4
+    },
+    "4": {
+     "dow": 4,
+     "hour": 4,
+     "sessions": 8
+    },
+    "5": {
+     "dow": 4,
+     "hour": 5,
+     "sessions": 12
+    },
+    "6": {
+     "dow": 4,
+     "hour": 6,
+     "sessions": 16
+    },
+    "7": {
+     "dow": 4,
+     "hour": 7,
+     "sessions": 20
+    },
+    "8": {
+     "dow": 4,
+     "hour": 8,
+     "sessions": 16
+    },
+    "9": {
+     "dow": 4,
+     "hour": 9,
+     "sessions": 19
+    },
+    "10": {
+     "dow": 4,
+     "hour": 10,
+     "sessions": 23
+    },
+    "11": {
+     "dow": 4,
+     "hour": 11,
+     "sessions": 26
+    },
+    "12": {
+     "dow": 4,
+     "hour": 12,
+     "sessions": 26
+    },
+    "13": {
+     "dow": 4,
+     "hour": 13,
+     "sessions": 16
+    },
+    "14": {
+     "dow": 4,
+     "hour": 14,
+     "sessions": 16
+    },
+    "15": {
+     "dow": 4,
+     "hour": 15,
+     "sessions": 18
+    },
+    "16": {
+     "dow": 4,
+     "hour": 16,
+     "sessions": 22
+    },
+    "17": {
+     "dow": 4,
+     "hour": 17,
+     "sessions": 22
+    },
+    "18": {
+     "dow": 4,
+     "hour": 18,
+     "sessions": 13
+    },
+    "19": {
+     "dow": 4,
+     "hour": 19,
+     "sessions": 16
+    },
+    "20": {
+     "dow": 4,
+     "hour": 20,
+     "sessions": 19
+    },
+    "21": {
+     "dow": 4,
+     "hour": 21,
+     "sessions": 16
+    },
+    "22": {
+     "dow": 4,
+     "hour": 22,
+     "sessions": 13
+    },
+    "23": {
+     "dow": 4,
+     "hour": 23,
+     "sessions": 5
+    },
+    "sessions": 0
+   },
+   {
+    "0": {
+     "dow": 5,
+     "hour": 0,
+     "sessions": 0
+    },
+    "1": {
+     "dow": 5,
+     "hour": 1,
+     "sessions": 0
+    },
+    "2": {
+     "dow": 5,
+     "hour": 2,
+     "sessions": 1
+    },
+    "3": {
+     "dow": 5,
+     "hour": 3,
+     "sessions": 2
+    },
+    "4": {
+     "dow": 5,
+     "hour": 4,
+     "sessions": 4
+    },
+    "5": {
+     "dow": 5,
+     "hour": 5,
+     "sessions": 4
+    },
+    "6": {
+     "dow": 5,
+     "hour": 6,
+     "sessions": 6
+    },
+    "7": {
+     "dow": 5,
+     "hour": 7,
+     "sessions": 7
+    },
+    "8": {
+     "dow": 5,
+     "hour": 8,
+     "sessions": 9
+    },
+    "9": {
+     "dow": 5,
+     "hour": 9,
+     "sessions": 11
+    },
+    "10": {
+     "dow": 5,
+     "hour": 10,
+     "sessions": 8
+    },
+    "11": {
+     "dow": 5,
+     "hour": 11,
+     "sessions": 9
+    },
+    "12": {
+     "dow": 5,
+     "hour": 12,
+     "sessions": 9
+    },
+    "13": {
+     "dow": 5,
+     "hour": 13,
+     "sessions": 9
+    },
+    "14": {
+     "dow": 5,
+     "hour": 14,
+     "sessions": 9
+    },
+    "15": {
+     "dow": 5,
+     "hour": 15,
+     "sessions": 6
+    },
+    "16": {
+     "dow": 5,
+     "hour": 16,
+     "sessions": 8
+    },
+    "17": {
+     "dow": 5,
+     "hour": 17,
+     "sessions": 8
+    },
+    "18": {
+     "dow": 5,
+     "hour": 18,
+     "sessions": 8
+    },
+    "19": {
+     "dow": 5,
+     "hour": 19,
+     "sessions": 9
+    },
+    "20": {
+     "dow": 5,
+     "hour": 20,
+     "sessions": 7
+    },
+    "21": {
+     "dow": 5,
+     "hour": 21,
+     "sessions": 6
+    },
+    "22": {
+     "dow": 5,
+     "hour": 22,
+     "sessions": 4
+    },
+    "23": {
+     "dow": 5,
+     "hour": 23,
+     "sessions": 3
+    },
+    "sessions": 0
+   },
+   {
+    "0": {
+     "dow": 6,
+     "hour": 0,
+     "sessions": 0
+    },
+    "1": {
+     "dow": 6,
+     "hour": 1,
+     "sessions": 1
+    },
+    "2": {
+     "dow": 6,
+     "hour": 2,
+     "sessions": 1
+    },
+    "3": {
+     "dow": 6,
+     "hour": 3,
+     "sessions": 2
+    },
+    "4": {
+     "dow": 6,
+     "hour": 4,
+     "sessions": 3
+    },
+    "5": {
+     "dow": 6,
+     "hour": 5,
+     "sessions": 5
+    },
+    "6": {
+     "dow": 6,
+     "hour": 6,
+     "sessions": 8
+    },
+    "7": {
+     "dow": 6,
+     "hour": 7,
+     "sessions": 6
+    },
+    "8": {
+     "dow": 6,
+     "hour": 8,
+     "sessions": 8
+    },
+    "9": {
+     "dow": 6,
+     "hour": 9,
+     "sessions": 9
+    },
+    "10": {
+     "dow": 6,
+     "hour": 10,
+     "sessions": 11
+    },
+    "11": {
+     "dow": 6,
+     "hour": 11,
+     "sessions": 12
+    },
+    "12": {
+     "dow": 6,
+     "hour": 12,
+     "sessions": 8
+    },
+    "13": {
+     "dow": 6,
+     "hour": 13,
+     "sessions": 8
+    },
+    "14": {
+     "dow": 6,
+     "hour": 14,
+     "sessions": 7
+    },
+    "15": {
+     "dow": 6,
+     "hour": 15,
+     "sessions": 9
+    },
+    "16": {
+     "dow": 6,
+     "hour": 16,
+     "sessions": 11
+    },
+    "17": {
+     "dow": 6,
+     "hour": 17,
+     "sessions": 6
+    },
+    "18": {
+     "dow": 6,
+     "hour": 18,
+     "sessions": 6
+    },
+    "19": {
+     "dow": 6,
+     "hour": 19,
+     "sessions": 7
+    },
+    "20": {
+     "dow": 6,
+     "hour": 20,
+     "sessions": 9
+    },
+    "21": {
+     "dow": 6,
+     "hour": 21,
+     "sessions": 8
+    },
+    "22": {
+     "dow": 6,
+     "hour": 22,
+     "sessions": 4
+    },
+    "23": {
+     "dow": 6,
+     "hour": 23,
+     "sessions": 2
+    },
+    "sessions": 0
+   }
+  ],
+  "by_adapter": [
+   {
+    "adapter": "claude_code",
+    "sessions": 210,
+    "tokens_tb": 40.1
+   },
+   {
+    "adapter": "codex",
+    "sessions": 91,
+    "tokens_tb": 9.9
+   },
+   {
+    "adapter": "antigravity",
+    "sessions": 48,
+    "tokens_tb": 6.2
+   },
+   {
+    "adapter": "opencode",
+    "sessions": 37,
+    "tokens_tb": 8.4
+   },
+   {
+    "adapter": "gemini",
+    "sessions": 18,
+    "tokens_tb": 6.4
+   }
+  ],
+  "models": [
+   {
+    "model": "claude-sonnet-5",
+    "sessions": 150,
+    "tb": 16.1,
+    "cr_perc": 21.1,
+    "it": 3.4,
+    "ot": 70.1
+   },
+   {
+    "model": "claude-opus-5",
+    "sessions": 71,
+    "tb": 21.4,
+    "cr_perc": 24.2,
+    "it": 0.9,
+    "ot": 78.2
+   },
+   {
+    "model": "claude-haiku-4-5",
+    "sessions": 44,
+    "tb": 0.7,
+    "cr_perc": 0.6,
+    "it": 0.1,
+    "ot": 1.5
+   },
+   {
+    "model": "claude-fable-5",
+    "sessions": 36,
+    "tb": 6.1,
+    "cr_perc": 8.1,
+    "it": 0.6,
+    "ot": 23
+   },
+   {
+    "model": "codex-auto-review",
+    "sessions": 33,
+    "tb": 0.3,
+    "cr_perc": 0,
+    "it": 40.3,
+    "ot": 0.5
+   },
+   {
+    "model": "gpt-5.6-sol",
+    "sessions": 29,
+    "tb": 2.4,
+    "cr_perc": 0,
+    "it": 110.1,
+    "ot": 10
+   },
+   {
+    "model": "gpt-5.6-terra",
+    "sessions": 21,
+    "tb": 0.9,
+    "cr_perc": 0,
+    "it": 36.2,
+    "ot": 3.1
+   },
+   {
+    "model": "muse-spark-1.3",
+    "sessions": 20,
+    "tb": 1,
+    "cr_perc": 0,
+    "it": 114,
+    "ot": 2
+   }
+  ],
+  "buckets": [
+   {
+    "label": "< 10M",
+    "sessions": 180
+   },
+   {
+    "label": "10-50M",
+    "sessions": 126
+   },
+   {
+    "label": "50-200M",
+    "sessions": 64
+   },
+   {
+    "label": "> 200M",
+    "sessions": 34
+   }
+  ],
+  "repos": [
+   {
+    "repo": "demo/webapp",
+    "sessions": 70,
+    "events": 5011
+   },
+   {
+    "repo": "demo/rustkit",
+    "sessions": 44,
+    "events": 3980
+   },
+   {
+    "repo": "demo/deck",
+    "sessions": 35,
+    "events": 2410
+   },
+   {
+    "repo": "demo/infra",
+    "sessions": 28,
+    "events": 2010
+   },
+   {
+    "repo": "demo/skills",
+    "sessions": 19,
+    "events": 1512
+   },
+   {
+    "repo": "demo/bench",
+    "sessions": 14,
+    "events": 1150
+   }
+  ],
+  "vocabulary": [
+   {
+    "term": "before pushing",
+    "sessions": 170
+   },
+   {
+    "term": "verification",
+    "sessions": 150
+   },
+   {
+    "term": "receipt",
+    "sessions": 120
+   },
+   {
+    "term": "fixture",
+    "sessions": 101
+   },
+   {
+    "term": "coverage",
+    "sessions": 80
+   },
+   {
+    "term": "drill-down",
+    "sessions": 50
+   },
+   {
+    "term": "cold start",
+    "sessions": 31
+   },
+   {
+    "term": "skeleton",
+    "sessions": 21
+   }
+  ],
+  "big_sessions": [
+   {
+    "adapter": "claude_code",
+    "date": "2026-08-30",
+    "tokens": 402118840,
+    "events": 5010,
+    "repo": "demo/webapp"
+   },
+   {
+    "adapter": "codex",
+    "date": "2026-08-27",
+    "tokens": 190412200,
+    "events": 2810,
+    "repo": "demo/rustkit"
+   }
+  ]
+ }
+}

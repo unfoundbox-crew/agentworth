@@ -5,6 +5,7 @@ import type { Direction, Harness } from '../protocol';
 import { Cruise } from './Cruise';
 import { Alert } from './Alert';
 import { Consoles } from './Consoles';
+import { Insights } from './Insights';
 import { Ambient } from './Ambient';
 import { FirstRun } from './FirstRun';
 import { FirstDirection } from './FirstDirection';
@@ -51,6 +52,7 @@ export function Deck() {
   const consoleOpen = useHome((s) => s.consoleOpen);
   const dockRef = useRef<DockHandle>(null);
   const [flow, setFlow] = useState<Flow>({ phase: 'none' });
+  const [insightsOpen, setInsightsOpen] = useState(false);
 
   const ordered = orderDirections(Object.values(directions));
   const active = ordered.filter((d) => d.state !== 'done');
@@ -64,17 +66,19 @@ export function Deck() {
   }
 
   const showFirstRun = flow.phase === 'firstrun' || (flow.phase === 'none' && active.length === 0);
-  const phase = showFirstRun
-    ? 'firstrun'
-    : flow.phase === 'firstdirection'
-      ? 'firstdirection'
-      : flow.phase === 'firstride'
-        ? 'firstride'
-        : consoleOpen
-          ? 'consoles'
-          : hasException
-            ? 'alert'
-            : 'cruise';
+  const phase = insightsOpen
+    ? 'insights'
+    : showFirstRun
+      ? 'firstrun'
+      : flow.phase === 'firstdirection'
+        ? 'firstdirection'
+        : flow.phase === 'firstride'
+          ? 'firstride'
+          : consoleOpen
+            ? 'consoles'
+            : hasException
+              ? 'alert'
+              : 'cruise';
 
   useDeckKeys({
     onSelectIndex: (n) => {
@@ -89,6 +93,12 @@ export function Deck() {
     onFocusDock: () => {
       // `/` is the new-direction hotkey (docs/specs/home.md decision 5) when nothing is
       // already open to steer; otherwise it keeps its old job of focusing the dock.
+      // While insights are open, `/` leaves them instead of opening a new direction
+      // under tiles the visitor did not ask for.
+      if (insightsOpen) {
+        setInsightsOpen(false);
+        return;
+      }
       if (consoleOpen) {
         dockRef.current?.focus();
         return;
@@ -96,9 +106,14 @@ export function Deck() {
       setFlow({ phase: 'firstrun' });
     },
     onEscape: () => {
+      if (insightsOpen) {
+        setInsightsOpen(false);
+        return;
+      }
       dispatch({ type: 'close_console' });
       if (flow.phase === 'firstrun' || flow.phase === 'firstdirection') setFlow({ phase: 'none' });
     },
+    onToggleInsights: () => setInsightsOpen((o) => !o),
   });
 
   function beginDirection(goal: string) {
@@ -166,6 +181,7 @@ export function Deck() {
       {phase === 'cruise' && <Cruise />}
       {phase === 'alert' && <Alert />}
       {phase === 'consoles' && <Consoles dockRef={dockRef} />}
+      {phase === 'insights' && <Insights open />}
       <Ambient />
     </div>
   );
