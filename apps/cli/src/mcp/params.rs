@@ -129,6 +129,21 @@ pub enum UsagePeriodParam {
     Month,
 }
 
+/// Parameters for the `insights_get` tool -- the same window `agentworth insights` and
+/// `/api/insights?since=&until=` take. Omit both for all-time.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct InsightsGetParams {
+    /// RFC 3339 timestamp; only sessions (and stored human turns) starting at or after
+    /// this instant. Optional; omit for all-time.
+    pub since: Option<String>,
+    /// RFC 3339 timestamp; requires `since` -- a window needs a start.
+    pub until: Option<String>,
+}
+
+/// Same parameters as `insights_get`: both windows narrow the same payload, only the
+/// projection differs.
+pub type InsightsSummaryParams = InsightsGetParams;
+
 /// Parameters for the `stats_usage` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UsageSummaryParams {

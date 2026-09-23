@@ -30,19 +30,18 @@ use serde_json::json;
 
 use super::params::{
     parse_rfc3339_opt, AgentStatusParams, BlameFindParams, CarryForwardParams, CoverageStatsParams,
-    ForgottenContextParams, LadderParams, OutcomeRateParams, PacingWindowParams, SessionAsksParams,
-    SessionBurnParams, SessionDriftParams, SessionGetParams, SessionHandoffParams,
-    SessionsFindParams,
-    SuspectCommitsParams,
-    UsagePeriodParam, UsageSummaryParams, WakeParams,
+    ForgottenContextParams, InsightsGetParams, InsightsSummaryParams, LadderParams,
+    OutcomeRateParams, PacingWindowParams, SessionAsksParams, SessionBurnParams,
+    SessionDriftParams, SessionGetParams, SessionHandoffParams, SessionsFindParams,
+    SuspectCommitsParams, UsagePeriodParam, UsageSummaryParams, WakeParams,
 };
 use crate::asks::{self, AsksOptions, AsksReport};
 use crate::forgotten::{self, ForgottenOptions, ForgottenReport};
 use crate::handoff::{
     self, render_markdown, HandoffOptions, HandoffReport, DEFAULT_MAX_LINES, MAX_LINES_CEILING,
 };
-use crate::wake::{self, WakeOptions, WakeReport};
 use crate::wake::render_markdown as render_wake_markdown;
+use crate::wake::{self, WakeOptions, WakeReport};
 
 /// Hard ceiling on `session_list`'s `limit`, so a remote model is forced to state how much
 /// it's asking for instead of getting a silently truncated "complete-looking" answer -- the
@@ -247,7 +246,9 @@ impl AgentWorthMcpServer {
         let sessions = tokio::task::spawn_blocking(move || storage.list_sessions_filtered(&filter))
             .await
             .map_err(Self::join_error)?
-            .map_err(|e| McpError::internal_error(format!("session_list query failed: {e}"), None))?;
+            .map_err(|e| {
+                McpError::internal_error(format!("session_list query failed: {e}"), None)
+            })?;
 
         let fetched_len = sessions.len();
         let mut truncated = repo.is_some() && fetched_len >= fetch_limit;
@@ -299,15 +300,16 @@ impl AgentWorthMcpServer {
 
         let scanner = self.scanner.clone();
         let session_id_for_task = params.session_id.clone();
-        let mut trace = tokio::task::spawn_blocking(move || scanner.load_trace(&session_id_for_task))
-            .await
-            .map_err(Self::join_error)?
-            .map_err(|e| {
-                McpError::resource_not_found(
-                    format!("session '{}' not found: {e}", params.session_id),
-                    None,
-                )
-            })?;
+        let mut trace =
+            tokio::task::spawn_blocking(move || scanner.load_trace(&session_id_for_task))
+                .await
+                .map_err(Self::join_error)?
+                .map_err(|e| {
+                    McpError::resource_not_found(
+                        format!("session '{}' not found: {e}", params.session_id),
+                        None,
+                    )
+                })?;
 
         let scorer = TraceScorer::default();
         let score = scorer.score(&trace);
@@ -364,10 +366,13 @@ impl AgentWorthMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let storage = self.storage.clone();
         let pattern = params.file_path.clone();
-        let mut matches = tokio::task::spawn_blocking(move || storage.find_sessions_for_blame(&pattern))
-            .await
-            .map_err(Self::join_error)?
-            .map_err(|e| McpError::internal_error(format!("repo_blame query failed: {e}"), None))?;
+        let mut matches =
+            tokio::task::spawn_blocking(move || storage.find_sessions_for_blame(&pattern))
+                .await
+                .map_err(Self::join_error)?
+                .map_err(|e| {
+                    McpError::internal_error(format!("repo_blame query failed: {e}"), None)
+                })?;
 
         for m in &mut matches {
             m.source_path = Self::redact_path(&m.source_path);
@@ -422,7 +427,9 @@ impl AgentWorthMcpServer {
         let pacing = tokio::task::spawn_blocking(move || storage.get_pacing_window(hours))
             .await
             .map_err(Self::join_error)?
-            .map_err(|e| McpError::internal_error(format!("window_show query failed: {e}"), None))?;
+            .map_err(|e| {
+                McpError::internal_error(format!("window_show query failed: {e}"), None)
+            })?;
 
         Self::json_result(&pacing)
     }
@@ -546,11 +553,78 @@ impl AgentWorthMcpServer {
         let result = tokio::task::spawn_blocking(move || storage.get_ladder(&query))
             .await
             .map_err(Self::join_error)?
-            .map_err(|e| McpError::internal_error(format!("stats_ladder query failed: {e}"), None))?;
+            .map_err(|e| {
+                McpError::internal_error(format!("stats_ladder query failed: {e}"), None)
+            })?;
 
         let payload = crate::commands::ladder::ladder_json(&result, period)
             .map_err(|e| McpError::internal_error(format!("stats_ladder failed: {e}"), None))?;
         Self::json_result(&payload)
+    }
+
+    #[tool(
+        description = "The deterministic machine-insights payload over this index -- the exact \
+                        contract `agentworth insights --json` and /api/insights serve, never a \
+                        hand-rolled variant: population, volume, by_adapter, ladder, verified, \
+                        calls_per_turn, turn_buckets, file_modifications, top_repos, \
+                        top_sessions, session_size_buckets, models, models_totals, series, \
+                        tool_buckets and tool_buckets_detail, plus the human-turn blocks \
+                        day_hour, friction and vocabulary, deltas, coverage_flags and the \
+                        deferred list with its reasons. Optional since/until narrow the window \
+                        (`until` requires `since`); absent both is all-time. Aggregates only -- \
+                        no transcript text is ever returned, so there is no include_raw. \
+                        Zero-data blocks come back empty with the reason in `deferred`, never \
+                        zero-filled."
+    )]
+    pub(crate) async fn insights_get(
+        &self,
+        Parameters(params): Parameters<InsightsGetParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let insights = self
+            .compute_insights(params.since.clone(), params.until.clone())
+            .await?;
+        Self::json_result(&insights)
+    }
+
+    #[tool(
+        description = "The compact insights surface: one headline row per KPI -- population, \
+                        volume, verified share, calls_per_turn strict, friction rate and top \
+                        trigger, the day_hour peak cell, and the deferred list -- projected \
+                        from the same payload `insights_get` returns, so the two can never \
+                        disagree. The series, top lists, vocabulary rows and full turn blocks \
+                        stay in `insights_get`. Optional since/until as there. Aggregates \
+                        only -- no transcript text is ever returned, so there is no \
+                        include_raw."
+    )]
+    pub(crate) async fn insights_summary(
+        &self,
+        Parameters(params): Parameters<InsightsSummaryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let insights = self
+            .compute_insights(params.since.clone(), params.until.clone())
+            .await?;
+        let summary = insights_summary_json(&insights);
+        Self::json_result(&summary)
+    }
+
+    /// The shared compute half of the two insights tools: client-window parsing (typed
+    /// errors, the same rule `agentworth insights` and /api/insights enforce) and one
+    /// read-only hop through `Storage::get_insights`/`get_insights_windowed`.
+    async fn compute_insights(
+        &self,
+        since: Option<String>,
+        until: Option<String>,
+    ) -> Result<agentworth_storage::insights::Insights, McpError> {
+        let window = agentworth_storage::insights::parse_window(since, until)
+            .map_err(|e| McpError::invalid_params(format!("{e:#}"), None))?;
+        let storage = self.storage.clone();
+        tokio::task::spawn_blocking(move || match &window {
+            Some(w) => storage.get_insights_windowed(w),
+            None => storage.get_insights(),
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::internal_error(format!("insights_get query failed: {e:#}"), None))
     }
 
     #[tool(
@@ -586,7 +660,14 @@ impl AgentWorthMcpServer {
                 Some(id) => id,
                 None => Self::newest_session_for_cwd(&storage)?,
             };
-            Self::render_one(&storage, &scanner, &session_id, max_lines, options, include_raw)
+            Self::render_one(
+                &storage,
+                &scanner,
+                &session_id,
+                max_lines,
+                options,
+                include_raw,
+            )
         })
         .await
         .map_err(Self::join_error)?
@@ -664,7 +745,9 @@ impl AgentWorthMcpServer {
         })
         .await
         .map_err(Self::join_error)?
-        .map_err(|e| McpError::internal_error(format!("session_carry_forward failed: {e:#}"), None))?;
+        .map_err(|e| {
+            McpError::internal_error(format!("session_carry_forward failed: {e:#}"), None)
+        })?;
 
         Self::json_result(&value)
     }
@@ -771,8 +854,10 @@ impl AgentWorthMcpServer {
             Some(w) => std::path::PathBuf::from(w),
             None => std::env::current_dir().map_err(|e| {
                 McpError::invalid_params(
-                    format!("workspace not given and the server's working directory could not \
-                              be read: {e:#}"),
+                    format!(
+                        "workspace not given and the server's working directory could not \
+                              be read: {e:#}"
+                    ),
                     None,
                 )
             })?,
@@ -980,14 +1065,13 @@ impl AgentWorthMcpServer {
         };
 
         let storage = self.storage.clone();
-        let mut report = tokio::task::spawn_blocking(move || {
-            suspect::compute_suspect_commits(&storage, &query)
-        })
-        .await
-        .map_err(Self::join_error)?
-        // A bad repo path or an unresolvable ref is the caller's mistake, not a server fault,
-        // and the message names the failing noun -- so it comes back as invalid_params.
-        .map_err(|e| McpError::invalid_params(format!("repo_suspect failed: {e}"), None))?;
+        let mut report =
+            tokio::task::spawn_blocking(move || suspect::compute_suspect_commits(&storage, &query))
+                .await
+                .map_err(Self::join_error)?
+                // A bad repo path or an unresolvable ref is the caller's mistake, not a server fault,
+                // and the message names the failing noun -- so it comes back as invalid_params.
+                .map_err(|e| McpError::invalid_params(format!("repo_suspect failed: {e}"), None))?;
 
         report.repo = Self::redact_path(&report.repo);
         for commit in &mut report.suspect {
@@ -1129,7 +1213,6 @@ impl AgentWorthMcpServer {
     ) -> Result<CallToolResult, McpError> {
         self.repo_suspect(params).await
     }
-
 }
 
 #[tool_handler]
@@ -1145,7 +1228,8 @@ impl ServerHandler for AgentWorthMcpServer {
             .with_instructions(
                 "Read-only local index of AI-agent session histories on this machine. Tools: \
                  session_list, session_show, repo_blame, stats_usage, window_show, \
-                 agent_list, stats_outcomes, stats_ladder, session_handoff, session_carry_forward, \
+                 agent_list, stats_outcomes, stats_ladder, insights_summary, insights_get, \
+                 session_handoff, session_carry_forward, \
                  session_wake, session_forgotten, session_asks, repo_suspect, agent_status, \
                  session_drift, session_burn. Start a \
                  session with session_wake; session_carry_forward lists the last few handoffs \
@@ -1179,4 +1263,45 @@ pub async fn run_mcp_server(storage: Arc<Storage>) -> anyhow::Result<()> {
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
+}
+
+/// The compact `insights_summary` payload: headline KPIs projected from the full
+/// [`agentworth_storage::insights::Insights`], so the summary tool and `insights_get` can
+/// never disagree. Aggregates only -- no transcript text, no `include_raw` opt-in needed.
+pub(crate) fn insights_summary_json(
+    insights: &agentworth_storage::insights::Insights,
+) -> serde_json::Value {
+    serde_json::json!({
+        "window": {
+            "min_started_at": insights.window.sessions.min_started_at,
+            "max_started_at": insights.window.sessions.max_started_at,
+        },
+        "population": insights.population,
+        "volume": insights.volume,
+        "verified": {
+            "sessions": insights.verified.sessions,
+            "total_tokens": insights.verified.total_tokens,
+            "share_pct": insights.verified.share_pct,
+        },
+        "calls_per_turn_strict": insights.calls_per_turn.strict,
+        "calls_per_turn_heavy_session_average": insights.calls_per_turn.heavy_session_average,
+        "friction": {
+            "total_turns": insights.friction.iter().map(|r| r.turns).sum::<i64>(),
+            "rate_pct": insights.deltas.friction_rate.current,
+            "top_trigger": insights
+                .friction
+                .iter()
+                .max_by_key(|r| r.turns)
+                .map(|r| r.trigger.clone()),
+        },
+        "day_hour": {
+            "cells": insights.day_hour.len(),
+            "peak": insights
+                .day_hour
+                .iter()
+                .max_by_key(|c| c.turns)
+                .map(|c| serde_json::json!({ "dow": c.dow, "hour": c.hour, "turns": c.turns })),
+        },
+        "deferred": insights.deferred,
+    })
 }
