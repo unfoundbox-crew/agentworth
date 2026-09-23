@@ -24,6 +24,8 @@ mod threat_digest;
 mod autopsy;
 #[path = "commands/recall.rs"]
 mod recall;
+#[path = "commands/insights.rs"]
+mod insights;
 #[path = "commands/bisect.rs"]
 mod bisect;
 #[path = "commands/pr_blame.rs"]
@@ -246,6 +248,11 @@ enum Commands {
         #[command(subcommand)]
         action: PolicyCommand,
     },
+
+    /// Machine agent work in one deterministic report: usable sessions, tool calls, file
+    /// touches, the evidence ladder, per-model burn, biggest sessions. Read-only; `--json` emits
+    /// the full payload (same JSON as GET /api/insights).
+    Insights(InsightsArgs),
 
     /// Check local environment, adapter discoveries, and SQLite database health
     Doctor(DoctorArgs),
@@ -931,6 +938,19 @@ struct HomeArgs {
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
+struct InsightsArgs {
+    /// Output the full insights payload as formatted JSON
+    #[arg(long)]
+    json: bool,
+    /// Window start (UTC RFC3339); inclusive
+    #[arg(long)]
+    since: Option<String>,
+    /// Window end (same format); exclusive. Defaults to the index's newest usable session
+    #[arg(long)]
+    until: Option<String>,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
 struct DoctorArgs {
     /// Output diagnostic report as formatted JSON
     #[arg(long)]
@@ -1482,6 +1502,7 @@ enum Action {
     Hook(Option<HookCommand>, bool),
     Policy(PolicyCommand),
     Doctor(DoctorArgs),
+    Insights(InsightsArgs),
     Docs(DocsArgs),
     Config(ConfigAction),
     Version(VersionArgs),
@@ -1507,6 +1528,7 @@ fn normalize(command: Commands) -> Action {
         Commands::Hook { action, gate } => Action::Hook(action, gate),
         Commands::Policy { action } => Action::Policy(action),
         Commands::Doctor(a) => Action::Doctor(a),
+        Commands::Insights(a) => Action::Insights(a),
         Commands::Docs(a) => Action::Docs(a),
         Commands::Config { action } => Action::Config(action),
         Commands::Version(a) => Action::Version(a),
@@ -1641,6 +1663,9 @@ pub fn run() -> Result<()> {
         }
         Action::Scan(a) => {
             run_scan_command(a.paths, a.force, a.include_stubs, resolve_json(a.json), cli.db_path, &ui)?;
+        }
+        Action::Insights(a) => {
+            insights::run_insights_command(resolve_json(a.json), a.since, a.until, cli.db_path, &ui)?;
         }
         Action::Stats { action: None, args } => {
             run_stats_command(resolve_json(args.json), cli.db_path, &ui)?;

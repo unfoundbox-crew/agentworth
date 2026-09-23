@@ -1,4 +1,5 @@
 mod anchoring;
+pub mod insights;
 pub mod chunker;
 pub mod embedder;
 pub mod pricing;
@@ -22,6 +23,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
 pub use chunker::TrajectoryChunker;
+pub use insights::compute_insights;
 pub use embedder::LocalEmbedder;
 pub use pricing::{estimate_model_tokens_cost_usd, get_model_rates, ModelRates, MODEL_PRICING_TABLE};
 pub use vector::{SqliteVectorStore, VectorStore};
@@ -3779,6 +3781,24 @@ impl Storage {
             periods_shown,
             truncated,
         })
+    }
+
+    /// Deterministic machine-insights payload over this index. See `insights::compute_insights`
+    /// for the metrics; the CLI command variant opens its own read-only connection instead of
+    /// this shared one.
+    pub fn get_insights(&self) -> Result<insights::Insights> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights::compute_insights(&conn, None)
+    }
+
+    /// Same payload over an explicit half-open `started_at` window: `?since=&until=` on
+    /// `/api/insights`.
+    pub fn get_insights_windowed(
+        &self,
+        window: &insights::InsightsTimeWindow,
+    ) -> Result<insights::Insights> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights::compute_insights(&conn, Some(window))
     }
 
     /// Calculate rolling pacing summary for the last N hours.

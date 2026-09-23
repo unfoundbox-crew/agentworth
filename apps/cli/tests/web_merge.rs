@@ -38,6 +38,7 @@ const EXPECTED_API_ROUTES: &[(&str, &str)] = &[
     ("GET", "/pacing"),
     ("GET", "/blame"),
     ("GET", "/matrix"),
+    ("GET", "/insights"),
     ("GET", "/archaeology"),
     ("GET", "/live-tail"),
     ("POST", "/scan"),
