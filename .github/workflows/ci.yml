@@ -102,9 +102,11 @@ jobs:
       # so it has to exist before cargo runs. This mirrors release.yml exactly --
       # if the order is wrong here, it is wrong there too.
       # `npm run build` already runs `tsc` (see apps/home/package.json).
+      # The deck's vitest suite runs first (non-watch) — a unit failure is
+      # cheaper to read than a tunnel-visioned cargo failure.
       - name: Build home deck
         working-directory: apps/home
-        run: npm ci && npm run build
+        run: npm ci && npm run test -- --reporter=dot && npm run build
 
       - name: Assert the deck will be embedded
         run: |

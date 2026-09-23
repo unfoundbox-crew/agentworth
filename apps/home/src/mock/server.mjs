@@ -1,14 +1,42 @@
 // Stand-in for the Rust gateway. Serves the same frames from a fixture so the
 // UI can be built and reviewed with no Rust build. `npm run mock`, then `npm run dev`.
+//
+// One port, two surfaces: /ws speaks protocol 2 frames, /api/insights answers
+// GET with the synthetic insights fixture (insights-fixture.json) that the
+// deck's insights dashboard builds against. The real backend lane ships GET
+// /api/insights in the CLI server; this mock exists so neither UI nor
+// contract waits on a cargo build.
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { createServer } from 'node:http';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(readFileSync(path.join(here, 'fixture.json'), 'utf8'));
+const insights = JSON.parse(readFileSync(path.join(here, 'insights-fixture.json'), 'utf8'));
 const port = Number(process.env.PORT ?? 7777);
-const wss = new WebSocketServer({ port, path: '/ws' });
+
+const httpServer = createServer((req, res) => {
+  if (req.url?.startsWith('/api/insights')) {
+    // Same fixture for every window/adapter/model/repo filter combination —
+    // this mock proves shape and rendering, not filter math (the Rust lane's
+    // job). Remove that lane's params and this shows the honest contract:
+    // query string in, one Insights object out.
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'content-type': 'text/plain' });
+      res.end('method not allowed');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(insights));
+    return;
+  }
+  res.writeHead(404, { 'content-type': 'text/plain' });
+  res.end('not found');
+});
+
+const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 let seq = 1000;
 const now = () => new Date().toISOString();
@@ -127,4 +155,6 @@ wss.on('connection', (ws) => {
   ws.on('close', () => clearInterval(tick));
 });
 
-console.log(`mock gateway ws://127.0.0.1:${port}/ws`);
+httpServer.listen(port, '127.0.0.1', () => {
+  console.log(`mock gateway ws://127.0.0.1:${port}/ws · insights http://127.0.0.1:${port}/api/insights`);
+});
