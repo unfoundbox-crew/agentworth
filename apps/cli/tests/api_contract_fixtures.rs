@@ -36,6 +36,7 @@ use agentworth_cli::server::routes::{
     AdapterMatrixItem, AdapterMatrixResponse, EventsPageResponse, TraceDetailResponse,
     UsageResponse,
 };
+use agentworth_core::turns::TurnIngestSummary;
 use agentworth_core::ScanSummary;
 use agentworth_schema::{
     AgentWorthTrace, EventPayload, EventType, FileActionType, NormalizedEvent, OutcomeEvidence,
@@ -453,6 +454,7 @@ fn api_contract_scan() {
             last_session_at: Some(ts("2026-09-07T00:00:00Z")),
         },
         stub_sessions_removed: 0,
+        human_turns: TurnIngestSummary::default(),
     };
     assert_fixture("scan", &response);
 }

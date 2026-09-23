@@ -77,6 +77,18 @@ pub fn codex_rollout(date: &str, uuid: &str) -> String {
     format!("{HOME}/.codex/sessions/{y}/{m}/{d}/rollout-{date}T12-00-00-{uuid}.jsonl")
 }
 
+/// The synthetic home the human-turn fixtures build from (mirrors `synthetic_turn_home`).
+pub fn synthetic_turn_home() -> String {
+    format!("{HOME}/.agentworth-test/fixtures/turn-home")
+}
+
+/// `claude-home/history.jsonl` inside a synthetic home. For tests, the ingested file lives
+/// under `root.join("claude-home").join("history.jsonl")`; this is the identity string for
+/// provenance and assertions. Tests should use `agw fixtures` helpers, not literals.
+pub fn synthetic_claude_history_path() -> String {
+    format!("{}/claude-home/history.jsonl", synthetic_turn_home())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -119,4 +119,32 @@ fn print_human_summary(insights: &agentworth_storage::insights::Insights) {
         "Deferred by design: {} groups (reasons under --json)",
         insights.deferred.len()
     );
+    // The three human-turn blocks (the insights data lane): absent rows are an absence —
+    // quiet turn lane or nothing ingested — never zero-filled, and always louder under --json.
+    if let Some(peak) = insights.day_hour.iter().max_by_key(|c| c.turns) {
+        println!(
+            "Human turns heatmap (hour x weekday): {} cells, peak at dow {} hour {:02}",
+            insights.day_hour.len(),
+            peak.dow,
+            peak.hour
+        );
+    }
+    if !insights.friction.is_empty() {
+        let total: i64 = insights.friction.iter().map(|r| r.turns).sum();
+        let top = insights.friction.iter().max_by_key(|r| r.turns);
+        println!(
+            "Friction by trigger: {} turns; top {}",
+            total,
+            top.map(|r| format!("{} {}", r.trigger, r.turns))
+                .unwrap_or_default()
+        );
+    }
+    if let Some(vocab) = insights.vocabulary.first() {
+        println!(
+            "Vocabulary: {} terms, top {} ×{}",
+            insights.vocabulary.len(),
+            vocab.term,
+            vocab.mentions
+        );
+    }
 }

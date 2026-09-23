@@ -1158,7 +1158,10 @@ async fn test_api_insights_golden_counts_over_synthetic_index() {
     let (status, insights) = request_json(app, "GET", "/api/insights", None).await;
     assert_eq!(status, StatusCode::OK);
 
-    assert_eq!(insights["schema_version"], 1);
+    // Schema v2: the human-turn turn-data blocks (day_hour/friction/vocabulary) joined the
+    // payload -- bumped with the deferred list's turn-aware rewrite, so a pre-lane payload
+    // must not look like a committed contract change.
+    assert_eq!(insights["schema_version"], 2);
     assert_eq!(insights["population"]["usable_sessions"], 2);
     assert_eq!(insights["population"]["sessions_raw"], 2);
     assert_eq!(insights["volume"]["tool_calls_witnessed"], 8);

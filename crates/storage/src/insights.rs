@@ -1,13 +1,19 @@
 //! The deterministic insights core: every number this machine can honestly say about its own
-//! index, computed read-only from `sessions`, `file_modifications` and `session_model_usage`.
+//! index, computed read-only from `sessions`, `file_modifications`, `session_model_usage` and
+//! — for the human-turn blocks — the `human_turns` feature tables the turn ingestion lane
+//! fills.
 //!
 //! Ported from `tools/insights/insights_query.py` (v1.4), the reviewed Python query pass, with
 //! the same population predicate everywhere: sessions must be conversations, multi-event
-//! (`total_events > 1`), and carry a started_at after the 2020-01-01 clock-bug floor. Section
-//! 8's vocabulary counts, the friction-trigger classification and the turn-level time-of-day
-//! histogram are NOT ported: they read a separate prompt-insights turn cache, which is outside
-//! the AgentWorth index and carries no schema this crate owns. They are listed under
-//! [`Insights::deferred`] so no consumer mistakes their absence for a zero.
+//! (`total_events > 1`), and carry a started_at after the 2020-01-01 clock-bug floor.
+//!
+//! The human-turn blocks (§ `day_hour`, `friction`, `vocabulary`) read the index's own
+//! `human_turns` table (which carries its own vocabulary mentions), ingested from the same local harness histories
+//! the prototype prompt-insights cache was built from, with the same classification taxonomy
+//! (`adapters::human_turns::taxonomy`). When zero turns are stored (no scan has ingested them
+//! yet), the blocks are empty AND the three dimensions stay in [`Insights::deferred`] with the
+//! reason, so no consumer mistakes their absence for a zero. When turns exist the three leave
+//! deferred: absence of rows would then genuinely mean "quiet window", not "not measured".
 //!
 //! Tool-name buckets are a display grouping over cross-adapter synonyms (`Bash`/`bash`,
 //! `Edit`/`edit`), not adapter-specific branching: the map is keyed on the tool-name strings
@@ -17,8 +23,9 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
+use serde_json::Value;
 
-pub const INSIGHTS_SCHEMA_VERSION: u32 = 1;
+pub const INSIGHTS_SCHEMA_VERSION: u32 = 2;
 
 /// The session population predicate shared by every metric in this module, verbatim from the
 /// reference implementation: `kind='conversation' AND total_events>1 AND started_at>'2020-01-01'`.
@@ -109,6 +116,17 @@ pub struct Insights {
     pub series: InsightsSeries,
     pub tool_buckets: InsightsToolBuckets,
     pub tool_buckets_detail: Vec<InsightsToolKeyValuePair>,
+    /// The hour-by-weekday heatmap over stored human turns (the tile the prototype served
+    /// from its separate turn cache). `dow` is 0=Sunday..6=Saturday; `turns` the count of
+    /// human turns in that local-time cell inside the window.
+    pub day_hour: Vec<InsightsDayHourRow>,
+    /// Friction-by-trigger counts over stored human turns. `none`-classified turns are the
+    /// denominator police, never a row: surfaces carry only real trigger classes.
+    pub friction: Vec<InsightsFrictionRow>,
+    /// Vocabulary mention counts over stored human turns, descending. Computed at query time
+    /// from the stored per-turn bounded mention counts (the static taxonomy list), never over
+    /// raw sources.
+    pub vocabulary: Vec<InsightsVocabRow>,
     pub coverage_flags: Vec<InsightsCoverageFlag>,
     pub deferred: Vec<InsightsDeferredMetric>,
 }
@@ -200,6 +218,28 @@ pub struct InsightsFileMods {
 pub struct InsightsFileModsWorktrees {
     pub total: i64,
     pub sessions: i64,
+}
+
+/// One heatmap cell of stored human turns: day-of-week (0=Sunday) × local hour.
+#[derive(Debug, Clone, Serialize)]
+pub struct InsightsDayHourRow {
+    pub dow: i64,
+    pub hour: i64,
+    pub turns: i64,
+}
+
+/// Friction-by-trigger over stored human turns.
+#[derive(Debug, Clone, Serialize)]
+pub struct InsightsFrictionRow {
+    pub trigger: String,
+    pub turns: i64,
+}
+
+/// One vocabulary term's total mentions within the window.
+#[derive(Debug, Clone, Serialize)]
+pub struct InsightsVocabRow {
+    pub term: String,
+    pub mentions: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -407,6 +447,8 @@ pub fn compute_insights(
     let deltas = query_deltas(conn, effective.as_ref(), headline)?;
 
     let (tool_buckets, tool_order) = query_tool_buckets(conn, &pred)?;
+    let turn_pred = turn_predicate(effective.as_ref());
+    let turn_total = query_one_i64(conn, "SELECT COUNT(*) FROM human_turns")?;
     Ok(Insights {
         schema_version: INSIGHTS_SCHEMA_VERSION,
         generated_at: Utc::now().to_rfc3339(),
@@ -443,9 +485,104 @@ pub fn compute_insights(
         series: query_series(conn, &pred)?,
         tool_buckets,
         tool_buckets_detail: tool_order,
+        day_hour: query_turn_day_hour(conn, &turn_pred)?,
+        friction: query_friction(conn, &turn_pred)?,
+        vocabulary: query_vocabulary(conn, &turn_pred)?,
         coverage_flags: coverage_flags(),
-        deferred: deferred_metrics(),
+        deferred: deferred_metrics(turn_total),
     })
+}
+
+/// The human-turn population predicate for this window: all-time, or the half-open
+/// `timestamp_ms` bounds of the same requested window the session metrics use. Literals are
+/// inlined integers; no injection surface.
+fn turn_predicate(window: Option<&InsightsTimeWindow>) -> String {
+    match window {
+        None => "1=1".to_string(),
+        Some(w) => {
+            let since_ms = rfc3339_to_epoch_millis(&w.since);
+            let until_ms = rfc3339_to_epoch_millis_opt(&w.until);
+            format!(
+                "timestamp_ms>={since_ms} AND timestamp_ms<{until_ms}",
+                since_ms = since_ms,
+                until_ms = until_ms.unwrap_or(i64::MAX)
+            )
+        }
+    }
+}
+
+/// RFC3339 → epoch millis. The window's `since` is always normalized non-empty by
+/// `parse_window`/the materializer here; degradation returns `i64::MIN` rather than midnight.
+fn rfc3339_to_epoch_millis(value: &str) -> i64 {
+    DateTime::parse_from_rfc3339(value)
+        .map(|dt| dt.with_timezone(&Utc).timestamp_millis())
+        .unwrap_or(i64::MIN)
+}
+
+fn rfc3339_to_epoch_millis_opt(value: &str) -> Option<i64> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc).timestamp_millis())
+}
+
+/// The heatmap over stored human turns; `dow` reads straight off the ingested `local_date`
+/// (the same SQLite clock the reference pass indexed from).
+fn query_turn_day_hour(conn: &Connection, turn_pred: &str) -> Result<Vec<InsightsDayHourRow>> {
+    let sql = format!(
+        "SELECT CAST(strftime('%w', local_date || ' 00:00:00') AS INT) AS dow, local_hour, \
+         COUNT(*) FROM human_turns WHERE {turn_pred} GROUP BY 1, 2 ORDER BY 1, 2"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(InsightsDayHourRow {
+                dow: r.get(0)?,
+                hour: r.get(1)?,
+                turns: r.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+    Ok(rows)
+}
+
+/// Friction by trigger (the classifier stores 'none' for quiet turns, so friction rows
+/// exclude it; the tile's shape is what the friction widget renders).
+fn query_friction(conn: &Connection, turn_pred: &str) -> Result<Vec<InsightsFrictionRow>> {
+    // 'none' is stored on every row, so the friction-only population is one literal
+    // predicate, not per-trigger display branching.
+    let sql = format!(
+        "SELECT friction_type, COUNT(*) FROM human_turns \
+         WHERE {turn_pred} AND friction_type!='none' GROUP BY 1 ORDER BY 2 DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(InsightsFrictionRow {
+                trigger: r.get(0)?,
+                turns: r.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+    Ok(rows)
+}
+
+/// Vocabulary mentions within the window, descending.
+fn query_vocabulary(conn: &Connection, turn_pred: &str) -> Result<Vec<InsightsVocabRow>> {
+    let sql = format!(
+        "SELECT je.value->>0 AS term, SUM(CAST(je.value->>1 AS INT)) AS mentions \
+         FROM human_turns t, json_each(t.vocab_json) je WHERE {turn_pred} \
+         GROUP BY 1 ORDER BY 2 DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(InsightsVocabRow {
+                term: r.get(0)?,
+                mentions: r.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+    Ok(rows)
 }
 
 /// The population predicate for this window: the all-time usable predicate, plus the half-open
@@ -550,22 +687,93 @@ fn query_deltas(
             current.total_tokens,
             previous.as_ref().map(|(_, h)| h.total_tokens),
         ),
-        friction_rate: friction_rate_delta(),
+        friction_rate: turn_friction_rate_delta(conn, window),
     })
 }
 
-/// Friction turns cannot come from the AgentWorth index: it stores no per-turn text, so friction
-///-turn classification (the prompt-insights lane) has no deterministic input here. The metric is
-/// present in the contract with an explicit reason, never a fabricated zero.
-fn friction_rate_delta() -> InsightsDeltaMetric {
+/// Friction rate over stored human turns, current window vs the preceding equal-length
+/// window. With zero stored turns the metric stays structurally unavailable — a reason,
+/// never a fabricated zero. Without a requested window it is single-sided over all turns.
+fn turn_friction_rate_delta(
+    conn: &Connection,
+    window: Option<&InsightsTimeWindow>,
+) -> InsightsDeltaMetric {
+    let current = query_turn_friction_rate(conn, &turn_predicate(window));
+    if current.is_none() && trim_total_turns(conn) == 0 {
+        return friction_unmeasured();
+    }
+    let previous = match window {
+        None => None,
+        Some(w) => {
+            let since = match DateTime::parse_from_rfc3339(&w.since) {
+                Ok(t) => t.with_timezone(&Utc),
+                Err(_) => return single_sided(current.map(round_json).unwrap_or(Value::Null)),
+            };
+            let until = DateTime::parse_from_rfc3339(&w.until)
+                .ok()
+                .map(|t| t.with_timezone(&Utc));
+            match until {
+                Some(u) if u > since => {
+                    let duration = u - since;
+                    let prev_since = (since - duration).to_rfc3339_opts(SecondsFormat::Millis, false);
+                    query_turn_friction_rate(
+                        conn,
+                        &turn_predicate(Some(&InsightsTimeWindow {
+                            since: prev_since,
+                            until: w.since.clone(),
+                        })),
+                    )
+                }
+                _ => None,
+            }
+        }
+    };
+    match (current, previous) {
+        (Some(cur), Some(prev)) => {
+            let delta = cur - prev;
+            InsightsDeltaMetric {
+                current: round_json(cur),
+                previous: round_json(prev),
+                delta: round_json(delta),
+                delta_pct: if prev.abs() < f64::EPSILON {
+                    Value::Null
+                } else {
+                    round_json(100.0 * delta / prev.abs())
+                },
+                reason: None,
+            }
+        }
+        _ => single_sided(current.map(round_json).unwrap_or(Value::Null)),
+    }
+}
+
+/// Friction rate in percent over one half-open turn window (`None` on zero turns — never a
+/// fabricated zero).
+fn query_turn_friction_rate(conn: &Connection, turn_pred: &str) -> Option<f64> {
+    let sql = format!(
+        "SELECT 100.0 * COALESCE(SUM(friction_type!='none'),0) / NULLIF(COUNT(*),0) \
+         FROM human_turns WHERE {turn_pred}"
+    );
+    conn.query_row(&sql, [], |r| r.get::<_, Option<f64>>(0))
+        .ok()?
+        .map(round4)
+}
+
+fn trim_total_turns(conn: &Connection) -> i64 {
+    super::human_turns::human_turn_total(conn).unwrap_or(0)
+}
+
+/// Friction turns cannot come from an index with no turn rows: classification is ingestion
+///-time, and nothing has landed yet. The metric stays in the contract with an explicit
+/// reason, never a fabricated zero.
+fn friction_unmeasured() -> InsightsDeltaMetric {
     InsightsDeltaMetric {
-        current: serde_json::Value::Null,
-        previous: serde_json::Value::Null,
-        delta: serde_json::Value::Null,
-        delta_pct: serde_json::Value::Null,
+        current: Value::Null,
+        previous: Value::Null,
+        delta: Value::Null,
+        delta_pct: Value::Null,
         reason: Some(
-            "friction classification needs per-turn text, which the index does not store; see \
-             deferred: friction_triggers"
+            "no human turns ingested yet; run `agentworth scan` to fill `human_turns` first"
                 .to_string(),
         ),
     }
@@ -1314,14 +1522,21 @@ fn coverage_flags() -> Vec<InsightsCoverageFlag> {
     ]
 }
 
-fn deferred_metrics() -> Vec<InsightsDeferredMetric> {
-    vec![
-        InsightsDeferredMetricsBuild::human_turn_word_counts(),
-        InsightsDeferredMetricsBuild::friction_triggers(),
-        InsightsDeferredMetricsBuild::intent_categories(),
-        InsightsDeferredMetricsBuild::time_of_day_histogram(),
-        InsightsDeferredMetricsBuild::vocabulary_mentions(),
-    ]
+/// The deferred list is turn-aware: the three human-turn blocks ship real fields when the
+/// turn lane has ingested anything, so they leave the list — a zero-turn window after
+/// ingestion genuinely means "quiet window", not "not measured". `turn_total` is the count of
+/// stored rows in `human_turns`, checked once per payload. Everything still listed carries a
+/// stated reason, never silence.
+fn deferred_metrics(turn_total: i64) -> Vec<InsightsDeferredMetric> {
+    let mut out = Vec::new();
+    if turn_total == 0 {
+        out.push(InsightsDeferredMetricsBuild::human_turn_word_counts());
+        out.push(InsightsDeferredMetricsBuild::friction_triggers());
+        out.push(InsightsDeferredMetricsBuild::time_of_day_histogram());
+        out.push(InsightsDeferredMetricsBuild::vocabulary_mentions());
+    }
+    out.push(InsightsDeferredMetricsBuild::intent_categories());
+    out
 }
 
 /// Named helpers keep the reasons in one place and force each deferral to be stated once.
@@ -1331,34 +1546,36 @@ impl InsightsDeferredMetricsBuild {
     fn human_turn_word_counts() -> InsightsDeferredMetric {
         deferred(
             "human_turn_word_counts",
-            "per-turn word counts live in a separate prompt-insights turn cache; the index stores no \
-             per-turn text",
+            "no human turns ingested yet; turn ingestion runs with `agentworth scan`, and per-turn \
+             word counts fill from `human_turns.word_count` once it has",
         )
     }
     fn friction_triggers() -> InsightsDeferredMetric {
         deferred(
             "friction_triggers",
-            "friction-turn classification needs per-turn text; the index stores none",
+            "no human turns ingested yet; friction-by-trigger fills from `human_turns` once \
+             `agentworth scan` has ingested them",
         )
     }
     fn intent_categories() -> InsightsDeferredMetric {
         deferred(
             "intent_categories",
-            "intent-category counts need per-turn text and a classifier; the index stores neither",
+            "intent-category counts need per-turn text and a classifier; friction-by-trigger \
+             (which is classified at ingestion) is the indexed stand-in",
         )
     }
     fn time_of_day_histogram() -> InsightsDeferredMetric {
         deferred(
             "time_of_day_histogram",
-            "the hour-of-day x day-of-week heatmap needs per-turn timestamps; the index stores one \
-             started_at per session",
+            "no human turns ingested yet; the hour-by-day heatmap fills from `human_turns` once \
+             `agentworth scan` has ingested them",
         )
     }
     fn vocabulary_mentions() -> InsightsDeferredMetric {
         deferred(
             "vocabulary_mentions",
-            "vocabulary mention counts need the raw turn text, which the index intentionally does \
-             not duplicate",
+            "no human turns ingested yet; vocabulary mentions fill from `human_turns`' bounded \
+             per-turn mention counts once `agentworth scan` has ingested them",
         )
     }
 }
