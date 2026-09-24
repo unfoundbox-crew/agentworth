@@ -85,6 +85,16 @@ impl AgentAdapter for ClaudeCodeAdapter {
         Self::PARSER_VERSION
     }
 
+    /// The structural rule [`is_claude_session_path`] encodes, exposed so the scanner can
+    /// prune an indexed row whose source is a mis-indexed non-session file left by an older,
+    /// looser discovery. Measured on this machine before this predicate existed: 51 rows under
+    /// `~/.claude/plugins/cache/**` and 19 under `~/.claude/telemetry/` -- all `.json` caches,
+    /// schemas, and telemetry dumps, none a conversation transcript. Genuine transcripts and
+    /// their `subagents/` children live under a `projects` directory and are accepted.
+    fn is_session_path(&self, path: &Path) -> bool {
+        is_claude_session_path(path)
+    }
+
     fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
         agentworth_adapter_sdk::AdapterCapabilities {
             prompts: true,
@@ -454,6 +464,24 @@ fn is_candidate_claude_file(path: &Path) -> bool {
     // such rows on one machine, all zero real content) -- so `.json` is no longer
     // accepted here.
     path.extension().is_some_and(|ext| ext == "jsonl")
+}
+
+/// Whether `path` is a Claude Code session transcript by the structural rule the adapter's
+/// discovery rests on: a `.jsonl` candidate (see [`is_candidate_claude_file`]) that sits
+/// under a `projects` directory. Claude Code writes every real transcript to
+/// `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`, with subagent transcripts nested deeper
+/// at `.../<encoded-cwd>/<uuid>/subagents/**/agent-*.jsonl`; a `projects` component is the
+/// one signature both shapes share and every non-session file the discovery has mis-indexed
+/// lacks -- plugin-cache schemas and vendored `node_modules` data under
+/// `~/.claude/plugins/cache/**`, telemetry dumps under `~/.claude/telemetry/`, and the
+/// rolling `~/.claude/history.jsonl` prompt log the adapter never reads. Keying on the
+/// component rather than an absolute prefix keeps a relocated or `air-sessions/projects`
+/// transcript valid while still rejecting a `.jsonl` vendored inside a plugin checkout.
+fn is_claude_session_path(path: &Path) -> bool {
+    is_candidate_claude_file(path)
+        && path
+            .components()
+            .any(|c| c.as_os_str() == std::ffi::OsStr::new("projects"))
 }
 
 fn derive_session_id(path: &Path) -> String {
@@ -1180,6 +1208,116 @@ mod tests {
             .path
             .to_string_lossy()
             .ends_with("13761161-221d-4493-8c52-62a18c3400be.jsonl"));
+    }
+
+    /// The structural rule the scanner's cleanup pass uses. It must accept genuine
+    /// transcripts -- a top-level project transcript, a `subagents/` child, and an
+    /// `air-sessions/projects` transcript -- and reject every non-session shape this
+    /// machine's index actually held: plugin-cache schemas under `plugins/cache/**`
+    /// (including the `.jsonl` files vendored in a plugin's own checkout), a telemetry
+    /// dump, and the rolling `history.jsonl` the adapter never reads.
+    #[test]
+    fn is_claude_session_path_accepts_project_transcripts_and_rejects_plugin_cache_json() {
+        let adapter = ClaudeCodeAdapter::new();
+
+        for accepted in [
+            // A genuine top-level transcript.
+            "/Users/example/.claude/projects/-Users-example-code-acme/13761161-221d-4493-8c52-62a18c3400be.jsonl",
+            // A subagent transcript, one level down.
+            "/Users/example/.claude/projects/-Users-example-code-acme/13761161-221d-4493-8c52-62a18c3400be/subagents/agent-a1c2e3f4d5b6a7c8d.jsonl",
+            // A workflow-subagent transcript, several levels down.
+            "/Users/example/.claude/projects/-Users-example-code-acme/13761161-221d-4493-8c52-62a18c3400be/subagents/workflows/wf_abc/agent-a1c2e3f4d5b6a7c8d.jsonl",
+            // A relocated transcript: `air-sessions/projects` has the same signature.
+            "/Users/example/.claude/air-sessions/projects/-Users-example-code-acme/13761161-221d-4493-8c52-62a18c3400be.jsonl",
+        ] {
+            assert!(adapter.is_session_path(Path::new(accepted)), "must accept: {accepted}");
+        }
+
+        for rejected in [
+            // A plugin-cache schema: the real junk shape (51 rows on this machine).
+            "/Users/example/.claude/plugins/cache/claude-plugins-official/hyperframes/4403b8b/docs/public/catalog-index.json",
+            // A vendored `node_modules` schema.
+            "/Users/example/.claude/plugins/cache/claude-plugins-official/hyperframes/4403b8b/node_modules/.bun/aws-cdk-lib@2.254.0/node_modules/aws-cdk-lib/aws-eks-v2/lib/addons/policy.json",
+            // A `.jsonl` vendored inside a plugin's own checkout: the extension rule
+            // accepts it, so only the `projects` clause rejects it.
+            "/Users/example/.claude/plugins/marketplaces/acme/apps/cli/tests/fixtures/wake/7f3c9a2e.jsonl",
+            // A telemetry dump (19 rows on this machine).
+            "/Users/example/.claude/telemetry/1p_failed_events.1bc83dca.1422656c.json",
+            // The rolling prompt-history log: never a session transcript.
+            "/Users/example/.claude/history.jsonl",
+        ] {
+            assert!(!adapter.is_session_path(Path::new(rejected)), "must reject: {rejected}");
+        }
+    }
+
+    /// An older discovery walked bare `~/.claude`, so plugin caches and vendored
+    /// `node_modules` data were indexed as sessions. Enumeration must yield exactly the
+    /// genuine project transcripts -- the top-level one and its `subagents/` child -- and
+    /// reject every decoy in the observed junk shape
+    /// (`plugins/cache/<pkg>/node_modules/<pkg>/data/*.json`).
+    #[test]
+    fn enumerate_claude_rejects_plugin_cache_and_node_modules_decoys() {
+        let temp = tempdir().unwrap();
+        let claude = temp.path().join(".claude");
+
+        let project = claude.join("projects").join("-Users-test-code-example");
+        std::fs::create_dir_all(&project).unwrap();
+        let mut top =
+            File::create(project.join("13761161-221d-4493-8c52-62a18c3400be.jsonl")).unwrap();
+        writeln!(
+            top,
+            "{{\"type\":\"user\",\"timestamp\":\"2026-08-29T10:00:00Z\",\"content\":\"hi\"}}"
+        )
+        .unwrap();
+        let subagent = project
+            .join("13761161-221d-4493-8c52-62a18c3400be")
+            .join("subagents")
+            .join("agent-a1c2e3f4d5b6a7c8d.jsonl");
+        std::fs::create_dir_all(subagent.parent().unwrap()).unwrap();
+        let mut sub = File::create(&subagent).unwrap();
+        writeln!(
+            sub,
+            "{{\"type\":\"user\",\"timestamp\":\"2026-08-29T10:00:01Z\",\"content\":\"sub\"}}"
+        )
+        .unwrap();
+
+        for decoy in [
+            claude.join("plugins/cache/acme/pkg/node_modules/dep/data/policy.json"),
+            claude.join("plugins/cache/acme/pkg/node_modules/dep/data/catalog-index.json"),
+            claude.join("plugins/cache/acme/pkg/docs/documents.json"),
+            claude.join("cache/gh-pr-status-cache.json"),
+            claude.join("telemetry/1p_failed_events.1bc83dca.1422656c.json"),
+        ] {
+            std::fs::create_dir_all(decoy.parent().unwrap()).unwrap();
+            File::create(&decoy).unwrap();
+        }
+
+        let adapter = ClaudeCodeAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+            ..Default::default()
+        };
+        let enumerated = adapter.enumerate(&options).unwrap();
+
+        let mut paths: Vec<String> = enumerated
+            .iter()
+            .map(|s| s.path.to_string_lossy().to_string())
+            .collect();
+        paths.sort();
+        assert_eq!(
+            paths.len(),
+            2,
+            "only the two genuine transcripts should enumerate: {paths:?}"
+        );
+        assert!(
+            paths[0].ends_with("13761161-221d-4493-8c52-62a18c3400be.jsonl"),
+            "top-level transcript missing: {paths:?}"
+        );
+        assert!(
+            paths[1].ends_with("agent-a1c2e3f4d5b6a7c8d.jsonl"),
+            "subagent transcript missing: {paths:?}"
+        );
     }
 
     #[test]

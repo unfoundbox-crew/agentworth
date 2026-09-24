@@ -1090,6 +1090,78 @@ mod tests {
         );
     }
 
+    /// The measured Claude Code over-reach: an older discovery walked bare `~/.claude`, so
+    /// plugin-cache schemas and telemetry dumps were indexed as sessions -- often richly
+    /// (a JSON array of objects parses into hundreds of untyped events), so the
+    /// `total_events <= 1` stub pass never touched them. The adapter's own
+    /// `is_session_path` is what proves the row was never a session; a genuine project
+    /// transcript the predicate accepts must survive even though it is not in today's
+    /// enumerated set (a moved file, a source on another machine).
+    #[test]
+    fn test_prune_non_session_sources_removes_richly_indexed_claude_plugin_cache_rows() {
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(ClaudeCodeAdapter::new())], storage.clone());
+
+        // A plugin-cache `.json` schema: the real junk shape. 40 events, far past the stub
+        // predicate, so only the adapter's predicate can remove it.
+        let json_decoy = Provenance::new(
+            "/home/u/.claude/plugins/cache/acme/pkg/node_modules/dep/data/registry.json"
+                .to_string(),
+            "claude_code",
+            12,
+            0,
+            "deadbeef",
+        );
+        let mut decoy =
+            AgentWorthTrace::new("plugin-json-decoy", "claude_code", json_decoy, Utc::now());
+        decoy.stats.total_events = 40;
+        storage.upsert_session(&decoy, None, Some(0.0), 0).expect("seed json decoy");
+
+        // A `.jsonl` vendored inside a plugin checkout: `is_candidate_claude_file` accepts
+        // it by extension, so only the `projects` clause of the predicate rejects it. 900
+        // events -- this is the row the old `<= 1` prune could never reach.
+        let jsonl_decoy = Provenance::new(
+            "/home/u/.claude/plugins/marketplaces/acme/apps/cli/tests/fixtures/wake/7f3c9a2e.jsonl"
+                .to_string(),
+            "claude_code",
+            12,
+            0,
+            "deadbeef",
+        );
+        let mut decoy =
+            AgentWorthTrace::new("plugin-jsonl-decoy", "claude_code", jsonl_decoy, Utc::now());
+        decoy.stats.total_events = 900;
+        storage.upsert_session(&decoy, None, Some(0.0), 0).expect("seed jsonl decoy");
+
+        // A genuine transcript the predicate accepts -- left alone even though it is not in
+        // today's enumerated set.
+        let live_prov = Provenance::new(
+            "/home/u/.claude/projects/-Users-u-code-acme/13761161-221d-4493-8c52-62a18c3400be.jsonl"
+                .to_string(),
+            "claude_code",
+            12,
+            0,
+            "deadbeef",
+        );
+        let mut live = AgentWorthTrace::new("live-claude", "claude_code", live_prov, Utc::now());
+        live.stats.total_events = 12;
+        storage.upsert_session(&live, None, Some(0.0), 0).expect("seed live");
+
+        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 3);
+
+        // Nothing is currently enumerated, so every row is judged by the predicate alone.
+        let removed = scanner.prune_non_session_sources(&HashSet::new());
+
+        assert_eq!(removed, 2, "both non-session decoys must go");
+        assert!(storage.get_session_by_id("plugin-json-decoy").unwrap().is_none());
+        assert!(storage.get_session_by_id("plugin-jsonl-decoy").unwrap().is_none());
+        assert!(
+            storage.get_session_by_id("live-claude").unwrap().is_some(),
+            "a genuine project transcript the predicate accepts must survive"
+        );
+    }
+
     #[test]
     fn test_scanner_end_to_end_with_in_memory_storage() {
         let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
