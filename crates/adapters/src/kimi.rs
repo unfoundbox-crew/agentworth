@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
+    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -89,7 +89,11 @@ impl AgentAdapter for KimiAdapter {
                         }
                     }
                     if discovered.is_empty() {
-                        for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                        for entry in WalkDir::new(custom)
+                            .max_depth(4)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                        {
                             let path = entry.path();
                             let s = path.to_string_lossy().to_lowercase();
                             if s.contains(".kimi") || s.contains("kimi") || s.contains("moonshot") {
@@ -123,7 +127,11 @@ impl AgentAdapter for KimiAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_kimi_file(custom) {
-                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
+                        if let Ok(source) = SessionSource::from_path_with_known(
+                            custom,
+                            self.name(),
+                            &options.known_sources,
+                        ) {
                             sources.push(source);
                         }
                     }
@@ -131,7 +139,11 @@ impl AgentAdapter for KimiAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_kimi_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
+                            if let Ok(source) = SessionSource::from_path_with_known(
+                                path,
+                                self.name(),
+                                &options.known_sources,
+                            ) {
                                 sources.push(source);
                             }
                         }
@@ -142,7 +154,11 @@ impl AgentAdapter for KimiAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_kimi_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
+                        if let Ok(source) = SessionSource::from_path_with_known(
+                            &root,
+                            self.name(),
+                            &options.known_sources,
+                        ) {
                             sources.push(source);
                         }
                     }
@@ -150,7 +166,11 @@ impl AgentAdapter for KimiAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_kimi_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
+                            if let Ok(source) = SessionSource::from_path_with_known(
+                                path,
+                                self.name(),
+                                &options.known_sources,
+                            ) {
                                 sources.push(source);
                             }
                         }
@@ -224,7 +244,13 @@ impl AgentAdapter for KimiAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_kimi_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
+                        let evts = parse_kimi_record(
+                            item,
+                            &mut sequence,
+                            timestamp,
+                            idx + 1,
+                            &mut last_model,
+                        );
                         trace.events.extend(evts);
                     }
 
@@ -270,7 +296,8 @@ impl AgentAdapter for KimiAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_kimi_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events =
+                    parse_kimi_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -295,7 +322,10 @@ impl AgentAdapter for KimiAdapter {
 
 fn is_candidate_kimi_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    if !path_str.contains("kimi") && !path_str.contains("moonshot") && !path_str.ends_with("wire.jsonl") {
+    if !path_str.contains("kimi")
+        && !path_str.contains("moonshot")
+        && !path_str.ends_with("wire.jsonl")
+    {
         return false;
     }
     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -501,7 +531,8 @@ fn parse_kimi_record(
                         .unwrap_or("unknown")
                         .to_string();
 
-                    let args: Value = match fn_val.get("arguments").or_else(|| fn_val.get("input")) {
+                    let args: Value = match fn_val.get("arguments").or_else(|| fn_val.get("input"))
+                    {
                         Some(Value::String(s)) => {
                             serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone()))
                         }
@@ -629,7 +660,15 @@ fn parse_kimi_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            process_specific_kimi_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
+            process_specific_kimi_tool_call(
+                &raw_name,
+                &name,
+                &args,
+                seq,
+                ts,
+                &raw_ref,
+                &mut events,
+            );
         }
 
         "tool" | "tool_result" | "function" | "tool_output" => {

@@ -1490,9 +1490,13 @@ fn parse_codex_item_function_call(
     if !is_codex_shell_call(&name) {
         return;
     }
-    let Some(mut command) = codex_command_of(&arguments) else {
+    let Some(raw_command) = codex_command_of(&arguments) else {
         return;
     };
+    // Bounded before storage: a multi-KB pasted payload stays in the rollout, not in
+    // every normalized `ShellCommand`. The first [`CODEX_CMD_TEXT_MAX`] chars keep
+    // every shape signal the ladder reads.
+    let command: String = raw_command.chars().take(CODEX_CMD_TEXT_MAX).collect();
 
     // A `ShellCommand` emitted directly behind its own `ToolCall` is what
     // `crate::exit_status` adjacency requires: the result keyed by this call id has to

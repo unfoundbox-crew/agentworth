@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
+    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -89,7 +89,11 @@ impl AgentAdapter for QwenAdapter {
                         }
                     }
                     if discovered.is_empty() {
-                        for entry in WalkDir::new(custom).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+                        for entry in WalkDir::new(custom)
+                            .max_depth(3)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                        {
                             let path = entry.path();
                             let s = path.to_string_lossy().to_lowercase();
                             if s.contains(".qwen") || s.contains("qwen") {
@@ -123,7 +127,11 @@ impl AgentAdapter for QwenAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_qwen_file(custom) {
-                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
+                        if let Ok(source) = SessionSource::from_path_with_known(
+                            custom,
+                            self.name(),
+                            &options.known_sources,
+                        ) {
                             sources.push(source);
                         }
                     }
@@ -131,7 +139,11 @@ impl AgentAdapter for QwenAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_qwen_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
+                            if let Ok(source) = SessionSource::from_path_with_known(
+                                path,
+                                self.name(),
+                                &options.known_sources,
+                            ) {
                                 sources.push(source);
                             }
                         }
@@ -142,7 +154,11 @@ impl AgentAdapter for QwenAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_qwen_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
+                        if let Ok(source) = SessionSource::from_path_with_known(
+                            &root,
+                            self.name(),
+                            &options.known_sources,
+                        ) {
                             sources.push(source);
                         }
                     }
@@ -150,7 +166,11 @@ impl AgentAdapter for QwenAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_qwen_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
+                            if let Ok(source) = SessionSource::from_path_with_known(
+                                path,
+                                self.name(),
+                                &options.known_sources,
+                            ) {
                                 sources.push(source);
                             }
                         }
@@ -225,7 +245,13 @@ impl AgentAdapter for QwenAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_qwen_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
+                        let evts = parse_qwen_record(
+                            item,
+                            &mut sequence,
+                            timestamp,
+                            idx + 1,
+                            &mut last_model,
+                        );
                         trace.events.extend(evts);
                     }
 
@@ -271,7 +297,8 @@ impl AgentAdapter for QwenAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_qwen_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events =
+                    parse_qwen_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -441,7 +468,10 @@ fn parse_qwen_record(
                     EventPayload::ModelInvocation {
                         model,
                         token_usage: usage,
-                        cost_usd: val.get("cost").or_else(|| val.get("cost_usd")).and_then(|c| c.as_f64()),
+                        cost_usd: val
+                            .get("cost")
+                            .or_else(|| val.get("cost_usd"))
+                            .and_then(|c| c.as_f64()),
                         latency_ms: val
                             .get("latency_ms")
                             .or_else(|| val.get("duration_ms"))
@@ -539,7 +569,8 @@ fn parse_qwen_record(
             } else if let Some(fc) = val.get("function_call") {
                 let id = fc.get("id").and_then(|v| v.as_str()).map(String::from);
                 let raw_name = fc.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                let args = parse_or_extract_json(fc.get("arguments").or_else(|| fc.get("parameters")));
+                let args =
+                    parse_or_extract_json(fc.get("arguments").or_else(|| fc.get("parameters")));
                 let name = normalize_mcp_tool_name(raw_name, &args);
 
                 *seq += 1;
@@ -617,7 +648,8 @@ fn parse_qwen_record(
                             ts,
                             EventPayload::OutcomeEvidence(OutcomeEvidence {
                                 kind: OutcomeKind::TestOrBuildPassed,
-                                summary: "Test suite executed successfully in Qwen session".to_string(),
+                                summary: "Test suite executed successfully in Qwen session"
+                                    .to_string(),
                                 confidence: 0.9,
                                 test_provenance: None,
                             }),
@@ -634,7 +666,8 @@ fn parse_qwen_record(
                 .get("name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
-            let args = parse_or_extract_json(val.get("arguments").or_else(|| val.get("parameters")));
+            let args =
+                parse_or_extract_json(val.get("arguments").or_else(|| val.get("parameters")));
             let name = normalize_mcp_tool_name(raw_name, &args);
 
             *seq += 1;
@@ -682,7 +715,11 @@ fn parse_qwen_record(
                     *seq,
                     ts,
                     EventPayload::Custom {
-                        kind: if role.is_empty() { "unknown".to_string() } else { role.to_string() },
+                        kind: if role.is_empty() {
+                            "unknown".to_string()
+                        } else {
+                            role.to_string()
+                        },
                         data: val.clone(),
                     },
                 )
@@ -696,7 +733,9 @@ fn parse_qwen_record(
 
 fn parse_or_extract_json(val: Option<&Value>) -> Value {
     match val {
-        Some(Value::String(s)) => serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone())),
+        Some(Value::String(s)) => {
+            serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone()))
+        }
         Some(v) => v.clone(),
         None => Value::Null,
     }
@@ -837,7 +876,11 @@ mod tests {
 
         let session_file = qwen_dir.join("qwen_coder_001.jsonl");
         let mut f = File::create(&session_file).unwrap();
-        writeln!(f, "{{\"role\":\"user\",\"content\":\"Write quicksort in Rust\"}}").unwrap();
+        writeln!(
+            f,
+            "{{\"role\":\"user\",\"content\":\"Write quicksort in Rust\"}}"
+        )
+        .unwrap();
 
         let adapter = QwenAdapter::new();
         let options = ScanOptions {

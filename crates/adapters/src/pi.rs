@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::exit_status::backfill_shell_exit_codes;
 use agentworth_adapter_sdk::{
     reuse_or_compute_fingerprint, AgentAdapter, DetectionResult, ParseResult, ScanOptions,
     SessionSource,
@@ -16,7 +17,6 @@ use chrono::{DateTime, Utc};
 use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
-use crate::exit_status::backfill_shell_exit_codes;
 
 /// Adapter for discovering and normalizing Pi agent task sessions and step logs.
 pub struct PiAdapter;
@@ -135,9 +135,9 @@ fn pi_identity_for(path: &Path) -> String {
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .and_then(decode_pi_slug);
-    let plausible = slug_cwd.as_deref().is_some_and(|d| {
-        d != "/" && d.split('/').filter(|c| !c.is_empty()).count() > 3
-    });
+    let plausible = slug_cwd
+        .as_deref()
+        .is_some_and(|d| d != "/" && d.split('/').filter(|c| !c.is_empty()).count() > 3);
     if !plausible {
         return real;
     }
@@ -165,8 +165,7 @@ fn build_pi_source(
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     let identity = pi_identity_for(path);
-    let fingerprint =
-        reuse_or_compute_fingerprint(known, &identity, path, size, mtime)?;
+    let fingerprint = reuse_or_compute_fingerprint(known, &identity, path, size, mtime)?;
     Ok(SessionSource {
         path: PathBuf::from(identity),
         adapter_name: "pi".to_string(),
@@ -244,7 +243,11 @@ impl AgentAdapter for PiAdapter {
                     }
                 }
                 if !found_nested {
-                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .max_depth(4)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         let is_pi_component = path.components().any(|c| {
                             let cs = c.as_os_str().to_string_lossy();
@@ -530,7 +533,10 @@ fn extract_token_usage(usage_val: &Value) -> TokenUsage {
         .get("output")
         .and_then(|v| v.as_u64())
         .unwrap_or(0)
-        + usage_val.get("reasoning").and_then(|v| v.as_u64()).unwrap_or(0);
+        + usage_val
+            .get("reasoning")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
     let cache_read_tokens = usage_val
         .get("cacheRead")
         .and_then(|v| v.as_u64())
@@ -581,7 +587,10 @@ fn pi_user_text(msg: &Value) -> String {
 /// Dispatch one v3 entry into normalized events. `last_model` tracks the
 /// model in force across `model_change` entries and assistant messages alike;
 /// `effort` carries the latest thinking level into invocations.
-#[allow(clippy::too_many_arguments, reason = "one entry-type dispatch; a context struct would hide the shape map")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one entry-type dispatch; a context struct would hide the shape map"
+)]
 fn parse_pi_entry(
     val: &Value,
     seq: &mut u64,
@@ -836,8 +845,14 @@ fn parse_pi_entry(
                 .get("toolCallId")
                 .and_then(|v| v.as_str())
                 .map(String::from);
-            let name = msg.get("toolName").and_then(|v| v.as_str()).map(String::from);
-            let is_error = msg.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
+            let name = msg
+                .get("toolName")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let is_error = msg
+                .get("isError")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let mut output_parts = Vec::new();
             if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
                 for b in blocks {
@@ -903,12 +918,19 @@ fn parse_pi_entry(
         }
 
         "bashExecution" => {
-            let command = msg.get("command").and_then(|c| c.as_str()).unwrap_or("").to_string();
+            let command = msg
+                .get("command")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
             if command.is_empty() {
                 return;
             }
             let output = msg.get("output").and_then(|o| o.as_str()).map(String::from);
-            let exit_code = msg.get("exitCode").and_then(|e| e.as_i64()).map(|c| c as i32);
+            let exit_code = msg
+                .get("exitCode")
+                .and_then(|e| e.as_i64())
+                .map(|c| c as i32);
             *seq += 1;
             events.push(
                 NormalizedEvent::new(
@@ -929,7 +951,8 @@ fn parse_pi_entry(
             warnings.push(format!("pi message role '{role}' not mapped"));
         }
     }
-}fn process_specific_pi_tool_call(
+}
+fn process_specific_pi_tool_call(
     name: &str,
     args: &Value,
     seq: &mut u64,
@@ -1063,16 +1086,26 @@ mod tests {
     #[test]
     fn test_parse_pi_v3_session() {
         let temp = tempdir().unwrap();
-        let session_dir = temp.path().join("sessions").join("--Users-saurabh-code-demo--");
+        let session_dir = temp
+            .path()
+            .join("sessions")
+            .join("--Users-saurabh-code-demo--");
         std::fs::create_dir_all(&session_dir).unwrap();
-        let session_file = session_dir.join("2026-09-13T04-53-00-066Z_01a0991c-8c21-717a-9beb-fc4687089ec4.jsonl");
+        let session_file =
+            session_dir.join("2026-09-13T04-53-00-066Z_01a0991c-8c21-717a-9beb-fc4687089ec4.jsonl");
         std::fs::write(&session_file, pi_v3_fixture()).unwrap();
 
         let adapter = PiAdapter::new();
-        let source = build_pi_source(&session_file, &agentworth_adapter_sdk::KnownSourceMap::new())
-            .unwrap();
+        let source = build_pi_source(
+            &session_file,
+            &agentworth_adapter_sdk::KnownSourceMap::new(),
+        )
+        .unwrap();
         // The slug decodes to the fixture cwd, so the identity anchors there.
-        assert!(source.path.to_string_lossy().contains("code/demo/.pi-session-01a0991c"));
+        assert!(source
+            .path
+            .to_string_lossy()
+            .contains("code/demo/.pi-session-01a0991c"));
         assert!(source.path.to_string_lossy().contains(PI_REPO_MARKER));
 
         let result = adapter.parse(&source).expect("parse failed");
@@ -1091,8 +1124,14 @@ mod tests {
         // the mid-session switch); the switch -- not the settings file -- is
         // what attribution must follow.
         assert_eq!(trace.stats.models_used.len(), 2);
-        assert!(trace.stats.models_used.contains(&"muse-spark-1.3-contributor-free".to_string()));
-        assert!(trace.stats.models_used.contains(&"go-glm-5.3-flash".to_string()));
+        assert!(trace
+            .stats
+            .models_used
+            .contains(&"muse-spark-1.3-contributor-free".to_string()));
+        assert!(trace
+            .stats
+            .models_used
+            .contains(&"go-glm-5.3-flash".to_string()));
         assert_eq!(trace.stats.effort.as_deref(), Some("high"));
 
         assert_eq!(trace.stats.user_messages_count, 1);
@@ -1115,7 +1154,9 @@ mod tests {
                 _ => "other",
             })
             .collect();
-        for want in ["user", "switch", "inv", "tool", "file", "asst", "result", "shell"] {
+        for want in [
+            "user", "switch", "inv", "tool", "file", "asst", "result", "shell",
+        ] {
             assert!(kinds.contains(&want), "missing {want} in {kinds:?}");
         }
     }
@@ -1131,7 +1172,9 @@ mod tests {
 
         let identity = "/Users/saurabh/code/demo/.pi-session-01a0991c.jsonl::pi-repo::/Users/saurabh/.pi/agent/sessions/--Users-saurabh-code-demo--/f.jsonl";
         assert!(is_pi_locator(identity));
-        assert!(!is_pi_locator("/Users/saurabh/.pi/agent/tasks/output.jsonl"));
+        assert!(!is_pi_locator(
+            "/Users/saurabh/.pi/agent/tasks/output.jsonl"
+        ));
         // A `~/code`-level workspace resolves to the leaf: fall back to bare.
         let bare = pi_identity_for(Path::new(
             "/Users/saurabh/.pi/agent/sessions/--Users-saurabh-code--/f.jsonl",
@@ -1152,8 +1195,11 @@ mod tests {
         .unwrap();
 
         let adapter = PiAdapter::new();
-        let source = build_pi_source(&session_file, &agentworth_adapter_sdk::KnownSourceMap::new())
-            .unwrap();
+        let source = build_pi_source(
+            &session_file,
+            &agentworth_adapter_sdk::KnownSourceMap::new(),
+        )
+        .unwrap();
         let result = adapter.parse(&source).expect("parse failed");
 
         assert_eq!(result.malformed_lines, 1);

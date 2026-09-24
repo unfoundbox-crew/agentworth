@@ -118,14 +118,21 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 // the adapter-specific dir itself; look a few levels in before
                 // giving up, matching how `enumerate()` already recurses.
                 let mut found_nested = false;
-                for sub in &[custom.join(".claude"), custom.join(".config").join("claude")] {
+                for sub in &[
+                    custom.join(".claude"),
+                    custom.join(".config").join("claude"),
+                ] {
                     if sub.exists() {
                         discovered.push(sub.clone());
                         found_nested = true;
                     }
                 }
                 if !found_nested {
-                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .max_depth(4)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         let ps = path.to_string_lossy().to_lowercase();
                         if ps.contains("claude") {
@@ -169,7 +176,11 @@ impl AgentAdapter for ClaudeCodeAdapter {
         } else {
             let mut roots = Vec::new();
             for r in self.session_roots() {
-                if r.exists() && !roots.iter().any(|existing: &PathBuf| r.starts_with(existing)) {
+                if r.exists()
+                    && !roots
+                        .iter()
+                        .any(|existing: &PathBuf| r.starts_with(existing))
+                {
                     roots.push(r);
                 }
             }
@@ -179,7 +190,11 @@ impl AgentAdapter for ClaudeCodeAdapter {
         for root in roots_to_scan {
             if root.is_file() {
                 if is_candidate_claude_file(&root) {
-                    if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
+                    if let Ok(source) = SessionSource::from_path_with_known(
+                        &root,
+                        self.name(),
+                        &options.known_sources,
+                    ) {
                         sources.push(source);
                     }
                 }
@@ -191,7 +206,11 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 {
                     let path = entry.path();
                     if path.is_file() && is_candidate_claude_file(path) {
-                        if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
+                        if let Ok(source) = SessionSource::from_path_with_known(
+                            path,
+                            self.name(),
+                            &options.known_sources,
+                        ) {
                             sources.push(source);
                         }
                     }
@@ -261,7 +280,8 @@ impl AgentAdapter for ClaudeCodeAdapter {
                         turns.clone()
                     } else if let Some(events) = json_val.get("events").and_then(|e| e.as_array()) {
                         events.clone()
-                    } else if let Some(history) = json_val.get("history").and_then(|h| h.as_array()) {
+                    } else if let Some(history) = json_val.get("history").and_then(|h| h.as_array())
+                    {
                         history.clone()
                     } else {
                         vec![json_val]
@@ -278,7 +298,14 @@ impl AgentAdapter for ClaudeCodeAdapter {
 
                         collect_unfinished_calls(item, &mut unfinished_calls);
                         track_workspace_fields(item, &mut last_cwd, &mut last_git_branch);
-                        let evts = parse_claude_record(item, &mut sequence, timestamp, idx + 1, &mut last_model, &mut usage_ledger);
+                        let evts = parse_claude_record(
+                            item,
+                            &mut sequence,
+                            timestamp,
+                            idx + 1,
+                            &mut last_model,
+                            &mut usage_ledger,
+                        );
                         trace.events.extend(evts);
                     }
 
@@ -328,7 +355,14 @@ impl AgentAdapter for ClaudeCodeAdapter {
 
                 collect_unfinished_calls(&val, &mut unfinished_calls);
                 track_workspace_fields(&val, &mut last_cwd, &mut last_git_branch);
-                let events = parse_claude_record(&val, &mut sequence, timestamp, line_num, &mut last_model, &mut usage_ledger);
+                let events = parse_claude_record(
+                    &val,
+                    &mut sequence,
+                    timestamp,
+                    line_num,
+                    &mut last_model,
+                    &mut usage_ledger,
+                );
                 trace.events.extend(events);
             }
 
@@ -465,7 +499,11 @@ fn derive_session_id(path: &Path) -> String {
 
 /// Updates `last_cwd`/`last_git_branch` with `val`'s top-level `cwd`/`gitBranch`, if present
 /// and non-empty. Called on every record so the trace ends up with the last value seen.
-fn track_workspace_fields(val: &Value, last_cwd: &mut Option<String>, last_git_branch: &mut Option<String>) {
+fn track_workspace_fields(
+    val: &Value,
+    last_cwd: &mut Option<String>,
+    last_git_branch: &mut Option<String>,
+) {
     if let Some(cwd) = val.get("cwd").and_then(|v| v.as_str()) {
         if !cwd.is_empty() {
             *last_cwd = Some(cwd.to_string());
@@ -482,7 +520,11 @@ fn track_workspace_fields(val: &Value, last_cwd: &mut Option<String>, last_git_b
 /// merging into any existing metadata rather than overwriting it. Only includes the keys that
 /// were actually seen; `metadata` stays `Null` when neither was, so a fresh trace still
 /// round-trips through `Storage::upsert_trace` the same way it always has.
-fn apply_workspace_metadata(trace: &mut AgentWorthTrace, cwd: Option<String>, git_branch: Option<String>) {
+fn apply_workspace_metadata(
+    trace: &mut AgentWorthTrace,
+    cwd: Option<String>,
+    git_branch: Option<String>,
+) {
     if cwd.is_none() && git_branch.is_none() {
         return;
     }
@@ -813,7 +855,11 @@ fn parse_claude_record(
                                 );
 
                                 // Check specific tool types: Bash, FileEdit, etc.
-                                if raw_name == "Bash" || raw_name == "bash" || name.ends_with(":bash") || name.ends_with(":shell") {
+                                if raw_name == "Bash"
+                                    || raw_name == "bash"
+                                    || name.ends_with(":bash")
+                                    || name.ends_with(":shell")
+                                {
                                     if let Some(cmd) = input.get("command").and_then(|v| v.as_str())
                                     {
                                         *seq += 1;
@@ -1161,11 +1207,13 @@ mod tests {
             .join("projects")
             .join("-Users-test-code-example");
         std::fs::create_dir_all(&project_dir).unwrap();
-        let mut real = File::create(
-            project_dir.join("13761161-221d-4493-8c52-62a18c3400be.jsonl"),
+        let mut real =
+            File::create(project_dir.join("13761161-221d-4493-8c52-62a18c3400be.jsonl")).unwrap();
+        writeln!(
+            real,
+            "{{\"type\":\"user\",\"timestamp\":\"2026-08-29T10:00:00Z\",\"content\":\"hi\"}}"
         )
         .unwrap();
-        writeln!(real, "{{\"type\":\"user\",\"timestamp\":\"2026-08-29T10:00:00Z\",\"content\":\"hi\"}}").unwrap();
 
         let adapter = ClaudeCodeAdapter::new();
         let options = ScanOptions {
@@ -1175,7 +1223,11 @@ mod tests {
         };
 
         let enumerated = adapter.enumerate(&options).unwrap();
-        assert_eq!(enumerated.len(), 1, "only the real project transcript should be enumerated");
+        assert_eq!(
+            enumerated.len(),
+            1,
+            "only the real project transcript should be enumerated"
+        );
         assert!(enumerated[0]
             .path
             .to_string_lossy()
@@ -1319,16 +1371,21 @@ mod tests {
         assert_eq!(
             switches,
             vec![
-                (Some("claude-opus-5".to_string()), "claude-fable-5".to_string()),
-                (Some("claude-fable-5".to_string()), "claude-opus-5".to_string()),
+                (
+                    Some("claude-opus-5".to_string()),
+                    "claude-fable-5".to_string()
+                ),
+                (
+                    Some("claude-fable-5".to_string()),
+                    "claude-opus-5".to_string()
+                ),
             ]
         );
 
         // The first model invocation in the session is a starting point, not a "switch".
-        assert!(!trace
-            .events
-            .iter()
-            .any(|e| matches!(&e.payload, EventPayload::ModelSwitch(ms) if ms.from_model.is_none())));
+        assert!(!trace.events.iter().any(
+            |e| matches!(&e.payload, EventPayload::ModelSwitch(ms) if ms.from_model.is_none())
+        ));
 
         // Each ModelSwitch event must be sequenced immediately before the
         // ModelInvocation it announces, so replaying the trace in order shows the
@@ -1341,10 +1398,14 @@ mod tests {
                     saw_switch_to_fable = true;
                 }
                 EventPayload::ModelInvocation { model, .. } if model == "claude-fable-5" => {
-                    assert!(saw_switch_to_fable, "switch must precede the fable invocation");
+                    assert!(
+                        saw_switch_to_fable,
+                        "switch must precede the fable invocation"
+                    );
                 }
                 EventPayload::ModelSwitch(ms)
-                    if ms.to_model == "claude-opus-5" && ms.from_model.as_deref() == Some("claude-fable-5") =>
+                    if ms.to_model == "claude-opus-5"
+                        && ms.from_model.as_deref() == Some("claude-fable-5") =>
                 {
                     saw_switch_to_opus_again = true;
                 }

@@ -2,19 +2,19 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
+use crate::exit_status::backfill_shell_exit_codes;
 use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
+    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
-use crate::exit_status::backfill_shell_exit_codes;
 
 /// Adapter for discovering and normalizing OpenClaw agent stream logs and session histories.
 pub struct OpenClawAdapter;
@@ -73,14 +73,21 @@ impl AgentAdapter for OpenClawAdapter {
                 // the adapter-specific dir itself; look a few levels in before
                 // giving up, matching how `enumerate()` already recurses.
                 let mut found_nested = false;
-                for sub in &[custom.join(".openclaw"), custom.join(".config").join("openclaw")] {
+                for sub in &[
+                    custom.join(".openclaw"),
+                    custom.join(".config").join("openclaw"),
+                ] {
                     if sub.exists() {
                         discovered.push(sub.clone());
                         found_nested = true;
                     }
                 }
                 if !found_nested {
-                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .max_depth(4)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         let ps = path.to_string_lossy().to_lowercase();
                         if ps.contains(".openclaw") || ps.contains("openclaw") {
@@ -110,7 +117,11 @@ impl AgentAdapter for OpenClawAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_openclaw_file(custom) {
-                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
+                        if let Ok(source) = SessionSource::from_path_with_known(
+                            custom,
+                            self.name(),
+                            &options.known_sources,
+                        ) {
                             sources.push(source);
                         }
                     }
@@ -118,7 +129,11 @@ impl AgentAdapter for OpenClawAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_openclaw_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
+                            if let Ok(source) = SessionSource::from_path_with_known(
+                                path,
+                                self.name(),
+                                &options.known_sources,
+                            ) {
                                 sources.push(source);
                             }
                         }
@@ -129,7 +144,11 @@ impl AgentAdapter for OpenClawAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_openclaw_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
+                        if let Ok(source) = SessionSource::from_path_with_known(
+                            &root,
+                            self.name(),
+                            &options.known_sources,
+                        ) {
                             sources.push(source);
                         }
                     }
@@ -137,7 +156,11 @@ impl AgentAdapter for OpenClawAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_openclaw_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
+                            if let Ok(source) = SessionSource::from_path_with_known(
+                                path,
+                                self.name(),
+                                &options.known_sources,
+                            ) {
                                 sources.push(source);
                             }
                         }
@@ -209,7 +232,13 @@ impl AgentAdapter for OpenClawAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_openclaw_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
+                        let evts = parse_openclaw_record(
+                            item,
+                            &mut sequence,
+                            timestamp,
+                            idx + 1,
+                            &mut last_model,
+                        );
                         trace.events.extend(evts);
                     }
 
@@ -255,7 +284,13 @@ impl AgentAdapter for OpenClawAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_openclaw_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_openclaw_record(
+                    &val,
+                    &mut sequence,
+                    timestamp,
+                    line_num,
+                    &mut last_model,
+                );
                 trace.events.extend(events);
             }
         }

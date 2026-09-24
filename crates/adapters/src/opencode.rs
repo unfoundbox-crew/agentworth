@@ -8,8 +8,8 @@ use agentworth_adapter_sdk::{
     ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
+    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -48,7 +48,12 @@ impl OpenCodeAdapter {
         let mut roots = Vec::new();
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
-            roots.push(home.join(".local").join("share").join("opencode").join("opencode.db"));
+            roots.push(
+                home.join(".local")
+                    .join("share")
+                    .join("opencode")
+                    .join("opencode.db"),
+            );
             roots.push(home.join(".local").join("share").join("opencode"));
             roots.push(home.join(".opencode").join("sessions"));
             roots.push(home.join(".opencode"));
@@ -168,7 +173,11 @@ fn build_opencode_file_source(
 
     let real_locator = path.to_string_lossy().to_string();
     let repo_dir = decode_opencode_project_directory(&real_locator);
-    let identity = wrap_with_repo_marker(repo_dir.as_deref(), ".opencode-project-session", &real_locator);
+    let identity = wrap_with_repo_marker(
+        repo_dir.as_deref(),
+        ".opencode-project-session",
+        &real_locator,
+    );
 
     let fingerprint = reuse_or_compute_fingerprint(
         known_sources,
@@ -287,14 +296,21 @@ impl AgentAdapter for OpenCodeAdapter {
                 // the adapter-specific dir itself; look a few levels in before
                 // giving up, matching how `enumerate()` already recurses.
                 let mut found_nested = false;
-                for sub in &[custom.join(".opencode"), custom.join(".config").join("opencode")] {
+                for sub in &[
+                    custom.join(".opencode"),
+                    custom.join(".config").join("opencode"),
+                ] {
                     if sub.exists() {
                         discovered.push(sub.clone());
                         found_nested = true;
                     }
                 }
                 if !found_nested {
-                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .max_depth(4)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         let ps = path.to_string_lossy().to_lowercase();
                         if ps.contains("opencode") {
@@ -333,7 +349,9 @@ impl AgentAdapter for OpenCodeAdapter {
                 if root.file_name().and_then(|n| n.to_str()) == Some("opencode.db") {
                     db_paths.push(root);
                 } else if is_candidate_opencode_file(&root) {
-                    if let Ok(source) = build_opencode_file_source(&root, self.name(), &options.known_sources) {
+                    if let Ok(source) =
+                        build_opencode_file_source(&root, self.name(), &options.known_sources)
+                    {
                         sources.push(source);
                     }
                 }
@@ -395,7 +413,9 @@ impl AgentAdapter for OpenCodeAdapter {
             {
                 let path = entry.path();
                 if path.is_file() && is_candidate_opencode_file(path) {
-                    if let Ok(source) = build_opencode_file_source(path, self.name(), &options.known_sources) {
+                    if let Ok(source) =
+                        build_opencode_file_source(path, self.name(), &options.known_sources)
+                    {
                         sources.push(source);
                     }
                 }
@@ -478,7 +498,8 @@ impl AgentAdapter for OpenCodeAdapter {
                         turns.clone()
                     } else if let Some(events) = json_val.get("events").and_then(|e| e.as_array()) {
                         events.clone()
-                    } else if let Some(history) = json_val.get("history").and_then(|h| h.as_array()) {
+                    } else if let Some(history) = json_val.get("history").and_then(|h| h.as_array())
+                    {
                         history.clone()
                     } else if let Some(conversation) =
                         json_val.get("conversation").and_then(|c| c.as_array())
@@ -497,7 +518,14 @@ impl AgentAdapter for OpenCodeAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_opencode_record(item, &mut sequence, timestamp, idx + 1, &mut last_model, &mut usage_ledger);
+                        let evts = parse_opencode_record(
+                            item,
+                            &mut sequence,
+                            timestamp,
+                            idx + 1,
+                            &mut last_model,
+                            &mut usage_ledger,
+                        );
                         trace.events.extend(evts);
                     }
 
@@ -543,7 +571,14 @@ impl AgentAdapter for OpenCodeAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_opencode_record(&val, &mut sequence, timestamp, line_num, &mut last_model, &mut usage_ledger);
+                let events = parse_opencode_record(
+                    &val,
+                    &mut sequence,
+                    timestamp,
+                    line_num,
+                    &mut last_model,
+                    &mut usage_ledger,
+                );
                 trace.events.extend(events);
             }
         }
@@ -632,7 +667,10 @@ fn parse_opencode_sqlite_session(
             latest_ts = Some(timestamp);
         }
 
-        let role = msg_val.get("role").and_then(|r| r.as_str()).unwrap_or("unknown");
+        let role = msg_val
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("unknown");
         let model_id = msg_val
             .get("modelID")
             .or_else(|| msg_val.get("model").and_then(|m| m.get("modelID")))
@@ -640,8 +678,14 @@ fn parse_opencode_sqlite_session(
 
         // Extract tokens
         if let Some(tokens_val) = msg_val.get("tokens") {
-            let input = tokens_val.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
-            let output = tokens_val.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
+            let input = tokens_val
+                .get("input")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let output = tokens_val
+                .get("output")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             let cache_read = tokens_val
                 .get("cache")
                 .and_then(|c| c.get("read"))
@@ -735,10 +779,7 @@ fn parse_opencode_sqlite_session(
                 Err(_) => continue,
             };
 
-            let part_type = part_val
-                .get("type")
-                .and_then(|t| t.as_str())
-                .unwrap_or("");
+            let part_type = part_val.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
             match part_type {
                 "text" => {
@@ -1167,7 +1208,15 @@ fn parse_opencode_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            process_specific_opencode_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
+            process_specific_opencode_tool_call(
+                &raw_name,
+                &name,
+                &args,
+                seq,
+                ts,
+                &raw_ref,
+                &mut events,
+            );
         }
 
         "tool_result" | "tool_output" => {
@@ -1583,7 +1632,10 @@ mod tests {
 
         assert_eq!(
             trace.stats.models_used,
-            vec!["claude-3-5-sonnet".to_string(), "claude-haiku-4".to_string()]
+            vec![
+                "claude-3-5-sonnet".to_string(),
+                "claude-haiku-4".to_string()
+            ]
         );
 
         let switches: Vec<_> = trace
@@ -1797,7 +1849,9 @@ mod tests {
         let sources = adapter.enumerate(&options).unwrap();
         assert_eq!(sources.len(), 1);
 
-        let result = adapter.parse(&sources[0]).expect("legacy json parse failed");
+        let result = adapter
+            .parse(&sources[0])
+            .expect("legacy json parse failed");
         let identity = extract_repository_or_workspace(&result.trace.provenance.source_path);
         assert_eq!(identity, "unfoundbox/agentworth");
         assert_eq!(result.trace.stats.user_messages_count, 1);
@@ -1865,8 +1919,11 @@ mod tests {
         drop(conn);
 
         let real_locator = format!("{}#{}", db_path.display(), "sess-gone");
-        let virtual_path =
-            wrap_with_repo_marker(Some("/repo/dir"), ".opencode/session-sess-gone.db", &real_locator);
+        let virtual_path = wrap_with_repo_marker(
+            Some("/repo/dir"),
+            ".opencode/session-sess-gone.db",
+            &real_locator,
+        );
 
         let source = SessionSource {
             path: PathBuf::from(&virtual_path),
@@ -1888,8 +1945,11 @@ mod tests {
     #[test]
     fn test_source_exists_false_when_the_backing_database_file_is_missing() {
         let real_locator = "/definitely/does/not/exist/opencode.db#sess-x".to_string();
-        let virtual_path =
-            wrap_with_repo_marker(Some("/repo/dir"), ".opencode/session-sess-x.db", &real_locator);
+        let virtual_path = wrap_with_repo_marker(
+            Some("/repo/dir"),
+            ".opencode/session-sess-x.db",
+            &real_locator,
+        );
 
         let source = SessionSource {
             path: PathBuf::from(&virtual_path),
@@ -1912,10 +1972,15 @@ mod tests {
             .unwrap();
 
         let adapter = OpenCodeAdapter::new();
-        let source = build_opencode_file_source(temp.path(), adapter.name(), &KnownSourceMap::new()).unwrap();
+        let source =
+            build_opencode_file_source(temp.path(), adapter.name(), &KnownSourceMap::new())
+                .unwrap();
         assert!(adapter.source_exists(&source));
 
         drop(temp);
-        assert!(!adapter.source_exists(&source), "a deleted legacy file must read as gone");
+        assert!(
+            !adapter.source_exists(&source),
+            "a deleted legacy file must read as gone"
+        );
     }
 }

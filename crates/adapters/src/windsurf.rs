@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
+    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -107,7 +107,11 @@ impl AgentAdapter for WindsurfAdapter {
         for custom in &options.custom_paths {
             if custom.exists() {
                 let s = custom.to_string_lossy().to_lowercase();
-                if s.contains("windsurf") || s.contains("codeium") || s.contains("cascade") || custom.is_file() {
+                if s.contains("windsurf")
+                    || s.contains("codeium")
+                    || s.contains("cascade")
+                    || custom.is_file()
+                {
                     discovered.push(custom.clone());
                 } else if custom.is_dir() {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
@@ -138,7 +142,11 @@ impl AgentAdapter for WindsurfAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_windsurf_file(custom) || custom.exists() {
-                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
+                        if let Ok(source) = SessionSource::from_path_with_known(
+                            custom,
+                            self.name(),
+                            &options.known_sources,
+                        ) {
                             sources.push(source);
                         }
                     }
@@ -146,7 +154,11 @@ impl AgentAdapter for WindsurfAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_windsurf_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
+                            if let Ok(source) = SessionSource::from_path_with_known(
+                                path,
+                                self.name(),
+                                &options.known_sources,
+                            ) {
                                 sources.push(source);
                             }
                         }
@@ -157,7 +169,11 @@ impl AgentAdapter for WindsurfAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_windsurf_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
+                        if let Ok(source) = SessionSource::from_path_with_known(
+                            &root,
+                            self.name(),
+                            &options.known_sources,
+                        ) {
                             sources.push(source);
                         }
                     }
@@ -165,7 +181,11 @@ impl AgentAdapter for WindsurfAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_windsurf_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
+                            if let Ok(source) = SessionSource::from_path_with_known(
+                                path,
+                                self.name(),
+                                &options.known_sources,
+                            ) {
                                 sources.push(source);
                             }
                         }
@@ -242,7 +262,13 @@ impl AgentAdapter for WindsurfAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_windsurf_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
+                        let evts = parse_windsurf_record(
+                            item,
+                            &mut sequence,
+                            timestamp,
+                            idx + 1,
+                            &mut last_model,
+                        );
                         trace.events.extend(evts);
                     }
 
@@ -288,7 +314,13 @@ impl AgentAdapter for WindsurfAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_windsurf_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_windsurf_record(
+                    &val,
+                    &mut sequence,
+                    timestamp,
+                    line_num,
+                    &mut last_model,
+                );
                 trace.events.extend(events);
             }
         }
@@ -312,7 +344,10 @@ impl AgentAdapter for WindsurfAdapter {
 
 fn is_candidate_windsurf_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    if !path_str.contains("windsurf") && !path_str.contains("codeium") && !path_str.contains("cascade") {
+    if !path_str.contains("windsurf")
+        && !path_str.contains("codeium")
+        && !path_str.contains("cascade")
+    {
         return false;
     }
     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -365,7 +400,11 @@ fn parse_timestamp(val: &Value) -> Option<DateTime<Utc>> {
             return Some(dt.with_timezone(&Utc));
         }
     }
-    if let Some(ts_num) = val.get("ts").or_else(|| val.get("timestamp")).and_then(|v| v.as_i64()) {
+    if let Some(ts_num) = val
+        .get("ts")
+        .or_else(|| val.get("timestamp"))
+        .and_then(|v| v.as_i64())
+    {
         if ts_num > 1_000_000_000_000 {
             return DateTime::from_timestamp_millis(ts_num);
         } else {
@@ -469,7 +508,11 @@ fn parse_windsurf_record(
             let norm_name = normalize_mcp_tool_name(name, &args);
 
             // Handle specific tool action types
-            if name == "run_command" || name == "execute_command" || name == "terminal_command" || name == "run_in_terminal" {
+            if name == "run_command"
+                || name == "execute_command"
+                || name == "terminal_command"
+                || name == "run_in_terminal"
+            {
                 let cmd = args
                     .get("command")
                     .or_else(|| args.get("cmd"))
@@ -483,7 +526,10 @@ fn parse_windsurf_record(
                         timestamp,
                         EventPayload::ShellCommand(ShellCommand {
                             command: cmd.to_string(),
-                            cwd: args.get("cwd").and_then(|c| c.as_str()).map(|s| s.to_string()),
+                            cwd: args
+                                .get("cwd")
+                                .and_then(|c| c.as_str())
+                                .map(|s| s.to_string()),
                             exit_code: None,
                             output: None,
                         }),
@@ -512,7 +558,11 @@ fn parse_windsurf_record(
                     )
                     .with_raw_ref(&raw_ref),
                 );
-            } else if name == "edit_file" || name == "write_file" || name == "modify_file" || name == "patch_file" {
+            } else if name == "edit_file"
+                || name == "write_file"
+                || name == "modify_file"
+                || name == "patch_file"
+            {
                 let path = args
                     .get("path")
                     .or_else(|| args.get("file_path"))
@@ -520,8 +570,15 @@ fn parse_windsurf_record(
                     .and_then(|p| p.as_str())
                     .unwrap_or("");
 
-                let diff = args.get("diff").and_then(|d| d.as_str()).map(|s| s.to_string());
-                let action = if name == "write_file" { FileActionType::Write } else { FileActionType::Edit };
+                let diff = args
+                    .get("diff")
+                    .and_then(|d| d.as_str())
+                    .map(|s| s.to_string());
+                let action = if name == "write_file" {
+                    FileActionType::Write
+                } else {
+                    FileActionType::Edit
+                };
 
                 *sequence += 1;
                 events.push(
@@ -568,8 +625,16 @@ fn parse_windsurf_record(
     }
 
     // Direct single tool call object
-    if let Some(tool_name) = val.get("tool").or_else(|| val.get("tool_name")).and_then(|t| t.as_str()) {
-        let args = val.get("arguments").or_else(|| val.get("args")).cloned().unwrap_or(Value::Null);
+    if let Some(tool_name) = val
+        .get("tool")
+        .or_else(|| val.get("tool_name"))
+        .and_then(|t| t.as_str())
+    {
+        let args = val
+            .get("arguments")
+            .or_else(|| val.get("args"))
+            .cloned()
+            .unwrap_or(Value::Null);
         let norm_name = normalize_mcp_tool_name(tool_name, &args);
 
         *sequence += 1;
@@ -578,7 +643,10 @@ fn parse_windsurf_record(
                 *sequence,
                 timestamp,
                 EventPayload::ToolCall(ToolCall {
-                    id: val.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()),
+                    id: val
+                        .get("id")
+                        .and_then(|i| i.as_str())
+                        .map(|s| s.to_string()),
                     name: norm_name,
                     arguments: args,
                 }),
@@ -588,10 +656,22 @@ fn parse_windsurf_record(
     }
 
     // 3. Tool Results & Outputs
-    if let Some(tool_results) = val.get("tool_results").or_else(|| val.get("results")).and_then(|r| r.as_array()) {
+    if let Some(tool_results) = val
+        .get("tool_results")
+        .or_else(|| val.get("results"))
+        .and_then(|r| r.as_array())
+    {
         for res in tool_results {
-            let output = res.get("output").or_else(|| res.get("content")).cloned().unwrap_or(Value::Null);
-            let is_error = res.get("is_error").or_else(|| res.get("error")).and_then(|e| e.as_bool()).unwrap_or(false);
+            let output = res
+                .get("output")
+                .or_else(|| res.get("content"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let is_error = res
+                .get("is_error")
+                .or_else(|| res.get("error"))
+                .and_then(|e| e.as_bool())
+                .unwrap_or(false);
 
             *sequence += 1;
             events.push(
@@ -599,8 +679,15 @@ fn parse_windsurf_record(
                     *sequence,
                     timestamp,
                     EventPayload::ToolResult(ToolResult {
-                        call_id: res.get("call_id").or_else(|| res.get("id")).and_then(|i| i.as_str()).map(|s| s.to_string()),
-                        name: res.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()),
+                        call_id: res
+                            .get("call_id")
+                            .or_else(|| res.get("id"))
+                            .and_then(|i| i.as_str())
+                            .map(|s| s.to_string()),
+                        name: res
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .map(|s| s.to_string()),
                         output,
                         is_error,
                     }),
@@ -612,8 +699,15 @@ fn parse_windsurf_record(
 
     // Direct shell command property
     if let Some(cmd) = val.get("command").and_then(|c| c.as_str()) {
-        let exit_code = val.get("exit_code").and_then(|e| e.as_i64()).map(|ec| ec as i32);
-        let output = val.get("output").or_else(|| val.get("stdout")).and_then(|o| o.as_str()).map(|s| s.to_string());
+        let exit_code = val
+            .get("exit_code")
+            .and_then(|e| e.as_i64())
+            .map(|ec| ec as i32);
+        let output = val
+            .get("output")
+            .or_else(|| val.get("stdout"))
+            .and_then(|o| o.as_str())
+            .map(|s| s.to_string());
 
         *sequence += 1;
         events.push(
@@ -622,7 +716,10 @@ fn parse_windsurf_record(
                 timestamp,
                 EventPayload::ShellCommand(ShellCommand {
                     command: cmd.to_string(),
-                    cwd: val.get("cwd").and_then(|c| c.as_str()).map(|s| s.to_string()),
+                    cwd: val
+                        .get("cwd")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_string()),
                     exit_code,
                     output: output.clone(),
                 }),
@@ -632,7 +729,10 @@ fn parse_windsurf_record(
 
         if exit_code == Some(0) {
             if let Some(ref out) = output {
-                if out.contains("test result: ok") || out.contains("PASSED") || out.contains("passed") {
+                if out.contains("test result: ok")
+                    || out.contains("PASSED")
+                    || out.contains("passed")
+                {
                     *sequence += 1;
                     events.push(NormalizedEvent::new(
                         *sequence,
@@ -656,7 +756,10 @@ fn parse_windsurf_record(
         .and_then(|m| m.as_str())
         .unwrap_or("windsurf-cascade");
 
-    let usage = val.get("usage").or_else(|| val.get("tokens")).or_else(|| val.get("token_usage"));
+    let usage = val
+        .get("usage")
+        .or_else(|| val.get("tokens"))
+        .or_else(|| val.get("token_usage"));
     if let Some(u) = usage {
         let input_tokens = u
             .get("prompt_tokens")
@@ -678,9 +781,17 @@ fn parse_windsurf_record(
             .or_else(|| u.get("cache_creation_input_tokens"))
             .and_then(|t| t.as_u64())
             .unwrap_or(0);
-        let cost_usd = val.get("cost_usd").or_else(|| val.get("cost")).and_then(|c| c.as_f64());
+        let cost_usd = val
+            .get("cost_usd")
+            .or_else(|| val.get("cost"))
+            .and_then(|c| c.as_f64());
 
-        if input_tokens > 0 || output_tokens > 0 || cache_read > 0 || cache_creation > 0 || cost_usd.is_some() {
+        if input_tokens > 0
+            || output_tokens > 0
+            || cache_read > 0
+            || cache_creation > 0
+            || cost_usd.is_some()
+        {
             if last_model.as_deref() != Some(model) {
                 if let Some(prev) = last_model.take() {
                     *sequence += 1;
@@ -755,8 +866,7 @@ mod tests {
     #[test]
     fn test_detect_and_enumerate_windsurf() {
         let mut temp_file = NamedTempFile::new().unwrap();
-        let content =
-            r#"{"role":"user","content":"Build an API server in Rust","timestamp":"2024-05-18T10:00:00Z"}"#;
+        let content = r#"{"role":"user","content":"Build an API server in Rust","timestamp":"2024-05-18T10:00:00Z"}"#;
         writeln!(temp_file, "{}", content).unwrap();
 
         let adapter = WindsurfAdapter::new();
