@@ -202,10 +202,12 @@ fn codex_depth_failed_test_then_retry() {
 }
 
 /// The bump: depth extraction changes what an already-parsed rollout yields, so the
-/// incremental scanner must recompute every indexed codex row on the next scan.
+/// incremental scanner must recompute every indexed codex row on the next scan. Version 4
+/// adds the `custom_tool_call` pair and the compaction rounds, so it is the current
+/// expected value.
 #[test]
 fn codex_parser_version_moved_past_the_depthless_version() {
-    assert_eq!(CodexAdapter::PARSER_VERSION, 3);
+    assert_eq!(CodexAdapter::PARSER_VERSION, 4);
     assert_eq!(
         CodexAdapter::new().parser_version(),
         CodexAdapter::PARSER_VERSION

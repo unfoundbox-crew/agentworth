@@ -1880,6 +1880,24 @@ impl Storage {
         Ok(reason)
     }
 
+    /// Returns `(session_id, adapter, source_path)` for every indexed session, regardless of
+    /// activity. Used with an adapter-provided `is_session_path` predicate to prune a row
+    /// whose source was never a session at all — the shape a pre-tightened discovery left
+    /// behind, which `stub_sessions` cannot catch once the row has accumulated more than one
+    /// event.
+    pub fn all_session_sources(&self) -> Result<Vec<(String, String, String)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare("SELECT session_id, adapter, source_path FROM sessions")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// Returns `(session_id, adapter, source_path)` for every indexed session that fails
     /// `NEAR_EMPTY_EVENTS_SQL_PREDICATE` -- 0 or 1 normalized events total, the shape left
     /// behind when a non-session file (config, cache, telemetry dump, ...) was accepted as a

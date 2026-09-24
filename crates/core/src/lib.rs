@@ -1,6 +1,7 @@
 //! Core orchestration engine for discovering, scanning, normalizing, and indexing agent traces.
 
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 
 use agentworth_adapter_sdk::{AgentAdapter, ScanOptions, SessionSource};
@@ -42,9 +43,10 @@ pub struct ScanSummary {
     pub errors_encountered: usize,
     pub total_indexed_sessions: usize,
     pub aggregate_stats: AggregateStats,
-    /// Previously-indexed sessions with zero events and zero tokens whose source no
-    /// longer passes any registered adapter's current detection, removed during this
-    /// scan. Only computed on a full (unscoped) scan -- see `run_scan`.
+    /// Previously-indexed sessions removed during this scan because their source is no
+    /// longer a session: near-empty stubs (zero or one event) plus rows whose `source_path`
+    /// the owning adapter's `is_session_path` rejects outright, whether or not they are
+    /// thin. Only computed on a full (unscoped) scan -- see `run_scan`.
     pub stub_sessions_removed: usize,
     /// The human-turn ingestion lane (insights data lane) runs with every scan; these are its
     /// numbers. Zeroes when no turn sources exist locally — an absence, never a fabrication.
@@ -241,6 +243,60 @@ impl Scanner {
                 }
             }
             Err(e) => warn!("Failed listing stub sessions for cleanup: {}", e),
+        }
+        removed
+    }
+
+    /// Deletes indexed sessions whose `(adapter, source_path)` is not among the currently
+    /// enumerated sources AND whose path the owning adapter's `is_session_path` rejects.
+    /// Where `prune_stub_sessions` can only catch rows thin enough to look like a stub (at
+    /// most one event), this catches a non-session file that an older, looser discovery
+    /// indexed richly enough to look like a real conversation — e.g. a plugin cache or a
+    /// vendored `node_modules` JSON array that parsed into thousands of untyped events.
+    ///
+    /// Only the adapter's own evidence-based discovery rule decides; a path it accepts is
+    /// left alone even when it is not currently enumerated (a source on another machine, a
+    /// file moved between roots), because that path *was* a session and its row is real. An
+    /// adapter that does not override `is_session_path` (the default `true`) prunes nothing
+    /// here. Returns the number removed; individual failures are logged, never fatal.
+    fn prune_non_session_sources(&self, valid_sources: &HashSet<(&str, String)>) -> usize {
+        let mut removed = 0;
+        match self.storage.all_session_sources() {
+            Ok(rows) => {
+                for (session_id, adapter_name, source_path) in rows {
+                    if valid_sources.contains(&(adapter_name.as_str(), source_path.clone())) {
+                        continue;
+                    }
+                    // Match on every identity the adapter claims, not just `name()`, so a
+                    // row filed under a secondary identity (e.g. antigravity handled by the
+                    // gemini adapter) is still judged.
+                    let Some(adapter) = self
+                        .adapters
+                        .iter()
+                        .find(|a| a.identity_names().contains(&adapter_name.as_str()))
+                    else {
+                        // Adapter no longer registered: nothing here can judge the path.
+                        continue;
+                    };
+                    if adapter.is_session_path(Path::new(source_path.as_str())) {
+                        continue;
+                    }
+                    match self.storage.delete_session(&session_id, &source_path) {
+                        Ok(()) => removed += 1,
+                        Err(e) => warn!(
+                            "Failed deleting session {} whose source is not a session file: {}",
+                            session_id, e
+                        ),
+                    }
+                }
+                if removed > 0 {
+                    tracing::info!(
+                        "Removed {} indexed row(s) whose source path is not a session file",
+                        removed
+                    );
+                }
+            }
+            Err(e) => warn!("Failed listing indexed sources for cleanup: {}", e),
         }
         removed
     }
@@ -469,7 +525,14 @@ impl Scanner {
                     )
                 })
                 .collect();
-            self.prune_stub_sessions(&valid_sources)
+            // Two passes over the same "not currently valid" set. The first removes rows a
+            // path predicate proves were never sessions, whatever their event count; the
+            // second removes the near-empty stragglers the first leaves untouched. Run the
+            // predicate pass first so a richly-indexed non-session file is gone before the
+            // near-empty scan runs.
+            let non_session_sources_removed = self.prune_non_session_sources(&valid_sources);
+            let stub_removed = self.prune_stub_sessions(&valid_sources);
+            non_session_sources_removed + stub_removed
         } else {
             0
         };
@@ -919,6 +982,112 @@ mod tests {
         assert!(storage.get_session_by_id("live-stub").unwrap().is_some());
         assert!(storage.get_session_by_id("stale-stub").unwrap().is_none());
         assert!(storage.get_session_by_id("stale-one-event-stub").unwrap().is_none());
+    }
+
+    /// The complement of `prune_stub_sessions`: a non-session file that an older discovery
+    /// accepted can parse into thousands of untyped events (a JSON array of objects), which
+    /// is far past the `total_events <= 1` stub predicate, so it lingers in the index
+    /// forever. The owning adapter's own `is_session_path` is what proves the row was never
+    /// a session; a real source path the predicate still accepts must survive even when it is
+    /// not in today's enumerated set (another machine, a moved file).
+    #[test]
+    fn test_prune_non_session_sources_removes_richly_indexed_non_session_rows() {
+        use agentworth_adapter_sdk::{DetectionResult, ParseResult};
+        use agentworth_schema::{EventPayload, NormalizedEvent, Provenance};
+
+        struct FilenamePredicateAdapter;
+
+        impl AgentAdapter for FilenamePredicateAdapter {
+            fn name(&self) -> &'static str {
+                "fake_pred"
+            }
+
+            fn is_session_path(&self, path: &Path) -> bool {
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl"))
+            }
+
+            fn detect(&self, _options: &ScanOptions) -> Result<DetectionResult> {
+                Ok(DetectionResult {
+                    adapter_name: self.name(),
+                    is_present: true,
+                    discovered_roots: vec![],
+                    confidence: 1.0,
+                })
+            }
+
+            fn enumerate(&self, _options: &ScanOptions) -> Result<Vec<SessionSource>> {
+                Ok(vec![])
+            }
+
+            fn parse(&self, source: &SessionSource) -> Result<ParseResult> {
+                let provenance = Provenance::new(
+                    source.path.to_string_lossy().to_string(),
+                    self.name(),
+                    source.file_size_bytes,
+                    source.mtime_epoch_secs,
+                    &source.fingerprint,
+                );
+                let mut trace = AgentWorthTrace::new("x", self.name(), provenance, Utc::now());
+                trace.events.push(NormalizedEvent::new(
+                    1,
+                    Utc::now(),
+                    EventPayload::UserMessage { content: "hi".to_string() },
+                ));
+                trace.recalculate_stats();
+                Ok(ParseResult { trace, malformed_lines: 0, warnings: vec![] })
+            }
+        }
+
+        let storage = Arc::new(Storage::open_in_memory().expect("open storage"));
+        let scanner =
+            Scanner::with_adapters(vec![Box::new(FilenamePredicateAdapter)], storage.clone());
+
+        // A JSON array accepted by an older, looser discovery: many events, so it is not a
+        // stub and `prune_stub_sessions` would never touch it.
+        let junk_prov = Provenance::new(
+            "/tmp/agentworth-test-nonsession/registry.json".to_string(),
+            "fake_pred",
+            12,
+            0,
+            "deadbeef",
+        );
+        let mut junk = AgentWorthTrace::new("rich-junk", "fake_pred", junk_prov, Utc::now());
+        junk.stats.total_events = 5;
+        storage.upsert_session(&junk, None, Some(0.0), 0).expect("seed rich junk");
+
+        // A real rollout the predicate still accepts -- left alone even though it is not in
+        // today's enumerated set.
+        let live_prov = Provenance::new(
+            "/tmp/agentworth-test-nonsession/rollout-2026-01-02T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl"
+                .to_string(),
+            "fake_pred",
+            12,
+            0,
+            "deadbeef",
+        );
+        let mut live = AgentWorthTrace::new("live", "fake_pred", live_prov, Utc::now());
+        live.stats.total_events = 5;
+        storage.upsert_session(&live, None, Some(0.0), 0).expect("seed live");
+
+        assert_eq!(storage.get_aggregate_stats(true).unwrap().total_sessions, 2);
+
+        let mut valid_sources = HashSet::new();
+        valid_sources.insert((
+            "fake_pred",
+            "/tmp/agentworth-test-nonsession/rollout-2026-01-02T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl"
+                .to_string(),
+        ));
+
+        let removed = scanner.prune_non_session_sources(&valid_sources);
+
+        assert_eq!(removed, 1);
+        assert!(storage.get_session_by_id("rich-junk").unwrap().is_none());
+        assert!(
+            storage.get_session_by_id("live").unwrap().is_some(),
+            "a real source path the predicate accepts must survive even when not enumerated"
+        );
     }
 
     #[test]
