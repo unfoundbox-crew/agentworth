@@ -205,7 +205,7 @@ fn codex_depth_failed_test_then_retry() {
 /// incremental scanner must recompute every indexed codex row on the next scan.
 #[test]
 fn codex_parser_version_moved_past_the_depthless_version() {
-    assert!(CodexAdapter::PARSER_VERSION > 2, "v2 parsed depthless");
+    assert_eq!(CodexAdapter::PARSER_VERSION, 3);
     assert_eq!(
         CodexAdapter::new().parser_version(),
         CodexAdapter::PARSER_VERSION
