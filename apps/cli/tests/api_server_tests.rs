@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentworth_cli::server::{
-    create_router, embedded_home_deck_is_built, AppState, LiveTailChangeKind, LiveTailEvent,
+    create_router, embedded_dashboard_is_built, AppState, LiveTailChangeKind, LiveTailEvent,
     LIVE_TAIL_CHANNEL_CAPACITY,
 };
 use agentworth_core::Scanner;
@@ -21,14 +21,16 @@ use tokio::sync::broadcast;
 use tower::ServiceExt;
 
 /// Helper function to create an in-memory test AppState and router.
-fn setup_test_app() -> (axum::Router, Arc<Storage>, Arc<Scanner>) {
-    let (app, storage, scanner, _live_tail_tx) = setup_test_app_with_live_tail();
+fn setup_test_app(dist_dir: Option<PathBuf>) -> (axum::Router, Arc<Storage>, Arc<Scanner>) {
+    let (app, storage, scanner, _live_tail_tx) = setup_test_app_with_live_tail(dist_dir);
     (app, storage, scanner)
 }
 
 /// Like `setup_test_app`, but also hands back the live-tail broadcast sender so a test can
 /// publish filesystem-change events and assert they reach a subscribed SSE client.
-fn setup_test_app_with_live_tail() -> (
+fn setup_test_app_with_live_tail(
+    dist_dir: Option<PathBuf>,
+) -> (
     axum::Router,
     Arc<Storage>,
     Arc<Scanner>,
@@ -40,9 +42,11 @@ fn setup_test_app_with_live_tail() -> (
     let state = AppState {
         storage: storage.clone(),
         scanner: scanner.clone(),
+        dist_dir,
         live_tail: live_tail_tx.clone(),
         #[cfg(unix)]
         home: None,
+        home_deck_enabled: false,
     };
     let app = create_router(state);
     (app, storage, scanner, live_tail_tx)
@@ -102,7 +106,7 @@ async fn request_raw(app: axum::Router, method: &str, uri: &str) -> (StatusCode,
 
 #[tokio::test]
 async fn test_api_get_stats_empty_and_populated() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
 
     // 1. Initial empty stats
     let (status, stats) = request_json(app.clone(), "GET", "/api/stats", None).await;
@@ -150,7 +154,7 @@ async fn test_api_get_stats_empty_and_populated() {
 
 #[tokio::test]
 async fn test_api_get_traces_filtering_search_and_pagination() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     let now = Utc::now();
 
     // Insert 4 sessions with diverse parameters
@@ -235,7 +239,7 @@ async fn test_api_get_traces_filtering_search_and_pagination() {
 
 #[tokio::test]
 async fn test_api_get_trace_by_id_and_not_found() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
 
     // Create a real temporary Claude Code JSONL file on disk
     let mut temp_file = tempfile::Builder::new()
@@ -326,7 +330,7 @@ fn seed_trace_with_n_events(storage: &Storage, n: usize) -> (String, TempDir, Pa
 
 #[tokio::test]
 async fn test_api_get_trace_by_id_events_pagination_boundaries() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     let (session_id, _dir, _path) = seed_trace_with_n_events(&storage, 10);
 
     // offset + limit slices trace.events, and echoes back events_total/events_offset.
@@ -363,7 +367,7 @@ async fn test_api_get_trace_by_id_events_pagination_boundaries() {
 
 #[tokio::test]
 async fn test_api_get_trace_events_endpoint_returns_just_the_slice() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     let (session_id, _dir, _path) = seed_trace_with_n_events(&storage, 10);
 
     let uri = format!("/api/traces/{session_id}/events?offset=2&limit=3");
@@ -384,7 +388,7 @@ async fn test_api_get_trace_events_endpoint_returns_just_the_slice() {
 
 #[tokio::test]
 async fn test_api_response_compression_negotiated_via_accept_encoding() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     let (session_id, _dir, _path) = seed_trace_with_n_events(&storage, 200);
 
     let uri = format!("/api/traces/{session_id}");
@@ -420,7 +424,7 @@ async fn test_api_response_compression_negotiated_via_accept_encoding() {
 
 #[tokio::test]
 async fn test_api_get_archaeology_highlights() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
 
     // Create 3 temporary trace files on disk representing archaeological discoveries:
     // Trace 1: Expensive unsolved task (18.3M tokens, unverified)
@@ -581,7 +585,7 @@ async fn test_api_get_archaeology_highlights() {
 
 #[tokio::test]
 async fn test_api_post_scan_endpoint() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
 
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("session_1.jsonl");
@@ -609,7 +613,7 @@ async fn test_api_post_scan_endpoint() {
 
 #[tokio::test]
 async fn test_api_post_export_json_and_atif_and_redact() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
 
     let mut temp_file = tempfile::Builder::new()
         .suffix(".jsonl")
@@ -683,53 +687,72 @@ async fn test_api_post_export_json_and_atif_and_redact() {
 }
 
 #[tokio::test]
-async fn test_root_serves_deck_when_built_else_json_api_root() {
-    // `/` serves the home deck shell when `npm run build` in apps/home ran before this
-    // binary was compiled (its asset URLs are absolute under `/home/`, so the shell works
-    // from either entry path); without a built deck it answers the JSON API root.
-    // Either way the v0.1.27 legacy dashboard ("Your agents left receipts") never appears.
+async fn test_api_static_file_serving_and_spa_fallback() {
+    // 1. Default embedded fallback: rust_embed pulls apps/dashboard/dist at
+    // compile time (see AGENTS.md item 5), so this proves the real built
+    // React shell is inside the binary — not the hand-written FALLBACK_HTML
+    // stub, which has neither a <title>AgentWorth</title> nor a hashed
+    // /assets/ bundle. Checking for "AGENTWORTH" / "Your agents left
+    // receipts" text would pass even against the stub, and would also fail
+    // against the real dashboard since that copy is rendered client-side by
+    // React, not present in the served HTML shell.
     //
-    // On a fresh clone nothing is embedded at all (apps/home/dist does not exist until the
-    // deck build runs), so the deck half skips loudly rather than failing. CI builds the
-    // deck before the Rust suite, so there it always runs.
-    let (app, _, _) = setup_test_app();
+    // On a fresh clone nothing is embedded at all (apps/dashboard/dist does not exist until
+    // `npm run build` has run), and every route serves the hand-written FALLBACK_HTML stub
+    // instead. That is a build state, not a regression, so this half skips loudly rather
+    // than failing. CI builds the dashboard before the Rust suite, so there it always runs.
+    if embedded_dashboard_is_built() {
+        let (app, _, _) = setup_test_app(None);
 
-    // Root GET / is never legacy HTML and never a 404.
-    let (status, root_html) = request_raw(app.clone(), "GET", "/").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(!root_html.contains("Your agents left receipts"));
-    assert!(!root_html.contains("<title>AgentWorth</title>"));
-
-    if embedded_home_deck_is_built() {
-        assert!(root_html.contains("<title>home</title>"));
+        // Root GET /
+        let (status, html) = request_raw(app.clone(), "GET", "/").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("<title>AgentWorth</title>"));
         assert!(
-            root_html.contains("/home/assets/"),
-            "expected the deck's baked-in /home/ asset prefix, got: {root_html}"
+            html.contains("/assets/"),
+            "expected a hashed Vite bundle reference, got: {html}"
         );
 
-        // Deck client-side route falls back to the same shell.
+        // SPA client-side route GET /traces/sess_123
         let (status, html) = request_raw(app, "GET", "/traces/sess_123").await;
         assert_eq!(status, StatusCode::OK);
-        assert!(html.contains("<title>home</title>"));
+        assert!(html.contains("<title>AgentWorth</title>"));
     } else {
         // stderr, not stdout: libtest shows a skipped test's stderr on `--nocapture` and in
         // the failure output, and a skip nobody can see is indistinguishable from a pass.
         eprintln!(
-            "SKIP: the deck half of test_root_serves_deck_when_built_else_json_api_root \
-             did not run, because apps/home/dist was absent at compile time so \
-             rust_embed embedded nothing and `/` answers the JSON API root. \
-             Run `npm --prefix apps/home run build` and rebuild to cover it. CI builds \
-             the deck first, so it always runs there. The JSON half below ran."
+            "SKIP: the embedded-asset half of test_api_static_file_serving_and_spa_fallback \
+             did not run, because apps/dashboard/dist was absent at compile time so \
+             rust_embed embedded nothing and every route serves the FALLBACK_HTML stub. \
+             Run `npm --prefix apps/dashboard run build` and rebuild to cover it. CI builds \
+             the dashboard first, so it always runs there. The custom-dist half below ran."
         );
-        let value: Value = serde_json::from_str(&root_html).expect("/ must be JSON without a deck");
-        assert_eq!(value["name"], "agentworth");
-        assert!(value["api"].as_str().unwrap().contains("/api/"));
     }
+
+    // 2. Custom dist_dir serving
+    let temp_dist = TempDir::new().unwrap();
+    let index_file = temp_dist.path().join("index.html");
+    std::fs::write(&index_file, "<html><body>Custom Dist Web UI</body></html>").unwrap();
+
+    let asset_file = temp_dist.path().join("app.js");
+    std::fs::write(&asset_file, "console.log('custom js');").unwrap();
+
+    let (app_dist, _, _) = setup_test_app(Some(temp_dist.path().to_path_buf()));
+
+    // Exact asset file GET /app.js
+    let (status, js) = request_raw(app_dist.clone(), "GET", "/app.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(js, "console.log('custom js');");
+
+    // SPA fallback route GET /sessions
+    let (status, custom_html) = request_raw(app_dist, "GET", "/sessions").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(custom_html.contains("Custom Dist Web UI"));
 }
 
 #[tokio::test]
 async fn test_api_get_usage_endpoint() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     let now = Utc::now();
 
     // Populate with 2 sessions across 2 days
@@ -770,7 +793,7 @@ async fn test_api_get_usage_endpoint() {
 
 #[tokio::test]
 async fn test_api_get_pacing_endpoint() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     let now = Utc::now();
 
     // Session 1 hour ago (within 5h window)
@@ -827,7 +850,7 @@ async fn test_api_get_pacing_endpoint() {
 
 #[tokio::test]
 async fn test_api_get_blame_endpoint() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
 
     let prov = Provenance::new(
         "/Users/dev/.claude/projects/-Users-dev-code-engine/sess-blame-abc.jsonl",
@@ -865,7 +888,7 @@ async fn test_api_get_blame_endpoint() {
 
 #[tokio::test]
 async fn test_api_get_matrix_endpoint() {
-    let (app, _, _) = setup_test_app();
+    let (app, _, _) = setup_test_app(None);
 
     let (status, matrix) = request_json(app, "GET", "/api/matrix", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -893,7 +916,7 @@ async fn test_api_get_matrix_endpoint() {
 
 #[tokio::test]
 async fn test_api_live_tail_sse_stream_delivers_broadcast_event() {
-    let (app, _, _, live_tail_tx) = setup_test_app_with_live_tail();
+    let (app, _, _, live_tail_tx) = setup_test_app_with_live_tail(None);
 
     let req = Request::builder()
         .method("GET")
@@ -942,7 +965,7 @@ async fn test_api_live_tail_sse_stream_delivers_broadcast_event() {
 
 #[tokio::test]
 async fn test_api_live_tail_sse_reports_lag_without_closing_stream() {
-    let (app, _, _, live_tail_tx) = setup_test_app_with_live_tail();
+    let (app, _, _, live_tail_tx) = setup_test_app_with_live_tail(None);
 
     let req = Request::builder()
         .method("GET")
@@ -974,6 +997,84 @@ async fn test_api_live_tail_sse_reports_lag_without_closing_stream() {
     assert!(text.contains("event: lagged"), "frame was: {}", text);
 }
 
+/// Regression test for `agentworth serve --dist <path>` silently falling back to the dashboard
+/// embedded in the binary instead of serving from the given directory. `resolve_dist_dir` (used
+/// by `main.rs`'s `Serve` command) is what enforces this now; this test exercises the router's
+/// serving path directly by writing a marker string into a temp dist dir's `index.html` and
+/// asserting the marker -- not anything from the embedded fallback -- comes back for both an
+/// exact-path request and an SPA-fallback request.
+#[tokio::test]
+async fn test_serve_custom_dist_dir_marker_is_returned_not_embedded_fallback() {
+    let temp_dist = TempDir::new().unwrap();
+    let marker = "AGENTWORTH-CUSTOM-DIST-MARKER-4f1c9a";
+    std::fs::write(
+        temp_dist.path().join("index.html"),
+        format!("<html><body>{marker}</body></html>"),
+    )
+    .unwrap();
+
+    let (app, _, _) = setup_test_app(Some(temp_dist.path().to_path_buf()));
+
+    let (status, root_html) = request_raw(app.clone(), "GET", "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        root_html.contains(marker),
+        "expected the custom dist's index.html marker, got: {}",
+        root_html
+    );
+
+    // SPA client-side route: still the custom dist's index.html, never the embedded fallback.
+    let (status, spa_html) = request_raw(app, "GET", "/some/client/route").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        spa_html.contains(marker),
+        "expected the custom dist's index.html marker on SPA fallback, got: {}",
+        spa_html
+    );
+}
+
+/// `resolve_dist_dir` must fail loudly when given a `--dist` path that doesn't exist, rather
+/// than silently falling back to the embedded dashboard -- that silent fallback is exactly what
+/// made `--dist` look "ignored" (evidence: a 200 response whose served index.html referenced
+/// asset hashes absent from the directory the user pointed `--dist` at).
+#[test]
+fn test_resolve_dist_dir_rejects_nonexistent_path() {
+    let missing = std::env::temp_dir().join("agentworth-test-dist-does-not-exist-4f1c9a");
+    let err = agentworth_cli::server::resolve_dist_dir(Some(missing.clone()))
+        .expect_err("a nonexistent --dist path must be a hard error, not a silent fallback");
+    assert!(
+        err.to_string().contains(&missing.display().to_string()),
+        "error should name the offending path: {}",
+        err
+    );
+}
+
+/// A `--dist` path that exists but isn't a built web frontend (no `index.html`) must also fail
+/// loudly rather than silently falling back to the embedded dashboard.
+#[test]
+fn test_resolve_dist_dir_rejects_directory_without_index_html() {
+    let empty_dir = TempDir::new().unwrap();
+    let err = agentworth_cli::server::resolve_dist_dir(Some(empty_dir.path().to_path_buf()))
+        .expect_err("a --dist dir with no index.html must be a hard error");
+    assert!(
+        err.to_string().contains("index.html"),
+        "error should mention the missing index.html: {}",
+        err
+    );
+}
+
+/// A valid `--dist` directory (exists, is a directory, has an `index.html`) must resolve
+/// successfully to that same path.
+#[test]
+fn test_resolve_dist_dir_accepts_valid_directory() {
+    let dist = TempDir::new().unwrap();
+    std::fs::write(dist.path().join("index.html"), "<html></html>").unwrap();
+
+    let resolved = agentworth_cli::server::resolve_dist_dir(Some(dist.path().to_path_buf()))
+        .expect("a valid --dist directory should resolve");
+    assert_eq!(resolved, Some(dist.path().to_path_buf()));
+}
+
 /// Regression test: `/api/traces` used to omit `primary_outcome` and `composite_score` from
 /// every row via `#[serde(skip_serializing_if = "Option::is_none")]` on `SessionSummary`, which
 /// on real (scored) sessions meant the keys should be present but on any never-scored session
@@ -982,7 +1083,7 @@ async fn test_api_live_tail_sse_reports_lag_without_closing_stream() {
 /// outcome value comes back snake_case (matching `OutcomeKind`'s own serde encoding).
 #[tokio::test]
 async fn test_api_traces_includes_primary_outcome_and_composite_score() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     let now = Utc::now();
 
     let scored_prov = Provenance::new(
@@ -1068,7 +1169,7 @@ async fn test_api_traces_includes_primary_outcome_and_composite_score() {
 /// route, not the function.
 #[tokio::test]
 async fn test_api_insights_golden_counts_over_synthetic_index() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     use chrono::TimeZone;
     let at = |y, m, d| Utc.with_ymd_and_hms(y, m, d, 10, 0, 0).unwrap();
     let mut seq = 0u64;
@@ -1197,7 +1298,7 @@ async fn test_api_insights_golden_counts_over_synthetic_index() {
 /// the golden test above seeds.
 #[tokio::test]
 async fn test_api_insights_filters_narrow_and_drill_returns_rows() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     use chrono::TimeZone;
     let at = |y, m, d| Utc.with_ymd_and_hms(y, m, d, 10, 0, 0).unwrap();
     let mut seq = 0u64;

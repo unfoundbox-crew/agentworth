@@ -78,11 +78,18 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: 'apps/home/package-lock.json'
+          cache-dependency-path: 'apps/dashboard/package-lock.json'
 
-      # Must run before cargo: the home deck is compiled INTO the binary via
-      # rust-embed (`HomeDeckAssets` in apps/cli/src/server/static_files.rs),
-      # served at `/` and under `/home/` by `archie serve` / `archie home`.
+      # Must run before cargo: the dashboard is compiled INTO the binary via
+      # rust-embed, so an empty apps/dashboard/dist ships a binary that serves
+      # a build-me notice instead of a UI. That is what shipped until now.
+      - name: Build dashboard
+        working-directory: apps/dashboard
+        run: |
+          npm ci
+          npm run build
+
+      # Same reason, second rust-embed folder: apps/home is `archie home`'s deck
       # (apps/cli/src/server/static_files.rs, `HomeDeckAssets`).
       - name: Build home deck
         working-directory: apps/home
@@ -90,11 +97,14 @@ jobs:
           npm ci
           npm run build
 
-      - name: Assert the home deck will actually be embedded
+      - name: Assert the dashboard and home deck will actually be embedded
         shell: bash
         run: |
+          test -f apps/dashboard/dist/index.html \
+            || { echo "::error::apps/dashboard/dist/index.html missing — the binary would ship without a UI"; exit 1; }
           test -f apps/home/dist/index.html \
             || { echo "::error::apps/home/dist/index.html missing — archie home would ship with no deck"; exit 1; }
+          echo "dashboard dist: $(du -sh apps/dashboard/dist | cut -f1)"
           echo "home dist: $(du -sh apps/home/dist | cut -f1)"
 
       - name: Build binaries

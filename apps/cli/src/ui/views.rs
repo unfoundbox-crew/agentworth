@@ -4180,8 +4180,7 @@ pub fn update(ui: &Ui, v: &UpdateView<'_>) -> String {
 
 pub struct ServeView<'a> {
     pub version: &'a str,
-    /// The origin the home deck (or the JSON API root, when the deck was not built in)
-    /// answers on, with no trailing slash.
+    /// The origin the dashboard answers on, with no trailing slash.
     pub url: &'a str,
     /// `None` for an index with no file behind it.
     pub index_path: Option<&'a str>,
@@ -4193,7 +4192,7 @@ pub fn serve(ui: &Ui, v: &ServeView<'_>) -> String {
     out.push_str(&ui.header("archie serve", v.version));
     out.push('\n');
     let w = ui.width();
-    section(&mut out, ui, "HOME DECK", "");
+    section(&mut out, ui, "DASHBOARD", "");
     push(&mut out, ui, ui.leaders("  local URL", v.url, w, Role::Emphasis));
     push(
         &mut out,
@@ -4209,7 +4208,7 @@ pub fn serve(ui: &Ui, v: &ServeView<'_>) -> String {
         push(&mut out, ui, ui.leaders("  index", &shorten_home(path), w, Role::Value));
     }
     out.push('\n');
-    out.push_str(&ui.next("Ctrl+C", "stop the home deck and the local API"));
+    out.push_str(&ui.next("Ctrl+C", "stop the dashboard and the local API"));
     out
 }
 
