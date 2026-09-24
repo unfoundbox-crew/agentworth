@@ -1169,7 +1169,7 @@ async fn test_api_traces_includes_primary_outcome_and_composite_score() {
 /// route, not the function.
 #[tokio::test]
 async fn test_api_insights_golden_counts_over_synthetic_index() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     use chrono::TimeZone;
     let at = |y, m, d| Utc.with_ymd_and_hms(y, m, d, 10, 0, 0).unwrap();
     let mut seq = 0u64;
@@ -1298,7 +1298,7 @@ async fn test_api_insights_golden_counts_over_synthetic_index() {
 /// the golden test above seeds.
 #[tokio::test]
 async fn test_api_insights_filters_narrow_and_drill_returns_rows() {
-    let (app, storage, _) = setup_test_app();
+    let (app, storage, _) = setup_test_app(None);
     use chrono::TimeZone;
     let at = |y, m, d| Utc.with_ymd_and_hms(y, m, d, 10, 0, 0).unwrap();
     let mut seq = 0u64;
