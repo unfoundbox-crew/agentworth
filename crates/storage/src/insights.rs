@@ -563,11 +563,18 @@ pub fn compute_insights(
     let turn_pred = turn_predicate(effective.as_ref());
     // With a filter on, the human-turn blocks are a sessions-facing metric: only turns whose
     // repaired link lands on a session inside the slice count. Unfiltered payloads keep the
-    // whole stored turn lane, byte-for-byte the pre-filter contract.
-    let turn_pred = if filter.is_some() {
-        format!("{turn_pred} AND {}", turn_link_exists(&filter))
+    // whole stored turn lane, byte-for-byte the pre-filter contract. The repo-label repair
+    // reads a MATERIALIZED one-row-per-session set (`repo_slice`), so the label function runs
+    // once per session and once per turn — never once per (turn, session) pair, which was
+    // ~34s machine-wide and ~8s per slice on the real index.
+    let (turn_cte, turn_pred) = if has_filter {
+        build_turn_link_sets(conn, &filter)?;
+        (
+            String::new(),
+            format!("{turn_pred} AND ({})", turn_link_predicate(&filter)),
+        )
     } else {
-        turn_pred
+        (String::new(), turn_pred)
     };
     let turn_total = query_one_i64(conn, "SELECT COUNT(*) FROM human_turns")?;
     let turn_link = query_turn_link(conn, effective.as_ref())?;
@@ -623,9 +630,9 @@ pub fn compute_insights(
         series: query_series(conn, &pred)?,
         tool_buckets,
         tool_buckets_detail: tool_order,
-        day_hour: query_turn_day_hour(conn, &turn_pred)?,
-        friction: query_friction(conn, &turn_pred)?,
-        vocabulary: query_vocabulary(conn, &turn_pred)?,
+        day_hour: query_turn_day_hour(conn, &turn_cte, &turn_pred)?,
+        friction: query_friction(conn, &turn_cte, &turn_pred)?,
+        vocabulary: query_vocabulary(conn, &turn_cte, &turn_pred)?,
         coverage_flags: coverage_flags(),
         deferred: deferred_metrics(turn_total),
     })
@@ -671,12 +678,7 @@ fn resolve_filter(
         }
         Ok(())
     };
-    check(
-        &f.adapter,
-        "adapter",
-        &facets.adapters,
-        "facets.adapters",
-    )?;
+    check(&f.adapter, "adapter", &facets.adapters, "facets.adapters")?;
     check(&f.model, "model", &facets.models, "facets.models")?;
     check(&f.repo, "repo", &facets.repos, "facets.repos")?;
     Ok(Some(f.clone()))
@@ -684,8 +686,15 @@ fn resolve_filter(
 
 /// The session population predicate for this window + the optional filter: the shared usable
 /// predicate, the half-open `started_at` bounds, then the equality fragment.
-fn session_predicate(window: Option<&InsightsTimeWindow>, filter: &InsightsDimensionFilter) -> String {
-    format!("{}{}", usable_predicate(window), dimension_predicate(filter))
+fn session_predicate(
+    window: Option<&InsightsTimeWindow>,
+    filter: &InsightsDimensionFilter,
+) -> String {
+    format!(
+        "{}{}",
+        usable_predicate(window),
+        dimension_predicate(filter)
+    )
 }
 
 /// The filter's equality fragment aliased to one session alias; empty fragment when unset.
@@ -716,28 +725,52 @@ fn dimension_predicate_on(filter: &InsightsDimensionFilter, s: &str) -> String {
     frag
 }
 
-/// Turn↔session link condition between turn row `t` and session row `s`: tier 1 exact stored
-/// id, tier 2 exact source path, tier 3 display repo (a project-dir cross-join — the repair
-/// the prototype cache used for fuzzy cwd variants). One definition, reused everywhere.
+/// Turn↔session link condition between turn row `t` and session row `s`, the PRECISE tiers:
+/// tier 1 exact stored id, tier 2 exact source path. The fuzzy tier 3 (repo-label
+/// cross-join, a project-dir repair) is deliberately NOT here: in a JOIN it would attribute
+/// a turn to every session in its repo, and its correlated form cost ~34s on the real index.
+/// The repair is measured instead as the link-health counter (`query_turn_link`) and applied
+/// to filtered aggregates via `turn_link_exists`, both with one label call per row.
 pub fn turn_session_match(alias_t: &str, alias_s: &str) -> String {
     format!(
         "(({t}.session_id IS NOT NULL AND {t}.session_id={s}.session_id) OR \
-          ({t}.source_path<>'' AND {t}.source_path={s}.source_path) OR \
-          (insights_repo_label({t}.source_path)<>'' AND \
-           insights_repo_label({t}.source_path)=insights_repo_label({s}.source_path)))",
+          ({t}.source_path<>'' AND {t}.source_path={s}.source_path))",
         t = alias_t,
         s = alias_s
     )
 }
 
-/// EXISTS fragment: the turn links to at least one session satisfying `filter`'s pred. A
-/// distinct alias (`cs`) so the fragment can appear inside queries that already carry `s`.
-fn turn_link_exists(filter: &InsightsDimensionFilter) -> String {
-    format!(
-        "EXISTS (SELECT 1 FROM sessions cs WHERE {}{} AND cs.kind='conversation' AND cs.total_events>1)",
-        turn_session_match("t", "cs"),
-        dimension_predicate_on(filter, "cs")
-    )
+/// The materialized slice as indexed TEMP tables: one `insights_repo_label` call per session,
+/// and every membership test below is an index probe instead of a nested scan. The correlated
+/// `EXISTS (… OR …)` form it replaces had no usable index for the OR and cost 11s (codex) to
+/// 97s (claude_code) per request on the real index; the plain machine-wide form cost 34s.
+/// TEMP tables live in SQLite's separate temp database, so this works on a read-only handle.
+fn build_turn_link_sets(conn: &Connection, filter: &InsightsDimensionFilter) -> Result<()> {
+    conn.execute_batch(&format!(
+        "CREATE TEMP TABLE IF NOT EXISTS ins_slice_sessions( \
+             session_id TEXT, source_path TEXT, rl TEXT); \
+         DELETE FROM ins_slice_sessions; \
+         INSERT INTO ins_slice_sessions \
+           SELECT s.session_id, s.source_path, insights_repo_label(s.source_path) \
+           FROM sessions s WHERE s.kind='conversation'{dim} AND s.total_events>1; \
+         CREATE INDEX IF NOT EXISTS ins_slice_id ON ins_slice_sessions(session_id); \
+         CREATE INDEX IF NOT EXISTS ins_slice_path ON ins_slice_sessions(source_path); \
+         CREATE INDEX IF NOT EXISTS ins_slice_rl ON ins_slice_sessions(rl);",
+        dim = dimension_predicate_on(filter, "s")
+    ))?;
+    Ok(())
+}
+
+/// The turn↔slice link condition used by filtered turn blocks: the precise tiers (id, path)
+/// as index probes into the TEMP slice set, plus the fuzzy repo tier against the same set.
+/// One definition, so the heatmap, friction and vocabulary blocks agree on what "in the
+/// slice" means for a turn.
+fn turn_link_predicate(_filter: &InsightsDimensionFilter) -> String {
+    "(t.session_id IS NOT NULL AND t.session_id IN (SELECT session_id FROM ins_slice_sessions)) \
+     OR (t.source_path<>'' AND t.source_path IN (SELECT source_path FROM ins_slice_sessions)) \
+     OR (insights_repo_label(t.source_path)<>'' \
+         AND insights_repo_label(t.source_path) IN (SELECT rl FROM ins_slice_sessions))"
+        .to_string()
 }
 
 /// The link health counters over one turn window against the always-usable session
@@ -756,9 +789,11 @@ fn query_turn_link(
             ),
         )
     };
-    let total = query_one_i64(conn, format!("SELECT COUNT(*) FROM human_turns t WHERE {tp}"))?;
-    let linked_by_id =
-        one("AND t.session_id IS NOT NULL AND t.session_id=s.session_id")?;
+    let total = query_one_i64(
+        conn,
+        format!("SELECT COUNT(*) FROM human_turns t WHERE {tp}"),
+    )?;
+    let linked_by_id = one("AND t.session_id IS NOT NULL AND t.session_id=s.session_id")?;
     let already_id = "NOT EXISTS (SELECT 1 FROM sessions s2 WHERE s2.session_id=t.session_id AND \
                       s2.kind='conversation' AND s2.total_events>1 AND s2.started_at>'2020-01-01')";
     let linked_by_path = one(&format!(
@@ -766,11 +801,21 @@ fn query_turn_link(
     ))?;
     let already_path = "NOT EXISTS (SELECT 1 FROM sessions s3 WHERE s3.source_path=t.source_path AND s3.kind='conversation' \
          AND s3.total_events>1 AND s3.started_at>'2020-01-01')";
-    let linked_by_repo = one(&format!(
-        "AND insights_repo_label(t.source_path)<>'' \
-         AND insights_repo_label(t.source_path)=insights_repo_label(s.source_path) \
-         AND {already_id} AND {already_path}"
-    ))?;
+    // Repo-tier repair, evaluated ONCE per row instead of per (turn, session) pair: the
+    // correlated `insights_repo_label(t.x)=insights_repo_label(s.x)` form cost a scalar
+    // function call for all 22k turns × 7k sessions (~34s on the real index). An uncorrelated
+    // IN over a materialized label set keeps the same repair semantics — a turn counts when
+    // its repo label is one a usable session carries — at linear cost.
+    let linked_by_repo = query_one_i64(
+        conn,
+        format!(
+            "SELECT COUNT(*) FROM human_turns t WHERE {tp} AND {already_id} AND {already_path} \
+             AND insights_repo_label(t.source_path)<>'' \
+             AND insights_repo_label(t.source_path) IN \
+                 (SELECT DISTINCT insights_repo_label(s.source_path) FROM sessions s \
+                  WHERE {USABLE_PREDICATE} AND insights_repo_label(s.source_path)<>'')"
+        ),
+    )?;
     let linked = linked_by_id + linked_by_path + linked_by_repo;
     Ok(InsightsTurnLink {
         total,
@@ -816,9 +861,13 @@ fn rfc3339_to_epoch_millis_opt(value: &str) -> Option<i64> {
 
 /// The heatmap over stored human turns; `dow` reads straight off the ingested `local_date`
 /// (the same SQLite clock the reference pass indexed from).
-fn query_turn_day_hour(conn: &Connection, turn_pred: &str) -> Result<Vec<InsightsDayHourRow>> {
+fn query_turn_day_hour(
+    conn: &Connection,
+    turn_cte: &str,
+    turn_pred: &str,
+) -> Result<Vec<InsightsDayHourRow>> {
     let sql = format!(
-        "SELECT CAST(strftime('%w', local_date || ' 00:00:00') AS INT) AS dow, local_hour, \
+        "{turn_cte}SELECT CAST(strftime('%w', local_date || ' 00:00:00') AS INT) AS dow, local_hour, \
          COUNT(*) FROM human_turns t WHERE {turn_pred} GROUP BY 1, 2 ORDER BY 1, 2"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -836,11 +885,15 @@ fn query_turn_day_hour(conn: &Connection, turn_pred: &str) -> Result<Vec<Insight
 
 /// Friction by trigger (the classifier stores 'none' for quiet turns, so friction rows
 /// exclude it; the tile's shape is what the friction widget renders).
-fn query_friction(conn: &Connection, turn_pred: &str) -> Result<Vec<InsightsFrictionRow>> {
+fn query_friction(
+    conn: &Connection,
+    turn_cte: &str,
+    turn_pred: &str,
+) -> Result<Vec<InsightsFrictionRow>> {
     // 'none' is stored on every row, so the friction-only population is one literal
     // predicate, not per-trigger display branching.
     let sql = format!(
-        "SELECT friction_type, COUNT(*) FROM human_turns t \
+        "{turn_cte}SELECT friction_type, COUNT(*) FROM human_turns t \
          WHERE {turn_pred} AND t.friction_type!='none' GROUP BY 1 ORDER BY 2 DESC"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -856,9 +909,13 @@ fn query_friction(conn: &Connection, turn_pred: &str) -> Result<Vec<InsightsFric
 }
 
 /// Vocabulary mentions within the window, descending.
-fn query_vocabulary(conn: &Connection, turn_pred: &str) -> Result<Vec<InsightsVocabRow>> {
+fn query_vocabulary(
+    conn: &Connection,
+    turn_cte: &str,
+    turn_pred: &str,
+) -> Result<Vec<InsightsVocabRow>> {
     let sql = format!(
-        "SELECT je.value->>0 AS term, SUM(CAST(je.value->>1 AS INT)) AS mentions \
+        "{turn_cte}SELECT je.value->>0 AS term, SUM(CAST(je.value->>1 AS INT)) AS mentions \
          FROM human_turns t, json_each(t.vocab_json) je WHERE {turn_pred} \
          GROUP BY 1 ORDER BY 2 DESC"
     );
@@ -889,8 +946,10 @@ fn usable_predicate(window: Option<&InsightsTimeWindow>) -> String {
 
 /// The five headline KPIs that both the delta block and the top-level payload read from.
 fn query_headline(conn: &Connection, pred: &str) -> Result<HeadlineWindow> {
-    let usable_sessions =
-        query_one_i64(conn, format!("SELECT COUNT(*) FROM sessions s WHERE {pred}"))?;
+    let usable_sessions = query_one_i64(
+        conn,
+        format!("SELECT COUNT(*) FROM sessions s WHERE {pred}"),
+    )?;
     let verified_names = VERIFIED_OUTCOMES
         .iter()
         .map(|n| format!("'{}'", n))
@@ -1008,7 +1067,8 @@ fn turn_friction_rate_delta(
             match until {
                 Some(u) if u > since => {
                     let duration = u - since;
-                    let prev_since = (since - duration).to_rfc3339_opts(SecondsFormat::Millis, false);
+                    let prev_since =
+                        (since - duration).to_rfc3339_opts(SecondsFormat::Millis, false);
                     query_turn_friction_rate(
                         conn,
                         &turn_predicate(Some(&InsightsTimeWindow {
@@ -1207,14 +1267,13 @@ fn register_repo_label_fn(conn: &Connection) {
 /// The valid filter values on this index, computed over the windowed usable population.
 /// Adapter from `sessions.adapter`, models from `session_model_usage`, repos from the display
 /// label of `sessions.source_path` — the one repo definition the filter and the drill share.
-fn query_facets(
-    conn: &Connection,
-    window: Option<&InsightsTimeWindow>,
-) -> Result<InsightsFacets> {
+fn query_facets(conn: &Connection, window: Option<&InsightsTimeWindow>) -> Result<InsightsFacets> {
     let pred = usable_predicate(window);
     let adapters: Vec<InsightsFacetEntry> = query_pairs(
         conn,
-        &format!("SELECT adapter, COUNT(*) FROM sessions s WHERE {pred} GROUP BY 1 ORDER BY 2 DESC"),
+        &format!(
+            "SELECT adapter, COUNT(*) FROM sessions s WHERE {pred} GROUP BY 1 ORDER BY 2 DESC"
+        ),
     )?
     .into_iter()
     .map(|(value, sessions)| InsightsFacetEntry { value, sessions })
@@ -1249,10 +1308,7 @@ fn query_facets(
 /// The drill-throughs: one endpoint surface, three cut shapes, always over the same
 /// filter/window vocabulary as the rest of the payload. Rows are stats-shaped (id, adapter,
 /// repo label, started_at, rung, tokens, events) — never transcript text, never raw paths.
-pub fn insights_drill(
-    conn: &Connection,
-    req: &InsightsDrillRequest,
-) -> Result<InsightsDrill> {
+pub fn insights_drill(conn: &Connection, req: &InsightsDrillRequest) -> Result<InsightsDrill> {
     register_repo_label_fn(conn);
     let limit = req.limit.unwrap_or(50).clamp(1, 200) as i64;
     let filter = resolve_filter(conn, req.filter.as_ref())?.unwrap_or_default();
@@ -1313,12 +1369,15 @@ pub fn insights_drill(
                      JOIN sessions s ON {match_frag} WHERE {where_frag}"
                 ),
             )?;
-            let rows = drill_rows(conn, &format!(
-                "SELECT DISTINCT s.session_id, s.adapter, s.started_at, s.primary_outcome, \
+            let rows = drill_rows(
+                conn,
+                &format!(
+                    "SELECT DISTINCT s.session_id, s.adapter, s.started_at, s.primary_outcome, \
                         s.total_tokens, s.total_events, s.source_path \
                  FROM human_turns t JOIN sessions s ON {match_frag} WHERE {where_frag} \
                  ORDER BY started_at DESC LIMIT {limit}"
-            ))?;
+                ),
+            )?;
             Ok(InsightsDrill {
                 view: req.view.clone(),
                 key: req.key.clone(),
@@ -1351,12 +1410,15 @@ pub fn insights_drill(
                      JOIN sessions s ON {match_frag} WHERE {where_frag}"
                 ),
             )?;
-            let rows = drill_rows(conn, &format!(
-                "SELECT DISTINCT s.session_id, s.adapter, s.started_at, s.primary_outcome, \
+            let rows = drill_rows(
+                conn,
+                &format!(
+                    "SELECT DISTINCT s.session_id, s.adapter, s.started_at, s.primary_outcome, \
                         s.total_tokens, s.total_events, s.source_path \
                  FROM human_turns t JOIN sessions s ON {match_frag} WHERE {where_frag} \
                  ORDER BY started_at DESC LIMIT {limit}"
-            ))?;
+                ),
+            )?;
             Ok(InsightsDrill {
                 view: req.view.clone(),
                 key: req.key.clone(),
@@ -1447,7 +1509,10 @@ fn query_population(conn: &Connection, pred: &str) -> Result<InsightsPopulation>
             "SELECT COUNT(*) FROM sessions s WHERE {pred} AND tools_used LIKE '{{%' AND tools_used!='{{}}'"
         ),
     )?;
-    let usable = query_one_i64(conn, format!("SELECT COUNT(*) FROM sessions s WHERE {pred}"))?;
+    let usable = query_one_i64(
+        conn,
+        format!("SELECT COUNT(*) FROM sessions s WHERE {pred}"),
+    )?;
     Ok(InsightsPopulation {
         sessions_raw: us,
         sessions_conversation_multi_event: conv,
@@ -1787,14 +1852,20 @@ pub fn repo_label(source_path: &str) -> String {
         return "cursor (global)".to_string();
     }
     if let Some(idx) = source_path.find("/code/") {
-        let rest = source_path.get(idx..).unwrap_or("").trim_start_matches("/code/");
+        let rest = source_path
+            .get(idx..)
+            .unwrap_or("")
+            .trim_start_matches("/code/");
         if let Some(first) = rest.split('/').next() {
             return truncate(first, 44);
         }
     }
     if let Some(idx) = source_path.find("-code-") {
         // Dash-encoded claude-project paths: `...-code-org-repo/sess.json` -> `org-repo`.
-        let rest = source_path.get(idx..).unwrap_or("").trim_start_matches("-code-");
+        let rest = source_path
+            .get(idx..)
+            .unwrap_or("")
+            .trim_start_matches("-code-");
         if let Some(first) = rest.split('/').next() {
             return truncate(first, 44);
         }
@@ -2370,7 +2441,12 @@ mod tests {
 
     const TURN_SOURCE_FIXTURE: &str = "claude";
 
-    fn turn_row(source: &str, session_id: Option<&str>, source_path: &str, ts_ms: i64) -> HumanTurnRow {
+    fn turn_row(
+        source: &str,
+        session_id: Option<&str>,
+        source_path: &str,
+        ts_ms: i64,
+    ) -> HumanTurnRow {
         HumanTurnRow {
             source: source.to_string(),
             session_id: session_id.map(str::to_string),
@@ -2388,7 +2464,13 @@ mod tests {
         }
     }
 
-    fn seed_link_session(storage: &crate::Storage, id: &str, adapter: &str, path: &str, day: (u32, u32)) {
+    fn seed_link_session(
+        storage: &crate::Storage,
+        id: &str,
+        adapter: &str,
+        path: &str,
+        day: (u32, u32),
+    ) {
         let mut a = AgentWorthTrace::new(
             id,
             adapter,
@@ -2398,7 +2480,9 @@ mod tests {
         a.events.push(NormalizedEvent::new(
             1,
             at(2026, day.0, day.1),
-            EventPayload::UserMessage { content: "turn".into() },
+            EventPayload::UserMessage {
+                content: "turn".into(),
+            },
         ));
         a.events.push(NormalizedEvent::new(
             2,
@@ -2414,7 +2498,8 @@ mod tests {
     }
 
     fn transcript_path(uuid: &str) -> String {
-        agentworth_schema::fixtures::claude_transcript(agentworth_schema::fixtures::REPO, uuid).clone()
+        agentworth_schema::fixtures::claude_transcript(agentworth_schema::fixtures::REPO, uuid)
+            .clone()
     }
 
     #[test]
@@ -2423,7 +2508,11 @@ mod tests {
         let g = |a: Option<String>, m: Option<String>, r: Option<String>| {
             storage.get_insights_filtered(
                 None,
-                Some(&InsightsDimensionFilter { adapter: a, model: m, repo: r }),
+                Some(&InsightsDimensionFilter {
+                    adapter: a,
+                    model: m,
+                    repo: r,
+                }),
             )
         };
         // adapter=codex: only sess-b survives anywhere sessions are counted.
@@ -2444,8 +2533,14 @@ mod tests {
         let w = parse_window(Some("2026-07-01T00:00:00Z".into()), None)
             .unwrap()
             .unwrap();
-        let none = InsightsDimensionFilter { adapter: None, model: None, repo: None };
-        let s2 = storage.get_insights_filtered(Some(&w), Some(&none)).unwrap();
+        let none = InsightsDimensionFilter {
+            adapter: None,
+            model: None,
+            repo: None,
+        };
+        let s2 = storage
+            .get_insights_filtered(Some(&w), Some(&none))
+            .unwrap();
         let s3 = storage
             .get_insights_filtered(
                 Some(&w),
@@ -2512,7 +2607,10 @@ mod tests {
         assert!(z.day_hour.is_empty());
         assert!(z.friction.is_empty());
         let notice = z.filter.notice.expect("zero slice states a reason");
-        assert!(notice.contains("0"), "notice names the empty slice: {notice}");
+        assert!(
+            notice.contains("0"),
+            "notice names the empty slice: {notice}"
+        );
     }
 
     #[test]
@@ -2520,7 +2618,10 @@ mod tests {
         let (_dir, storage) = synthetic_fixture();
         let f = storage.get_insights().unwrap().facets;
         let names: Vec<&str> = f.adapters.iter().map(|x| x.value.as_str()).collect();
-        assert!(names.contains(&"claude_code") && names.contains(&"codex"), "{f:?}");
+        assert!(
+            names.contains(&"claude_code") && names.contains(&"codex"),
+            "{f:?}"
+        );
         assert_eq!(f.models.len(), 1, "models facet from session_model_usage");
         let repos: Vec<&str> = f.repos.iter().map(|x| x.value.as_str()).collect();
         assert!(repos.contains(&"org"), "{repos:?}");
@@ -2559,18 +2660,98 @@ mod tests {
             .unwrap();
         let tl = storage.get_insights().unwrap().turn_link;
         assert_eq!(tl.total, 4, "stored turns are the population");
-        assert_eq!(tl.unmatched, 1, "the unknown-path turn stays visibly unmatched");
+        assert_eq!(
+            tl.unmatched, 1,
+            "the unknown-path turn stays visibly unmatched"
+        );
         assert_eq!(tl.linked, 3);
         assert_eq!(tl.linked_by_id, 1);
-        assert_eq!(tl.linked_by_path, 2, "sess-z loses the exact id; its path still links");
+        assert_eq!(
+            tl.linked_by_path, 2,
+            "sess-z loses the exact id; its path still links"
+        );
+    }
+
+    #[test]
+    fn filtered_slice_stays_linear_at_volume() {
+        // Regression guard for the 2026-09-24 outage: the filtered turn-link was a correlated
+        // `EXISTS (… OR insights_repo_label(t)=insights_repo_label(s) …)` — one scalar call
+        // per (turn, session) pair. At ~1.5k sessions × 12k turns that is ~18M evaluations and
+        // took tens of seconds; the temp-set membership it was replaced with is a linear scan.
+        // The ceiling is deliberately loose (fixed ≈ tens of ms) so it fails only on a return
+        // to super-linear behaviour, not on CI jitter.
+        use std::time::Instant;
+
+        let dir = TempDir::new().unwrap();
+        let storage = crate::Storage::open_path(&dir.path().join("scale.db")).unwrap();
+
+        const SESSIONS: usize = 1_500;
+        const TURNS: usize = 12_000;
+        for i in 0..SESSIONS {
+            seed_link_session(
+                &storage,
+                &format!("scale-sess-{i}"),
+                "claude_code",
+                &format!("/home/dev/code/org/repo-{}/log-{i}.jsonl", i % 40),
+                (6, 1),
+            );
+        }
+        let rows: Vec<HumanTurnRow> = (0..TURNS)
+            .map(|i| {
+                let mut r = turn_row(
+                    "claude",
+                    // Half link by exact id, half rely on the fuzzy repo tier.
+                    if i % 2 == 0 {
+                        Some("scale-sess-0")
+                    } else {
+                        None
+                    },
+                    &format!("/home/dev/code/org/repo-{}/log-0.jsonl", i % 40),
+                    i as i64,
+                );
+                r.dedup_sig = format!("scale-sig-{i}");
+                r
+            })
+            .collect();
+        storage.insert_human_turn_batch(&rows).unwrap();
+
+        let filter = InsightsDimensionFilter {
+            adapter: Some("claude_code".to_string()),
+            model: None,
+            repo: None,
+        };
+        let started = Instant::now();
+        let payload = storage.get_insights_filtered(None, Some(&filter)).unwrap();
+        let elapsed = started.elapsed();
+        assert!(
+            payload.population.usable_sessions >= SESSIONS as i64,
+            "the slice must actually be large enough to exercise the join"
+        );
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "filtered insights took {elapsed:?} at {SESSIONS} sessions × {TURNS} turns; \
+             the link repair has gone super-linear again"
+        );
     }
 
     #[test]
     fn adapter_filter_reaches_day_hour_and_friction_through_the_link() {
         let dir = TempDir::new().unwrap();
         let storage = crate::Storage::open_path(&dir.path().join("link.db")).unwrap();
-        seed_link_session(&storage, "sess-a", "claude_code", &transcript_path("11111111-1111-4111-8111-111111111111"), (6, 1));
-        seed_link_session(&storage, "sess-b", "codex", &agentworth_schema::fixtures::codex_rollout("2026-09-15", "b"), (9, 15));
+        seed_link_session(
+            &storage,
+            "sess-a",
+            "claude_code",
+            &transcript_path("11111111-1111-4111-8111-111111111111"),
+            (6, 1),
+        );
+        seed_link_session(
+            &storage,
+            "sess-b",
+            "codex",
+            &agentworth_schema::fixtures::codex_rollout("2026-09-15", "b"),
+            (9, 15),
+        );
         let mut rows = vec![
             turn_row("claude", Some("sess-a"), "", 1),
             turn_row("codex", Some("sess-b"), "", 2),
@@ -2580,7 +2761,11 @@ mod tests {
         storage.insert_human_turn_batch(&rows).unwrap();
 
         let unfiltered = storage.get_insights().unwrap();
-        assert_eq!(unfiltered.day_hour.len(), 1, "both turns fall in one heatmap cell");
+        assert_eq!(
+            unfiltered.day_hour.len(),
+            1,
+            "both turns fall in one heatmap cell"
+        );
         assert!(unfiltered.friction.iter().any(|r| r.turns == 2));
 
         let claude = storage
@@ -2594,7 +2779,10 @@ mod tests {
             )
             .unwrap();
         let total: i64 = claude.day_hour.iter().map(|c| c.turns).sum();
-        assert_eq!(total, 1, "the heatmap counts only the filter's linked turns");
+        assert_eq!(
+            total, 1,
+            "the heatmap counts only the filter's linked turns"
+        );
         let fric: i64 = claude.friction.iter().map(|r| r.turns).sum();
         assert_eq!(fric, 1);
     }
@@ -2629,10 +2817,22 @@ mod tests {
 
         // Unknown views and bad keys are typed refusals, not empty hand-ins.
         assert!(storage
-            .insights_drill(&InsightsDrillRequest { view: "pie".into(), key: "x".into(), filter: None, window: None, limit: None })
+            .insights_drill(&InsightsDrillRequest {
+                view: "pie".into(),
+                key: "x".into(),
+                filter: None,
+                window: None,
+                limit: None
+            })
             .is_err());
         assert!(storage
-            .insights_drill(&InsightsDrillRequest { view: "day_hour".into(), key: "31-99".into(), filter: None, window: None, limit: None })
+            .insights_drill(&InsightsDrillRequest {
+                view: "day_hour".into(),
+                key: "31-99".into(),
+                filter: None,
+                window: None,
+                limit: None
+            })
             .is_err());
     }
 
@@ -2724,13 +2924,11 @@ mod tests {
         // bad input
         assert!(parse_window(Some("not-a-time".into()), None).is_err());
         // since must precede until
-        assert!(
-            parse_window(
-                Some("2026-09-01T00:00:00Z".into()),
-                Some("2026-07-01T00:00:00Z".into())
-            )
-            .is_err()
-        );
+        assert!(parse_window(
+            Some("2026-09-01T00:00:00Z".into()),
+            Some("2026-07-01T00:00:00Z".into())
+        )
+        .is_err());
         // Z-normalizes to +00:00 millis
         let w = parse_window(Some("2026-07-01T00:00:00Z".into()), None)
             .unwrap()
