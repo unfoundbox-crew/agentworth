@@ -223,9 +223,9 @@ fn codex_a_restarted_cumulative_counter_contributes_its_new_total_in_full() {
 #[test]
 fn codex_parser_version_moved_past_the_version_that_read_nothing() {
     // v2 was the depthless parser (metadata and tokens only); v3 added the
-    // `response_item` depth extraction. A floor stored as a constant-to-constant
-    // comparison reads false; 3 is the current version.
-    assert_eq!(CodexAdapter::PARSER_VERSION, 3);
+    // `response_item` depth extraction; v4 added the `custom_tool_call` pair and the
+    // compaction rounds. 4 is the current version.
+    assert_eq!(CodexAdapter::PARSER_VERSION, 4);
     assert_eq!(
         CodexAdapter::new().parser_version(),
         CodexAdapter::PARSER_VERSION
