@@ -167,6 +167,18 @@ impl HomeRuntime {
             .or_else(|| fallback_pane_id.map(String::from))
     }
 
+    /// The inverse of `pane_for_session`'s primary join: which indexed session runs in
+    /// `pane_id`, by scanning the (tiny, one row per tracked session) `agent_session` map.
+    /// The timeline request needs this direction -- a `timeline` frame names the office
+    /// space, the office names the persona, the persona names the pane, and the scrubber
+    /// wants the session whose transcript is the timeline.
+    fn session_for_pane(&self, pane_id: &str) -> Option<String> {
+        self.session_id_to_pane
+            .iter()
+            .find(|(_, p)| p.as_str() == pane_id)
+            .map(|(s, _)| s.clone())
+    }
+
     fn snapshot_hello(&self) -> (Vec<Persona>, Vec<Space>) {
         let mut personas: Vec<Persona> = self.personas.values().cloned().collect();
         personas.sort_by(|a, b| a.id.cmp(&b.id));
@@ -407,6 +419,10 @@ pub struct HomeHandle {
     runtime: Arc<Mutex<HomeRuntime>>,
     tx: broadcast::Sender<ServerFrame>,
     storage: Arc<Storage>,
+    /// Loads a session's transcript into a trace on demand -- the timeline request's path
+    /// (`dispatch_timeline`). The same scanner `transcript_feed_loop` was spawned with, so
+    /// both paths read the same index for the same bytes.
+    scanner: Arc<Scanner>,
     /// Detected once at startup (decision 4: "auto-fill the working directory ... never ask
     /// what the environment already knows"). Never changes for the life of the process.
     env: HomeEnv,
@@ -446,6 +462,7 @@ pub fn spawn(storage: Arc<Storage>, scanner: Arc<Scanner>, live_tail_tx: broadca
         runtime: runtime.clone(),
         tx: tx.clone(),
         storage: storage.clone(),
+        scanner: scanner.clone(),
         env,
         new_panes_tx: new_panes_tx.clone(),
     };
@@ -961,6 +978,7 @@ async fn handle_client_frame(home: &HomeHandle, socket: &mut WebSocket, frame: C
             .await;
         }
         ClientFrame::Seen { .. } | ClientFrame::Fetch { .. } => {}
+        ClientFrame::Timeline { space_id } => dispatch_timeline(home, socket, space_id).await,
         ClientFrame::Prompt { space_id, text, mentions } => {
             dispatch_prompt(home, socket, space_id, text, mentions).await
         }
@@ -973,6 +991,66 @@ async fn handle_client_frame(home: &HomeHandle, socket: &mut WebSocket, frame: C
         }
         ClientFrame::StartRider { direction_id, harness, args, .. } => {
             dispatch_start_rider(home, socket, direction_id, harness, args).await
+        }
+    }
+}
+
+/// Answers a `timeline` request: the full distilled timeline of the session behind one
+/// office space, sent to the requesting socket only. A room gets an error (rooms have no
+/// session); an office whose pane or session cannot be resolved yet gets an *empty*
+/// timeline rather than an error -- a brand-new rider with a transcript not yet indexed
+/// simply has nothing to scrub, and the deck degrades to its stops-only strip on that.
+async fn dispatch_timeline(home: &HomeHandle, socket: &mut WebSocket, space_id: String) {
+    let session_id = {
+        let rt = home.runtime.lock().await;
+        let persona_id = match space_id.strip_prefix("office-") {
+            Some(id) => id.to_string(),
+            None => {
+                let _ = send_frame(
+                    socket,
+                    &ServerFrame::Error {
+                        code: "timeline_error".into(),
+                        detail: format!(
+                            "{space_id} is not an office; only a rider's office has a session timeline"
+                        ),
+                    },
+                )
+                .await;
+                return;
+            }
+        };
+        rt.personas
+            .get(&persona_id)
+            .and_then(|p| rt.session_for_pane(&p.pane_id))
+    };
+
+    let Some(session_id) = session_id else {
+        let _ = send_frame(
+            socket,
+            &ServerFrame::Timeline { space_id, moments: Vec::new(), truncated: false },
+        )
+        .await;
+        return;
+    };
+
+    match home.scanner.load_trace(&session_id) {
+        Ok(trace) => {
+            let (moments, truncated) = transcript_feed::timeline_with_cap(&trace);
+            let _ = send_frame(
+                socket,
+                &ServerFrame::Timeline { space_id, moments, truncated },
+            )
+            .await;
+        }
+        Err(e) => {
+            let _ = send_frame(
+                socket,
+                &ServerFrame::Error {
+                    code: "timeline_error".into(),
+                    detail: format!("{session_id}: {e:#}"),
+                },
+            )
+            .await;
         }
     }
 }
@@ -1518,6 +1596,10 @@ async fn dispatch_start_rider(
 mod tests {
     use super::*;
 
+    fn sample_runtime() -> HomeRuntime {
+        HomeRuntime::new(HashMap::new())
+    }
+
     fn sample_agent(pane_id: &str, agent: &str, name: Option<&str>, status: Presence) -> HerdrAgent {
         HerdrAgent {
             agent: agent.to_string(),
@@ -1838,6 +1920,76 @@ mod tests {
         let frame = ServerFrame::Backfill { space_id: "lounge".into(), messages: Vec::new(), artifacts: Vec::new() };
         let expected = serde_json::json!({"t": "backfill", "spaceId": "lounge", "messages": [], "artifacts": []});
         assert_eq!(serde_json::to_value(&frame).unwrap(), expected);
+    }
+
+    /// The timeline frame and its client counterpart, literal-JSON pinned -- the deck's
+    /// scrubber scrubs exactly these strings.
+    #[test]
+    fn timeline_frames_match_protocol_ts_shape() {
+        let frame = ServerFrame::Timeline {
+            space_id: "office-partner-harvey".into(),
+            moments: vec![
+                TimelineMoment {
+                    seq: 3,
+                    kind: MomentKind::Speech,
+                    text: "checking the file".into(),
+                    at: "2026-09-07T00:00:05+00:00".into(),
+                },
+                TimelineMoment {
+                    seq: 5,
+                    kind: MomentKind::Handoff,
+                    text: "claude-opus-5 → claude-fable-5".into(),
+                    at: "2026-09-07T00:00:10+00:00".into(),
+                },
+                TimelineMoment {
+                    seq: 7,
+                    kind: MomentKind::Error,
+                    text: "cargo test exited 101".into(),
+                    at: "2026-09-07T00:00:15+00:00".into(),
+                },
+                TimelineMoment {
+                    seq: 9,
+                    kind: MomentKind::Work,
+                    text: "edited 2 files, ran 1 command".into(),
+                    at: "2026-09-07T00:00:30+00:00".into(),
+                },
+            ],
+            truncated: false,
+        };
+        // Field-by-field comparison keeps a drift readable instead of one blob diff.
+        let expected = serde_json::json!({
+            "t": "timeline",
+            "spaceId": "office-partner-harvey",
+            "moments": [
+                { "seq": 3, "kind": "speech", "text": "checking the file", "at": "2026-09-07T00:00:05+00:00" },
+                { "seq": 5, "kind": "handoff", "text": "claude-opus-5 → claude-fable-5", "at": "2026-09-07T00:00:10+00:00" },
+                { "seq": 7, "kind": "error", "text": "cargo test exited 101", "at": "2026-09-07T00:00:15+00:00" },
+                { "seq": 9, "kind": "work", "text": "edited 2 files, ran 1 command", "at": "2026-09-07T00:00:30+00:00" }
+            ],
+            "truncated": false
+        });
+        let value = serde_json::to_value(&frame).unwrap();
+        assert_eq!(value["t"], expected["t"]);
+        assert_eq!(value["spaceId"], expected["spaceId"]);
+        assert_eq!(value["truncated"], expected["truncated"]);
+        for (i, want) in expected["moments"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(value["moments"][i], *want, "moment {i} shape drifted from protocol.ts");
+        }
+
+        let request: ClientFrame =
+            serde_json::from_str(r#"{"t":"timeline","spaceId":"office-partner-harvey"}"#).unwrap();
+        match request {
+            ClientFrame::Timeline { space_id } => assert_eq!(space_id, "office-partner-harvey"),
+            _ => panic!("expected Timeline request"),
+        }
+    }
+
+    #[test]
+    fn session_for_pane_round_trips_the_inverse_join() {
+        let mut rt = sample_runtime();
+        rt.session_id_to_pane.insert("sess-1".into(), "w1:pA".into());
+        assert_eq!(rt.session_for_pane("w1:pA").as_deref(), Some("sess-1"));
+        assert!(rt.session_for_pane("w9:missing").is_none());
     }
 
     #[test]
