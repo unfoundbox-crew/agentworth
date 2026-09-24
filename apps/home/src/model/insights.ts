@@ -88,6 +88,21 @@ export interface Insights {
   until: string;
   current: InsightsWindow;
   previous: InsightsWindow | null;
+  /** The echoed server-side slice; `notice` set only on an honest empty slice. */
+  echo?: {
+    adapter: string | null;
+    model: string | null;
+    repo: string | null;
+    notice: string | null;
+  };
+  /** The index's valid filter values (from the payload's facets block), so the filter
+   * bar and the validation error both read one source. Optional: payloads from before
+   * the slice lane omit it. */
+  facets?: {
+    adapters: { value: string; sessions: number }[];
+    models: { value: string; sessions: number }[];
+    repos: { value: string; sessions: number }[];
+  };
 }
 
 /** The server answers with a window it cannot resolve yet, or an empty window. */
@@ -123,13 +138,17 @@ export function serializeFilter(f: InsightsFilter): string {
   const params = new URLSearchParams();
   // The backend (GET /api/insights, `parse_window`) rejects `until` without
   // `since`, so the pair is only sent for a windowed preset; "all" sends
-  // nothing. adapter/model/repo are not backend query params (#191 serves the
-  // same payload shape as MCP) — those narrow per-row widgets in
-  // insightsBackend.applyDimensionFilter, never as a fabricated server filter.
+  // nothing. adapter/model/repo ARE backend params now (post-#191 extension
+  // the slice-and-drill lane landed): single-select equality slices the
+  // server validates against its own facets block, so aggregates narrow for
+  // real and no client-side re-narrowing stands between them.
   if (since) {
     params.set('since', since);
     params.set('until', new Date().toISOString());
   }
+  if (f.adapter) params.set('adapter', f.adapter);
+  if (f.model) params.set('model', f.model);
+  if (f.repo) params.set('repo', f.repo);
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
@@ -276,4 +295,62 @@ export function sortModels(models: Insights['current']['models'], sort: ModelSor
   const value = (m: Insights['current']['models'][number]) =>
     sort.key === 'tb' ? m.tb : sort.key === 'sessions' ? m.sessions : m.cr_perc;
   return [...models].sort((a, b) => (value(a) - value(b)) * sort.dir);
+}
+
+/* ---------- drill-through: the sessions behind one insights cut ---------- */
+
+/** One drill cut: which widget and which cell, over the same filter vocabulary. */
+export interface DrillRequest {
+  view: 'ladder' | 'day_hour' | 'friction';
+  key: string;
+}
+
+/** One drill row: the shared session-feed columns, stats-shaped only. */
+export interface DrillRow {
+  session_id: string;
+  adapter: string;
+  repo_label: string;
+  started_at: string;
+  primary_outcome: string | null;
+  total_tokens: number;
+  total_events: number;
+}
+
+export interface DrillResult {
+  view: string;
+  key: string;
+  count: number;
+  rows: DrillRow[];
+}
+
+/** The drill query serializes the SAME filters /insights takes, plus view/key/limit. */
+export function serializeDrill(filter: InsightsFilter, drill: DrillRequest): string {
+  const head = serializeFilter(filter).replace(/^\??/, '');
+  const params = new URLSearchParams(head);
+  const extra = new URLSearchParams({ view: drill.view, key: drill.key });
+  extra.forEach((v, k) => params.set(k, v));
+  return `?${params.toString()}`;
+}
+
+/** One GET to /api/insights/drill. Errors throw with the endpoint's own message. */
+export async function fetchDrill(
+  filter: InsightsFilter,
+  drill: DrillRequest,
+): Promise<DrillResult> {
+  const response = await fetch(`/api/insights/drill${serializeDrill(filter, drill)}`, {
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(
+      body && typeof body.error === 'string'
+        ? body.error
+        : `drill returned HTTP ${response.status}`,
+    );
+  }
+  const parsed = (await response.json()) as DrillResult;
+  if (typeof parsed.count !== 'number' || !Array.isArray(parsed.rows)) {
+    throw new Error('drill shape did not match the contract');
+  }
+  return parsed;
 }

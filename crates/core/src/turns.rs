@@ -126,7 +126,7 @@ fn ingest_source(
             Some(mut turn) => {
                 turn.turn_index = index;
                 index += 1;
-                batch.push(to_row(&turn));
+                batch.push(to_row(&turn, path_key));
                 if batch.len() >= 256 {
                     flush_turns(storage, &mut batch, summary, &mut inserted_in_file);
                 }
@@ -174,10 +174,12 @@ fn flush_turns(
 
 fn to_row(
     turn: &agentworth_adapters::human_turns::HumanTurn,
+    source_path: &str,
 ) -> agentworth_storage::human_turns::HumanTurnRow {
     agentworth_storage::human_turns::HumanTurnRow {
         source: turn.source.to_string(),
         session_id: turn.session_id.clone(),
+        source_path: source_path.to_string(),
         turn_index: turn.turn_index,
         timestamp_ms: turn.timestamp_ms,
         epoch_secs: turn.epoch_secs,

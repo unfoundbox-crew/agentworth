@@ -12,13 +12,25 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::ui::Ui;
 
+/// One struct, not eight positional flags: the dispatch site (`app.rs`) and the command
+/// speak the same typed arguments.
+pub struct InsightsCommandArgs {
+    pub json: bool,
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub adapter: Option<String>,
+    pub model: Option<String>,
+    pub repo: Option<String>,
+    pub db_path: Option<PathBuf>,
+}
+
 pub fn run_insights_command(
-    json: bool,
-    since: Option<String>,
-    until: Option<String>,
-    db_path: Option<PathBuf>,
+    args: InsightsCommandArgs,
     ui: &Ui,
 ) -> Result<()> {
+    let InsightsCommandArgs {
+        json, since, until, adapter, model, repo, db_path,
+    } = args;
     let db = match db_path {
         Some(p) => p,
         None => agentworth_storage::default_db_dir().map(|dir| dir.join("agentworth.db"))?,
@@ -40,9 +52,20 @@ pub fn run_insights_command(
         // Zero busy timeout: this read reports the index, it does not wait for its writer.
         conn.busy_timeout(std::time::Duration::from_millis(0)).ok();
         let window = agentworth_storage::insights::parse_window(since, until)?;
+        let filter = if adapter.is_some() || model.is_some() || repo.is_some() {
+            Some(agentworth_storage::insights::InsightsDimensionFilter {
+                adapter,
+                model,
+                repo,
+            })
+        } else {
+            None
+        };
         match window {
-            Some(w) => agentworth_storage::compute_insights(&conn, Some(&w)),
-            None => agentworth_storage::compute_insights(&conn, None),
+            Some(w) => {
+                agentworth_storage::compute_insights(&conn, Some(&w), filter.as_ref())
+            }
+            None => agentworth_storage::compute_insights(&conn, None, filter.as_ref()),
         }
     })?;
 

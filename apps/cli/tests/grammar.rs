@@ -81,6 +81,9 @@ fn every_new_verb_answers_against_a_fixture_index() {
         (&["session", "list", "--unproven", "--json"], "total_blind_spots"),
         (&["agent", "list", "--json"], "total_adapters"),
         (&["stats", "usage", "--period", "day", "--json"], "period"),
+        // The turn lane's own verb: on a machine with no turn sources installed it still
+        // answers -- the summary is the all-time truth, never an error.
+        (&["turns", "--json"], "ingestion_version"),
     ];
 
     for (args, needle) in cases {

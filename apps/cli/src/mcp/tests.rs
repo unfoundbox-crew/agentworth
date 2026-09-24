@@ -1744,7 +1744,7 @@ fn insights_summary_params(since: Option<&str>, until: Option<&str>) -> Insights
 /// `/api/insights` golden test pins the rest).
 /// The exact key set the full payload must carry: the serialized `Insights` struct, so one
 /// contract serves the deck, the CLI, /api/insights, and MCP with no hand-rolled variant.
-const EXPECTED_KEYS: [&str; 28] = [
+const EXPECTED_KEYS: [&str; 30] = [
     "schema_version",
     "generated_at",
     "window",
@@ -1768,6 +1768,8 @@ const EXPECTED_KEYS: [&str; 28] = [
     "series",
     "tool_buckets",
     "tool_buckets_detail",
+    "facets",
+    "turn_link",
     "day_hour",
     "friction",
     "vocabulary",
@@ -2021,4 +2023,97 @@ async fn insights_get_rejects_a_bad_rfc3339_window_typed() {
 fn use_utc(y: i32, m: u32, d: u32) -> chrono::DateTime<Utc> {
     use chrono::TimeZone;
     Utc.with_ymd_and_hms(y, m, d, 10, 0, 0).unwrap()
+}
+
+// ---- slice-and-drill lane tests: the failing tests first, per the TDD brief ---------
+
+fn insights_filter_params(adapter: Option<&str>, model: Option<&str>, repo: Option<&str>) -> InsightsGetParams {
+    serde_json::from_value(serde_json::json!({ "adapter": adapter, "model": model, "repo": repo })).unwrap()
+}
+
+#[tokio::test]
+async fn insights_get_with_a_filter_narrows_the_payload_and_deltas() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    seed_insights_sessions(&storage, &use_utc);
+    let server = AgentWorthMcpServer::new(storage);
+
+    let result = server
+        .insights_get(Parameters(insights_filter_params(Some("codex"), None, None)))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+
+    assert_eq!(value["population"]["usable_sessions"], 1, "only the codex session survives the slice");
+    assert_eq!(value["verified"]["sessions"], 0);
+    assert_eq!(value["by_adapter"].as_array().unwrap().len(), 1);
+    // The echo says what was asked; the key set is the same 30-key contract.
+    assert_eq!(value["filter"]["adapter"], "codex");
+    assert_key_set(&value, &EXPECTED_KEYS);
+    // Facets list what the filter bar may hold, computed from the index.
+    let adapters: Vec<&str> = value["facets"]["adapters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["value"].as_str().unwrap())
+        .collect();
+    let _ = adapters;
+}
+
+#[tokio::test]
+async fn insights_get_rejects_an_unknown_filter_value_typed() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    seed_insights_sessions(&storage, &use_utc);
+    let server = AgentWorthMcpServer::new(storage);
+
+    let err = match server
+        .insights_get(Parameters(insights_filter_params(
+            Some("definitely-not-an-adapter"),
+            None,
+            None,
+        )))
+        .await
+    {
+        Ok(r) => panic!("unknown filter must be an error, got {:?}", r),
+        Err(e) => e,
+    };
+    assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("facets"), "names where valid values live: {}", err.message);
+}
+
+#[tokio::test]
+async fn insights_get_without_filters_keeps_the_contract_shape() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    seed_insights_sessions(&storage, &use_utc);
+    let _turn_dir = seed_human_turns(&storage);
+    let server = AgentWorthMcpServer::new(storage);
+    let result = server
+        .insights_get(Parameters(InsightsGetParams::default()))
+        .await
+        .unwrap();
+    let value = call_result_json(result);
+    assert_key_set(&value, &EXPECTED_KEYS);
+    // No filter given: the echo carries no slice and no notice.
+    assert_eq!(value["filter"]["adapter"], serde_json::Value::Null);
+    assert!(value["filter"].get("notice").map(|v| v.is_null()).unwrap_or(true));
+}
+
+#[tokio::test]
+async fn insights_get_on_a_zero_slice_states_the_notice() {
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    seed_insights_sessions(&storage, &use_utc);
+    let server = AgentWorthMcpServer::new(storage);
+
+    // adapter=codex is a valid facet value; this window holds no codex session.
+    let params: InsightsGetParams = serde_json::from_value(serde_json::json!({
+        "since": "2026-07-01T00:00:00Z",
+        "until": "2026-08-01T00:00:00Z",
+        "adapter": "codex",
+    }))
+    .unwrap();
+    let result = server.insights_get(Parameters(params)).await.unwrap();
+    let value = call_result_json(result);
+    assert_eq!(value["population"]["usable_sessions"], 0, "an empty slice, honestly");
+    assert_eq!(value["verified"]["sessions"], 0);
+    let notice = value["filter"]["notice"].as_str().expect("zero slice states a reason");
+    assert!(notice.contains("0"), "the notice names the empty slice: {notice}");
 }

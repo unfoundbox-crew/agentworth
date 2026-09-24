@@ -14,7 +14,10 @@ pub const NONE: &str = "none";
 /// Ship the whole classification pipeline together; a change to these rules rewrites every
 /// turn's derived features, so file fingerprints alone cannot decide staleness. The
 /// orchestrator wipes and re-ingests everything on a bump.
-pub const INGESTION_VERSION: i64 = 1;
+///
+/// Version 2: turn rows carry their source file's `source_path` — the turn↔session link
+/// repair keys — which legacy stored rows lack entirely.
+pub const INGESTION_VERSION: i64 = 2;
 
 /// The dashboard's friction vocabulary, first match wins — definitions and order quoted
 /// character-for-character from the builder's `FRICTION_RULES`.

@@ -581,7 +581,13 @@ impl AgentWorthMcpServer {
         Parameters(params): Parameters<InsightsGetParams>,
     ) -> Result<CallToolResult, McpError> {
         let insights = self
-            .compute_insights(params.since.clone(), params.until.clone())
+            .compute_insights(
+                params.since.clone(),
+                params.until.clone(),
+                params.adapter.clone(),
+                params.model.clone(),
+                params.repo.clone(),
+            )
             .await?;
         Self::json_result(&insights)
     }
@@ -601,30 +607,48 @@ impl AgentWorthMcpServer {
         Parameters(params): Parameters<InsightsSummaryParams>,
     ) -> Result<CallToolResult, McpError> {
         let insights = self
-            .compute_insights(params.since.clone(), params.until.clone())
+            .compute_insights(
+                params.since.clone(),
+                params.until.clone(),
+                params.adapter.clone(),
+                params.model.clone(),
+                params.repo.clone(),
+            )
             .await?;
         let summary = insights_summary_json(&insights);
         Self::json_result(&summary)
     }
 
     /// The shared compute half of the two insights tools: client-window parsing (typed
-    /// errors, the same rule `agentworth insights` and /api/insights enforce) and one
-    /// read-only hop through `Storage::get_insights`/`get_insights_windowed`.
+    /// errors, the same rule `agentworth insights` and /api/insights enforce) plus the
+    /// optional single-select dimension filter, and one read-only hop through
+    /// `Storage::get_insights`/`get_insights_filtered`.
     async fn compute_insights(
         &self,
         since: Option<String>,
         until: Option<String>,
+        adapter: Option<String>,
+        model: Option<String>,
+        repo: Option<String>,
     ) -> Result<agentworth_storage::insights::Insights, McpError> {
         let window = agentworth_storage::insights::parse_window(since, until)
             .map_err(|e| McpError::invalid_params(format!("{e:#}"), None))?;
+        let filter = match (adapter, model, repo) {
+            (None, None, None) => None,
+            (adapter, model, repo) => Some(agentworth_storage::insights::InsightsDimensionFilter {
+                adapter,
+                model,
+                repo,
+            }),
+        };
         let storage = self.storage.clone();
         tokio::task::spawn_blocking(move || match &window {
-            Some(w) => storage.get_insights_windowed(w),
-            None => storage.get_insights(),
+            Some(w) => storage.get_insights_filtered(Some(w), filter.as_ref()),
+            None => storage.get_insights_filtered(None, filter.as_ref()),
         })
         .await
         .map_err(Self::join_error)?
-        .map_err(|e| McpError::internal_error(format!("insights_get query failed: {e:#}"), None))
+        .map_err(|e| McpError::invalid_params(format!("{e:#}"), None))
     }
 
     #[tool(
