@@ -564,7 +564,7 @@ mod tests {
     fn timeline_marks_error_records_as_fork_points() {
         let trace = parse_fixture(&[
             r#"{"type":"assistant","timestamp":"2026-09-07T10:00:00Z","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cargo test"}}]}"#,
-            r#"{"type":"system","timestamp":"2026-09-07T10:00:05Z","error":"cargo test exited 101"}"#,
+            r#"{"type":"error","timestamp":"2026-09-07T10:00:05Z","error":"cargo test exited 101"}"#,
             r#"{"type":"assistant","timestamp":"2026-09-07T10:00:10Z","content":[{"type":"text","text":"retrying with a fix"}]}"#,
         ]);
 
