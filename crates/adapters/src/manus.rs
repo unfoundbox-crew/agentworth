@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
-    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -89,11 +89,7 @@ impl AgentAdapter for ManusAdapter {
                         }
                     }
                     if discovered.is_empty() {
-                        for entry in WalkDir::new(custom)
-                            .max_depth(3)
-                            .into_iter()
-                            .filter_map(|e| e.ok())
-                        {
+                        for entry in WalkDir::new(custom).max_depth(3).into_iter().filter_map(|e| e.ok()) {
                             let path = entry.path();
                             let s = path.to_string_lossy().to_lowercase();
                             if s.contains(".manus") || s.contains("manus") {
@@ -127,11 +123,7 @@ impl AgentAdapter for ManusAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_manus_file(custom) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            custom,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -139,11 +131,7 @@ impl AgentAdapter for ManusAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_manus_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -154,11 +142,7 @@ impl AgentAdapter for ManusAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_manus_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            &root,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -166,11 +150,7 @@ impl AgentAdapter for ManusAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_manus_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -245,13 +225,7 @@ impl AgentAdapter for ManusAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_manus_record(
-                            item,
-                            &mut sequence,
-                            timestamp,
-                            idx + 1,
-                            &mut last_model,
-                        );
+                        let evts = parse_manus_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -297,8 +271,7 @@ impl AgentAdapter for ManusAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events =
-                    parse_manus_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_manus_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -469,10 +442,7 @@ fn parse_manus_record(
                     EventPayload::ModelInvocation {
                         model,
                         token_usage: usage,
-                        cost_usd: val
-                            .get("cost")
-                            .or_else(|| val.get("cost_usd"))
-                            .and_then(|c| c.as_f64()),
+                        cost_usd: val.get("cost").or_else(|| val.get("cost_usd")).and_then(|c| c.as_f64()),
                         latency_ms: val
                             .get("latency_ms")
                             .or_else(|| val.get("duration_ms"))
@@ -572,11 +542,7 @@ fn parse_manus_record(
                 }
             } else if let Some(action) = val.get("action") {
                 if let Some(action_name) = action.as_str() {
-                    let args = val
-                        .get("arguments")
-                        .or_else(|| val.get("params"))
-                        .cloned()
-                        .unwrap_or(Value::Null);
+                    let args = val.get("arguments").or_else(|| val.get("params")).cloned().unwrap_or(Value::Null);
                     let name = normalize_mcp_tool_name(action_name, &args);
 
                     *seq += 1;
@@ -669,11 +635,7 @@ fn parse_manus_record(
                     ts,
                     EventPayload::ToolResult(ToolResult {
                         call_id,
-                        name: val
-                            .get("name")
-                            .or_else(|| val.get("action"))
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
+                        name: val.get("name").or_else(|| val.get("action")).and_then(|v| v.as_str()).map(String::from),
                         output: output.clone(),
                         is_error,
                     }),
@@ -694,8 +656,7 @@ fn parse_manus_record(
                             ts,
                             EventPayload::OutcomeEvidence(OutcomeEvidence {
                                 kind: OutcomeKind::TestOrBuildPassed,
-                                summary: "Build, test, or autonomous task verified in Manus"
-                                    .to_string(),
+                                summary: "Build, test, or autonomous task verified in Manus".to_string(),
                                 confidence: 0.9,
                                 test_provenance: None,
                             }),
@@ -734,11 +695,7 @@ fn parse_manus_record(
                     *seq,
                     ts,
                     EventPayload::Custom {
-                        kind: if role.is_empty() {
-                            "unknown".to_string()
-                        } else {
-                            role.to_string()
-                        },
+                        kind: if role.is_empty() { "unknown".to_string() } else { role.to_string() },
                         data: val.clone(),
                     },
                 )
@@ -752,9 +709,7 @@ fn parse_manus_record(
 
 fn parse_or_extract_json(val: Option<&Value>) -> Value {
     match val {
-        Some(Value::String(s)) => {
-            serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone()))
-        }
+        Some(Value::String(s)) => serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone())),
         Some(v) => v.clone(),
         None => Value::Null,
     }
@@ -817,11 +772,7 @@ fn process_specific_manus_tool_call(
                 .with_raw_ref(raw_ref),
             );
         }
-    } else if lower.contains("file")
-        || lower.contains("edit")
-        || lower.contains("write")
-        || lower.contains("create")
-    {
+    } else if lower.contains("file") || lower.contains("edit") || lower.contains("write") || lower.contains("create") {
         let path = args
             .get("path")
             .or_else(|| args.get("file_path"))
@@ -907,11 +858,7 @@ mod tests {
 
         let session_file = manus_dir.join("manus_trajectory_01.jsonl");
         let mut f = File::create(&session_file).unwrap();
-        writeln!(
-            f,
-            "{{\"role\":\"user\",\"content\":\"Deploy website and run browser test\"}}"
-        )
-        .unwrap();
+        writeln!(f, "{{\"role\":\"user\",\"content\":\"Deploy website and run browser test\"}}").unwrap();
 
         let adapter = ManusAdapter::new();
         let options = ScanOptions {

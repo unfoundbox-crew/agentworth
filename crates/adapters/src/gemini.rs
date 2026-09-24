@@ -83,11 +83,7 @@ impl GeminiAdapter {
         if let Some(base_dirs) = BaseDirs::new() {
             let home = base_dirs.home_dir();
             roots.push(home.join(".gemini").join("antigravity-cli").join("brain"));
-            roots.push(
-                home.join(".gemini")
-                    .join("antigravity-cli")
-                    .join("history.jsonl"),
-            );
+            roots.push(home.join(".gemini").join("antigravity-cli").join("history.jsonl"));
             roots.push(home.join(".gemini").join("antigravity-ide").join("brain"));
             // Bare `.gemini/antigravity` (no `-cli`/`-ide` suffix) is a real, currently
             // populated alternate install layout on at least one real machine, mirroring
@@ -95,11 +91,7 @@ impl GeminiAdapter {
             // mcp/, conversations/, ...). Verified: a real 26-event transcript_full.jsonl
             // lived here and would otherwise go undetected.
             roots.push(home.join(".gemini").join("antigravity").join("brain"));
-            roots.push(
-                home.join(".gemini")
-                    .join("antigravity")
-                    .join("history.jsonl"),
-            );
+            roots.push(home.join(".gemini").join("antigravity").join("history.jsonl"));
             roots.push(home.join(".gemini").join("history"));
             roots.push(home.join(".gemini").join("sessions"));
             roots.push(home.join(".antigravity").join("sessions"));
@@ -187,19 +179,17 @@ fn split_agy_locator(identity: &str) -> Option<(&str, &str)> {
 /// Legacy transcript paths never match: they carry no `#` locator tail.
 fn is_agy_locator(identity: &str) -> bool {
     match split_agy_locator(identity) {
-        Some((db, conv)) => db.ends_with(".db") && db.contains("conversations") && !conv.is_empty(),
+        Some((db, conv)) => {
+            db.ends_with(".db") && db.contains("conversations") && !conv.is_empty()
+        }
         None => false,
     }
 }
 
 /// File or directory `name` inside `~/.gemini/antigravity-cli/`.
 fn agy_store_path(name: &str) -> Option<PathBuf> {
-    BaseDirs::new().map(|b| {
-        b.home_dir()
-            .join(".gemini")
-            .join("antigravity-cli")
-            .join(name)
-    })
+    BaseDirs::new()
+        .map(|b| b.home_dir().join(".gemini").join("antigravity-cli").join(name))
 }
 
 /// One row of `conversation_summaries.db`: session-level metadata the per-step
@@ -262,7 +252,10 @@ fn read_agy_summary(summaries_db: &Path, conv_id: &str) -> Option<AgySummary> {
 /// `(timestamp, user prompt)` pairs from the rolling `history.jsonl`, oldest
 /// first. Missing or unreadable history yields an empty vec; prompt events
 /// then fall back to step order without wall-clock times.
-fn read_agy_history(history_path: &Path, conv_id: &str) -> Vec<(Option<DateTime<Utc>>, String)> {
+fn read_agy_history(
+    history_path: &Path,
+    conv_id: &str,
+) -> Vec<(Option<DateTime<Utc>>, String)> {
     let mut out = Vec::new();
     let file = match File::open(history_path) {
         Ok(f) => f,
@@ -280,21 +273,13 @@ fn read_agy_history(history_path: &Path, conv_id: &str) -> Vec<(Option<DateTime<
         if v.get("conversationId").and_then(|c| c.as_str()) != Some(conv_id) {
             continue;
         }
-        let display = v
-            .get("display")
-            .and_then(|d| d.as_str())
-            .unwrap_or("")
-            .to_string();
+        let display = v.get("display").and_then(|d| d.as_str()).unwrap_or("").to_string();
         if display.is_empty() {
             continue;
         }
         let ts = v.get("timestamp").and_then(|t| t.as_i64()).unwrap_or(0);
         let dt = if ts > 0 {
-            let millis = if ts > 1_000_000_000_000 {
-                ts
-            } else {
-                ts * 1000
-            };
+            let millis = if ts > 1_000_000_000_000 { ts } else { ts * 1000 };
             DateTime::from_timestamp_millis(millis)
         } else {
             None
@@ -367,7 +352,8 @@ fn pb_walk_strings(buf: &[u8], out: &mut Vec<(u32, String)>) -> bool {
                 }
                 let slice = &buf[pos..end];
                 let mut nested = Vec::new();
-                if !slice.is_empty() && pb_walk_strings(slice, &mut nested) && !nested.is_empty() {
+                if !slice.is_empty() && pb_walk_strings(slice, &mut nested) && !nested.is_empty()
+                {
                     out.extend(nested);
                 } else if let Ok(s) = std::str::from_utf8(slice) {
                     if !s.is_empty() {
@@ -475,10 +461,7 @@ fn split_message_record(s: &str) -> Option<(Option<DateTime<Utc>>, String)> {
 /// worse than no anchor at all -- so the candidate is validated and rejected
 /// when the leaf leaks through.
 fn agy_identity_for(workspace: Option<String>, short: &str, real_locator: &str) -> String {
-    if let Some(dir) = workspace
-        .map(|w| w.trim().to_string())
-        .filter(|w| !w.is_empty())
-    {
+    if let Some(dir) = workspace.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
         let candidate = format!(
             "{}/.agy-conversation-{short}.sqlite{AGY_REPO_MARKER}{real_locator}",
             dir.trim_end_matches('/')
@@ -501,9 +484,7 @@ fn is_agy_id_token(s: &str) -> bool {
     }
     let has_lower = s.bytes().any(|b| b.is_ascii_lowercase());
     let has_upper = s.bytes().any(|b| b.is_ascii_uppercase());
-    let has_extra = s
-        .bytes()
-        .any(|b| b.is_ascii_digit() || b == b'_' || b == b'-');
+    let has_extra = s.bytes().any(|b| b.is_ascii_digit() || b == b'_' || b == b'-');
     has_lower && has_upper && has_extra
 }
 
@@ -519,9 +500,7 @@ fn enumerate_agy_conversations(options: &ScanOptions) -> Vec<SessionSource> {
         for root in &options.custom_paths {
             let mut conv_dirs = vec![
                 root.join("conversations"),
-                root.join(".gemini")
-                    .join("antigravity-cli")
-                    .join("conversations"),
+                root.join(".gemini").join("antigravity-cli").join("conversations"),
             ];
             if root.file_name().and_then(|n| n.to_str()) == Some("conversations") {
                 conv_dirs.push(root.clone());
@@ -579,8 +558,7 @@ fn agy_history_workspaces(history_path: &Path) -> std::collections::HashMap<Stri
         if ws.is_empty() {
             continue;
         }
-        map.entry(conv.to_string())
-            .or_insert_with(|| ws.to_string());
+        map.entry(conv.to_string()).or_insert_with(|| ws.to_string());
     }
     map
 }
@@ -716,10 +694,7 @@ fn parse_agy_conversation(source: &SessionSource) -> Result<ParseResult> {
     )
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "one step_type dispatch; splitting would scatter the shape map"
-)]
+#[allow(clippy::too_many_lines, reason = "one step_type dispatch; splitting would scatter the shape map")]
 fn parse_agy_conversation_with_store(
     source: &SessionSource,
     summaries_db: Option<&Path>,
@@ -880,10 +855,7 @@ fn parse_agy_conversation_with_store(
             }
             // Tool call: `call_*` id, snake_case name, JSON args.
             132 => {
-                let call_id = texts
-                    .iter()
-                    .find(|s| s.starts_with("call_"))
-                    .map(|s| s.to_string());
+                let call_id = texts.iter().find(|s| s.starts_with("call_")).map(|s| s.to_string());
                 let args_raw = texts
                     .iter()
                     .find(|s| s.starts_with('{') && s.ends_with('}'))
@@ -960,12 +932,9 @@ fn parse_agy_conversation_with_store(
     if summary.as_ref().is_some_and(|s| s.killed) {
         warnings.push("agy conversation was killed before finishing".to_string());
     }
-    if let Some(started) = earliest.or_else(|| {
-        summary
-            .as_ref()
-            .and_then(|s| s.last_modified)
-            .map(|_| mtime_ts)
-    }) {
+    if let Some(started) =
+        earliest.or_else(|| summary.as_ref().and_then(|s| s.last_modified).map(|_| mtime_ts))
+    {
         trace.started_at = started;
     }
     // The parsed steps carry sparse timestamps (only `[Message]` records and
@@ -1060,11 +1029,7 @@ impl AgentAdapter for GeminiAdapter {
                     }
                 }
                 if !found_nested {
-                    for entry in WalkDir::new(custom)
-                        .max_depth(4)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                    {
+                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         let ps = path.to_string_lossy().to_lowercase();
                         if ps.contains("gemini") || ps.contains("antigravity") {
@@ -1131,11 +1096,7 @@ impl AgentAdapter for GeminiAdapter {
         } else {
             let mut roots = Vec::new();
             for r in self.session_roots() {
-                if r.exists()
-                    && !roots
-                        .iter()
-                        .any(|existing: &PathBuf| r.starts_with(existing))
-                {
+                if r.exists() && !roots.iter().any(|existing: &PathBuf| r.starts_with(existing)) {
                     roots.push(r);
                 }
             }
@@ -1146,11 +1107,7 @@ impl AgentAdapter for GeminiAdapter {
             if root.is_file() {
                 if is_candidate_gemini_file(&root) {
                     let adapter_name = detect_product_identity(&root);
-                    if let Ok(source) = SessionSource::from_path_with_known(
-                        &root,
-                        adapter_name,
-                        &options.known_sources,
-                    ) {
+                    if let Ok(source) = SessionSource::from_path_with_known(&root, adapter_name, &options.known_sources) {
                         sources.push(source);
                     }
                 }
@@ -1163,11 +1120,7 @@ impl AgentAdapter for GeminiAdapter {
                     let path = entry.path();
                     if path.is_file() && is_candidate_gemini_file(path) {
                         let adapter_name = detect_product_identity(path);
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            path,
-                            adapter_name,
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(path, adapter_name, &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -1247,14 +1200,7 @@ impl AgentAdapter for GeminiAdapter {
                 latest_ts = Some(timestamp);
             }
 
-            let events = parse_gemini_record(
-                &val,
-                &mut sequence,
-                timestamp,
-                line_num,
-                &mut last_model,
-                &mut usage_ledger,
-            );
+            let events = parse_gemini_record(&val, &mut sequence, timestamp, line_num, &mut last_model, &mut usage_ledger);
             trace.events.extend(events);
         }
 
@@ -1437,11 +1383,10 @@ fn parse_gemini_record(
         // Gemini CLI repeats a message's whole `tokens` block on every streamed revision of
         // that message, keyed by the record's `id` -- measured 1.90x inflation across this
         // machine's chat logs. See `crate::usage_ledger::UsageLedger`.
-        let message_id = val.get("id").and_then(|v| v.as_str()).or_else(|| {
-            val.get("message")
-                .and_then(|m| m.get("id"))
-                .and_then(|v| v.as_str())
-        });
+        let message_id = val
+            .get("id")
+            .and_then(|v| v.as_str())
+            .or_else(|| val.get("message").and_then(|m| m.get("id")).and_then(|v| v.as_str()));
         let usage = usage_ledger.credit_delta(message_id, extract_token_usage(usage_val));
         if usage.total() > 0 {
             let model = val
@@ -1576,15 +1521,7 @@ fn parse_gemini_record(
                         .with_raw_ref(&raw_ref),
                     );
 
-                    process_specific_gemini_tool_call(
-                        &raw_name,
-                        &name,
-                        &args,
-                        seq,
-                        ts,
-                        &raw_ref,
-                        &mut events,
-                    );
+                    process_specific_gemini_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
                 }
             }
 
@@ -1932,21 +1869,10 @@ mod tests {
         std::fs::create_dir_all(&gemini_dir).unwrap();
         let gemini_file = gemini_dir.join("history_001.jsonl");
         let mut f1 = File::create(&gemini_file).unwrap();
-        writeln!(
-            f1,
-            "{{\"type\":\"USER_INPUT\",\"content\":\"gemini prompt\"}}"
-        )
-        .unwrap();
+        writeln!(f1, "{{\"type\":\"USER_INPUT\",\"content\":\"gemini prompt\"}}").unwrap();
 
         // 2. Antigravity CLI brain trajectory
-        let agy_dir = temp
-            .path()
-            .join(".gemini")
-            .join("antigravity-cli")
-            .join("brain")
-            .join("sess-1")
-            .join(".system_generated")
-            .join("logs");
+        let agy_dir = temp.path().join(".gemini").join("antigravity-cli").join("brain").join("sess-1").join(".system_generated").join("logs");
         std::fs::create_dir_all(&agy_dir).unwrap();
         let agy_file = agy_dir.join("transcript.jsonl");
         let mut f2 = File::create(&agy_file).unwrap();
@@ -1991,42 +1917,18 @@ mod tests {
     fn test_enumerate_gemini_finds_plain_cli_tmp_logs_and_rejects_lookalikes() {
         let temp = tempdir().unwrap();
 
-        let chats_dir = temp
-            .path()
-            .join(".gemini")
-            .join("tmp")
-            .join("my-project")
-            .join("chats");
+        let chats_dir = temp.path().join(".gemini").join("tmp").join("my-project").join("chats");
         std::fs::create_dir_all(&chats_dir).unwrap();
-        let mut real_session =
-            File::create(chats_dir.join("session-2026-01-07T06-44-f969d3b9.json")).unwrap();
-        writeln!(
-            real_session,
-            "{{\"sessionId\":\"f969d3b9\",\"messages\":[]}}"
-        )
-        .unwrap();
+        let mut real_session = File::create(chats_dir.join("session-2026-01-07T06-44-f969d3b9.json")).unwrap();
+        writeln!(real_session, "{{\"sessionId\":\"f969d3b9\",\"messages\":[]}}").unwrap();
 
-        let logs_json = temp
-            .path()
-            .join(".gemini")
-            .join("tmp")
-            .join("my-project")
-            .join("logs.json");
+        let logs_json = temp.path().join(".gemini").join("tmp").join("my-project").join("logs.json");
         let mut logs = File::create(&logs_json).unwrap();
-        writeln!(
-            logs,
-            "[{{\"sessionId\":\"abc\",\"type\":\"user\",\"message\":\"hi\"}}]"
-        )
-        .unwrap();
+        writeln!(logs, "[{{\"sessionId\":\"abc\",\"type\":\"user\",\"message\":\"hi\"}}]").unwrap();
 
         // Lookalike: starts with "session-" but is an Antigravity planning-doc sidecar,
         // not a timestamped session log -- must NOT be treated as real content.
-        let brain_dir = temp
-            .path()
-            .join(".gemini")
-            .join("antigravity-cli")
-            .join("brain")
-            .join("sess-2");
+        let brain_dir = temp.path().join(".gemini").join("antigravity-cli").join("brain").join("sess-2");
         std::fs::create_dir_all(&brain_dir).unwrap();
         File::create(brain_dir.join("SESSION-REPORT.md.metadata.json")).unwrap();
 
@@ -2041,11 +1943,7 @@ mod tests {
         let paths: Vec<_> = enumerated.iter().map(|s| s.path.clone()).collect();
         assert!(paths.contains(&chats_dir.join("session-2026-01-07T06-44-f969d3b9.json")));
         assert!(paths.contains(&logs_json));
-        assert_eq!(
-            enumerated.len(),
-            2,
-            "the metadata.json lookalike must be rejected"
-        );
+        assert_eq!(enumerated.len(), 2, "the metadata.json lookalike must be rejected");
     }
 
     #[test]
@@ -2065,10 +1963,7 @@ mod tests {
         let trace = result.trace;
         assert_eq!(trace.stats.tool_calls_count, 1);
         assert_eq!(
-            trace
-                .stats
-                .tools_used
-                .get("mcp:chrome-devtools:navigate_page"),
+            trace.stats.tools_used.get("mcp:chrome-devtools:navigate_page"),
             Some(&1)
         );
     }
@@ -2142,16 +2037,10 @@ mod tests {
         )]);
         let persona = agy_join(vec![agy_pb_str(1, "[AGENT PERSONA] You are Donna")]);
         let unknown = agy_join(vec![agy_pb_str(1, "whatever")]);
-        for (i, (step_type, payload)) in [
-            (14, user),
-            (132, tool),
-            (15, assistant),
-            (101, message),
-            (90, persona),
-            (777, unknown),
-        ]
-        .into_iter()
-        .enumerate()
+        for (i, (step_type, payload)) in
+            [(14, user), (132, tool), (15, assistant), (101, message), (90, persona), (777, unknown)]
+                .into_iter()
+                .enumerate()
         {
             conn.execute(
                 "INSERT INTO steps (idx, step_type, status, step_payload) VALUES (?, ?, 3, ?)",
@@ -2169,12 +2058,8 @@ mod tests {
             [],
         )
         .unwrap();
-        for (i, model) in [
-            (0, "gemini-3.7-flash"),
-            (1, "gemini-3.8-flash"),
-            (2, "\u{8}\u{1}"),
-        ]
-        .into_iter()
+        for (i, model) in [(0, "gemini-3.7-flash"), (1, "gemini-3.8-flash"), (2, "\u{8}\u{1}")]
+            .into_iter()
         {
             let blob = agy_join(vec![
                 agy_pb_str(4, "ebd119fadcf91b99"),
@@ -2200,19 +2085,20 @@ mod tests {
             .unwrap();
         let workspace = dir.join("proj");
         std::fs::create_dir_all(&workspace).unwrap();
-        sums.execute(
-            "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params![
-                conv_id,
-                "DocIR feasibility",
-                "research",
-                "CASCADE_RUN_STATUS_IDLE",
-                0,
-                "2026-09-13 05:00:00+00:00",
-                format!("[\"file://{}\"]", workspace.to_string_lossy()),
-            ],
-        )
-        .unwrap();
+        sums
+            .execute(
+                "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    conv_id,
+                    "DocIR feasibility",
+                    "research",
+                    "CASCADE_RUN_STATUS_IDLE",
+                    0,
+                    "2026-09-13 05:00:00+00:00",
+                    format!("[\"file://{}\"]", workspace.to_string_lossy()),
+                ],
+            )
+            .unwrap();
 
         let history_path = dir.join("history.jsonl");
         std::fs::write(
@@ -2302,10 +2188,7 @@ mod tests {
         // call id, tool name, and span id.
         match &result.trace.events[2].payload {
             EventPayload::AssistantMessage { content, .. } => {
-                assert_eq!(
-                    content,
-                    "Considering the request, a deep dive seems necessary"
-                );
+                assert_eq!(content, "Considering the request, a deep dive seems necessary");
             }
             other => panic!("expected AssistantMessage, got {other:?}"),
         }
@@ -2314,10 +2197,7 @@ mod tests {
             result.trace.started_at,
             DateTime::from_timestamp_millis(1789000000000).unwrap()
         );
-        assert_eq!(
-            result.trace.ended_at.unwrap().to_rfc3339(),
-            "2026-09-13T05:00:00+00:00"
-        );
+        assert_eq!(result.trace.ended_at.unwrap().to_rfc3339(), "2026-09-13T05:00:00+00:00");
     }
 
     /// Parse the shared fixture store as one agy conversation, resolving the identity the way
@@ -2350,10 +2230,7 @@ mod tests {
         let result = agy_parse_fixture(temp.path(), "31562521-ce8f-47e0-89f8-901594ae66c6");
         assert_eq!(
             result.trace.stats.models_used,
-            vec![
-                "gemini-3.7-flash".to_string(),
-                "gemini-3.8-flash".to_string()
-            ],
+            vec!["gemini-3.7-flash".to_string(), "gemini-3.8-flash".to_string()],
             "field 19 of gen_metadata is the model, in first-seen order, control bytes dropped"
         );
     }
@@ -2404,8 +2281,11 @@ mod tests {
             force: false,
             ..Default::default()
         };
-        let sources =
-            enumerate_agy_conversations_in(&temp.path().join("conversations"), None, &options);
+        let sources = enumerate_agy_conversations_in(
+            &temp.path().join("conversations"),
+            None,
+            &options,
+        );
         assert_eq!(sources.len(), 1);
         let identity = sources[0].path.to_string_lossy().to_string();
         assert!(identity.contains("proj/.agy-conversation-92e14033.sqlite"));
@@ -2416,9 +2296,11 @@ mod tests {
         // A workspace like `~/code` itself would resolve to the synthetic leaf
         // through the `/code/` rule -- the bare locator is used instead.
         let locator = "/Users/saurabh/.gemini/antigravity-cli/conversations/abc.db#abc";
-        let anchored = agy_identity_for(Some("/Users/saurabh/code".to_string()), "abc", locator);
+        let anchored =
+            agy_identity_for(Some("/Users/saurabh/code".to_string()), "abc", locator);
         assert_eq!(anchored, locator);
         assert!(!anchored.contains(AGY_REPO_MARKER));
         assert!(is_agy_locator(&anchored));
     }
 }
+

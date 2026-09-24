@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
-    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -198,11 +198,7 @@ impl AgentAdapter for ClineAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_cline_file(custom) || custom.exists() {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            custom,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -210,11 +206,7 @@ impl AgentAdapter for ClineAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_cline_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -225,11 +217,7 @@ impl AgentAdapter for ClineAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_cline_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            &root,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -237,11 +225,7 @@ impl AgentAdapter for ClineAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_cline_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -316,13 +300,7 @@ impl AgentAdapter for ClineAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_cline_record(
-                            item,
-                            &mut sequence,
-                            timestamp,
-                            idx + 1,
-                            &mut last_model,
-                        );
+                        let evts = parse_cline_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -369,8 +347,7 @@ impl AgentAdapter for ClineAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events =
-                    parse_cline_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_cline_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -425,8 +402,7 @@ fn is_candidate_cline_file(path: &Path) -> bool {
         return true;
     }
 
-    path.extension()
-        .is_some_and(|ext| ext == "json" || ext == "jsonl")
+    path.extension().is_some_and(|ext| ext == "json" || ext == "jsonl")
 }
 
 fn derive_session_id(path: &Path) -> String {
@@ -484,11 +460,7 @@ fn extract_xml_tag_content(text: &str, tag: &str) -> Option<String> {
     if let Some(start_pos) = text.find(&open_tag) {
         let content_start = start_pos + open_tag.len();
         if let Some(end_pos) = text[content_start..].find(&close_tag) {
-            return Some(
-                text[content_start..content_start + end_pos]
-                    .trim()
-                    .to_string(),
-            );
+            return Some(text[content_start..content_start + end_pos].trim().to_string());
         }
     }
     None
@@ -538,17 +510,18 @@ fn parse_cline_record(
         if !content.is_empty() {
             *sequence += 1;
             events.push(
-                NormalizedEvent::new(*sequence, timestamp, EventPayload::UserMessage { content })
-                    .with_raw_ref(&raw_ref),
+                NormalizedEvent::new(
+                    *sequence,
+                    timestamp,
+                    EventPayload::UserMessage { content },
+                )
+                .with_raw_ref(&raw_ref),
             );
         }
     }
 
     // 2. Assistant Message Cases
-    if (say == "text" || say == "reasoning" || role == "assistant")
-        && say != "task"
-        && say != "user_feedback"
-    {
+    if (say == "text" || say == "reasoning" || role == "assistant") && say != "task" && say != "user_feedback" {
         let mut thinking: Option<String> = None;
         let mut content = text_str.clone();
 
@@ -622,10 +595,7 @@ fn parse_cline_record(
                     )
                     .with_raw_ref(&raw_ref),
                 );
-            } else if tool_name == "writeToFile"
-                || tool_name == "write_to_file"
-                || tool_name == "newFile"
-            {
+            } else if tool_name == "writeToFile" || tool_name == "write_to_file" || tool_name == "newFile" {
                 let path = tool_json
                     .get("path")
                     .or_else(|| tool_json.get("filePath"))
@@ -658,20 +628,14 @@ fn parse_cline_record(
                         test_provenance: None,
                     }),
                 ));
-            } else if tool_name == "replaceInFile"
-                || tool_name == "apply_diff"
-                || tool_name == "editFile"
-            {
+            } else if tool_name == "replaceInFile" || tool_name == "apply_diff" || tool_name == "editFile" {
                 let path = tool_json
                     .get("path")
                     .or_else(|| tool_json.get("filePath"))
                     .and_then(|p| p.as_str())
                     .unwrap_or("");
 
-                let diff = tool_json
-                    .get("diff")
-                    .and_then(|d| d.as_str())
-                    .map(|s| s.to_string());
+                let diff = tool_json.get("diff").and_then(|d| d.as_str()).map(|s| s.to_string());
 
                 *sequence += 1;
                 events.push(
@@ -727,10 +691,7 @@ fn parse_cline_record(
                     *sequence,
                     timestamp,
                     EventPayload::ToolCall(ToolCall {
-                        id: val
-                            .get("tool_call_id")
-                            .and_then(|i| i.as_str())
-                            .map(|s| s.to_string()),
+                        id: val.get("tool_call_id").and_then(|i| i.as_str()).map(|s| s.to_string()),
                         name: norm_name,
                         arguments: tool_json,
                     }),
@@ -831,10 +792,7 @@ fn parse_cline_record(
                         *sequence,
                         timestamp,
                         EventPayload::ToolCall(ToolCall {
-                            id: block
-                                .get("id")
-                                .and_then(|i| i.as_str())
-                                .map(|s| s.to_string()),
+                            id: block.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()),
                             name: norm_name,
                             arguments: input,
                         }),
@@ -842,15 +800,9 @@ fn parse_cline_record(
                     .with_raw_ref(&raw_ref),
                 );
             } else if b_type == "tool_result" {
-                let call_id = block
-                    .get("tool_use_id")
-                    .and_then(|i| i.as_str())
-                    .map(|s| s.to_string());
+                let call_id = block.get("tool_use_id").and_then(|i| i.as_str()).map(|s| s.to_string());
                 let output = block.get("content").cloned().unwrap_or(Value::Null);
-                let is_error = block
-                    .get("is_error")
-                    .and_then(|e| e.as_bool())
-                    .unwrap_or(false);
+                let is_error = block.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
 
                 *sequence += 1;
                 events.push(
@@ -887,8 +839,7 @@ fn parse_cline_record(
             .with_raw_ref(&raw_ref),
         );
     } else if say == "command_output" {
-        let is_ok = !text_str.to_lowercase().contains("error")
-            && !text_str.to_lowercase().contains("failed");
+        let is_ok = !text_str.to_lowercase().contains("error") && !text_str.to_lowercase().contains("failed");
 
         *sequence += 1;
         events.push(
@@ -905,10 +856,7 @@ fn parse_cline_record(
             .with_raw_ref(&raw_ref),
         );
 
-        if text_str.contains("test result: ok")
-            || text_str.contains("PASSED")
-            || text_str.contains("passed")
-        {
+        if text_str.contains("test result: ok") || text_str.contains("PASSED") || text_str.contains("passed") {
             *sequence += 1;
             events.push(NormalizedEvent::new(
                 *sequence,
@@ -932,11 +880,7 @@ fn parse_cline_record(
                 timestamp,
                 EventPayload::OutcomeEvidence(OutcomeEvidence {
                     kind: OutcomeKind::DoneClaimed,
-                    summary: if text_str.is_empty() {
-                        "Task completed".to_string()
-                    } else {
-                        text_str.clone()
-                    },
+                    summary: if text_str.is_empty() { "Task completed".to_string() } else { text_str.clone() },
                     confidence: 0.8,
                     test_provenance: None,
                 }),
@@ -966,10 +910,7 @@ fn parse_cline_record(
     let mut tokens_out = val.get("tokensOut").and_then(|t| t.as_u64()).unwrap_or(0);
     let mut cache_reads = val.get("cacheReads").and_then(|t| t.as_u64()).unwrap_or(0);
     let mut cache_writes = val.get("cacheWrites").and_then(|t| t.as_u64()).unwrap_or(0);
-    let cost_usd = val
-        .get("totalCost")
-        .or_else(|| val.get("cost"))
-        .and_then(|c| c.as_f64());
+    let cost_usd = val.get("totalCost").or_else(|| val.get("cost")).and_then(|c| c.as_f64());
 
     if let Some(usage) = val.get("usage") {
         if let Some(inp) = usage.get("input_tokens").and_then(|t| t.as_u64()) {
@@ -978,16 +919,10 @@ fn parse_cline_record(
         if let Some(out) = usage.get("output_tokens").and_then(|t| t.as_u64()) {
             tokens_out = out;
         }
-        if let Some(cr) = usage
-            .get("cache_read_input_tokens")
-            .and_then(|t| t.as_u64())
-        {
+        if let Some(cr) = usage.get("cache_read_input_tokens").and_then(|t| t.as_u64()) {
             cache_reads = cr;
         }
-        if let Some(cw) = usage
-            .get("cache_creation_input_tokens")
-            .and_then(|t| t.as_u64())
-        {
+        if let Some(cw) = usage.get("cache_creation_input_tokens").and_then(|t| t.as_u64()) {
             cache_writes = cw;
         }
     }
@@ -998,8 +933,7 @@ fn parse_cline_record(
         .and_then(|m| m.as_str())
         .unwrap_or("cline");
 
-    if tokens_in > 0 || tokens_out > 0 || cache_reads > 0 || cache_writes > 0 || cost_usd.is_some()
-    {
+    if tokens_in > 0 || tokens_out > 0 || cache_reads > 0 || cache_writes > 0 || cost_usd.is_some() {
         if last_model.as_deref() != Some(model) {
             if let Some(prev) = last_model.take() {
                 *sequence += 1;
@@ -1291,12 +1225,9 @@ mod tests {
             &trace.events[first_invocation_idx].payload,
             EventPayload::ModelInvocation { model, .. } if model == "claude-opus-5"
         ));
-        assert!(
-            first_invocation_idx == 0
-                || !matches!(
-                    &trace.events[first_invocation_idx - 1].payload,
-                    EventPayload::ModelSwitch(_)
-                )
-        );
+        assert!(first_invocation_idx == 0 || !matches!(
+            &trace.events[first_invocation_idx - 1].payload,
+            EventPayload::ModelSwitch(_)
+        ));
     }
 }

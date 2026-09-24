@@ -34,11 +34,7 @@ pub(crate) struct UsageLedger {
 }
 
 impl UsageLedger {
-    pub(crate) fn credit_delta(
-        &mut self,
-        message_id: Option<&str>,
-        usage: TokenUsage,
-    ) -> TokenUsage {
+    pub(crate) fn credit_delta(&mut self, message_id: Option<&str>, usage: TokenUsage) -> TokenUsage {
         let Some(id) = message_id else {
             return usage;
         };
@@ -48,9 +44,7 @@ impl UsageLedger {
         let delta = TokenUsage::new(
             usage.input_tokens.saturating_sub(already.input_tokens),
             usage.output_tokens.saturating_sub(already.output_tokens),
-            usage
-                .cache_read_tokens
-                .saturating_sub(already.cache_read_tokens),
+            usage.cache_read_tokens.saturating_sub(already.cache_read_tokens),
             usage
                 .cache_creation_tokens
                 .saturating_sub(already.cache_creation_tokens),
@@ -59,9 +53,7 @@ impl UsageLedger {
             already.input_tokens.max(usage.input_tokens),
             already.output_tokens.max(usage.output_tokens),
             already.cache_read_tokens.max(usage.cache_read_tokens),
-            already
-                .cache_creation_tokens
-                .max(usage.cache_creation_tokens),
+            already.cache_creation_tokens.max(usage.cache_creation_tokens),
         );
         delta
     }

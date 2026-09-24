@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
-    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    Provenance, ShellCommand, TokenUsage, ToolCall,
 };
 use anyhow::Result;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -100,11 +100,7 @@ impl AgentAdapter for AiderAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_aider_file(custom) || custom.exists() {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            custom,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -112,11 +108,7 @@ impl AgentAdapter for AiderAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_aider_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -127,11 +119,7 @@ impl AgentAdapter for AiderAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_aider_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            &root,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -139,11 +127,7 @@ impl AgentAdapter for AiderAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_aider_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -217,13 +201,7 @@ impl AgentAdapter for AiderAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_aider_json_record(
-                            item,
-                            &mut sequence,
-                            timestamp,
-                            idx + 1,
-                            &mut last_model,
-                        );
+                        let evts = parse_aider_json_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -245,12 +223,7 @@ impl AgentAdapter for AiderAdapter {
             }
 
             // If it's JSONL lines (starts with '{')
-            if trimmed
-                .lines()
-                .next()
-                .map(|l| l.trim().starts_with('{'))
-                .unwrap_or(false)
-            {
+            if trimmed.lines().next().map(|l| l.trim().starts_with('{')).unwrap_or(false) {
                 let mut is_pure_jsonl = true;
                 let mut jsonl_events = Vec::new();
 
@@ -271,13 +244,7 @@ impl AgentAdapter for AiderAdapter {
                                 latest_ts = Some(timestamp);
                             }
 
-                            let events = parse_aider_json_record(
-                                &val,
-                                &mut sequence,
-                                timestamp,
-                                line_num,
-                                &mut last_model,
-                            );
+                            let events = parse_aider_json_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                             jsonl_events.extend(events);
                         }
                         Err(e) => {
@@ -286,8 +253,7 @@ impl AgentAdapter for AiderAdapter {
                                 break;
                             } else {
                                 malformed_lines += 1;
-                                warnings
-                                    .push(format!("JSON syntax error on line {}: {}", line_num, e));
+                                warnings.push(format!("JSON syntax error on line {}: {}", line_num, e));
                             }
                         }
                     }
@@ -367,8 +333,9 @@ fn is_candidate_aider_file(path: &Path) -> bool {
         return true;
     }
 
-    path.extension()
-        .is_some_and(|ext| ext == "md" || ext == "json" || ext == "jsonl" || ext == "log")
+    path.extension().is_some_and(|ext| {
+        ext == "md" || ext == "json" || ext == "jsonl" || ext == "log"
+    })
 }
 
 fn derive_session_id(path: &Path) -> String {
@@ -462,10 +429,7 @@ fn parse_aider_markdown(
     let mut in_bash_block = false;
     let mut current_bash_buf: Vec<String> = Vec::new();
 
-    let flush_user = |buf: &mut Vec<String>,
-                      seq: &mut u64,
-                      ts: DateTime<Utc>,
-                      evs: &mut Vec<NormalizedEvent>| {
+    let flush_user = |buf: &mut Vec<String>, seq: &mut u64, ts: DateTime<Utc>, evs: &mut Vec<NormalizedEvent>| {
         if !buf.is_empty() {
             let content = buf.join("\n").trim().to_string();
             if !content.is_empty() {
@@ -480,10 +444,7 @@ fn parse_aider_markdown(
         }
     };
 
-    let flush_assistant = |buf: &mut Vec<String>,
-                           seq: &mut u64,
-                           ts: DateTime<Utc>,
-                           evs: &mut Vec<NormalizedEvent>| {
+    let flush_assistant = |buf: &mut Vec<String>, seq: &mut u64, ts: DateTime<Utc>, evs: &mut Vec<NormalizedEvent>| {
         if !buf.is_empty() {
             let content = buf.join("\n").trim().to_string();
             if !content.is_empty() {
@@ -508,16 +469,9 @@ fn parse_aider_markdown(
         // Check for session start line: # aider chat started at 2024-05-18 14:20:00
         if trimmed.starts_with("# aider chat started at ") {
             flush_user(&mut current_user_buf, sequence, current_ts, &mut events);
-            flush_assistant(
-                &mut current_assistant_buf,
-                sequence,
-                current_ts,
-                &mut events,
-            );
+            flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
 
-            let time_part = trimmed
-                .trim_start_matches("# aider chat started at ")
-                .trim();
+            let time_part = trimmed.trim_start_matches("# aider chat started at ").trim();
             if let Some(ts) = parse_aider_start_time(time_part) {
                 current_ts = ts;
                 if earliest_ts.is_none_or(|t| current_ts < t) {
@@ -532,10 +486,7 @@ fn parse_aider_markdown(
 
         // Model line: Model: claude-3-5-sonnet-20241022 with diff edit format
         if trimmed.starts_with("Model: ") || trimmed.starts_with("Main model: ") {
-            let rem = trimmed
-                .trim_start_matches("Model: ")
-                .trim_start_matches("Main model: ")
-                .trim();
+            let rem = trimmed.trim_start_matches("Model: ").trim_start_matches("Main model: ").trim();
             let model_name = rem.split_whitespace().next().unwrap_or(rem);
             active_model = model_name.to_string();
             continue;
@@ -609,14 +560,8 @@ fn parse_aider_markdown(
                 let mut cmd_line = String::new();
                 let mut out_lines = Vec::new();
                 for l in bash_content.lines() {
-                    if cmd_line.is_empty()
-                        && (l.starts_with('$') || l.starts_with('>') || !l.trim().is_empty())
-                    {
-                        cmd_line = l
-                            .trim_start_matches('$')
-                            .trim_start_matches('>')
-                            .trim()
-                            .to_string();
+                    if cmd_line.is_empty() && (l.starts_with('$') || l.starts_with('>') || !l.trim().is_empty()) {
+                        cmd_line = l.trim_start_matches('$').trim_start_matches('>').trim().to_string();
                     } else {
                         out_lines.push(l);
                     }
@@ -649,10 +594,7 @@ fn parse_aider_markdown(
                     );
 
                     if let Some(ref out) = output_str {
-                        if out.contains("test result: ok")
-                            || out.contains("PASSED")
-                            || out.contains("passed")
-                        {
+                        if out.contains("test result: ok") || out.contains("PASSED") || out.contains("passed") {
                             *sequence += 1;
                             events.push(NormalizedEvent::new(
                                 *sequence,
@@ -671,22 +613,12 @@ fn parse_aider_markdown(
             } else {
                 if trimmed.starts_with("```diff") {
                     flush_user(&mut current_user_buf, sequence, current_ts, &mut events);
-                    flush_assistant(
-                        &mut current_assistant_buf,
-                        sequence,
-                        current_ts,
-                        &mut events,
-                    );
+                    flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
                     in_diff_block = true;
                     continue;
                 } else if trimmed.starts_with("```bash") || trimmed.starts_with("```sh") {
                     flush_user(&mut current_user_buf, sequence, current_ts, &mut events);
-                    flush_assistant(
-                        &mut current_assistant_buf,
-                        sequence,
-                        current_ts,
-                        &mut events,
-                    );
+                    flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
                     in_bash_block = true;
                     continue;
                 }
@@ -706,12 +638,7 @@ fn parse_aider_markdown(
         // Tokens & Cost line: Tokens: 2.3k sent, 412 received. Cost: $0.03 message, $0.12 session.
         if trimmed.starts_with("Tokens:") {
             flush_user(&mut current_user_buf, sequence, current_ts, &mut events);
-            flush_assistant(
-                &mut current_assistant_buf,
-                sequence,
-                current_ts,
-                &mut events,
-            );
+            flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
 
             let mut input_tokens = 0u64;
             let mut output_tokens = 0u64;
@@ -783,18 +710,10 @@ fn parse_aider_markdown(
 
         // Git commit observed: Commit abc1234 feat: implement feature or Commit 1234567: ...
         if trimmed.starts_with("Commit ") || trimmed.starts_with("commit ") {
-            let commit_line = trimmed
-                .trim_start_matches("Commit ")
-                .trim_start_matches("commit ")
-                .trim();
+            let commit_line = trimmed.trim_start_matches("Commit ").trim_start_matches("commit ").trim();
             if !commit_line.is_empty() {
                 flush_user(&mut current_user_buf, sequence, current_ts, &mut events);
-                flush_assistant(
-                    &mut current_assistant_buf,
-                    sequence,
-                    current_ts,
-                    &mut events,
-                );
+                flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
 
                 *sequence += 1;
                 events.push(
@@ -819,12 +738,7 @@ fn parse_aider_markdown(
             let target_path = trimmed.trim_start_matches("Applied edit to ").trim();
             if !target_path.is_empty() {
                 flush_user(&mut current_user_buf, sequence, current_ts, &mut events);
-                flush_assistant(
-                    &mut current_assistant_buf,
-                    sequence,
-                    current_ts,
-                    &mut events,
-                );
+                flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
 
                 *sequence += 1;
                 events.push(
@@ -859,12 +773,7 @@ fn parse_aider_markdown(
         // User message turn: #### <msg> or > <prompt> or User: <msg>
         if trimmed.starts_with("#### ") {
             flush_user(&mut current_user_buf, sequence, current_ts, &mut events);
-            flush_assistant(
-                &mut current_assistant_buf,
-                sequence,
-                current_ts,
-                &mut events,
-            );
+            flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
 
             let msg = trimmed.trim_start_matches("#### ").trim();
             if !msg.is_empty() {
@@ -873,12 +782,7 @@ fn parse_aider_markdown(
             continue;
         } else if trimmed.starts_with("> ") && !trimmed.starts_with("> /") {
             // User prompt line in markdown quote
-            flush_assistant(
-                &mut current_assistant_buf,
-                sequence,
-                current_ts,
-                &mut events,
-            );
+            flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
             let msg = trimmed.trim_start_matches("> ").trim();
             if !msg.is_empty() {
                 current_user_buf.push(msg.to_string());
@@ -887,12 +791,7 @@ fn parse_aider_markdown(
         } else if trimmed.starts_with("> /run ") || trimmed.starts_with("> /test ") {
             // Aider command invocation
             flush_user(&mut current_user_buf, sequence, current_ts, &mut events);
-            flush_assistant(
-                &mut current_assistant_buf,
-                sequence,
-                current_ts,
-                &mut events,
-            );
+            flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
 
             let cmd = trimmed.trim_start_matches("> ").trim();
             *sequence += 1;
@@ -923,12 +822,7 @@ fn parse_aider_markdown(
     }
 
     flush_user(&mut current_user_buf, sequence, current_ts, &mut events);
-    flush_assistant(
-        &mut current_assistant_buf,
-        sequence,
-        current_ts,
-        &mut events,
-    );
+    flush_assistant(&mut current_assistant_buf, sequence, current_ts, &mut events);
 
     events
 }
@@ -977,9 +871,7 @@ fn parse_aider_json_record(
                 .with_raw_ref(&raw_ref),
             );
         }
-    } else if (role == "assistant" || role == "agent" || role == "model")
-        && !content_text.is_empty()
-    {
+    } else if (role == "assistant" || role == "agent" || role == "model") && !content_text.is_empty() {
         *sequence += 1;
         events.push(
             NormalizedEvent::new(
@@ -1050,14 +942,8 @@ fn parse_aider_json_record(
 
     // Shell command
     if let Some(cmd) = val.get("command").and_then(|c| c.as_str()) {
-        let exit_code = val
-            .get("exit_code")
-            .and_then(|ec| ec.as_i64())
-            .map(|e| e as i32);
-        let output = val
-            .get("output")
-            .and_then(|o| o.as_str())
-            .map(|s| s.to_string());
+        let exit_code = val.get("exit_code").and_then(|ec| ec.as_i64()).map(|e| e as i32);
+        let output = val.get("output").and_then(|o| o.as_str()).map(|s| s.to_string());
 
         *sequence += 1;
         events.push(
@@ -1076,10 +962,7 @@ fn parse_aider_json_record(
 
         if exit_code == Some(0) {
             if let Some(ref out) = output {
-                if out.contains("test result: ok")
-                    || out.contains("PASSED")
-                    || out.contains("passed")
-                {
+                if out.contains("test result: ok") || out.contains("PASSED") || out.contains("passed") {
                     *sequence += 1;
                     events.push(NormalizedEvent::new(
                         *sequence,
@@ -1099,10 +982,7 @@ fn parse_aider_json_record(
     // Tool calls / MCP tools
     if let Some(tools) = val.get("tool_calls").and_then(|t| t.as_array()) {
         for t in tools {
-            let name = t
-                .get("name")
-                .and_then(|n| n.as_str())
-                .unwrap_or("unknown_tool");
+            let name = t.get("name").and_then(|n| n.as_str()).unwrap_or("unknown_tool");
             let args = t.get("arguments").cloned().unwrap_or(Value::Null);
             let normalized_name = normalize_mcp_tool_name(name, &args);
 
@@ -1123,7 +1003,10 @@ fn parse_aider_json_record(
     }
 
     // Token accounting & Model invocation
-    let model = val.get("model").and_then(|m| m.as_str()).unwrap_or("aider");
+    let model = val
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("aider");
 
     let usage = val.get("usage").or_else(|| val.get("token_usage"));
     if let Some(u) = usage {
@@ -1147,10 +1030,7 @@ fn parse_aider_json_record(
             .or_else(|| u.get("cache_creation_input_tokens"))
             .and_then(|t| t.as_u64())
             .unwrap_or(0);
-        let cost_usd = val
-            .get("cost_usd")
-            .or_else(|| val.get("cost"))
-            .and_then(|c| c.as_f64());
+        let cost_usd = val.get("cost_usd").or_else(|| val.get("cost")).and_then(|c| c.as_f64());
 
         if input_tokens > 0 || output_tokens > 0 || cache_read > 0 || cache_creation > 0 {
             if last_model.as_deref() != Some(model) {

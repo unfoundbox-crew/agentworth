@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
-    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -86,15 +86,10 @@ impl AgentAdapter for MiniMaxAdapter {
                         }
                     }
                     if discovered.is_empty() {
-                        for entry in WalkDir::new(custom)
-                            .max_depth(4)
-                            .into_iter()
-                            .filter_map(|e| e.ok())
-                        {
+                        for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
                             let path = entry.path();
                             let s = path.to_string_lossy().to_lowercase();
-                            if s.contains(".minimax") || s.contains("minimax") || s.contains("abab")
-                            {
+                            if s.contains(".minimax") || s.contains("minimax") || s.contains("abab") {
                                 discovered.push(path.to_path_buf());
                                 break;
                             }
@@ -125,11 +120,7 @@ impl AgentAdapter for MiniMaxAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_minimax_file(custom) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            custom,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -137,11 +128,7 @@ impl AgentAdapter for MiniMaxAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_minimax_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -152,11 +139,7 @@ impl AgentAdapter for MiniMaxAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_minimax_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            &root,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -164,11 +147,7 @@ impl AgentAdapter for MiniMaxAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_minimax_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -243,13 +222,7 @@ impl AgentAdapter for MiniMaxAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_minimax_record(
-                            item,
-                            &mut sequence,
-                            timestamp,
-                            idx + 1,
-                            &mut last_model,
-                        );
+                        let evts = parse_minimax_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -295,8 +268,7 @@ impl AgentAdapter for MiniMaxAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events =
-                    parse_minimax_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_minimax_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -528,11 +500,7 @@ fn parse_minimax_record(
                         .unwrap_or("unknown")
                         .to_string();
 
-                    let args: Value = match fn_val
-                        .get("arguments")
-                        .or_else(|| fn_val.get("parameters"))
-                        .or_else(|| fn_val.get("input"))
-                    {
+                    let args: Value = match fn_val.get("arguments").or_else(|| fn_val.get("parameters")).or_else(|| fn_val.get("input")) {
                         Some(Value::String(s)) => {
                             serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone()))
                         }
@@ -590,10 +558,7 @@ fn parse_minimax_record(
                 .and_then(|v| v.as_str())
                 .unwrap_or("Coding plan step");
 
-            let thought = val
-                .get("thought")
-                .and_then(|v| v.as_str())
-                .map(String::from);
+            let thought = val.get("thought").and_then(|v| v.as_str()).map(String::from);
 
             *seq += 1;
             events.push(
@@ -608,16 +573,8 @@ fn parse_minimax_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            if let Some(tool_name) = val
-                .get("tool")
-                .or_else(|| val.get("action"))
-                .and_then(|v| v.as_str())
-            {
-                let args = val
-                    .get("arguments")
-                    .or_else(|| val.get("input"))
-                    .cloned()
-                    .unwrap_or(Value::Null);
+            if let Some(tool_name) = val.get("tool").or_else(|| val.get("action")).and_then(|v| v.as_str()) {
+                let args = val.get("arguments").or_else(|| val.get("input")).cloned().unwrap_or(Value::Null);
                 let name = normalize_mcp_tool_name(tool_name, &args);
 
                 *seq += 1;
@@ -634,15 +591,7 @@ fn parse_minimax_record(
                     .with_raw_ref(&raw_ref),
                 );
 
-                process_specific_minimax_tool_call(
-                    tool_name,
-                    &name,
-                    &args,
-                    seq,
-                    ts,
-                    &raw_ref,
-                    &mut events,
-                );
+                process_specific_minimax_tool_call(tool_name, &name, &args, seq, ts, &raw_ref, &mut events);
             }
         }
 
@@ -675,15 +624,7 @@ fn parse_minimax_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            process_specific_minimax_tool_call(
-                &raw_name,
-                &name,
-                &args,
-                seq,
-                ts,
-                &raw_ref,
-                &mut events,
-            );
+            process_specific_minimax_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
         }
 
         "tool" | "tool_result" | "function" | "tool_output" => {
@@ -962,11 +903,7 @@ mod tests {
 
         let log_file = mm_dir.join("trajectory_01.json");
         let mut f = File::create(&log_file).unwrap();
-        writeln!(
-            f,
-            "{{\"role\":\"user\",\"content\":\"Run minimax coding agent\"}}"
-        )
-        .unwrap();
+        writeln!(f, "{{\"role\":\"user\",\"content\":\"Run minimax coding agent\"}}").unwrap();
 
         let adapter = MiniMaxAdapter::new();
         let options = ScanOptions {

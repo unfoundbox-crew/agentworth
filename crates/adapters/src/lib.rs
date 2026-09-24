@@ -13,9 +13,9 @@ mod grok;
 // Human-turn source parsing (insights data lane): claude and antigravity prompt histories
 // and transcript user-turns, normalized into per-turn derived features. Not a session
 // adapter, so no AgentAdapter impl.
+pub mod human_turns;
 mod herdr;
 mod hermes;
-pub mod human_turns;
 mod kimi;
 mod manus;
 mod mcp;
@@ -24,8 +24,8 @@ mod openclaw;
 mod opencode;
 mod pi;
 mod qwen;
-mod usage_ledger;
 mod windsurf;
+mod usage_ledger;
 mod zhipu;
 
 pub use aider::AiderAdapter;
@@ -109,10 +109,6 @@ mod registry_tests {
                 adapter.name()
             );
         }
-        assert_eq!(
-            adapters.len(),
-            20,
-            "update this count when adding/removing an adapter"
-        );
+        assert_eq!(adapters.len(), 20, "update this count when adding/removing an adapter");
     }
 }

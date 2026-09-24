@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
-    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -88,11 +88,7 @@ impl AgentAdapter for DeepSeekAdapter {
                         }
                     }
                     if discovered.is_empty() {
-                        for entry in WalkDir::new(custom)
-                            .max_depth(4)
-                            .into_iter()
-                            .filter_map(|e| e.ok())
-                        {
+                        for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
                             let path = entry.path();
                             let s = path.to_string_lossy().to_lowercase();
                             if s.contains(".deepseek") || s.contains("deepseek") {
@@ -126,11 +122,7 @@ impl AgentAdapter for DeepSeekAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_deepseek_file(custom) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            custom,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -138,11 +130,7 @@ impl AgentAdapter for DeepSeekAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_deepseek_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -153,11 +141,7 @@ impl AgentAdapter for DeepSeekAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_deepseek_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            &root,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -165,11 +149,7 @@ impl AgentAdapter for DeepSeekAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_deepseek_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -244,13 +224,7 @@ impl AgentAdapter for DeepSeekAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_deepseek_record(
-                            item,
-                            &mut sequence,
-                            timestamp,
-                            idx + 1,
-                            &mut last_model,
-                        );
+                        let evts = parse_deepseek_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -296,13 +270,7 @@ impl AgentAdapter for DeepSeekAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events = parse_deepseek_record(
-                    &val,
-                    &mut sequence,
-                    timestamp,
-                    line_num,
-                    &mut last_model,
-                );
+                let events = parse_deepseek_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -534,8 +502,7 @@ fn parse_deepseek_record(
                         .unwrap_or("unknown")
                         .to_string();
 
-                    let args: Value = match fn_val.get("arguments").or_else(|| fn_val.get("input"))
-                    {
+                    let args: Value = match fn_val.get("arguments").or_else(|| fn_val.get("input")) {
                         Some(Value::String(s)) => {
                             serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone()))
                         }
@@ -613,15 +580,7 @@ fn parse_deepseek_record(
                 .with_raw_ref(&raw_ref),
             );
 
-            process_specific_deepseek_tool_call(
-                &raw_name,
-                &name,
-                &args,
-                seq,
-                ts,
-                &raw_ref,
-                &mut events,
-            );
+            process_specific_deepseek_tool_call(&raw_name, &name, &args, seq, ts, &raw_ref, &mut events);
         }
 
         "tool" | "tool_result" | "function" | "tool_output" => {
@@ -931,11 +890,7 @@ mod tests {
 
         let log_file = ds_dir.join("ds_sess_01.jsonl");
         let mut f = File::create(&log_file).unwrap();
-        writeln!(
-            f,
-            "{{\"role\":\"user\",\"content\":\"Refactor algorithms\"}}"
-        )
-        .unwrap();
+        writeln!(f, "{{\"role\":\"user\",\"content\":\"Refactor algorithms\"}}").unwrap();
 
         let adapter = DeepSeekAdapter::new();
         let options = ScanOptions {
@@ -984,15 +939,7 @@ mod tests {
         let ast_msg = trace
             .events
             .iter()
-            .find(|e| {
-                matches!(
-                    &e.payload,
-                    EventPayload::AssistantMessage {
-                        thinking: Some(_),
-                        ..
-                    }
-                )
-            })
+            .find(|e| matches!(&e.payload, EventPayload::AssistantMessage { thinking: Some(_), .. }))
             .expect("should find assistant message with thinking");
         if let EventPayload::AssistantMessage { thinking, .. } = &ast_msg.payload {
             assert!(thinking.as_ref().unwrap().contains("dual-pivot quicksort"));
@@ -1024,14 +971,8 @@ mod tests {
             .collect();
 
         assert_eq!(file_actions.len(), 2);
-        assert_eq!(
-            file_actions[0],
-            ("src/sort.rs".to_string(), FileActionType::Edit)
-        );
-        assert_eq!(
-            file_actions[1],
-            ("src/sort.rs".to_string(), FileActionType::Read)
-        );
+        assert_eq!(file_actions[0], ("src/sort.rs".to_string(), FileActionType::Edit));
+        assert_eq!(file_actions[1], ("src/sort.rs".to_string(), FileActionType::Read));
     }
 
     #[test]

@@ -6,8 +6,8 @@ use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
-    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -91,19 +91,10 @@ impl AgentAdapter for ZhipuAdapter {
                         }
                     }
                     if discovered.is_empty() {
-                        for entry in WalkDir::new(custom)
-                            .max_depth(3)
-                            .into_iter()
-                            .filter_map(|e| e.ok())
-                        {
+                        for entry in WalkDir::new(custom).max_depth(3).into_iter().filter_map(|e| e.ok()) {
                             let path = entry.path();
                             let s = path.to_string_lossy().to_lowercase();
-                            if s.contains(".codegeex")
-                                || s.contains("codegeex")
-                                || s.contains(".zhipu")
-                                || s.contains("zhipu")
-                                || s.contains("glm")
-                            {
+                            if s.contains(".codegeex") || s.contains("codegeex") || s.contains(".zhipu") || s.contains("zhipu") || s.contains("glm") {
                                 discovered.push(path.to_path_buf());
                                 break;
                             }
@@ -134,11 +125,7 @@ impl AgentAdapter for ZhipuAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_zhipu_file(custom) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            custom,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -146,11 +133,7 @@ impl AgentAdapter for ZhipuAdapter {
                     for entry in WalkDir::new(custom).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_zhipu_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -161,11 +144,7 @@ impl AgentAdapter for ZhipuAdapter {
             for root in self.candidate_roots() {
                 if root.is_file() {
                     if is_candidate_zhipu_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            &root,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -173,11 +152,7 @@ impl AgentAdapter for ZhipuAdapter {
                     for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         if path.is_file() && is_candidate_zhipu_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -252,13 +227,7 @@ impl AgentAdapter for ZhipuAdapter {
                             latest_ts = Some(timestamp);
                         }
 
-                        let evts = parse_zhipu_record(
-                            item,
-                            &mut sequence,
-                            timestamp,
-                            idx + 1,
-                            &mut last_model,
-                        );
+                        let evts = parse_zhipu_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                         trace.events.extend(evts);
                     }
 
@@ -304,8 +273,7 @@ impl AgentAdapter for ZhipuAdapter {
                     latest_ts = Some(timestamp);
                 }
 
-                let events =
-                    parse_zhipu_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
+                let events = parse_zhipu_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                 trace.events.extend(events);
             }
         }
@@ -475,10 +443,7 @@ fn parse_zhipu_record(
                     EventPayload::ModelInvocation {
                         model,
                         token_usage: usage,
-                        cost_usd: val
-                            .get("cost")
-                            .or_else(|| val.get("cost_usd"))
-                            .and_then(|c| c.as_f64()),
+                        cost_usd: val.get("cost").or_else(|| val.get("cost_usd")).and_then(|c| c.as_f64()),
                         latency_ms: val
                             .get("latency_ms")
                             .or_else(|| val.get("duration_ms"))
@@ -633,8 +598,7 @@ fn parse_zhipu_record(
                             ts,
                             EventPayload::OutcomeEvidence(OutcomeEvidence {
                                 kind: OutcomeKind::TestOrBuildPassed,
-                                summary: "Test or build executed successfully in Zhipu session"
-                                    .to_string(),
+                                summary: "Test or build executed successfully in Zhipu session".to_string(),
                                 confidence: 0.9,
                                 test_provenance: None,
                             }),
@@ -651,8 +615,7 @@ fn parse_zhipu_record(
                 .get("name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
-            let args =
-                parse_or_extract_json(val.get("arguments").or_else(|| val.get("parameters")));
+            let args = parse_or_extract_json(val.get("arguments").or_else(|| val.get("parameters")));
             let name = normalize_mcp_tool_name(raw_name, &args);
 
             *seq += 1;
@@ -700,11 +663,7 @@ fn parse_zhipu_record(
                     *seq,
                     ts,
                     EventPayload::Custom {
-                        kind: if role.is_empty() {
-                            "unknown".to_string()
-                        } else {
-                            role.to_string()
-                        },
+                        kind: if role.is_empty() { "unknown".to_string() } else { role.to_string() },
                         data: val.clone(),
                     },
                 )
@@ -718,9 +677,7 @@ fn parse_zhipu_record(
 
 fn parse_or_extract_json(val: Option<&Value>) -> Value {
     match val {
-        Some(Value::String(s)) => {
-            serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone()))
-        }
+        Some(Value::String(s)) => serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone())),
         Some(v) => v.clone(),
         None => Value::Null,
     }
@@ -761,11 +718,7 @@ fn process_specific_zhipu_tool_call(
                 .with_raw_ref(raw_ref),
             );
         }
-    } else if lower.contains("file")
-        || lower.contains("edit")
-        || lower.contains("write")
-        || lower.contains("patch")
-    {
+    } else if lower.contains("file") || lower.contains("edit") || lower.contains("write") || lower.contains("patch") {
         let path = args
             .get("path")
             .or_else(|| args.get("file_path"))
@@ -844,11 +797,7 @@ mod tests {
 
         let session_file = zhipu_dir.join("codegeex_session_01.jsonl");
         let mut f = File::create(&session_file).unwrap();
-        writeln!(
-            f,
-            "{{\"role\":\"user\",\"content\":\"Generate backend API\"}}"
-        )
-        .unwrap();
+        writeln!(f, "{{\"role\":\"user\",\"content\":\"Generate backend API\"}}").unwrap();
 
         let adapter = ZhipuAdapter::new();
         let options = ScanOptions {

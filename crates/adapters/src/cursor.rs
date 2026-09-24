@@ -2,13 +2,12 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
-use crate::exit_status::backfill_shell_exit_codes;
 use agentworth_adapter_sdk::{
     AgentAdapter, DetectionResult, ParseResult, ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence,
-    OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
+    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -16,6 +15,7 @@ use directories::BaseDirs;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 use walkdir::WalkDir;
+use crate::exit_status::backfill_shell_exit_codes;
 
 /// Adapter for discovering and normalizing Cursor (Composer / Chat) agent sessions.
 pub struct CursorAdapter;
@@ -56,10 +56,7 @@ impl CursorAdapter {
 
             // macOS Application Support paths (Cursor & Trae)
             for editor in &["Cursor", "Trae"] {
-                let app_sup = home
-                    .join("Library")
-                    .join("Application Support")
-                    .join(editor);
+                let app_sup = home.join("Library").join("Application Support").join(editor);
                 roots.push(app_sup.clone());
                 roots.push(app_sup.join("User").join("workspaceStorage"));
                 roots.push(app_sup.join("User").join("globalStorage"));
@@ -84,12 +81,7 @@ impl CursorAdapter {
             // BaseDirs config_dir resolution (cross-platform mapping)
             for editor in &["Cursor", "Trae"] {
                 roots.push(config_dir.join(editor));
-                roots.push(
-                    config_dir
-                        .join(editor)
-                        .join("User")
-                        .join("workspaceStorage"),
-                );
+                roots.push(config_dir.join(editor).join("User").join("workspaceStorage"));
                 roots.push(config_dir.join(editor).join("User").join("globalStorage"));
             }
         }
@@ -117,10 +109,7 @@ impl CursorAdapter {
 
             // macOS Application Support paths
             for editor in &["Cursor", "Trae"] {
-                let app_sup = home
-                    .join("Library")
-                    .join("Application Support")
-                    .join(editor);
+                let app_sup = home.join("Library").join("Application Support").join(editor);
                 roots.push(app_sup.join("User").join("workspaceStorage"));
                 roots.push(app_sup.join("User").join("globalStorage"));
             }
@@ -141,12 +130,7 @@ impl CursorAdapter {
 
             // BaseDirs config_dir resolution (cross-platform mapping)
             for editor in &["Cursor", "Trae"] {
-                roots.push(
-                    config_dir
-                        .join(editor)
-                        .join("User")
-                        .join("workspaceStorage"),
-                );
+                roots.push(config_dir.join(editor).join("User").join("workspaceStorage"));
                 roots.push(config_dir.join(editor).join("User").join("globalStorage"));
             }
         }
@@ -177,11 +161,7 @@ impl CursorAdapter {
         ) {
             Ok(c) => c,
             Err(e) => {
-                warnings.push(format!(
-                    "Failed to open SQLite database {}: {}",
-                    path.display(),
-                    e
-                ));
+                warnings.push(format!("Failed to open SQLite database {}: {}", path.display(), e));
                 return Ok(());
             }
         };
@@ -209,11 +189,7 @@ impl CursorAdapter {
         }) {
             Ok(r) => r,
             Err(e) => {
-                warnings.push(format!(
-                    "Failed to read rows from {}: {}",
-                    path.display(),
-                    e
-                ));
+                warnings.push(format!("Failed to read rows from {}: {}", path.display(), e));
                 return Ok(());
             }
         };
@@ -351,11 +327,7 @@ impl AgentAdapter for CursorAdapter {
                     found_nested = true;
                 }
                 if !found_nested {
-                    for entry in WalkDir::new(custom)
-                        .max_depth(4)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                    {
+                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
                         let path = entry.path();
                         let ps = path.to_string_lossy().to_lowercase();
                         if ps.contains(".cursor") || ps.contains("cursor") {
@@ -385,11 +357,7 @@ impl AgentAdapter for CursorAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_cursor_file(custom) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            custom,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(custom, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -401,11 +369,7 @@ impl AgentAdapter for CursorAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_cursor_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -416,11 +380,7 @@ impl AgentAdapter for CursorAdapter {
             for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_cursor_file(&root) {
-                        if let Ok(source) = SessionSource::from_path_with_known(
-                            &root,
-                            self.name(),
-                            &options.known_sources,
-                        ) {
+                        if let Ok(source) = SessionSource::from_path_with_known(&root, self.name(), &options.known_sources) {
                             sources.push(source);
                         }
                     }
@@ -432,11 +392,7 @@ impl AgentAdapter for CursorAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_cursor_file(path) {
-                            if let Ok(source) = SessionSource::from_path_with_known(
-                                path,
-                                self.name(),
-                                &options.known_sources,
-                            ) {
+                            if let Ok(source) = SessionSource::from_path_with_known(path, self.name(), &options.known_sources) {
                                 sources.push(source);
                             }
                         }
@@ -499,8 +455,7 @@ impl AgentAdapter for CursorAdapter {
                     if let Ok(json_val) = serde_json::from_str::<Value>(trimmed) {
                         let items = if let Some(arr) = json_val.as_array() {
                             arr.clone()
-                        } else if let Some(bubbles) =
-                            json_val.get("bubbles").and_then(|b| b.as_array())
+                        } else if let Some(bubbles) = json_val.get("bubbles").and_then(|b| b.as_array())
                         {
                             bubbles.clone()
                         } else if let Some(messages) =
@@ -511,8 +466,7 @@ impl AgentAdapter for CursorAdapter {
                             json_val.get("conversation").and_then(|c| c.as_array())
                         {
                             turns.clone()
-                        } else if let Some(turns) = json_val.get("turns").and_then(|t| t.as_array())
-                        {
+                        } else if let Some(turns) = json_val.get("turns").and_then(|t| t.as_array()) {
                             turns.clone()
                         } else {
                             vec![json_val]
@@ -527,13 +481,7 @@ impl AgentAdapter for CursorAdapter {
                                 latest_ts = Some(timestamp);
                             }
 
-                            let evts = parse_cursor_record(
-                                item,
-                                &mut sequence,
-                                timestamp,
-                                idx + 1,
-                                &mut last_model,
-                            );
+                            let evts = parse_cursor_record(item, &mut sequence, timestamp, idx + 1, &mut last_model);
                             trace.events.extend(evts);
                         }
 
@@ -579,13 +527,7 @@ impl AgentAdapter for CursorAdapter {
                         latest_ts = Some(timestamp);
                     }
 
-                    let events = parse_cursor_record(
-                        &val,
-                        &mut sequence,
-                        timestamp,
-                        line_num,
-                        &mut last_model,
-                    );
+                    let events = parse_cursor_record(&val, &mut sequence, timestamp, line_num, &mut last_model);
                     trace.events.extend(events);
                 }
             }
@@ -614,9 +556,7 @@ fn is_candidate_cursor_file(path: &Path) -> bool {
     let lower = filename.to_lowercase();
 
     let is_vscdb = lower == "state.vscdb" || lower.ends_with(".vscdb");
-    let is_json = path
-        .extension()
-        .is_some_and(|ext| ext == "jsonl" || ext == "json");
+    let is_json = path.extension().is_some_and(|ext| ext == "jsonl" || ext == "json");
 
     if !is_vscdb && !is_json {
         return false;
@@ -631,11 +571,7 @@ fn is_candidate_cursor_file(path: &Path) -> bool {
         return false;
     }
 
-    if filename.starts_with('.')
-        && !lower.ends_with(".jsonl")
-        && !lower.ends_with(".json")
-        && !is_vscdb
-    {
+    if filename.starts_with('.') && !lower.ends_with(".jsonl") && !lower.ends_with(".json") && !is_vscdb {
         return false;
     }
 
@@ -671,11 +607,7 @@ fn is_sqlite_file(path: &Path) -> bool {
 fn derive_session_id(path: &Path) -> String {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     if stem == "state" {
-        if let Some(parent) = path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|p| p.to_str())
-        {
+        if let Some(parent) = path.parent().and_then(|p| p.file_name()).and_then(|p| p.to_str()) {
             if !parent.is_empty() && parent != "globalStorage" {
                 return format!("cursor-{}", parent);
             } else if parent == "globalStorage" {
@@ -879,7 +811,9 @@ fn parse_cursor_record(
         .or_else(|| val.get("usage"))
         .or_else(|| val.get("tokenUsage"));
 
-    let usage = usage_val_opt.map(extract_token_usage).unwrap_or_default();
+    let usage = usage_val_opt
+        .map(extract_token_usage)
+        .unwrap_or_default();
 
     if usage.total() > 0 || model_opt.is_some() {
         let model = model_opt.unwrap_or_else(|| "cursor-composer-model".to_string());
@@ -1279,11 +1213,7 @@ mod tests {
         let composer_dir = temp.path().join(".cursor").join("composer");
         std::fs::create_dir_all(&composer_dir).unwrap();
         let mut real = File::create(composer_dir.join("composer_001.jsonl")).unwrap();
-        writeln!(
-            real,
-            "{{\"type\":\"user\",\"text\":\"Fix bug in component\"}}"
-        )
-        .unwrap();
+        writeln!(real, "{{\"type\":\"user\",\"text\":\"Fix bug in component\"}}").unwrap();
 
         let adapter = CursorAdapter::new();
         let options = ScanOptions {
@@ -1293,15 +1223,8 @@ mod tests {
         };
 
         let enumerated = adapter.enumerate(&options).unwrap();
-        assert_eq!(
-            enumerated.len(),
-            1,
-            "only the real composer session should be enumerated"
-        );
-        assert!(enumerated[0]
-            .path
-            .to_string_lossy()
-            .ends_with("composer_001.jsonl"));
+        assert_eq!(enumerated.len(), 1, "only the real composer session should be enumerated");
+        assert!(enumerated[0].path.to_string_lossy().ends_with("composer_001.jsonl"));
     }
 
     #[test]
@@ -1436,7 +1359,10 @@ mod tests {
         ]);
         conn.execute(
             "INSERT INTO ItemTable (key, value) VALUES (?1, ?2)",
-            rusqlite::params!["aiService.prompts", prompts_data.to_string()],
+            rusqlite::params![
+                "aiService.prompts",
+                prompts_data.to_string()
+            ],
         )
         .unwrap();
 
@@ -1451,10 +1377,7 @@ mod tests {
         assert_eq!(result.malformed_lines, 0);
         let trace = result.trace;
         assert_eq!(trace.adapter, "cursor");
-        assert_eq!(
-            trace.stats.models_used,
-            vec!["claude-3.5-sonnet".to_string()]
-        );
+        assert_eq!(trace.stats.models_used, vec!["claude-3.5-sonnet".to_string()]);
         assert_eq!(trace.stats.token_usage.input_tokens, 150);
         assert_eq!(trace.stats.token_usage.output_tokens, 45);
         assert_eq!(trace.stats.token_usage.cache_read_tokens, 20);
@@ -1472,12 +1395,7 @@ mod tests {
             .filter(|e| matches!(e.payload, EventPayload::FileAction { .. }))
             .collect();
         assert_eq!(file_actions.len(), 1);
-        if let EventPayload::FileAction {
-            path,
-            lines_changed,
-            ..
-        } = &file_actions[0].payload
-        {
+        if let EventPayload::FileAction { path, lines_changed, .. } = &file_actions[0].payload {
             assert_eq!(path, "crates/adapters/src/cursor.rs");
             assert_eq!(*lines_changed, Some(10));
         } else {
@@ -1566,7 +1484,10 @@ mod tests {
 
         conn.execute(
             "INSERT INTO ItemTable (key, value) VALUES (?1, ?2)",
-            rusqlite::params!["composer.composerData", composer_data.to_string()],
+            rusqlite::params![
+                "composer.composerData",
+                composer_data.to_string()
+            ],
         )
         .unwrap();
         drop(conn);

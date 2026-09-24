@@ -148,10 +148,7 @@ mod tests {
 
     #[test]
     fn error_envelope_uses_the_stated_code() {
-        assert_eq!(
-            exit_code_from_result(true, "Error: Exit code 101"),
-            Some(101)
-        );
+        assert_eq!(exit_code_from_result(true, "Error: Exit code 101"), Some(101));
         assert_eq!(
             exit_code_from_result(true, "Command failed with exit code 137"),
             Some(137)
