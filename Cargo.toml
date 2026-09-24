@@ -30,7 +30,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rusqlite = { version = "0.31", features = ["bundled", "chrono", "uuid"] }
+rusqlite = { version = "0.31", features = ["bundled", "chrono", "uuid", "functions"] }
 # `unstable-ext` is what makes `#[arg(add = ...)]` compile: it is how clap_complete's
 # per-argument value completers (ArgValueCandidates) attach to an Arg.
 clap = { version = "4.5", features = ["derive", "cargo", "unstable-ext"] }

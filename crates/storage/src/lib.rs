@@ -1367,6 +1367,10 @@ impl Storage {
                 turn_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source TEXT NOT NULL,
                 session_id TEXT,
+                -- The turn source's own absolute file path: captured at ingestion so the
+                -- index can fill the turn↔session link (tier-2 by path, tier-3 by display
+                -- repo) without touching raw sources. Empty string on legacy rows.
+                source_path TEXT NOT NULL DEFAULT '',
                 turn_index INTEGER NOT NULL,
                 timestamp_ms INTEGER NOT NULL,
                 epoch_secs REAL NOT NULL,
@@ -1424,6 +1428,22 @@ impl Storage {
                 );
                 let _ = conn.execute(
                     "ALTER TABLE session_suspensions ADD COLUMN usd_at_lift REAL",
+                    [],
+                );
+            }
+        }
+
+        // Turn-lane link-repair column: an existing index's stored turns gain the source
+        // path key (NULL-defaulted); a later re-ingest (the version bump) fills it. Legacy
+        // rows still resolve tier-1 by stored id.
+        if let Ok(mut turn_stmt) = conn.prepare("PRAGMA table_info(human_turns)") {
+            let turn_columns: Vec<String> = turn_stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(Result::ok)
+                .collect();
+            if !turn_columns.is_empty() && !turn_columns.contains(&"source_path".to_string()) {
+                let _ = conn.execute(
+                    "ALTER TABLE human_turns ADD COLUMN source_path TEXT NOT NULL DEFAULT ''",
                     [],
                 );
             }
@@ -3887,7 +3907,7 @@ impl Storage {
     /// this shared one.
     pub fn get_insights(&self) -> Result<insights::Insights> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        insights::compute_insights(&conn, None)
+        insights::compute_insights(&conn, None, None)
     }
 
     /// Same payload over an explicit half-open `started_at` window: `?since=&until=` on
@@ -3897,7 +3917,28 @@ impl Storage {
         window: &insights::InsightsTimeWindow,
     ) -> Result<insights::Insights> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        insights::compute_insights(&conn, Some(window))
+        insights::compute_insights(&conn, Some(window), None)
+    }
+
+    /// The filtered variant: every session block and every human-turn block computes only
+    /// from the slice ([`insights::InsightsDimensionFilter`]), with deltas slice-to-slice.
+    pub fn get_insights_filtered(
+        &self,
+        window: Option<&insights::InsightsTimeWindow>,
+        filter: Option<&insights::InsightsDimensionFilter>,
+    ) -> Result<insights::Insights> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights::compute_insights(&conn, window, filter)
+    }
+
+    /// The drill-through: the sessions behind one ladder rung, heatmap cell or friction
+    /// trigger (stats-shaped rows only). See `insights::insights_drill`.
+    pub fn insights_drill(
+        &self,
+        req: &insights::InsightsDrillRequest,
+    ) -> Result<insights::InsightsDrill> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights::insights_drill(&conn, req)
     }
 
     /// Calculate rolling pacing summary for the last N hours.

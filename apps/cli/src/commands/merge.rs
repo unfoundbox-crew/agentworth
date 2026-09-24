@@ -964,6 +964,7 @@ mod tests {
                 .insert_human_turn_batch(&[agentworth_storage::human_turns::HumanTurnRow {
                     source: "claude".to_string(),
                     session_id: Some("sess-child".to_string()),
+                    source_path: String::new(),
                     turn_index: 0,
                     timestamp_ms: 1_772_860_000_000,
                     epoch_secs: 1_772_860_000.0,

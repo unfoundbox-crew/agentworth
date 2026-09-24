@@ -333,9 +333,31 @@ pub fn route_entries() -> Vec<RouteEntry> {
         RouteEntry {
             method: "GET",
             path: "/insights",
-            description: "The deterministic machine-insights payload: usable sessions, tool calls, evidence ladder, per-model burn, biggest sessions (same JSON as `agentworth insights --json`)",
-            query_params: &[],
+            description: "The deterministic machine-insights payload: usable sessions, tool calls, evidence ladder, per-model burn, biggest sessions (same JSON as `agentworth insights --json`). Optional since/until window plus single-select adapter/model/repo slice filters (values validated against the payload's facets block)",
+            query_params: &[
+                QueryParamDoc { name: "since", description: "window start (UTC RFC3339, inclusive)" },
+                QueryParamDoc { name: "until", description: "window end (exclusive; requires since)" },
+                QueryParamDoc { name: "adapter", description: "single-select equality slice; values validated against the payload's facets" },
+                QueryParamDoc { name: "model", description: "single-select model equality over recorded per-session usage" },
+                QueryParamDoc { name: "repo", description: "single-select display-repo equality" },
+            ],
             handler: get(get_insights_handler),
+        },
+        RouteEntry {
+            method: "GET",
+            path: "/insights/drill",
+            description: "Drill-through: the sessions behind one insights cut (same shape the deck's session feeds render). view=ladder|day_hour|friction + key=<rung|dow-hour|trigger>, optional since/until and the same adapter/model/repo filters",
+            query_params: &[
+                QueryParamDoc { name: "view", description: "ladder | day_hour | friction" },
+                QueryParamDoc { name: "key", description: "rung outcome | <dow>-<hour> | trigger" },
+                QueryParamDoc { name: "since", description: "window start (UTC RFC3339, inclusive)" },
+                QueryParamDoc { name: "until", description: "window end (exclusive; requires since)" },
+                QueryParamDoc { name: "adapter", description: "single-select equality slice" },
+                QueryParamDoc { name: "model", description: "single-select model equality" },
+                QueryParamDoc { name: "repo", description: "single-select display-repo equality" },
+                QueryParamDoc { name: "limit", description: "rows to return (default 50, ceiling 200); count is always the full total" },
+            ],
+            handler: get(get_insights_drill_handler),
         },
         RouteEntry {
             method: "GET",
@@ -789,11 +811,16 @@ async fn get_pacing_handler(
 /// `agentworth insights --json` command prints (agentworth_storage::insights). `?since=&until=`
 /// optionally narrows the whole population to a half-open `started_at` window (UTC RFC3339);
 /// `?since=` without `?until=` extends to the data horizon, and the deltas block then compares
-/// against the preceding window of equal length.
+/// against the preceding window of equal length. The optional `?adapter=&model=&repo=` are
+/// single-select equality slices: with any one present every session block and every human-turn
+/// block recompute from the slice only (values validated against the payload's `facets` block).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct InsightsQuery {
     pub since: Option<String>,
     pub until: Option<String>,
+    pub adapter: Option<String>,
+    pub model: Option<String>,
+    pub repo: Option<String>,
 }
 
 async fn get_insights_handler(
@@ -809,10 +836,16 @@ async fn get_insights_handler(
             ))
         }
     };
+    let filter = (query.adapter.is_some() || query.model.is_some() || query.repo.is_some()).then_some(
+        agentworth_storage::insights::InsightsDimensionFilter {
+            adapter: query.adapter,
+            model: query.model,
+            repo: query.repo,
+        },
+    );
     let storage = state.storage.clone();
-    let insights_res = tokio::task::spawn_blocking(move || match &window {
-        Some(w) => storage.get_insights_windowed(w),
-        None => storage.get_insights(),
+    let insights_res = tokio::task::spawn_blocking(move || {
+        storage.get_insights_filtered(window.as_ref(), filter.as_ref())
     })
         .await
         .map_err(|e| {
@@ -824,12 +857,76 @@ async fn get_insights_handler(
 
     let insights = insights_res.map_err(|e| {
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed computing insights: {}", e) })),
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("Failed computing insights: {e:#}") })),
         )
     })?;
 
     Ok(Json(insights))
+}
+
+/// GET /api/insights/drill?view=ladder&key=<rung> -> the sessions behind one cut. The
+/// deck's session-feed shape (id, adapter, repo label, started_at, rung, tokens, events),
+/// stats-shaped only -- no transcript text, no raw source paths. Same filters and window as
+/// /api/insights; `limit` defaults to 50, ceiling 200.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InsightsDrillQuery {
+    pub view: Option<String>,
+    pub key: Option<String>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub adapter: Option<String>,
+    pub model: Option<String>,
+    pub repo: Option<String>,
+    pub limit: Option<u64>,
+}
+
+async fn get_insights_drill_handler(
+    State(state): State<AppState>,
+    Query(query): Query<InsightsDrillQuery>,
+) -> Result<Json<agentworth_storage::insights::InsightsDrill>, (StatusCode, Json<serde_json::Value>)> {
+    let view = query.view.unwrap_or_default();
+    let key = query.key.unwrap_or_default();
+    let window = match agentworth_storage::insights::parse_window(query.since, query.until) {
+        Ok(w) => w,
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("Bad window: {}", e) })),
+            ))
+        }
+    };
+    let filter = (query.adapter.is_some() || query.model.is_some() || query.repo.is_some())
+        .then_some(agentworth_storage::insights::InsightsDimensionFilter {
+            adapter: query.adapter,
+            model: query.model,
+            repo: query.repo,
+        });
+    let req = agentworth_storage::insights::InsightsDrillRequest {
+        view: view.clone(),
+        key: key.clone(),
+        filter: filter.clone(),
+        window: window.clone(),
+        limit: query.limit,
+    };
+    let storage = state.storage.clone();
+    let drill_res = tokio::task::spawn_blocking(move || storage.insights_drill(&req))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Task joining failed: {}", e) })),
+            )
+        })?;
+
+    let drill = drill_res.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("Bad drill: {e:#}") })),
+        )
+    })?;
+
+    Ok(Json(drill))
 }
 
 /// GET /api/blame?file=<path> -> file change lineage matching session histories

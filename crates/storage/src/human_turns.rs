@@ -16,6 +16,9 @@ use rusqlite::{params, Connection};
 pub struct HumanTurnRow {
     pub source: String,
     pub session_id: Option<String>,
+    /// The turn source's own absolute file path — the link-repair tier-2 key (the turn's file
+    /// joined to the session whose source_path it is) and tier-3 repo cross-join input.
+    pub source_path: String,
     pub turn_index: u64,
     pub timestamp_ms: i64,
     pub epoch_secs: f64,
@@ -84,13 +87,14 @@ pub(crate) fn insert_human_turn_batch(
     for turn in turns {
         let inserted_here = conn.execute(
             "INSERT OR IGNORE INTO human_turns (
-                source, session_id, turn_index, timestamp_ms, epoch_secs,
+                source, session_id, source_path, turn_index, timestamp_ms, epoch_secs,
                 local_hour, local_date, word_count, char_count, friction_type, dedup_sig,
                 vocab_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 turn.source,
                 turn.session_id.as_deref(),
+                turn.source_path,
                 turn.turn_index,
                 turn.timestamp_ms,
                 turn.epoch_secs,

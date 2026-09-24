@@ -948,6 +948,15 @@ struct InsightsArgs {
     /// Window end (same format); exclusive. Defaults to the index's newest usable session
     #[arg(long)]
     until: Option<String>,
+    /// Single-select equality filter; valid values list under --json (insights.facets)
+    #[arg(long)]
+    adapter: Option<String>,
+    /// Filter by a recorded per-session model usage row
+    #[arg(long)]
+    model: Option<String>,
+    /// Filter by display repo over session source paths (insights.repo_label)
+    #[arg(long)]
+    repo: Option<String>,
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
@@ -1665,7 +1674,18 @@ pub fn run() -> Result<()> {
             run_scan_command(a.paths, a.force, a.include_stubs, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Insights(a) => {
-            insights::run_insights_command(resolve_json(a.json), a.since, a.until, cli.db_path, &ui)?;
+            insights::run_insights_command(
+                insights::InsightsCommandArgs {
+                    json: resolve_json(a.json),
+                    since: a.since,
+                    until: a.until,
+                    adapter: a.adapter,
+                    model: a.model,
+                    repo: a.repo,
+                    db_path: cli.db_path,
+                },
+                &ui,
+            )?;
         }
         Action::Stats { action: None, args } => {
             run_stats_command(resolve_json(args.json), cli.db_path, &ui)?;

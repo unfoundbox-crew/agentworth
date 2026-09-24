@@ -53,7 +53,32 @@ export interface RawInsights {
   schema_version: number;
   generated_at: string;
   window: { sessions: { min_started_at: string | null; max_started_at: string | null } };
-  filter: { since: string | null; until: string | null };
+  filter: {
+    since: string | null;
+    until: string | null;
+    adapter?: string | null;
+    model?: string | null;
+    repo?: string | null;
+    /** Set only when the slice matched zero usable sessions: the aggregates below are an
+     * honest empty slice, achieved by the backend's own recompute — not clamped zeros. */
+    notice?: string | null;
+  };
+  /** The valid single-select filter values on this index (the deck's filter bar + the
+   * drill lifecycle both read this). Optional pre-slice-lane payloads omit it. */
+  facets?: {
+    adapters: { value: string; sessions: number }[];
+    models: { value: string; sessions: number }[];
+    repos: { value: string; sessions: number }[];
+  };
+  /** Turn↔session link health (#194 repair): matched tiers + visibly unmatched counts. */
+  turn_link?: {
+    total: number;
+    linked: number;
+    unmatched: number;
+    linked_by_id: number;
+    linked_by_path: number;
+    linked_by_repo: number;
+  };
   deltas: {
     window: { since: string; until: string };
     previous_window: { since: string; until: string } | null;
@@ -296,9 +321,32 @@ export function mapInsights(raw: RawInsights): Insights {
     generated_at: raw.generated_at,
     since,
     until,
+    /** A filtered payload now recomputes for real, so `previous` rides the deltas
+     * block whenever the backend gives a window (slice-to-slice numbers). */
     current: mapCurrent(raw),
     previous: allTime ? null : mapPrevious(raw),
+    echo: {
+      adapter: raw.filter.adapter ?? null,
+      model: raw.filter.model ?? null,
+      repo: raw.filter.repo ?? null,
+      notice: raw.filter.notice ?? null,
+    },
+    facets: raw.facets,
   };
+}
+
+/** The echoed slice, for the note line (`Insights.tsx`): `adapter='x' repo='y'`, or null. */
+export function filteredDimension(filter: {
+  adapter?: string | null;
+  model?: string | null;
+  repo?: string | null;
+}): string | null {
+  const parts = [
+    ['adapter', filter.adapter],
+    ['model', filter.model],
+    ['repo', filter.repo],
+  ].filter(([, v]) => !!v) as [string, string][];
+  return parts.length === 0 ? null : parts.map(([k, v]) => `${k}=${v}`).join(' ');
 }
 
 /* ---------- client-side dimension narrowing ---------- */

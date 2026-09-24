@@ -1,13 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_FILTER,
   DEFAULT_MODEL_SORT,
+  fetchDrill,
   modelSortToggle,
   pctDelta,
+  serializeDrill,
+  serializeFilter,
   sinceFor,
   sortModels,
   topMovers,
   verifiedRate,
+  type InsightsFilter,
   type InsightsWindow,
 } from './insights';
 
@@ -103,5 +107,46 @@ describe('insights contract math (deck-insights lane)', () => {
     const flipped = modelSortToggle(DEFAULT_MODEL_SORT, 'tb');
     expect(sortModels(WIN.models, flipped).map((m) => m.model)).toEqual(['claude-sonnet-5', 'claude-opus-5']);
     expect(sortModels(WIN.models, modelSortToggle(flipped, 'sessions'))[0].sessions).toBe(50);
+  });
+});
+
+describe('slice-and-drill lane: serialize + drill scraper', () => {
+  it('serializeFilter sends adapter/model/repo as real server params alongside the window', () => {
+    const f: InsightsFilter = { web: '7d', adapter: 'claude_code', model: 'model-a', repo: 'demo/webapp' };
+    const qs = serializeFilter(f);
+    expect(qs).toContain('adapter=claude_code');
+    expect(qs).toContain('model=model-a');
+    expect(qs).toContain('repo=demo%2Fwebapp');
+    expect(qs).toContain('since=');
+  });
+
+  it('serializeFilter with no dimensions sends no filter keys (contract unchanged)', () => {
+    const qs = serializeFilter(DEFAULT_FILTER);
+    expect(qs).not.toContain('adapter');
+    expect(qs).not.toContain('model=');
+    expect(qs).not.toContain('repo=');
+  });
+
+  it('serializeDrill carries the same slice plus view/key, no window loss', () => {
+    const qs = serializeDrill(
+      { web: '7d', adapter: 'codex', model: null, repo: null },
+      { view: 'ladder', key: 'commit_observed' },
+    );
+    expect(qs).toContain('view=ladder');
+    expect(qs).toContain('key=commit_observed');
+    expect(qs).toContain('adapter=codex');
+    expect(qs).toContain('since=');
+  });
+
+  it('fetchDrill rejects a payload without its spine instead of guessing', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ count: 1 }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      fetchDrill(DEFAULT_FILTER, { view: 'ladder', key: 'commit_observed' }),
+    ).rejects.toThrow('did not match the contract');
+    // The URL is what the backend route expects.
+    expect(String(fetchMock.mock.calls[0][0])).toMatch('/api/insights/drill?');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('view=ladder&key=commit_observed');
+    vi.unstubAllGlobals();
   });
 });

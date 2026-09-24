@@ -1155,7 +1155,7 @@ async fn test_api_insights_golden_counts_over_synthetic_index() {
     b.recalculate_stats();
     storage.upsert_session(&b, None, None, 1).unwrap();
 
-    let (status, insights) = request_json(app, "GET", "/api/insights", None).await;
+    let (status, insights) = request_json(app.clone(), "GET", "/api/insights", None).await;
     assert_eq!(status, StatusCode::OK);
 
     // Schema v2: the human-turn turn-data blocks (day_hour/friction/vocabulary) joined the
@@ -1188,4 +1188,95 @@ async fn test_api_insights_golden_counts_over_synthetic_index() {
     let max = insights["window"]["sessions"]["max_started_at"].as_str().unwrap();
     assert!(min.starts_with("2026-06-01"), "got {min}");
     assert!(max.starts_with("2026-09-15"), "got {max}");
+}
+
+// ---- slice-and-drill lane: filters + the drill endpoint (TDD: failing first) --------
+
+/// The slot filters narrow the aggregate payload through the real route, and the drill
+/// endpoint returns the sessions behind one rung / one heatmap cell over the same fixture
+/// the golden test above seeds.
+#[tokio::test]
+async fn test_api_insights_filters_narrow_and_drill_returns_rows() {
+    let (app, storage, _) = setup_test_app();
+    use chrono::TimeZone;
+    let at = |y, m, d| Utc.with_ymd_and_hms(y, m, d, 10, 0, 0).unwrap();
+    let mut seq = 0u64;
+
+    let mut a = AgentWorthTrace::new(
+        "sess-a",
+        "claude_code",
+        Provenance::new("/home/dev/code/org/alpha/log.jsonl", "claude_code", 1024, 1, "fp-a"),
+        at(2026, 6, 1),
+    );
+    for _ in 0..2 {
+        seq += 1;
+        a.events.push(NormalizedEvent::new(
+            seq,
+            at(2026, 6, 1),
+            EventPayload::UserMessage { content: "turn".into() },
+        ));
+    }
+    a.recalculate_stats();
+    storage.upsert_session(&a, Some("commit_observed"), Some(0.9), 1).unwrap();
+
+    let mut b = AgentWorthTrace::new(
+        "sess-b",
+        "codex",
+        Provenance::new("/tmp/somewhere/b-rollout-1.jsonl", "codex", 512, 2, "fp-b"),
+        at(2026, 9, 15),
+    );
+    b.events.push(NormalizedEvent::new(
+        1,
+        at(2026, 9, 15),
+        EventPayload::UserMessage { content: "do it".into() },
+    ));
+    b.recalculate_stats();
+    storage.upsert_session(&b, None, None, 1).unwrap();
+
+    // Slot filter narrows for real: the population, the ladder and the echo agree.
+    let (status, slice) = request_json(app.clone(), "GET", "/api/insights?adapter=claude_code", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(slice["population"]["usable_sessions"], 1);
+    assert_eq!(slice["by_adapter"][0]["adapter"], "claude_code");
+    assert_eq!(slice["filter"]["adapter"], "claude_code");
+    assert_eq!(slice["facets"]["adapters"][0]["value"], "claude_code");
+
+    // An unknown value is a typed 400 naming the facet block.
+    let (status, err) =
+        request_json(app.clone(), "GET", "/api/insights?adapter=jet-fueled-adapter", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(err["error"].as_str().unwrap().contains("facets"));
+
+    // Drill through the ladder's verified rung: sess-a, with a redacted repo label.
+    let (status, drill) =
+        request_json(app.clone(), "GET", "/api/insights/drill?view=ladder&key=commit_observed", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(drill["count"], 1);
+    assert_eq!(drill["rows"][0]["session_id"], "sess-a");
+    assert_eq!(drill["rows"][0]["repo_label"], "org");
+    assert!(drill["rows"][0].get("source_path").is_none(), "no raw paths on the wire");
+    assert!(drill["rows"][0].get("primary_outcome").is_some());
+
+    // An empty rung is explicit: count 0, no rows.
+    let (status, empty) = request_json(
+        app.clone(),
+        "GET",
+        "/api/insights/drill?view=ladder&key=ci_or_deployment_verified",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(empty["count"], 0);
+    assert_eq!(empty["rows"].as_array().unwrap().len(), 0);
+
+    // Bad view and bad key are typed 400s, never empty greets.
+    for bad in [
+        "/api/insights/drill?view=pie&key=x",
+        "/api/insights/drill?view=day_hour&key=99-99",
+        "/api/insights/drill?view=friction&key=none",
+    ] {
+        let (status, err) = request_json(app.clone(), "GET", bad, None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "GET {bad}");
+        assert!(err["error"].as_str().unwrap_or_default().len() > 4, "typed error for {bad}");
+    }
 }

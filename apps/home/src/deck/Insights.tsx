@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { PanelState } from './PanelState';
 import {
   DEFAULT_FILTER,
@@ -10,7 +10,9 @@ import {
   topMovers,
   verifiedRate,
   WEBS,
+  fetchDrill,
   fetchInsights,
+  type DrillResult,
   type Insights,
   type InsightsFilter,
   type InsightsState,
@@ -18,8 +20,7 @@ import {
   type ModelSortKey,
 } from '../model/insights';
 import {
-  applyDimensionFilter,
-  hasDimensionFilter,
+  filteredDimension,
 } from '../model/insightsBackend';
 
 /**
@@ -161,7 +162,7 @@ function KpiStrip({ win, prevWin }: { win: InsightsWindow; prevWin: InsightsWind
 
 /* ---------- ladder funnel (horizontal SVG funnel, not a pie) ---------- */
 
-function LadderFunnel({ win }: { win: InsightsWindow }) {
+export function LadderFunnel({ win, onDrill }: { win: InsightsWindow; onDrill: (key: string) => void }) {
   const counts = new Map(win.ladder.map((r) => [r.outcome, r.sessions]));
   const top = Math.max(1, ...win.ladder.map((r) => r.sessions));
   const width = 100;
@@ -189,24 +190,38 @@ function LadderFunnel({ win }: { win: InsightsWindow }) {
               fill={outcome === 'no_outcome_evidence' ? 'var(--mv-border)' : 'var(--mv-accent)'}
               opacity={outcome === 'no_outcome_evidence' ? 0.7 : 0.9}
               rx={1.5}
+              tabIndex={0}
+              role="button"
+              aria-label={`drill into ${LADDER[i].label}: ${n} sessions`}
+              className="outline-none cursor-pointer"
             >
-              <title>{`${LADDER[i].label}: ${n.toLocaleString()} sessions`}</title>
+              <title>{`${LADDER[i].label}: ${n.toLocaleString()} sessions · click to drill through`}</title>
             </rect>
           );
         })}
       </svg>
       <div className="mt-2 grid grid-cols-2 gap-x-3">
-        {LADDER.map(({ outcome, label }) => (
-          <div key={outcome} className="flex items-baseline justify-between gap-1 py-px">
-            <span className={`text-[10px] ${outcome === 'no_outcome_evidence' ? 'text-dim' : 'text-muted'}`}>{label}</span>
-            <span className="font-mono text-[10px] tabular-nums text-dim">
-              {(counts.get(outcome) ?? 0).toLocaleString()}
-            </span>
-          </div>
-        ))}
+        {LADDER.map(({ outcome, label }) => {
+          const n = counts.get(outcome) ?? 0;
+          return (
+            <button
+              key={outcome}
+              type="button"
+              className="flex items-baseline justify-between gap-1 py-px cursor-pointer hover:text-ink text-left"
+              onClick={() => n > 0 && onDrill(outcome)}
+              title={n > 0 ? `drill into the ${n} session(s) behind ${label}` : 'nothing on this rung'}
+              disabled={n === 0}
+            >
+              <span className={`text-[10px] ${outcome === 'no_outcome_evidence' ? 'text-dim' : 'text-muted'}`}>{label}</span>
+              <span className="font-mono text-[10px] tabular-nums text-dim">
+                {n.toLocaleString()}
+              </span>
+            </button>
+          );
+        })}
       </div>
       <div className="mt-2 text-[10px] text-dim">
-        rungs are evidence, not success — the bottom rung is not flunking {verifiedRate(win).toFixed(1)}% sessions cleared test-or-better
+        rungs are evidence, not success — the bottom rung is not flunking · rows drill through {verifiedRate(win).toFixed(1)}% sessions cleared test-or-better
       </div>
     </div>
   );
@@ -214,7 +229,7 @@ function LadderFunnel({ win }: { win: InsightsWindow }) {
 
 /* ---------- heatmap (hour x dow) ---------- */
 
-function Heatmap({ win }: { win: InsightsWindow }) {
+function Heatmap({ win, onDrill, filteredRepos }: { win: InsightsWindow; onDrill: (key: string) => void; filteredRepos: number | null }) {
   const cell = (dow: number, hour: number) =>
     win.day_hour.find((c) => c.dow === dow && c.hour === hour)?.sessions ?? 0;
   const peak = Math.max(1, ...win.day_hour.map((c) => c.sessions));
@@ -224,7 +239,9 @@ function Heatmap({ win }: { win: InsightsWindow }) {
   return (
     <div className="border border-line rounded-md p-4">
       <Label>when this machine works · sessions</Label>
-      <div className="mt-2 text-[9px] text-dim">hours 00-23 (utc)</div>
+      <div className="mt-2 text-[9px] text-dim">
+        hours 00-23 (utc){filteredRepos != null && ' · heatmap is turns on filtered sessions'}
+      </div>
       <div className="mt-1 flex flex-col gap-[2px]">
         {DOW.map((day, dow) => (
           <div key={day} className="flex items-center gap-[2px]">
@@ -235,11 +252,12 @@ function Heatmap({ win }: { win: InsightsWindow }) {
                 <button
                   type="button"
                   key={h}
-                  className="h-2.5 flex-1 rounded-[2px] cursor-default border-0 p-0"
+                  className="h-2.5 flex-1 rounded-[2px] border-0 p-0 cursor-pointer"
                   style={{ background: colour(n) }}
-                  title={`${day} ${String(h).padStart(2, '0')}:00 · ${n.toLocaleString()} sessions`}
+                  title={`${day} ${String(h).padStart(2, '0')}:00 · ${n.toLocaleString()} sessions · click to drill through`}
+                  onClick={() => n > 0 && onDrill(`${dow}-${h}`)}
                 >
-                  <span className="sr-only">{`${day} ${h}:00 ${n} sessions`}</span>
+                  <span className="sr-only">{`${day} ${h}:00 ${n} sessions, drill through`}</span>
                 </button>
               );
             })}
@@ -306,7 +324,7 @@ function ModelTable({ win, filter, onSetModel }: {
 
 /* ---------- friction bars (direct value labels) ---------- */
 
-function FrictionBars({ win, prevWin }: { win: InsightsWindow; prevWin: InsightsWindow | null }) {
+function FrictionBars({ win, prevWin, onDrill }: { win: InsightsWindow; prevWin: InsightsWindow | null; onDrill: (key: string) => void }) {
   const rows = [...win.friction].sort((a, b) => b.sessions - a.sessions);
   const prevMap = new Map(prevWin?.friction.map((r) => [r.trigger, r.sessions]) ?? []);
   const peak = Math.max(1, ...rows.map((r) => r.sessions));
@@ -322,7 +340,8 @@ function FrictionBars({ win, prevWin }: { win: InsightsWindow; prevWin: Insights
             key={r.trigger}
             type="button"
             className="flex items-baseline gap-2 text-left cursor-pointer hover:bg-ground"
-            title={`${r.trigger}: ${r.sessions.toLocaleString()} sessions where humans intervened — friction is fuel for recovery, not a defect log`}
+            onClick={() => onDrill(r.trigger)}
+            title={`${r.trigger}: ${r.sessions.toLocaleString()} turns — friction is fuel for recovery; click to drill through`}
           >
             <span className="text-[10px] text-muted w-[110px] truncate shrink-0">{r.trigger.replace(/_/g, ' ')}</span>
             <span
@@ -398,6 +417,63 @@ export function ExploreDrawer({ win, open, onToggle }: { win: InsightsWindow; op
   );
 }
 
+/* ---------- drill drawer (the sessions behind one cut, the deck's feed surface) ---------- */
+
+export interface DrillView {
+  view: 'ladder' | 'day_hour' | 'friction';
+  key: string;
+}
+
+/**
+ * DrillDrawer — the deck's own session rows (same columns the explore drawer's
+ * biggest-sessions list already renders, plus outcome + id), fed by
+ * /api/insights/drill. Escape closes (Deck.tsx owns Escape globally; clicking
+ * ✕ is the mouse path). Rows are stats-shaped only by backend contract.
+ */
+export function DrillDrawer({ drill, result, error, loading, onClose }: {
+  drill: DrillView | null;
+  result: (DrillResult & { of: string }) | null;
+  error: string | null;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  if (!drill) return null;
+  const title: Record<DrillView['view'], string> = {
+    ladder: 'evidence ladder',
+    day_hour: 'heatmap cell',
+    friction: 'friction trigger',
+  };
+  if (loading) {
+    return <PanelState kind="empty" title="drilling…" hint={`${drill.view} · ${drill.key}`} />;
+  }
+  if (error) {
+    return <PanelState kind="error" title="drill failed" hint={error} />;
+  }
+  if (!result || result.of !== `${drill.view}|${drill.key}`) return null;
+  return (
+    <div className="border border-line rounded-md" aria-label="drill through">
+      <div className="px-4 py-2 border-b border-line flex justify-between items-baseline">
+        <Label>{`drill · ${title[drill.view]} · ${result.count.toLocaleString()} session(s)`}</Label>
+        <button type="button" className="text-[10px] text-dim hover:text-ink" onClick={onClose}>hide ✕</button>
+      </div>
+      {result.count === 0 ? (
+        <div className="p-4 text-[10px] text-dim">no sessions on this cut in this window</div>
+      ) : (
+        <ul className="p-4 flex flex-col gap-1 max-h-56 overflow-y-auto">
+          {result.rows.map((r) => (
+            <li key={r.session_id} className="flex justify-between gap-2 text-[10px] py-0.5" title={r.session_id}>
+              <span className="text-muted truncate">{r.repo_label} · {r.adapter.slice(0, 6)}</span>
+              <span className="text-dim">{r.started_at.slice(0, 10)}</span>
+              <span className="text-muted tabular-nums">{(r.total_tokens / 1e9).toFixed(2)}B tok</span>
+              <span className="w-10 text-right text-dim truncate tabular-nums">{r.primary_outcome ?? 'unflown'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ---------- auto-insight callout ---------- */
 
 function CalloutStrip({ win, prevWin }: { win: InsightsWindow; prevWin: InsightsWindow | null }) {
@@ -461,6 +537,10 @@ function FilterBar({ filter, onFilter, options }: {
 
 /* ---------- hooks + shell ---------- */
 
+function hasFilter(f: Pick<InsightsFilter, 'adapter' | 'model' | 'repo'>): boolean {
+  return !!(f.adapter || f.model || f.repo);
+}
+
 function useInsights(filter: InsightsFilter, open: boolean): InsightsState {
   const [state, setState] = useState<InsightsState>({ status: 'ready', data: null });
   const key = useMemo(() => `${filter.web}|${filter.adapter}|${filter.model}|${filter.repo}`, [filter]);
@@ -495,19 +575,46 @@ export function InsightsBody({ data, filter, onFilter, detailsOpen, onToggleDeta
   onToggleDrawer: () => void;
 }) {
   const { current: rawCurrent, previous: rawPrevious } = data;
-  // Dimension filters (adapter/model/repo) are not backend query params (#191
-  // serves only since/until); they narrow per-row widgets here. With any
-  // dimension filter set, Δ hides rather than comparing a narrowed number to
-  // an unfiltered base — the header note says so on-screen.
-  const filtered = hasDimensionFilter(filter);
-  const current = useMemo(() => applyDimensionFilter(rawCurrent, filter), [rawCurrent, filter]);
-  const previous = useMemo(
-    () => (filtered ? null : rawPrevious),
-    [filtered, rawPrevious],
-  );
+  // Dimension filters are backend query params now (the slice-and-drill lane): the payload
+  // ALREADY recomputed every aggregate — KPIs, ladder, heatmap, friction, deltas — from the
+  // slice, so no client-side narrowing stands between the wire and the widgets, and Δ now
+  // compares slice to slice. A zero-session slice arrives pre-noticed on data.filter.notice.
+  // Nothing hidden: the mapped `previous` window rides the real deltas block, whatever the
+  // slice. The honest-Δ change above is the whole point of the backend recompute.
+  const current = rawCurrent;
+  const previous = rawPrevious;
+  const filtered = hasFilter(filter);
+  const sliceNotice = data.echo?.notice ?? null;
   const adapterOptions = useMemo(() => rawCurrent.by_adapter.map((a) => a.adapter), [rawCurrent]);
   const modelOptions = useMemo(() => rawCurrent.models.map((m) => m.model), [rawCurrent]);
   const repoOptions = useMemo(() => rawCurrent.repos.map((r) => r.repo), [rawCurrent]);
+
+  const [drill, setDrill] = useState<DrillView | null>(null);
+  const [drillState, setDrillState] = useState<{
+    loading: boolean;
+    error: string | null;
+    result: (DrillResult & { of: string }) | null;
+  }>({ loading: false, error: null, result: null });
+
+  useEffect(() => {
+    if (!drill) return;
+    let cancelled = false;
+    setDrillState({ loading: true, error: null, result: null });
+    fetchDrill(filter, drill)
+      .then((rows) => {
+        if (!cancelled) {
+          setDrillState({ loading: false, error: null, result: { ...rows, of: `${drill.view}|${drill.key}` } });
+        }
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setDrillState({ loading: false, error: err.message, result: null });
+      });
+    return () => { cancelled = true; };
+  }, [drill]);
+
+  const openDrill = useCallback((view: DrillView['view'], key: string) => {
+    setDrill(key ? { view, key } : null);
+  }, []);
 
   return (
     <div className="h-full overflow-y-auto" aria-label="insights">
@@ -520,18 +627,19 @@ export function InsightsBody({ data, filter, onFilter, detailsOpen, onToggleDeta
               title={`window ${data.since} → ${data.until}`}
             >
               {filter.web}{data.since && ` · since ${data.since.slice(0, 10)}`}
-              {filtered && ' · row filters narrow the tables; aggregates stay machine-wide'}
+              {filtered && ` · aggregates recomputed on ${sliceNotice ? 'empty slice' : filteredDimension(filter)}`}
+              {sliceNotice && <span title={sliceNotice}> · empty slice ⚑</span>}
             </span>
           </div>
-          <FilterBar filter={filter} onFilter={onFilter} options={{ adapters: adapterOptions, models: modelOptions, repos: repoOptions }} />
+          <FilterBar filter={filter} onFilter={(f) => { setDrill(null); onFilter(f); }} options={{ adapters: adapterOptions, models: modelOptions, repos: repoOptions }} />
         </div>
 
         <CalloutStrip win={current} prevWin={previous} />
         <KpiStrip win={current} prevWin={previous} />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <LadderFunnel win={current} />
-          <Heatmap win={current} />
+          <LadderFunnel win={current} onDrill={(k) => openDrill('ladder', k)} />
+          <Heatmap win={current} onDrill={(k) => openDrill('day_hour', k)} filteredRepos={hasFilter(filter) ? 1 : null} />
         </div>
 
         <button type="button" className="text-[10px] text-dim hover:text-ink self-start cursor-pointer" onClick={onToggleDetails}>
@@ -542,11 +650,19 @@ export function InsightsBody({ data, filter, onFilter, detailsOpen, onToggleDeta
           <div className="flex flex-col gap-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <ModelTable win={current} filter={filter} onSetModel={(m) => onFilter({ ...filter, model: filter.model === m ? null : m })} />
-              <FrictionBars win={current} prevWin={previous} />
+              <FrictionBars win={current} prevWin={previous} onDrill={(k) => openDrill('friction', k)} />
             </div>
             <ExploreDrawer win={current} open={drawerOpen} onToggle={onToggleDrawer} />
           </div>
         )}
+
+        <DrillDrawer
+          drill={drill}
+          result={drillState.result}
+          error={drillState.error}
+          loading={drillState.loading}
+          onClose={() => setDrill(null)}
+        />
       </div>
     </div>
   );

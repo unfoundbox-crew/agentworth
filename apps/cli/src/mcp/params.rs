@@ -131,6 +131,11 @@ pub enum UsagePeriodParam {
 
 /// Parameters for the `insights_get` tool -- the same window `agentworth insights` and
 /// `/api/insights?since=&until=` take. Omit both for all-time.
+///
+/// The three optional single-select dimension filters (adapter/model/repo) narrow every
+/// session block and every human-turn block to the slice; equality semantics, values
+/// validated against the payload's own `facets` block (an unknown value is a typed error,
+/// never a silent empty). Omit all three; the key set is unchanged.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct InsightsGetParams {
     /// RFC 3339 timestamp; only sessions (and stored human turns) starting at or after
@@ -138,6 +143,12 @@ pub struct InsightsGetParams {
     pub since: Option<String>,
     /// RFC 3339 timestamp; requires `since` -- a window needs a start.
     pub until: Option<String>,
+    /// Exact adapter match (e.g. `claude_code`); valid values in the payload's facets.
+    pub adapter: Option<String>,
+    /// Exact model match over recorded per-session model usage. Optional.
+    pub model: Option<String>,
+    /// Exact display-repo match over session source paths. Optional.
+    pub repo: Option<String>,
 }
 
 /// Same parameters as `insights_get`: both windows narrow the same payload, only the
