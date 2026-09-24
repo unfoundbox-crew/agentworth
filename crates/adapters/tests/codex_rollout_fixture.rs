@@ -222,6 +222,12 @@ fn codex_a_restarted_cumulative_counter_contributes_its_new_total_in_full() {
 /// empty rows version 1 produced.
 #[test]
 fn codex_parser_version_moved_past_the_version_that_read_nothing() {
-    assert_eq!(CodexAdapter::PARSER_VERSION, 2);
-    assert_eq!(CodexAdapter::new().parser_version(), 2);
+    // v2 was the depthless parser (metadata and tokens only); v3 added the
+    // `response_item` depth extraction. A floor stored as a constant-to-constant
+    // comparison reads false; 3 is the current version.
+    assert_eq!(CodexAdapter::PARSER_VERSION, 3);
+    assert_eq!(
+        CodexAdapter::new().parser_version(),
+        CodexAdapter::PARSER_VERSION
+    );
 }
