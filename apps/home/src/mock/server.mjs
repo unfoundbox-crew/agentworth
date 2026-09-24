@@ -148,6 +148,23 @@ wss.on('connection', (ws) => {
     if (f.t === 'open') {
       send({ t: 'backfill', spaceId: f.spaceId, messages: fixture.messages.filter((m) => m.spaceId === f.spaceId), artifacts: fixture.artifacts.filter((a) => a.spaceId === f.spaceId) });
     }
+    if (f.t === 'timeline') {
+      // The scrubber's fixture: the same distillation the gateway ships (speech/work
+      // moments from the stream, plus one shaped handoff pair and one retried fork so
+      // `npm run mock` shows every mark the track can draw).
+      const below = fixture.messages
+        .filter((m) => m.spaceId === f.spaceId)
+        .map((m, i) => ({ seq: i + 1, kind: m.kind === 'work' ? 'work' : 'speech', text: m.text, at: m.at }));
+      const shaped = f.spaceId === 'office-sen'
+        ? [
+            ...below,
+            { seq: 101, kind: 'handoff', text: 'claude-opus-5 → claude-fable-5', at: '2026-09-07T11:20:00Z' },
+            { seq: 102, kind: 'handoff', text: 'claude-fable-5 → claude-opus-5', at: '2026-09-07T11:21:30Z' },
+            { seq: 103, kind: 'error', text: 'cargo test exited 101', at: '2026-09-07T11:25:00Z' },
+          ]
+        : below;
+      send({ t: 'timeline', spaceId: f.spaceId, moments: shaped, truncated: false });
+    }
     if (f.t === 'prompt') {
       const space = fixture.spaces.find((s) => s.id === f.spaceId);
       const who = f.mentions[0] ?? space?.members[0];

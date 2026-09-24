@@ -10,6 +10,13 @@ import { buildSessionReview, selectReviewPath } from '../model/sessionReview';
 import { SessionReview } from './SessionReview';
 import { ToolCards } from './ToolCards';
 import { PanelState } from './PanelState';
+import { TrackScrubber } from './TrackScrubber';
+import {
+  buildTrackEvents,
+  latestStopBefore,
+  rewoundEvents,
+  type TrackEvent,
+} from '../model/trackTimeline';
 
 const RUNG_LABEL: Record<string, string> = {
   said: 'said',
@@ -36,6 +43,29 @@ function MessageLine({ m, theme, personas }: { m: Message; theme: Theme; persona
   );
 }
 
+/** One rewound timeline line under the playhead. Speech stays the rider's voice;
+ *  handoff/error render as the shaped marks DESIGN.md names, deck-native. */
+function TrackLine({ e }: { e: TrackEvent }) {
+  if (e.kind === 'handoff') {
+    return (
+      <div className="text-[11px] text-accent" title="handoff">
+        <span aria-hidden="true">→</span> {e.text}
+      </div>
+    );
+  }
+  if (e.kind === 'error') {
+    return (
+      <div className="text-[11px] text-warn" title="fork on retry">
+        <span aria-hidden="true">⑂</span> {e.text}
+      </div>
+    );
+  }
+  if (e.kind === 'work') {
+    return <div className="text-[11px] text-dim">{e.text}</div>;
+  }
+  return <div className="text-[11px] text-text">{e.text}</div>;
+}
+
 export function Course({
   direction,
   stops,
@@ -55,6 +85,7 @@ export function Course({
 }) {
   const officeId = direction ? `office-${direction.riders[0]}` : null;
   const messagesBySpace = useHome((s) => s.messages);
+  const timelines = useHome((s) => s.timelines);
   const connection = useHome((s) => s.connection);
   const messages = officeId ? messagesBySpace[officeId] ?? [] : [];
 
@@ -66,10 +97,15 @@ export function Course({
     if (officeId) gateway.open(officeId);
   }, [officeId]);
 
+  // The scrubber's timeline: one request per office, answered by `timeline` frames into
+  // the store. A room-less or fresh rider simply stays timeline-less; the strip degrades.
+  useEffect(() => {
+    if (officeId) gateway.send({ t: 'timeline', spaceId: officeId });
+  }, [officeId]);
+
   const list = direction ? stops[direction.id] ?? [] : [];
   const ordered = useMemo(() => [...list].sort((a, b) => a.at.localeCompare(b.at)), [list]);
   const latest = ordered[ordered.length - 1];
-  const latestArtifact = latest?.artifactId ? artifacts[latest.artifactId] : undefined;
 
   useEffect(() => {
     if (latest?.artifactId && !artifacts[latest.artifactId]) {
@@ -103,6 +139,35 @@ export function Course({
     return true;
   });
 
+  // The scrubber: the distilled session timeline plus this client's live tail, and a
+  // playhead. Live (scrub = null) the track follows the end; scrubbed, everything below
+  // reads the state at the playhead. Reaching the last moment is live again.
+  const timeline = officeId ? timelines[officeId] : undefined;
+  const trackEvents = useMemo(
+    () => buildTrackEvents(timeline?.moments ?? [], messages),
+    [timeline?.moments, messages],
+  );
+  const [scrub, setScrubRaw] = useState<number | null>(null);
+  useEffect(() => {
+    setScrubRaw(null);
+  }, [officeId]);
+  const scrubbable = trackEvents.length > 1;
+  const setScrub = (index: number) => {
+    if (!scrubbable) return;
+    setScrubRaw(index >= trackEvents.length - 1 ? null : index);
+  };
+  const scrubbed = scrub !== null;
+  const playheadAtMs = scrubbed && scrub !== null ? trackEvents[scrub].atMs : null;
+  const evidenceStop = playheadAtMs !== null ? latestStopBefore(ordered, playheadAtMs) : latest;
+  const rewindShown = scrubbed ? rewoundEvents(trackEvents, scrub ?? 0) : [];
+  const latestArtifact = evidenceStop?.artifactId ? artifacts[evidenceStop.artifactId] : undefined;
+
+  // A rewound evidence stop can be an older artifact this client never fetched.
+  useEffect(() => {
+    const id = evidenceStop?.artifactId;
+    if (id && !artifacts[id]) gateway.send({ t: 'fetch', artifactId: id });
+  }, [evidenceStop, artifacts]);
+
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualize = visible.length > 200;
   const virtualizer = useVirtualizer({
@@ -120,33 +185,18 @@ export function Course({
     );
   }
 
-  const min = ordered[0] ? new Date(ordered[0].at).getTime() : 0;
-  const max = ordered[ordered.length - 1] ? new Date(ordered[ordered.length - 1].at).getTime() : min + 1;
-  const span = Math.max(1, max - min);
-
   return (
     <div className="h-full overflow-y-auto p-4" aria-label="course">
       <div className="text-[10px] text-muted">course &middot; {direction.goal}</div>
 
-      <div className="relative mt-4 h-16 rounded-lg border border-line bg-[var(--mv-ground)]">
-        {ordered.map((s) => (
-          <div
-            key={s.id}
-            role="img"
-            aria-label={`${RUNG_LABEL[s.rung]} · ${s.from} · ${s.at}`}
-            tabIndex={0}
-            className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full border border-ink bg-[var(--mv-ground)]"
-            style={{ left: `${8 + ((new Date(s.at).getTime() - min) / span) * 84}%` }}
-            title={`${RUNG_LABEL[s.rung]} · ${s.from} · ${s.at}`}
-          />
-        ))}
-        <div className="absolute right-2 top-1 text-[9px] text-accent">now</div>
-        {ordered.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center text-[10px] text-dim">
-            no evidence yet
-          </div>
-        )}
-      </div>
+      <TrackScrubber
+        events={trackEvents}
+        stops={ordered}
+        scrub={scrub}
+        truncated={timeline?.truncated ?? false}
+        onScrub={setScrub}
+        onLive={() => setScrubRaw(null)}
+      />
 
       <div className="mt-4 rounded-lg border border-line bg-panel p-3">
         <div className="text-[10px] text-muted mb-1.5">review &middot; files changed</div>
@@ -154,17 +204,24 @@ export function Course({
       </div>
 
       <div className="mt-4 rounded-lg border border-line bg-panel p-3">
-        <div className="text-[10px] text-muted mb-1.5">evidence &middot; last stop</div>
+        <div className="text-[10px] text-muted mb-1.5">
+          evidence &middot; {scrubbed ? 'the rung so far' : 'last stop'}
+          {playheadAtMs !== null && (
+            <span className="ml-1" aria-hidden="true">
+              · rewound to {new Date(playheadAtMs).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
         {latestArtifact?.body ? (
           <VirtualizedPreview body={latestArtifact.body} />
-        ) : latest?.artifactId ? (
+        ) : evidenceStop?.artifactId ? (
           <PanelState kind="loading" title="fetching the evidence" />
         ) : (
           <PanelState kind="empty" title="no evidence yet" hint="stops land here when a rider earns a rung" />
         )}
-        {latest && (
+        {evidenceStop && (
           <div className="mt-2 text-[11px] text-success">
-            {RUNG_LABEL[latest.rung]} &middot; {latest.from}
+            {RUNG_LABEL[evidenceStop.rung]} &middot; {evidenceStop.from}
           </div>
         )}
       </div>
@@ -189,7 +246,20 @@ export function Course({
         />
       </div>
 
-      {(visible.length > 0 || riderWorking) ? (
+      {scrubbed ? (
+        <div className="mt-4 rounded-lg border border-line bg-panel p-3" style={{ maxHeight: 320, overflowY: 'auto' }}>
+          <div className="text-[10px] text-muted mb-1.5">stream &middot; rewound</div>
+          {rewindShown.length === 0 ? (
+            <PanelState kind="empty" title="nothing yet at this moment" hint="drag the playhead forward to see more" />
+          ) : (
+            <div className="flex flex-col gap-1">
+              {rewindShown.map((e) => (
+                <TrackLine key={e.key} e={e} />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (visible.length > 0 || riderWorking) ? (
         <div className="mt-4 rounded-lg border border-line bg-panel p-3" ref={parentRef} style={{ maxHeight: 220, overflowY: 'auto' }}>
           <div className="text-[10px] text-muted mb-1.5">stream</div>
           {virtualize ? (

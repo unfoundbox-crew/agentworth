@@ -89,8 +89,27 @@ body {
   color: var(--mv-ink);
 }
 
-/* Focus visibility: one ring for every interactive element. */
-:where(button, input, a, [tabindex]):focus-visible {
+/*
+ * Track stop dots carry their evidence rung, the way the design mockup reserves
+ * per-rung tokens. Dark by default; a light palette is a token swap at the cascade
+ * root, never a component edit. `said` is the hollow unflown dot; artifact is warn
+ * (a diff exists but is unverified); test-and-up is success.
+ */
+:root {
+  --track-rung-said: var(--mv-muted);
+  --track-rung-artifact: var(--mv-warn);
+  --track-rung-test: var(--mv-success);
+  --track-rung-commit: var(--mv-success);
+  --track-rung-ci: var(--mv-success);
+}
+.track-stop { box-sizing: border-box; }
+.track-stop[data-rung='said'] { background: var(--mv-ground); box-shadow: inset 0 0 0 1.5px var(--track-rung-said); border-color: transparent; }
+.track-stop[data-rung='artifact'] { background: var(--track-rung-artifact); border-color: transparent; }
+.track-stop[data-rung='test'] { background: var(--track-rung-test); border-color: transparent; }
+.track-stop[data-rung='commit'] { background: var(--track-rung-commit); border-color: transparent; }
+.track-stop[data-rung='ci'] { background: var(--track-rung-ci); border-color: transparent; }
+
+/* Focus visibility: one ring for every interactive element. */:where(button, input, a, [tabindex]):focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--mv-accent-soft), 0 0 0 1px var(--mv-accent-border);
   border-radius: 4px;
