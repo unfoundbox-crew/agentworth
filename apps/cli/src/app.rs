@@ -26,6 +26,8 @@ mod autopsy;
 mod recall;
 #[path = "commands/insights.rs"]
 mod insights;
+#[path = "commands/turns.rs"]
+mod turns;
 #[path = "commands/bisect.rs"]
 mod bisect;
 #[path = "commands/pr_blame.rs"]
@@ -253,6 +255,13 @@ enum Commands {
     /// touches, the evidence ladder, per-model burn, biggest sessions. Read-only; `--json` emits
     /// the full payload (same JSON as GET /api/insights).
     Insights(InsightsArgs),
+
+    /// (Re)ingest the human-turn lane on its own -- the turn-data side of Insights, without
+    /// a full scan. A taxonomy-version bump wipes and re-parses every turn source; the
+    /// dedup signature keeps past encounters out. Also the repair turn for the
+    /// turn↔session link (tier-2/3 need each turn's source file path, which only ingester
+    /// v2+ writes).
+    Turns(TurnsArgs),
 
     /// Check local environment, adapter discoveries, and SQLite database health
     Doctor(DoctorArgs),
@@ -938,6 +947,16 @@ struct HomeArgs {
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
+struct TurnsArgs {
+    /// Re-parse every turn source regardless of fingerprints (dedup keeps stored rows stable)
+    #[arg(long)]
+    force: bool,
+    /// Output the ingest summary as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
 struct InsightsArgs {
     /// Output the full insights payload as formatted JSON
     #[arg(long)]
@@ -1512,6 +1531,7 @@ enum Action {
     Policy(PolicyCommand),
     Doctor(DoctorArgs),
     Insights(InsightsArgs),
+    Turns(TurnsArgs),
     Docs(DocsArgs),
     Config(ConfigAction),
     Version(VersionArgs),
@@ -1538,6 +1558,7 @@ fn normalize(command: Commands) -> Action {
         Commands::Policy { action } => Action::Policy(action),
         Commands::Doctor(a) => Action::Doctor(a),
         Commands::Insights(a) => Action::Insights(a),
+        Commands::Turns(a) => Action::Turns(a),
         Commands::Docs(a) => Action::Docs(a),
         Commands::Config { action } => Action::Config(action),
         Commands::Version(a) => Action::Version(a),
@@ -1686,6 +1707,9 @@ pub fn run() -> Result<()> {
                 },
                 &ui,
             )?;
+        }
+        Action::Turns(a) => {
+            turns::run_turns_command(a.force, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Stats { action: None, args } => {
             run_stats_command(resolve_json(args.json), cli.db_path, &ui)?;
@@ -2172,7 +2196,7 @@ pub fn cli_command() -> clap::Command {
     Cli::command()
 }
 
-fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
+pub(crate) fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
     if let Some(path) = db_path {
         Ok(Arc::new(Storage::open_path(&path)?))
     } else {

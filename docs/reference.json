@@ -1,6 +1,6 @@
 {
   "version": "0.1.27",
-  "generatedDate": "2026-09-23",
+  "generatedDate": "2026-09-24",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -1732,6 +1732,52 @@
           "help": "Window end (same format); exclusive. Defaults to the index's newest usable session",
           "default": null,
           "possibleValues": []
+        },
+        {
+          "name": "--adapter",
+          "positional": false,
+          "required": false,
+          "help": "Single-select equality filter; valid values list under --json (insights.facets)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--model",
+          "positional": false,
+          "required": false,
+          "help": "Filter by a recorded per-session model usage row",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Filter by display repo over session source paths (insights.repo_label)",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie turns",
+      "about": "(Re)ingest the human-turn lane on its own -- the turn-data side of Insights, without a full scan. A taxonomy-version bump wipes and re-parses every turn source; the dedup signature keeps past encounters out. Also the repair turn for the turn↔session link (tier-2/3 need each turn's source file path, which only ingester v2+ writes)",
+      "args": [
+        {
+          "name": "--force",
+          "positional": false,
+          "required": false,
+          "help": "Re-parse every turn source regardless of fingerprints (dedup keeps stored rows stable)",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the ingest summary as JSON",
+          "default": "false",
+          "possibleValues": []
         }
       ]
     },
@@ -2084,8 +2130,68 @@
     {
       "method": "GET",
       "path": "/api/insights",
-      "description": "The deterministic machine-insights payload: usable sessions, tool calls, evidence ladder, per-model burn, biggest sessions (same JSON as `agentworth insights --json`)",
-      "queryParams": []
+      "description": "The deterministic machine-insights payload: usable sessions, tool calls, evidence ladder, per-model burn, biggest sessions (same JSON as `agentworth insights --json`). Optional since/until window plus single-select adapter/model/repo slice filters (values validated against the payload's facets block)",
+      "queryParams": [
+        {
+          "name": "since",
+          "description": "window start (UTC RFC3339, inclusive)"
+        },
+        {
+          "name": "until",
+          "description": "window end (exclusive; requires since)"
+        },
+        {
+          "name": "adapter",
+          "description": "single-select equality slice; values validated against the payload's facets"
+        },
+        {
+          "name": "model",
+          "description": "single-select model equality over recorded per-session usage"
+        },
+        {
+          "name": "repo",
+          "description": "single-select display-repo equality"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/insights/drill",
+      "description": "Drill-through: the sessions behind one insights cut (same shape the deck's session feeds render). view=ladder|day_hour|friction + key=<rung|dow-hour|trigger>, optional since/until and the same adapter/model/repo filters",
+      "queryParams": [
+        {
+          "name": "view",
+          "description": "ladder | day_hour | friction"
+        },
+        {
+          "name": "key",
+          "description": "rung outcome | <dow>-<hour> | trigger"
+        },
+        {
+          "name": "since",
+          "description": "window start (UTC RFC3339, inclusive)"
+        },
+        {
+          "name": "until",
+          "description": "window end (exclusive; requires since)"
+        },
+        {
+          "name": "adapter",
+          "description": "single-select equality slice"
+        },
+        {
+          "name": "model",
+          "description": "single-select model equality"
+        },
+        {
+          "name": "repo",
+          "description": "single-select display-repo equality"
+        },
+        {
+          "name": "limit",
+          "description": "rows to return (default 50, ceiling 200); count is always the full total"
+        }
+      ]
     },
     {
       "method": "GET",
@@ -2154,6 +2260,27 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "adapter": {
+            "description": "Exact adapter match (e.g. `claude_code`); valid values in the payload's facets.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "Exact model match over recorded per-session model usage. Optional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Exact display-repo match over session source paths. Optional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "since": {
             "description": "RFC 3339 timestamp; only sessions (and stored human turns) starting at or after\nthis instant. Optional; omit for all-time.",
             "type": [
@@ -2178,6 +2305,27 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "adapter": {
+            "description": "Exact adapter match (e.g. `claude_code`); valid values in the payload's facets.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "Exact model match over recorded per-session model usage. Optional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Exact display-repo match over session source paths. Optional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "since": {
             "description": "RFC 3339 timestamp; only sessions (and stored human turns) starting at or after\nthis instant. Optional; omit for all-time.",
             "type": [

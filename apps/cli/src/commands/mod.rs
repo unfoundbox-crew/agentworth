@@ -10,6 +10,7 @@ pub mod ladder;
 pub mod loop_cmds;
 pub mod receipt;
 pub mod search;
+pub mod turns;
 pub mod suspect;
 
 pub use audit::run_audit_command;
