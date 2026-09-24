@@ -543,7 +543,8 @@ mod tests {
             r#"{"type":"assistant","timestamp":"2026-09-07T10:00:20Z","model":"claude-opus-5","usage":{"input_tokens":100,"output_tokens":40,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Done."}]}"#,
         ]);
 
-        let handoffs: Vec<&str> = timeline_from_trace(&trace)
+        let moments = timeline_from_trace(&trace);
+        let handoffs: Vec<&str> = moments
             .iter()
             .filter(|m| m.kind == MomentKind::Handoff)
             .map(|m| m.text.as_str())
@@ -567,8 +568,9 @@ mod tests {
             r#"{"type":"assistant","timestamp":"2026-09-07T10:00:10Z","content":[{"type":"text","text":"retrying with a fix"}]}"#,
         ]);
 
+        let moments = timeline_from_trace(&trace);
         let kinds: Vec<(MomentKind, &str)> =
-            timeline_from_trace(&trace).iter().map(|m| (m.kind, m.text.as_str())).collect();
+            moments.iter().map(|m| (m.kind, m.text.as_str())).collect();
         assert_eq!(
             kinds,
             vec![
