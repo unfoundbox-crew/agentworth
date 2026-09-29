@@ -41,8 +41,12 @@ impl GeminiAdapter {
     ///
     /// 3: Antigravity CLI (`agy`) sessions read the model that generated each step out of the
     /// conversation store's `gen_metadata` table, so `models_used` is no longer empty for them.
-    /// Token usage is unchanged -- the store has no counters (see the agy section below).
-    pub const PARSER_VERSION: i64 = 3;
+    ///
+    /// 4: agy `gen_metadata` blobs carry per-step usage varints at protobuf path `1/4/<n>`
+    /// (input/output/cached/thoughts/tool), previously missed because the walker only
+    /// collected strings. Emitting `ModelInvocation` events from those counters stops
+    /// antigravity rows indexing at tokens=0 while tools>0.
+    pub const PARSER_VERSION: i64 = 4;
 
     pub fn new() -> Self {
         Self
@@ -136,8 +140,9 @@ pub fn detect_product_identity(path: &Path) -> &'static str {
 // (`call_*` id, snake_case name, JSON args), 90 the agent persona
 // (configuration, not history -- skipped). Anything else is skipped with a
 // warning rather than guessed at: formats are unstable and a wrong event is
-// worse than a missing one. Token counters exist nowhere in this store, so
-// agy rows honestly index with zero tokens.
+// worse than a missing one. Per-step token counters live in `gen_metadata` as
+// protobuf varints at path `1/4/<field>` (see `extract_agy_step_usage`); an
+// earlier pass only walked strings and concluded the store had none.
 // ---------------------------------------------------------------------------
 
 /// Marker separating the synthetic repo-anchored identity prefix from the real
@@ -655,14 +660,159 @@ fn is_agy_model_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_graphic())
 }
 
+/// Walk protobuf collecting `(path, varint)` where `path` is the nest of field
+/// numbers from the blob root. LEN fields that do not decode as nested messages
+/// (strings, opaque bytes) are skipped. Returns false when the bytes stop looking
+/// like protobuf — same contract as [`pb_walk_strings`].
+fn pb_walk_varint_paths(
+    buf: &[u8],
+    out: &mut Vec<(Vec<u32>, u64)>,
+    path: &mut Vec<u32>,
+) -> bool {
+    let mut pos = 0usize;
+    while pos < buf.len() {
+        let tag = match pb_varint(buf, &mut pos) {
+            Some(t) => t,
+            None => return false,
+        };
+        let field = (tag >> 3) as u32;
+        match tag & 7 {
+            0 => {
+                let val = match pb_varint(buf, &mut pos) {
+                    Some(v) => v,
+                    None => return false,
+                };
+                path.push(field);
+                out.push((path.clone(), val));
+                path.pop();
+            }
+            1 => {
+                pos = match pos.checked_add(8) {
+                    Some(p) => p,
+                    None => return false,
+                };
+                if pos > buf.len() {
+                    return false;
+                }
+            }
+            2 => {
+                let len = match pb_varint(buf, &mut pos) {
+                    Some(l) => l as usize,
+                    None => return false,
+                };
+                let end = match pos.checked_add(len) {
+                    Some(e) => e,
+                    None => return false,
+                };
+                if end > buf.len() {
+                    return false;
+                }
+                let slice = &buf[pos..end];
+                path.push(field);
+                let before = out.len();
+                let nested_ok = slice.is_empty()
+                    || pb_walk_varint_paths(slice, out, path);
+                if !nested_ok {
+                    out.truncate(before);
+                }
+                path.pop();
+                pos = end;
+            }
+            5 => {
+                pos = match pos.checked_add(4) {
+                    Some(p) => p,
+                    None => return false,
+                };
+                if pos > buf.len() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Per-step usage from one `gen_metadata.data` blob.
+///
+/// Verified 2026-09-29 against `~/.gemini/antigravity-cli/conversations/*.db`:
+/// counters sit at protobuf path `1/4/<n>`, mirroring Gemini CLI's `tokens`
+/// JSON block (`input` / `output` / `cached` / `thoughts` / `tool`):
+///
+/// | field | meaning |
+/// | ---: | :--- |
+/// | 2 | input (non-cached prompt tokens; full prompt on a cache miss) |
+/// | 3 | output (candidates) |
+/// | 5 | cached (`cache_read`) |
+/// | 9 | thoughts (folded into output, same as Gemini CLI) |
+/// | 10 | tool (folded into output) |
+///
+/// Field 1 is a near-constant per-config overhead also present in
+/// `executor_metadata`; field 6 is a constant `24`. Neither is summed. A
+/// mirror copy of the same counters at path `1/17/2/*` is ignored so we do
+/// not double-count. Top-level `4/<n>` is accepted for compact fixtures.
+fn extract_agy_step_usage(data: &[u8]) -> TokenUsage {
+    let mut fields = Vec::new();
+    let mut path = Vec::new();
+    if !pb_walk_varint_paths(data, &mut fields, &mut path) {
+        return TokenUsage::default();
+    }
+    let mut input = 0u64;
+    let mut output = 0u64;
+    let mut thoughts = 0u64;
+    let mut tool = 0u64;
+    let mut cached = 0u64;
+    let mut saw = false;
+    for (p, val) in &fields {
+        let leaf = match p.as_slice() {
+            [1, 4, n] => *n,
+            [4, n] => *n,
+            _ => continue,
+        };
+        saw = true;
+        match leaf {
+            2 => input = *val,
+            3 => output = *val,
+            5 => cached = *val,
+            9 => thoughts = *val,
+            10 => tool = *val,
+            _ => {}
+        }
+    }
+    if !saw {
+        return TokenUsage::default();
+    }
+    TokenUsage::new(
+        input,
+        output.saturating_add(thoughts).saturating_add(tool),
+        cached,
+        0,
+    )
+}
+
+/// Model name carried in one `gen_metadata` blob (field [`AGY_MODEL_FIELD`]), if any.
+fn agy_model_from_gen_blob(data: &[u8]) -> Option<String> {
+    let mut fields = Vec::new();
+    if !pb_walk_strings(data, &mut fields) {
+        return None;
+    }
+    fields
+        .into_iter()
+        .find_map(|(field, value)| {
+            if field == AGY_MODEL_FIELD && is_agy_model_name(&value) {
+                Some(value)
+            } else {
+                None
+            }
+        })
+}
+
 /// Distinct models the conversation store recorded, in first-seen order.
 ///
-/// `gen_metadata` holds one blob per generated step; field 19 of each is the model name. This
-/// is the only model source the agy store has -- there are no per-step token counters beside
-/// it -- so an absent `gen_metadata` table or an unreadable blob yields an empty list and the
-/// session indexes with no models, never with a guessed one.
+/// `gen_metadata` holds one blob per generated step; field 19 of each is the model name.
+/// An absent table or unreadable blob yields an empty list — never a guessed model.
 fn read_agy_models(conn: &Connection) -> Vec<String> {
-    let Ok(mut stmt) = conn.prepare("SELECT data FROM gen_metadata") else {
+    let Ok(mut stmt) = conn.prepare("SELECT data FROM gen_metadata ORDER BY idx ASC") else {
         return Vec::new();
     };
     let Ok(rows) = stmt.query_map([], |row| row.get::<_, Vec<u8>>(0)) else {
@@ -670,17 +820,60 @@ fn read_agy_models(conn: &Connection) -> Vec<String> {
     };
     let mut models = Vec::new();
     for row in rows.flatten() {
-        let mut fields = Vec::new();
-        if !pb_walk_strings(&row, &mut fields) {
-            continue;
-        }
-        for (field, value) in fields {
-            if field == AGY_MODEL_FIELD && is_agy_model_name(&value) && !models.contains(&value) {
+        if let Some(value) = agy_model_from_gen_blob(&row) {
+            if !models.contains(&value) {
                 models.push(value);
             }
         }
     }
     models
+}
+
+/// Emit one [`EventPayload::ModelInvocation`] per `gen_metadata` row that names a
+/// model (or follows one), carrying the step's usage counters. This is how
+/// `recalculate_stats` learns both `models_used` and `token_usage` for agy —
+/// the same event shape Claude Code and Codex already use.
+fn emit_agy_model_invocations(
+    conn: &Connection,
+    trace: &mut AgentWorthTrace,
+    sequence: &mut u64,
+    ts: DateTime<Utc>,
+) {
+    let Ok(mut stmt) = conn.prepare("SELECT data FROM gen_metadata ORDER BY idx ASC") else {
+        return;
+    };
+    let Ok(rows) = stmt.query_map([], |row| row.get::<_, Vec<u8>>(0)) else {
+        return;
+    };
+    let mut last_model: Option<String> = None;
+    for row in rows.flatten() {
+        if let Some(model) = agy_model_from_gen_blob(&row) {
+            last_model = Some(model);
+        }
+        let usage = extract_agy_step_usage(&row);
+        let Some(model) = last_model.clone() else {
+            continue;
+        };
+        // Skip rows that carry neither a fresh model sighting's usage nor any
+        // counters: a zero-total invocation still records the model for
+        // `models_used`, which matters when a session's only gen_metadata rows
+        // have empty usage (control-character / decode-artifact rows aside).
+        if usage.total() == 0 && agy_model_from_gen_blob(&row).is_none() {
+            continue;
+        }
+        *sequence += 1;
+        trace.events.push(NormalizedEvent::new(
+            *sequence,
+            ts,
+            EventPayload::ModelInvocation {
+                model,
+                token_usage: usage,
+                cost_usd: None,
+                latency_ms: None,
+                effort: None,
+            },
+        ));
+    }
 }
 
 /// Parse one agy conversation database into prompt, response, and tool-call
@@ -948,16 +1141,21 @@ fn parse_agy_conversation_with_store(
         trace.ended_at = Some(latest);
     }
 
+    // Usage + models come from gen_metadata as ModelInvocation events so
+    // recalculate_stats fills token_usage and models_used the same way it does
+    // for Claude Code / Codex / Gemini CLI.
+    emit_agy_model_invocations(&conn, &mut trace, &mut sequence, last_ts);
     backfill_shell_exit_codes(&mut trace.events);
     trace.recalculate_stats();
 
-    // The store names the model that generated each step but carries no token counters. Set
-    // `models_used` from the store's own field so antigravity rows carry the model parity
-    // claude_code and codex do; token usage stays exactly zero because there is nothing to
-    // read (docs/capability-matrix.md, "antigravity: events and tools, no tokens").
-    let models = read_agy_models(&conn);
-    if !models.is_empty() {
-        trace.stats.models_used = models;
+    // If every gen_metadata row lacked a usable model name, invocations were
+    // skipped and models_used stayed empty — fall back to the string-only pass
+    // so a models-without-usage store still surfaces model identity.
+    if trace.stats.models_used.is_empty() {
+        let models = read_agy_models(&conn);
+        if !models.is_empty() {
+            trace.stats.models_used = models;
+        }
     }
 
     Ok(ParseResult {
@@ -1993,6 +2191,21 @@ mod tests {
         out
     }
 
+    /// Encode one protobuf varint field (test fixtures only).
+    fn agy_pb_int(field_no: u32, value: u64) -> Vec<u8> {
+        let mut out = agy_pb_varint(((field_no << 3) | 0) as u64);
+        out.extend(agy_pb_varint(value));
+        out
+    }
+
+    /// Encode a LEN-delimited nested message (test fixtures only).
+    fn agy_pb_msg(field_no: u32, inner: Vec<u8>) -> Vec<u8> {
+        let mut out = agy_pb_varint(((field_no << 3) | 2) as u64);
+        out.extend(agy_pb_varint(inner.len() as u64));
+        out.extend(inner);
+        out
+    }
+
     fn agy_join(parts: Vec<Vec<u8>>) -> Vec<u8> {
         parts.into_iter().flatten().collect()
     }
@@ -2058,15 +2271,27 @@ mod tests {
             [],
         )
         .unwrap();
-        for (i, model) in [(0, "gemini-3.7-flash"), (1, "gemini-3.8-flash"), (2, "\u{8}\u{1}")]
-            .into_iter()
+        for (i, (model, input, output, cached, thoughts, tool)) in [
+            (0, ("gemini-3.7-flash", 1200u64, 80u64, 0u64, 40u64, 10u64)),
+            (1, ("gemini-3.8-flash", 900, 60, 500, 20, 5)),
+            (2, ("\u{8}\u{1}", 0, 0, 0, 0, 0)),
+        ]
+        .into_iter()
         {
-            let blob = agy_join(vec![
-                agy_pb_str(4, "ebd119fadcf91b99"),
+            // Real store nests usage at path 1/4/<n> and the model at 1/19.
+            let usage = agy_join(vec![
+                agy_pb_int(2, input),
+                agy_pb_int(3, output),
+                agy_pb_int(5, cached),
+                agy_pb_int(9, thoughts),
+                agy_pb_int(10, tool),
+            ]);
+            let inner = agy_join(vec![
+                agy_pb_msg(4, usage),
                 agy_pb_str(AGY_MODEL_FIELD, model),
                 agy_pb_str(20, "request_id"),
-                agy_pb_str(1, "used_non_gemini_model"),
             ]);
+            let blob = agy_pb_msg(1, inner);
             conn.execute(
                 "INSERT INTO gen_metadata (idx, data, size) VALUES (?, ?, ?)",
                 params![i as i64, blob, 0i64],
@@ -2157,8 +2382,9 @@ mod tests {
                 .expect("agy parse failed");
 
         assert_eq!(result.trace.adapter, "antigravity");
-        // user + tool + assistant + [Message]: persona skipped, 777 warned.
-        assert_eq!(result.trace.events.len(), 4);
+        // user + tool + assistant + [Message] + 2 ModelInvocations (control-char
+        // gen_metadata row skipped): persona skipped, 777 warned.
+        assert_eq!(result.trace.events.len(), 6);
         assert_eq!(result.malformed_lines, 1);
 
         match &result.trace.events[0].payload {
@@ -2235,14 +2461,42 @@ mod tests {
         );
     }
 
-    /// The store has no token counters. The adapter must not invent them, and this guard keeps a
-    /// future change from quietly estimating: `docs/capability-matrix.md` says so in prose, and
-    /// this says it in a test.
+    /// Usage varints at protobuf path `1/4/<n>` inside `gen_metadata` are real counters
+    /// (verified on live conversation DBs). Thoughts and tool fold into output the same way
+    /// Gemini CLI's JSON `tokens` block does. The control-character model row contributes
+    /// nothing: no usable model name, and zero usage.
     #[test]
-    fn agy_tokens_stay_zero_because_the_store_has_none() {
+    fn agy_tokens_come_from_gen_metadata_usage_fields() {
         let temp = tempdir().unwrap();
         let result = agy_parse_fixture(temp.path(), "31562521-ce8f-47e0-89f8-901594ae66c6");
-        assert_eq!(result.trace.stats.token_usage.total(), 0);
+        // row0: in=1200 out=80+40+10=130 cache=0 → 1330
+        // row1: in=900 out=60+20+5=85 cache=500 → 1485
+        // total = 1200+900 + 130+85 + 500 = 2815
+        assert_eq!(result.trace.stats.token_usage.input_tokens, 2100);
+        assert_eq!(result.trace.stats.token_usage.output_tokens, 215);
+        assert_eq!(result.trace.stats.token_usage.cache_read_tokens, 500);
+        assert_eq!(result.trace.stats.token_usage.total(), 2815);
+        assert_eq!(
+            result.trace.stats.per_model_token_usage.len(),
+            2,
+            "control-character model row must not become a model bucket"
+        );
+    }
+
+    #[test]
+    fn extract_agy_step_usage_reads_path_1_4_and_ignores_mirror() {
+        // Path 1/4/2=50, 1/4/3=7, plus a mirror at 1/17/2/2=999 that must not win.
+        let usage_msg = agy_join(vec![agy_pb_int(2, 50), agy_pb_int(3, 7)]);
+        let mirror = agy_join(vec![agy_pb_int(2, 999), agy_pb_int(3, 999)]);
+        let inner = agy_join(vec![
+            agy_pb_msg(4, usage_msg),
+            agy_pb_msg(17, agy_pb_msg(2, mirror)),
+        ]);
+        let blob = agy_pb_msg(1, inner);
+        let usage = extract_agy_step_usage(&blob);
+        assert_eq!(usage.input_tokens, 50);
+        assert_eq!(usage.output_tokens, 7);
+        assert_eq!(usage.cache_read_tokens, 0);
     }
 
     #[test]
