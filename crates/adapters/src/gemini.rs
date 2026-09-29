@@ -2193,7 +2193,7 @@ mod tests {
 
     /// Encode one protobuf varint field (test fixtures only).
     fn agy_pb_int(field_no: u32, value: u64) -> Vec<u8> {
-        let mut out = agy_pb_varint(((field_no << 3) | 0) as u64);
+        let mut out = agy_pb_varint((field_no << 3) as u64);
         out.extend(agy_pb_varint(value));
         out
     }
