@@ -190,29 +190,15 @@ export function isRealInsights(data: Insights | null): data is Insights {
   return !!data && Array.isArray(data.current.kpis) && data.current.kpis.length > 0;
 }
 
-/* ---------- deep link (#insights), in parity with the i / Escape keyboard flow ---------- */
-
-/** The hash fragment that opens the insights phase: `…/#insights`. */
-export const INSIGHTS_HASH = '#insights';
-
-/** Pure parse so the deck's mount-time read is testable without window semantics. */
-export function parseInsightsDeepLink(hash: string | null | undefined): boolean {
-  return hash === INSIGHTS_HASH;
-}
-
-/**
- * Keep the URL in sync with the phase: no navigation, replaceState only, so
- * back/forward stays the browser's own. The `i`/Escape keyboard flow is
- * untouched — this only mirrors what `i` and the deep link both produce.
- */
-export function syncInsightsHash(open: boolean): void {
-  if (typeof window === 'undefined') return;
-  const next = open ? INSIGHTS_HASH : '';
-  const now = window.location.hash === next;
-  if (now) return;
-  const url = window.location.pathname + window.location.search + next;
-  window.history.replaceState(null, '', url);
-}
+/* ---------- deep link: path `/insights` (and legacy `#insights`) ---------- */
+/* Route parsing lives in ./route.ts (app-merge P1). Re-export so older imports keep working. */
+export {
+  INSIGHTS_HASH,
+  INSIGHTS_PATH,
+  parseInsightsDeepLink,
+  syncInsightsHash,
+  syncInsightsPath,
+} from './route';
 
 /* ---------- numbers ---------- */
 
