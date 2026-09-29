@@ -3162,7 +3162,9 @@ impl Storage {
                 let source_path: String = row.get(2)?;
                 let repo = extract_repository_or_workspace(&source_path);
                 if let Some(needle) = &q.repo {
-                    if !repo.to_lowercase().contains(&needle.to_lowercase()) {
+                    if !(repo.to_lowercase().contains(&needle.to_lowercase())
+                        || repo_keys_match(&repo, needle))
+                    {
                         continue;
                     }
                 }
@@ -3497,7 +3499,7 @@ impl Storage {
                 continue;
             }
             if let Some(repo) = repo {
-                if extract_repository_or_workspace(&source_path) != repo {
+                if !repo_keys_match(&extract_repository_or_workspace(&source_path), repo) {
                     continue;
                 }
             }
@@ -3525,7 +3527,7 @@ impl Storage {
                 continue;
             }
             if let Some(repo) = repo {
-                if extract_repository_or_workspace(&source_path) != repo {
+                if !repo_keys_match(&extract_repository_or_workspace(&source_path), repo) {
                     continue;
                 }
             }
@@ -4224,7 +4226,7 @@ impl Storage {
         while let Some(row) = rows.next()? {
             scanned += 1;
             let source_path: String = row.get(2)?;
-            if extract_repository_or_workspace(&source_path) != repo {
+            if !repo_keys_match(&extract_repository_or_workspace(&source_path), repo) {
                 continue;
             }
             if !include_subagents && is_subagent_transcript(&source_path) {
@@ -4297,7 +4299,7 @@ impl Storage {
         while let Some(row) = rows.next()? {
             scanned += 1;
             let source_path: String = row.get(2)?;
-            if extract_repository_or_workspace(&source_path) != repo {
+            if !repo_keys_match(&extract_repository_or_workspace(&source_path), repo) {
                 continue;
             }
             if !include_subagents && is_subagent_transcript(&source_path) {
@@ -5783,7 +5785,7 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
 /// Lives in `agentworth-schema` now (`agentworth-redaction` needs it too, and shouldn't have
 /// to pull in this crate's SQLite dependency to get one pure string function) — re-exported
 /// here so existing callers importing it from `agentworth_storage` don't need to change.
-pub use agentworth_schema::extract_repository_or_workspace;
+pub use agentworth_schema::{canonical_repo_key, extract_repository_or_workspace, repo_keys_match};
 
 /// The directory-shaped counterpart to [`extract_repository_or_workspace`]: the key for a live
 /// `cwd`, a `--workspace`, or a checkout root, resolved through the git checkout root on disk
