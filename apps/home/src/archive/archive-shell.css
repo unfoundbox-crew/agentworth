@@ -1,0 +1,67 @@
+/* Archive phase layout — .shell-root scopes panes.css / list.css / inspector.css. */
+.shell-root.archive-phase {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--mv-ground);
+  color: var(--mv-text);
+  font-family: var(--font-mono);
+  overflow: hidden;
+}
+.shell-root.archive-phase button,
+.shell-root.archive-phase input,
+.shell-root.archive-phase select {
+  font-family: inherit;
+}
+.shell-root.archive-phase ::selection {
+  background: var(--mv-accent-soft);
+  color: var(--mv-ink);
+}
+.shell-root.archive-phase .shell-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.shell-root.archive-phase .list-region {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 100%;
+  border-right: 0.5px solid var(--mv-border);
+}
+.shell-root.archive-phase .inspector-region {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  outline: none;
+}
+.shell-root.archive-phase .archive-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 0.5px solid var(--mv-border);
+  background: var(--mv-surface);
+  flex: 0 0 auto;
+}
+.shell-root.archive-phase .archive-topbar-title {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mv-muted);
+}
+.shell-root.archive-phase .archive-topbar-spacer { flex: 1; }
+.shell-root.archive-phase .archive-topbar-hint {
+  font-size: 10px;
+  color: var(--mv-faint);
+}
+.shell-root.archive-phase .archive-topbar-hint kbd {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 4px;
+  border: 0.5px solid var(--mv-border);
+  border-radius: 3px;
+  color: var(--mv-muted);
+}

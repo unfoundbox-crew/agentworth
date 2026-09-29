@@ -128,7 +128,7 @@ export function parseInsightsDeepLink(hash: string | null | undefined): boolean 
  * Clears a legacy `#insights` hash when writing the path form.
  *
  * Closing insights while the URL is `/s/<id>` leaves the session deep link
- * alone (session UI is P2; the route must still round-trip).
+ * alone (archive owns that path; the route must still round-trip).
  */
 export function syncInsightsPath(open: boolean): void {
   if (typeof window === 'undefined') return;
@@ -166,6 +166,48 @@ export function syncInsightsHash(open: boolean): void {
 function readWindowRoute(): ParsedHomeRoute {
   if (typeof window === 'undefined') return { path: '/', sessionId: null, insights: false };
   return parseHomeLocation(window.location.pathname, window.location.hash);
+}
+
+
+/** App path for a session deep link. */
+export function sessionAppPath(sessionId: string): string {
+  return `/s/${encodeURIComponent(sessionId)}`;
+}
+
+/**
+ * Mirror archive open/closed + selection onto the path (replaceState).
+ * - open + sessionId → `/home/s/<id>`
+ * - open + no session → `/home/` (list without a deep link)
+ * - closed → `/home/` (does not clobber `/insights` while that phase is open —
+ *   callers should close archive before opening insights)
+ */
+export function syncArchivePath(open: boolean, sessionId: string | null): void {
+  if (typeof window === 'undefined') return;
+  const current = parseHomeLocation(window.location.pathname, window.location.hash);
+
+  let nextApp: string;
+  if (!open) {
+    // Leave insights alone if that phase owns the URL.
+    if (current.insights) return;
+    nextApp = '/';
+  } else if (sessionId) {
+    nextApp = sessionAppPath(sessionId);
+  } else {
+    // Open without a selection: clear a stale /s/<id>, keep root.
+    nextApp = '/';
+  }
+
+  const nextHref = homeHref(nextApp);
+  const nowPath = window.location.pathname;
+  if (nowPath === nextHref || (nextApp === '/' && stripHomeBase(nowPath) === '/')) {
+    if (window.location.hash) {
+      window.history.replaceState(null, '', nowPath + window.location.search);
+      window.dispatchEvent(new Event(ROUTE_CHANGE_EVENT));
+    }
+    return;
+  }
+  window.history.replaceState(null, '', nextHref + window.location.search);
+  window.dispatchEvent(new Event(ROUTE_CHANGE_EVENT));
 }
 
 /**

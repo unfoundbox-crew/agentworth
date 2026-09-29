@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { useHome, orderDirections, dispatch } from '../model/store';
-import { parseHomeLocation, syncInsightsPath } from '../model/route';
+import {
+  parseHomeLocation,
+  syncArchivePath,
+  syncInsightsPath,
+  useRoute,
+} from '../model/route';
 import { gateway } from '../ws/client';
 import type { Direction, Harness } from '../protocol';
 import { Cruise } from './Cruise';
 import { Alert } from './Alert';
 import { Consoles } from './Consoles';
 import { Insights } from './Insights';
+import { Archive } from '../archive/Archive';
 import { Ambient } from './Ambient';
 import { FirstRun } from './FirstRun';
 import { FirstDirection } from './FirstDirection';
@@ -43,6 +49,8 @@ function expectedPersonaId(directionId: string, harnessId: string): string {
  * exception) -> consoles (the human opened one). Cruise and alert never show while a first
  * ride is starting (docs/specs/home.md's "nothing opens on an end state" -- an empty deck is
  * itself an end state). Escape always returns to whichever of cruise/alert the data implies.
+ *
+ * App-merge overlays: `i` / `/insights` opens Insights; `a` / `/s/<id>` opens Archive (P2).
  */
 export function Deck() {
   const directions = useHome((s) => s.directions);
@@ -53,25 +61,41 @@ export function Deck() {
   const consoleOpen = useHome((s) => s.consoleOpen);
   const dockRef = useRef<DockHandle>(null);
   const [flow, setFlow] = useState<Flow>({ phase: 'none' });
-  // Deep link: `/home/insights` (or legacy `#insights`) opens the insights phase —
-  // same state the `i` key drives (keys.ts owns the keyboard; the URL is a second
-  // entry path). `/home/s/<id>` is parsed here for P2 session UI; unused until then.
+  const route = useRoute();
+
   const [insightsOpen, setInsightsOpen] = useState(() =>
     typeof window === 'undefined'
       ? false
       : parseHomeLocation(window.location.pathname, window.location.hash).insights
   );
+  // Archive opens from `a`, or whenever the URL carries `/s/<id>`.
+  const [archiveOpen, setArchiveOpen] = useState(() =>
+    typeof window === 'undefined'
+      ? false
+      : !!parseHomeLocation(window.location.pathname, window.location.hash).sessionId
+  );
 
-  // Mirror phase → path, so i, Escape and the deep link all leave `/home/insights`.
-  useEffect(() => {
-    syncInsightsPath(insightsOpen);
-  }, [insightsOpen]);
-
-  // Pasted / back-navigated `/insights` (or legacy hash) opens or leaves the phase.
+  // URL → phase: session deep link wins; insights path/hash next.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const onChange = () =>
-      setInsightsOpen(parseHomeLocation(window.location.pathname, window.location.hash).insights);
+    const onChange = () => {
+      const parsed = parseHomeLocation(window.location.pathname, window.location.hash);
+      if (parsed.sessionId) {
+        setArchiveOpen(true);
+        setInsightsOpen(false);
+        return;
+      }
+      if (parsed.insights) {
+        setInsightsOpen(true);
+        setArchiveOpen(false);
+        return;
+      }
+      // Root (or other) path via back/forward: drop archive only when we left a
+      // session URL; `a` can keep archive open at `/` without a session id.
+      if (parsed.path === '/' || parsed.path === '') {
+        setInsightsOpen(false);
+      }
+    };
     window.addEventListener('popstate', onChange);
     window.addEventListener('hashchange', onChange);
     window.addEventListener('agentworth-home-route-change', onChange);
@@ -81,6 +105,15 @@ export function Deck() {
       window.removeEventListener('agentworth-home-route-change', onChange);
     };
   }, []);
+
+  // Phase → URL. Archive owns `/s/<id>`; insights owns `/insights`.
+  useEffect(() => {
+    if (archiveOpen) {
+      syncArchivePath(true, route.sessionId);
+      return;
+    }
+    syncInsightsPath(insightsOpen);
+  }, [archiveOpen, insightsOpen, route.sessionId]);
 
   const ordered = orderDirections(Object.values(directions));
   const active = ordered.filter((d) => d.state !== 'done');
@@ -94,19 +127,30 @@ export function Deck() {
   }
 
   const showFirstRun = flow.phase === 'firstrun' || (flow.phase === 'none' && active.length === 0);
-  const phase = insightsOpen
-    ? 'insights'
-    : showFirstRun
-      ? 'firstrun'
-      : flow.phase === 'firstdirection'
-        ? 'firstdirection'
-        : flow.phase === 'firstride'
-          ? 'firstride'
-          : consoleOpen
-            ? 'consoles'
-            : hasException
-              ? 'alert'
-              : 'cruise';
+  const phase = archiveOpen
+    ? 'archive'
+    : insightsOpen
+      ? 'insights'
+      : showFirstRun
+        ? 'firstrun'
+        : flow.phase === 'firstdirection'
+          ? 'firstdirection'
+          : flow.phase === 'firstride'
+            ? 'firstride'
+            : consoleOpen
+              ? 'consoles'
+              : hasException
+                ? 'alert'
+                : 'cruise';
+
+  function closeArchive() {
+    setArchiveOpen(false);
+    syncArchivePath(false, null);
+  }
+
+  function closeInsights() {
+    setInsightsOpen(false);
+  }
 
   useDeckKeys({
     onSelectIndex: (n) => {
@@ -119,12 +163,11 @@ export function Deck() {
       dockRef.current?.focus();
     },
     onFocusDock: () => {
-      // `/` is the new-direction hotkey (docs/specs/home.md decision 5) when nothing is
-      // already open to steer; otherwise it keeps its old job of focusing the dock.
-      // While insights are open, `/` leaves them instead of opening a new direction
-      // under tiles the visitor did not ask for.
+      // While archive is open, `/` focuses the session filter (archive keys,
+      // capture phase). While insights are open, `/` leaves them.
+      if (archiveOpen) return;
       if (insightsOpen) {
-        setInsightsOpen(false);
+        closeInsights();
         return;
       }
       if (consoleOpen) {
@@ -134,14 +177,33 @@ export function Deck() {
       setFlow({ phase: 'firstrun' });
     },
     onEscape: () => {
+      if (archiveOpen) {
+        closeArchive();
+        return;
+      }
       if (insightsOpen) {
-        setInsightsOpen(false);
+        closeInsights();
         return;
       }
       dispatch({ type: 'close_console' });
       if (flow.phase === 'firstrun' || flow.phase === 'firstdirection') setFlow({ phase: 'none' });
     },
-    onToggleInsights: () => setInsightsOpen((o) => !o),
+    onToggleInsights: () => {
+      if (insightsOpen) {
+        closeInsights();
+        return;
+      }
+      if (archiveOpen) closeArchive();
+      setInsightsOpen(true);
+    },
+    onToggleArchive: () => {
+      if (archiveOpen) {
+        closeArchive();
+        return;
+      }
+      setInsightsOpen(false);
+      setArchiveOpen(true);
+    },
   });
 
   function beginDirection(goal: string) {
@@ -210,6 +272,9 @@ export function Deck() {
       {phase === 'alert' && <Alert />}
       {phase === 'consoles' && <Consoles dockRef={dockRef} />}
       {phase === 'insights' && <Insights open />}
+      {phase === 'archive' && (
+        <Archive sessionId={route.sessionId} onNavigate={route.navigate} />
+      )}
       <Ambient />
     </div>
   );

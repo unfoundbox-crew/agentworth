@@ -5,6 +5,7 @@ import {
   parseAppPath,
   parseHomeLocation,
   parseInsightsDeepLink,
+  sessionAppPath,
   stripHomeBase,
 } from './route';
 
@@ -106,5 +107,13 @@ describe('parseInsightsDeepLink (legacy)', () => {
     expect(parseInsightsDeepLink('#other')).toBe(false);
     expect(parseInsightsDeepLink('')).toBe(false);
     expect(parseInsightsDeepLink(null)).toBe(false);
+  });
+});
+
+
+describe('sessionAppPath', () => {
+  it('percent-encodes opaque session ids', () => {
+    expect(sessionAppPath('sess_1')).toBe('/s/sess_1');
+    expect(sessionAppPath('foo/bar')).toBe('/s/foo%2Fbar');
   });
 });
