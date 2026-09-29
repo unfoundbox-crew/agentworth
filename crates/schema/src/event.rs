@@ -56,12 +56,55 @@ pub struct ShellCommand {
     pub output: Option<String>,
 }
 
+/// Where a test that produced pass/fail evidence came from.
+///
+/// The promotion (`held_out`) gate reads this, never the test's name or path:
+/// promotion on agent-chosen tests only FAILS. Anything the detector observes
+/// without authorship information carries `None` provenance and fails closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TestOrigin {
+    /// The working agent wrote the test itself (or picked it).
+    AgentChosen,
+    /// An independent, held-out verifier the agent neither wrote nor picked.
+    HeldOut,
+}
+
+/// Who wrote a test and when — cited on every pass/fail record (decisions-v1 row R).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestProvenance {
+    /// `"human:<name>"` for a person, `"agent:<session-id>"` for an agent session.
+    pub author: String,
+    /// When the test was written. `None` when the authoring time is unknown —
+    /// still promotable, since authorship (not age) is what the gate checks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authored_at: Option<DateTime<Utc>>,
+    pub origin: TestOrigin,
+}
+
 /// Evidence supporting an outcome inference.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutcomeEvidence {
     pub kind: OutcomeKind,
     pub summary: String,
     pub confidence: f32,
+    /// Who wrote the test behind this pass/fail and when. `None` for evidence
+    /// the detector observed without authorship information (e.g. a shell test
+    /// command that exited 0) and for non-test evidence — old exports without
+    /// the field still deserialize, and `None` fails the promotion gate closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_provenance: Option<TestProvenance>,
+}
+
+impl OutcomeEvidence {
+    /// True when this is a test/build pass backed by a held-out verifier.
+    pub fn is_held_out_pass(&self) -> bool {
+        self.kind == OutcomeKind::TestOrBuildPassed
+            && matches!(
+                self.test_provenance.as_ref().map(|p| p.origin),
+                Some(TestOrigin::HeldOut)
+            )
+    }
 }
 
 /// Human intervention or interruption in the session.

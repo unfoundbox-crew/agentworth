@@ -161,6 +161,14 @@ const SESSION_CHILD_TABLES: &[ChildTable] = &[
         name: "trace_anchors",
         columns: &["session_id", "seq", "kind", "value"],
     },
+    // The hook-spool-serve dedup set (fleet decisions v1 section 6). Keyed by the globally
+    // unique event id rather than by session, but carried per session like every table here:
+    // a merge that dropped it would let already-applied events apply again on the merged
+    // index -- the duplicate-handoff corruption the seen-table exists to prevent.
+    ChildTable {
+        name: "seen_hook_events",
+        columns: &["event_id", "session_id", "hook_event_name", "seen_at"],
+    },
     // The governor's three (docs/specs/governor.md). `turn_usage` is a merged session's whole
     // spend history; the other two are why it was stopped and whether it still is.
     ChildTable {
@@ -199,6 +207,28 @@ const SESSION_CHILD_TABLES: &[ChildTable] = &[
             "lifted_at",
             "tokens_at_lift",
             "usd_at_lift",
+        ],
+    },
+    // The insights data lane's per-session human turns. `session_id` is the mappable-by-source
+    // link (present when the record carried one), so a merge that dropped these would show a
+    // merged session's turns missing from the insights payload's day_hour/friction blocks.
+    // Note the intersects: `human_turns` also carries turns whose `session_id` is NULL and the
+    // merge dedups by `dedup_sig`, so overlapping indexes stay single-counted.
+    ChildTable {
+        name: "human_turns",
+        columns: &[
+            "source",
+            "session_id",
+            "turn_index",
+            "timestamp_ms",
+            "epoch_secs",
+            "local_hour",
+            "local_date",
+            "word_count",
+            "char_count",
+            "friction_type",
+            "dedup_sig",
+            "vocab_json",
         ],
     },
 ];
@@ -875,6 +905,20 @@ mod tests {
                     value: "a".repeat(64),
                 }])
                 .unwrap();
+            // The hook-spool-serve dedup set: two claimed ids ride the merge like any
+            // other per-session rows, so a merged index never re-applies them.
+            assert!(
+                storage2
+                    .mark_hook_event_seen("evt-child-1", "sess-child", "Stop")
+                    .unwrap(),
+                "fixture setup must actually claim the id"
+            );
+            assert!(
+                storage2
+                    .mark_hook_event_seen("evt-child-2", "sess-child", "PreToolUse")
+                    .unwrap(),
+                "fixture setup must actually claim the id"
+            );
 
             // The governor's three.
             storage2
@@ -913,6 +957,26 @@ mod tests {
                     usd_at_lift: None,
                 })
                 .unwrap();
+
+            // The insights data lane's turn row for the same session (the merged session's
+            // turnaround facts must survive the merge into every child table here).
+            storage2
+                .insert_human_turn_batch(&[agentworth_storage::human_turns::HumanTurnRow {
+                    source: "claude".to_string(),
+                    session_id: Some("sess-child".to_string()),
+                    source_path: String::new(),
+                    turn_index: 0,
+                    timestamp_ms: 1_772_860_000_000,
+                    epoch_secs: 1_772_860_000.0,
+                    local_hour: 15,
+                    local_date: "2026-02-05".to_string(),
+                    word_count: 8,
+                    char_count: 35,
+                    friction_type: "loop_interruption".to_string(),
+                    dedup_sig: "fixture-merge-turn-sig".to_string(),
+                    vocab_json: r#"[["receipts",1]]"#.to_string(),
+                }])
+                .unwrap();
         }
 
         let stats = merge_sqlite_databases(db1.path(), db2.path()).unwrap();
@@ -944,6 +1008,18 @@ mod tests {
                 table.name
             );
         }
+
+        // And the merged row still carries its vocabulary inside the row itself, so the
+        // insights vocabulary block survives a merge without a second table to copy.
+        let vocab: i64 = target_conn
+            .query_row(
+                "SELECT SUM(CAST(je.value->>1 AS INT)) FROM human_turns t, \
+                 json_each(t.vocab_json) je WHERE t.session_id = 'sess-child'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(vocab, 1);
     }
 
     /// The registry itself must stay complete: any table with a foreign key into

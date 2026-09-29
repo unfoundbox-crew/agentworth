@@ -48,10 +48,10 @@ async fn test_stdio_tools_list_and_sessions_find() {
             .expect("server should shut down cleanly");
     });
 
-    let client = ()
-        .serve(client_transport)
-        .await
-        .expect("client should complete the MCP handshake");
+    let client =
+        ().serve(client_transport)
+            .await
+            .expect("client should complete the MCP handshake");
 
     let tools = client
         .list_tools(Default::default())
@@ -66,6 +66,8 @@ async fn test_stdio_tools_list_and_sessions_find() {
         "window_show",
         "agent_list",
         "stats_outcomes",
+        "insights_summary",
+        "insights_get",
         "session_handoff",
         "session_carry_forward",
         "session_wake",
@@ -83,13 +85,21 @@ async fn test_stdio_tools_list_and_sessions_find() {
 
     let call_result = client
         .call_tool(
-            CallToolRequestParams::new("session_list")
-                .with_arguments(serde_json::json!({ "limit": 10 }).as_object().unwrap().clone()),
+            CallToolRequestParams::new("session_list").with_arguments(
+                serde_json::json!({ "limit": 10 })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
         )
         .await
         .expect("tools/call session_list should succeed");
 
-    assert_ne!(call_result.is_error, Some(true), "session_list returned an error result");
+    assert_ne!(
+        call_result.is_error,
+        Some(true),
+        "session_list returned an error result"
+    );
 
     let text = call_result
         .content
@@ -103,9 +113,15 @@ async fn test_stdio_tools_list_and_sessions_find() {
     assert_eq!(sessions[0]["session_id"], "sess-1");
     // source_path redaction is exercised in unit tests (apps/cli/src/mcp/tests.rs); here it's
     // enough to confirm the field survived the real wire round trip.
-    assert!(sessions[0]["source_path"].as_str().unwrap().contains("[REDACTED_REPOSITORY]"));
+    assert!(sessions[0]["source_path"]
+        .as_str()
+        .unwrap()
+        .contains("[REDACTED_REPOSITORY]"));
 
-    client.cancel().await.expect("client should shut down cleanly");
+    client
+        .cancel()
+        .await
+        .expect("client should shut down cleanly");
     server_handle.await.expect("server task should not panic");
 }
 
@@ -138,21 +154,30 @@ async fn retired_tool_names_reach_the_same_handler() {
             .await
             .expect("server should shut down cleanly");
     });
-    let client = ()
-        .serve(client_transport)
-        .await
-        .expect("client should complete the MCP handshake");
+    let client =
+        ().serve(client_transport)
+            .await
+            .expect("client should complete the MCP handshake");
 
     let text_of = |name: &'static str| {
         let client = &client;
         async move {
             let result = client
-                .call_tool(CallToolRequestParams::new(name).with_arguments(
-                    serde_json::json!({ "limit": 10 }).as_object().unwrap().clone(),
-                ))
+                .call_tool(
+                    CallToolRequestParams::new(name).with_arguments(
+                        serde_json::json!({ "limit": 10 })
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    ),
+                )
                 .await
                 .unwrap_or_else(|e| panic!("tools/call {name} failed: {e}"));
-            assert_ne!(result.is_error, Some(true), "{name} returned an error result");
+            assert_ne!(
+                result.is_error,
+                Some(true),
+                "{name} returned an error result"
+            );
             result
                 .content
                 .first()
@@ -187,6 +212,9 @@ async fn retired_tool_names_reach_the_same_handler() {
         }
     }
 
-    client.cancel().await.expect("client should shut down cleanly");
+    client
+        .cancel()
+        .await
+        .expect("client should shut down cleanly");
     server_handle.await.expect("server task should not panic");
 }

@@ -22,6 +22,7 @@
 //! writes a number in `policy.toml`, and every gate fails open: `docs/specs/governor.md`.
 
 pub mod anchors;
+pub mod close;
 pub mod gate;
 pub mod governor;
 pub mod hook;
@@ -34,6 +35,7 @@ pub mod state;
 pub mod support;
 
 pub use anchors::{extract_anchors, hash_paths_for_anchors, Anchor, AnchorKind};
+pub use close::{classify_close, CloseState};
 pub use gate::{GateOutput, GateRequest};
 pub use governor::{
     is_verification_command, Action, Decision, EditLedger, Failure, Governor, Rule, Suspension,

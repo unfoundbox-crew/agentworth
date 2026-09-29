@@ -51,6 +51,32 @@ pub enum MessageKind {
     System,
 }
 
+/// What a timeline moment is. Mirrors `apps/home/src/protocol.ts`'s `MomentKind`.
+/// `handoff` marks a delegation the adapter surfaced as a `ModelSwitch` (the
+/// subagent-delegation proxy this codebase has -- see `crates/adapters/src/claude.rs`'s
+/// multi-model test); `error` marks an `EventPayload::Error`, the fork-on-retry point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MomentKind {
+    Speech,
+    Work,
+    Handoff,
+    Error,
+}
+
+/// One seekable position on the session timeline: the same distillation the live
+/// `message`/`stop` stream is built from, but for the whole session and ordered by the
+/// trace's own event sequence. Carries `seq` (the trace event sequence) so the UI can
+/// scrub deterministically, `at` for time placement, and `text` for what happened.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineMoment {
+    pub seq: u64,
+    pub kind: MomentKind,
+    pub text: String,
+    pub at: String,
+}
+
 /// Archie's evidence ladder, lowest rung first -- `agentworth_outcomes::outcome_rank`'s scale
 /// (1..5) under its protocol name. `Rung::from_outcome_rank`/`rank` are the one place that
 /// mapping is written down for this module; `agentworth_storage::rung_outcome_name` is the
@@ -174,9 +200,8 @@ impl AnswerKey {
 }
 
 /// Whether herdr, required to seat any rider, is usable from here. Distinguishes "not
-/// installed" from "installed but never run" (no socket yet) -- see `home_cmd::herdr_reachable`
-/// for the same check made at `archie home` startup; this is the wire-typed twin used by
-/// `detect_env` for the deck's first-run screen.
+/// installed" from "installed but never run" (no socket yet); this is the wire-typed
+/// status used by `detect_env` for the deck's first-run screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HerdrStatus {
@@ -412,6 +437,15 @@ pub enum ServerFrame {
         messages: Vec<Message>,
         artifacts: Vec<Artifact>,
     },
+    /// The full seekable timeline for one office's session, sent to the requesting client
+    /// only (not broadcast). `truncated` says the session produced more moments than the
+    /// server-side cap and only the most recent ones are carried.
+    #[serde(rename = "timeline", rename_all = "camelCase")]
+    Timeline {
+        space_id: String,
+        moments: Vec<TimelineMoment>,
+        truncated: bool,
+    },
     #[serde(rename = "error")]
     Error {
         code: String,
@@ -466,6 +500,13 @@ pub enum ClientFrame {
         space_id: String,
         #[allow(dead_code)]
         upto: String,
+    },
+    /// Asks for the session timeline behind one office space, so the deck's scrubber can
+    /// seek the full session and not just what this client has seen live. Answered with a
+    /// `timeline` frame to the requesting socket only.
+    #[serde(rename = "timeline", rename_all = "camelCase")]
+    Timeline {
+        space_id: String,
     },
     #[serde(rename = "fetch", rename_all = "camelCase")]
     Fetch {
@@ -549,9 +590,8 @@ pub fn detect_harnesses() -> Vec<Harness> {
 }
 
 /// Whether herdr can seat a rider: on PATH at all, and its socket actually present (an
-/// installed-but-never-run herdr looks identical to a missing one otherwise). Mirrors
-/// `home_cmd::herdr_reachable`'s two-step check, kept separate because that one returns a
-/// bool for a println and this one returns the wire-typed three-way status `hello` carries.
+/// installed-but-never-run herdr looks identical to a missing one otherwise). Returns the
+/// wire-typed three-way status `hello` carries.
 pub fn detect_herdr_status() -> HerdrStatus {
     if !on_path("herdr") {
         return HerdrStatus::Missing;

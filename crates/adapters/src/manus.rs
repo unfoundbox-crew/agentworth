@@ -658,6 +658,7 @@ fn parse_manus_record(
                                 kind: OutcomeKind::TestOrBuildPassed,
                                 summary: "Build, test, or autonomous task verified in Manus".to_string(),
                                 confidence: 0.9,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),

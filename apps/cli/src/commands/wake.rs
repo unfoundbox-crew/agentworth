@@ -36,9 +36,16 @@ pub fn run_wake_command(
     let workspace = workspace
         .map(Ok)
         .unwrap_or_else(std::env::current_dir)?;
-    let repo = repo.unwrap_or_else(|| {
-        agentworth_schema::extract_repository_or_workspace(&workspace.to_string_lossy())
-    });
+    // The workspace is a *directory*, so the key comes from the git checkout root on disk --
+    // not from `extract_repository_or_workspace`, which is written for a session's transcript
+    // path and keys a repo checked out directly under `code/` one component short of what the
+    // index holds. See `agentworth_schema::repo_key_for_dir`.
+    // `repo_key_for_dir` already returns the canonical key; an explicit `--repo` may still
+    // be the path-derived alias (`crew/agentworth`), so collapse it the same way.
+    let repo = agentworth_schema::canonical_repo_key(
+        &repo.unwrap_or_else(|| agentworth_schema::repo_key_for_dir(&workspace)),
+    )
+    .to_string();
     let options = WakeOptions {
         include_raw: !redact,
     };

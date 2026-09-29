@@ -3,6 +3,7 @@ import type { Persona } from '../protocol';
 import type { Theme } from '../model/theme';
 import { characterFor } from '../model/theme';
 import { dispatch } from '../model/store';
+import { PanelState } from './PanelState';
 
 /** Presence as DESIGN.md defines it: idle hollow, working pulses, blocked filled amber, done filled in badge hue, unknown dashed. */
 function PresenceDot({ presence, badge }: { presence: Persona['presence']; badge: string }) {
@@ -47,6 +48,17 @@ export function Seats({
   mute: Set<string>;
   solo: Set<string>;
 }) {
+  if (personas.length === 0) {
+    return (
+      <div className="h-full overflow-y-auto p-3 flex flex-col" aria-label="seats">
+        <div className="text-[10px] text-muted mb-2">seats</div>
+        <div className="flex-1 flex flex-col justify-center">
+          <PanelState kind="empty" title="no riders seated" hint="pick a harness to seat one" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto p-3" aria-label="seats">
       <div className="text-[10px] text-muted mb-2">seats</div>
@@ -68,6 +80,8 @@ export function Seats({
               <button
                 type="button"
                 onClick={() => dispatch({ type: 'toggle_solo', personaId: p.id })}
+                aria-pressed={soloed}
+                aria-label={`solo ${p.title || p.id}`}
                 className={clsx('px-1 rounded hover:text-ink', soloed && 'text-ink')}
               >
                 solo
@@ -75,6 +89,8 @@ export function Seats({
               <button
                 type="button"
                 onClick={() => dispatch({ type: 'toggle_mute', personaId: p.id })}
+                aria-pressed={muted}
+                aria-label={`mute ${p.title || p.id}`}
                 className={clsx('px-1 rounded hover:text-ink', muted && 'text-ink')}
               >
                 mute

@@ -1,0 +1,399 @@
+//! web_merge gate (decisions-v1 row W): one routes table serves every spelling of the
+//! server command.
+//!
+//! - `archie serve`, `serve --open`, and the `web` alias all build the server from the
+//!   same `create_router` table (snapshot below); `--open` only opens the browser.
+//! - The dead `home` CLI spelling 404s with a pointer to `serve --open`. The `/home*` HTTP
+//!   paths are the deck's own route (PR #188) and serve the deck shell or an honest 404;
+//!   `/` is the dashboard, restored after PR #182 removed it by mistake. No route ever
+//!   answers with `static_files.rs`'s `FALLBACK_HTML` placeholder.
+//! - LAN is out: `serve` exposes no host/bind flag and the server binds loopback only.
+//! - `include_raw` over non-loopback has no HTTP code path (`include_raw` exists only on
+//!   MCP stdio tools; the HTTP server binds 127.0.0.1 with no flag to change that), so
+//!   the forced-OFF gate is noted as blocked, not asserted here.
+
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use agentworth_cli::app::cli_command;
+use agentworth_cli::server::{create_router, route_entries, AppState, LIVE_TAIL_CHANNEL_CAPACITY};
+use agentworth_core::Scanner;
+use agentworth_storage::Storage;
+use assert_cmd::cargo::CommandCargoExt;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use http_body_util::BodyExt;
+use predicates::str::contains;
+use tower::ServiceExt;
+
+/// The full `/api/*` table, method + path, in `route_entries()` order. Checked in: adding,
+/// removing, or renaming a route must update this const, which is the snapshot.
+const EXPECTED_API_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/stats"),
+    ("GET", "/traces"),
+    ("GET", "/traces/:id"),
+    ("GET", "/traces/:id/events"),
+    ("GET", "/usage"),
+    ("GET", "/pacing"),
+    ("GET", "/blame"),
+    ("GET", "/matrix"),
+    ("GET", "/insights"),
+    ("GET", "/insights/drill"),
+    ("GET", "/archaeology"),
+    ("GET", "/live-tail"),
+    ("POST", "/scan"),
+    ("GET", "/config"),
+    ("POST", "/config"),
+    ("POST", "/export/:id"),
+];
+
+/// Non-`/api` routes `create_router` registers: the home-deck trio plus the `/ws`
+/// gateway. Unmatched non-API paths fall through to the dashboard SPA fallback;
+/// unmatched `/api/*` returns a JSON 404 instead (never HTML).
+const EXPECTED_NON_API_PATHS: &[&str] = &["/home", "/home/", "/home/any/inner/route", "/ws"];
+
+fn test_router(home_deck_enabled: bool) -> axum::Router {
+    let storage = Arc::new(Storage::open_in_memory().expect("open in-memory storage"));
+    let scanner = Arc::new(Scanner::new(storage.clone()));
+    let (live_tail_tx, _rx) = tokio::sync::broadcast::channel(LIVE_TAIL_CHANNEL_CAPACITY);
+    let state = AppState {
+        storage: storage.clone(),
+        scanner: scanner.clone(),
+        dist_dir: None,
+        live_tail: live_tail_tx,
+        #[cfg(unix)]
+        home: None,
+        home_deck_enabled,
+    };
+    create_router(state)
+}
+
+async fn raw(app: axum::Router, method: &str, uri: &str) -> (StatusCode, String) {
+    let req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.expect("execute request");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("collect body")
+        .to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[test]
+fn api_route_table_snapshot() {
+    let actual: Vec<(&str, &str)> = route_entries().iter().map(|e| (e.method, e.path)).collect();
+    assert_eq!(
+        actual, EXPECTED_API_ROUTES,
+        "route_entries() drifted from the checked-in web_merge snapshot"
+    );
+}
+
+/// Every spelling builds its server from the one `create_router` table: the same probe set
+/// answers identically with the deck off and on, except the `/home*` paths the deck gate
+/// owns. `/api/live-tail` is excluded: its SSE stream never ends, so `oneshot` would hang.
+#[tokio::test]
+async fn one_table_across_spellings() {
+    let probes = [
+        ("GET", "/api/stats", StatusCode::OK),
+        ("GET", "/api/traces", StatusCode::OK),
+        ("GET", "/api/traces/does-not-exist", StatusCode::NOT_FOUND),
+        (
+            "GET",
+            "/api/traces/does-not-exist/events",
+            StatusCode::NOT_FOUND,
+        ),
+        ("GET", "/api/usage", StatusCode::OK),
+        ("GET", "/api/pacing", StatusCode::OK),
+        ("GET", "/api/blame?file=src/lib.rs", StatusCode::OK),
+        ("GET", "/api/matrix", StatusCode::OK),
+        ("GET", "/api/archaeology", StatusCode::OK),
+        ("GET", "/api/config", StatusCode::OK),
+    ];
+    for (method, uri, expected) in probes {
+        let (off_status, off_body) = raw(test_router(false), method, uri).await;
+        let (on_status, on_body) = raw(test_router(true), method, uri).await;
+        assert_eq!(
+            (off_status, on_status),
+            (expected, expected),
+            "{method} {uri} must be {expected} under both deck states, served from one table"
+        );
+        // `/api/pacing` stamps `started_at`/`ended_at` off the wall clock, so two
+        // builds never byte-match there; everything else must be identical.
+        if uri == "/api/pacing" {
+            let mut off_json: serde_json::Value =
+                serde_json::from_str(&off_body).expect("pacing body is JSON");
+            let mut on_json: serde_json::Value =
+                serde_json::from_str(&on_body).expect("pacing body is JSON");
+            for key in ["started_at", "ended_at"] {
+                off_json.as_object_mut().map(|o| o.remove(key));
+                on_json.as_object_mut().map(|o| o.remove(key));
+            }
+            assert_eq!(
+                off_json, on_json,
+                "{method} {uri} must answer identically apart from timestamps"
+            );
+        } else {
+            assert_eq!(
+                off_body, on_body,
+                "{method} {uri} must answer identically with the deck off and on"
+            );
+        }
+    }
+
+    // The SPA fallback signature, captured from a non-API path: unmatched dashboard
+    // history routes still get the shell. `/api/*` must NOT share that signature — an
+    // unmatched API path is a JSON 404, never HTML (COS dogfood: `serve --home` was
+    // swallowing `/api/insights` into the SPA).
+    let (fallback_status, fallback_body) =
+        raw(test_router(false), "GET", "/no-such-spa-route-xyz").await;
+    for near_miss in ["/hom", "/homee"] {
+        let (status, body) = raw(test_router(false), "GET", near_miss).await;
+        assert_eq!(
+            (status, body),
+            (fallback_status, fallback_body.clone()),
+            "{near_miss} must fall through to the SPA fallback, not a registered route"
+        );
+    }
+    for api_miss in ["/api/no-such-route-xyz", "/api/trace", "/api/scans"] {
+        let (status, body) = raw(test_router(false), "GET", api_miss).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{api_miss} must be 404, not SPA");
+        assert!(
+            (status, body.clone()) != (fallback_status, fallback_body.clone()),
+            "{api_miss} must not be treated as SPA fallback"
+        );
+        assert!(
+            !body.contains('<') && body.contains("not found"),
+            "{api_miss} must be a JSON API 404, not HTML; got: {body}"
+        );
+    }
+
+    // Every non-/api path in the snapshot is registered: none of them may answer with
+    // the fallback signature.
+    for path in EXPECTED_NON_API_PATHS {
+        let (status, body) = raw(test_router(false), "GET", path).await;
+        assert!(
+            (status, body.clone()) != (fallback_status, fallback_body.clone()),
+            "{path} must be a registered route, not the fallback"
+        );
+    }
+}
+
+/// COS dogfood P0: with the home deck enabled, `/api/insights` must answer as the API
+/// (JSON schema v2), never as the SPA shell. Same table as plain `serve` — `--home` only
+/// gates `/home*` and `/ws`, it must not change how `/api/*` falls through.
+#[tokio::test]
+async fn home_deck_does_not_spa_fallback_api_insights() {
+    for enabled in [false, true] {
+        let (status, body) = raw(test_router(enabled), "GET", "/api/insights").await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "GET /api/insights must be 200 with home_deck_enabled={enabled}; got {status}"
+        );
+        // Insights JSON can contain '<' in bucket labels ("< 10M"); refuse HTML by
+        // shape (must parse as JSON object), not by scanning for that character.
+        assert!(
+            !body.trim_start().starts_with('<'),
+            "GET /api/insights must not be HTML (SPA) with home_deck_enabled={enabled}; got: {body}"
+        );
+        let json: serde_json::Value = serde_json::from_str(&body)
+            .unwrap_or_else(|e| panic!("expected JSON: {e}; body={body}"));
+        assert!(json.is_object(), "insights body must be a JSON object");
+        assert_eq!(
+            json["schema_version"],
+            2,
+            "insights schema_version must be 2 with home_deck_enabled={enabled}; got {json}"
+        );
+    }
+}
+
+/// `/home*` is the deck's own route (PR #188), which is independent of the dashboard
+/// living at `/`: it serves the deck shell when built, or an honest 404 otherwise.
+///
+/// The `Your agents left receipts` assertion is the one that matters here. That string is
+/// `static_files.rs`'s `FALLBACK_HTML` -- the placeholder served when a dist folder is
+/// empty at compile time. Mistaking it for the real dashboard is what got apps/dashboard
+/// deleted in PR #182, so no route may ever answer with it while pretending to be an app.
+#[tokio::test]
+async fn home_paths_serve_the_deck_or_an_honest_404() {
+    for enabled in [false, true] {
+        for path in ["/home", "/home/", "/home/any/inner/route"] {
+            let (status, body) = raw(test_router(enabled), "GET", path).await;
+            assert!(
+                status == StatusCode::OK || status == StatusCode::NOT_FOUND,
+                "GET {path} must be 200 (deck built) or 404; got {status}"
+            );
+            assert!(
+                !body.contains("Your agents left receipts"),
+                "GET {path} must never serve the FALLBACK_HTML placeholder; got: {body}"
+            );
+            if status == StatusCode::NOT_FOUND {
+                assert!(
+                    body.contains("deck was not built")
+                        || body.contains("not enabled")
+                        || body.contains("serve --open"),
+                    "a 404 on {path} must say what to do about it; got: {body}"
+                );
+            }
+        }
+    }
+}
+
+/// CLI grammar: `web` is a visible alias of `serve`, `serve --open` parses, `home` is a
+/// hidden dead spelling, and `serve` exposes no host/bind flag (LAN is out).
+#[test]
+fn cli_spellings_and_lan_out() {
+    let mut cmd = cli_command();
+    cmd.build();
+
+    let serve = cmd
+        .get_subcommands()
+        .find(|s| s.get_name() == "serve")
+        .expect("`serve` subcommand exists");
+    assert!(
+        serve.get_visible_aliases().any(|a| a == "web"),
+        "`web` must be a visible alias of `serve`; aliases: {:?}",
+        serve.get_aliases().collect::<Vec<_>>()
+    );
+    for flag in ["open", "port", "dist", "no_socket", "home"] {
+        assert!(
+            serve.get_arguments().any(|a| a.get_id() == flag),
+            "`serve` keeps --{flag}"
+        );
+    }
+    for banned in ["host", "bind", "listen", "address", "lan"] {
+        assert!(
+            !serve.get_arguments().any(|a| {
+                let id = a.get_id();
+                id == banned || a.get_long().is_some_and(|l| l == banned)
+            }),
+            "`serve` must expose no --{banned}: the server binds loopback only (LAN out)"
+        );
+    }
+
+    let home = cmd
+        .get_subcommands()
+        .find(|s| s.get_name() == "home")
+        .expect("dead `home` spelling still parses so it can 404 with a pointer");
+    assert!(
+        home.is_hide_set(),
+        "`home` is dead and must be hidden; the live spellings are `serve`, `serve --open`, `web`"
+    );
+}
+
+fn free_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+    listener.local_addr().expect("local_addr").port()
+}
+
+fn wait_for_port(port: u16, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        if Instant::now() > deadline {
+            panic!("server never opened port {port} within {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// `archie web --help` is `serve --help` through the alias: exits 0, documents `--open`.
+#[test]
+fn web_alias_boots_serve_help() {
+    let mut cmd = assert_cmd::Command::cargo_bin("archie").expect("find the archie binary");
+    cmd.args(["web", "--help"]).timeout(Duration::from_secs(60));
+    cmd.assert()
+        .success()
+        .stdout(contains("--open"))
+        .stdout(contains("Automatically open the Web UI"));
+}
+
+/// `archie home` 404s with a pointer to `serve --open`: nonzero exit, pointer on stderr,
+/// no port ever bound. The timeout only bites pre-fix, when `home` still starts a server.
+#[test]
+fn home_cli_404s_with_pointer_to_serve_open() {
+    let port = free_port();
+    let db_dir = tempfile::tempdir().expect("tempdir for the test index");
+    let db_path = db_dir.path().join("web-merge-home-test.sqlite");
+
+    let mut cmd = assert_cmd::Command::cargo_bin("archie").expect("find the archie binary");
+    cmd.args([
+        "--db-path",
+        db_path.to_str().expect("utf8 tempdir path"),
+        "home",
+        "--no-open",
+        "--port",
+        &port.to_string(),
+    ])
+    .timeout(Duration::from_secs(15));
+    cmd.assert().failure().stderr(contains("serve --open"));
+    assert!(
+        TcpStream::connect(("127.0.0.1", port)).is_err(),
+        "dead `home` must not bind any port"
+    );
+}
+
+/// The surviving deck spelling still serves the deck: `serve --home` answers `/home/` 200.
+/// Kept here (not only in the renamed deck test) so this lane owns its proof end to end.
+#[test]
+fn serve_home_still_serves_the_deck() {
+    let port = free_port();
+    let db_dir = tempfile::tempdir().expect("tempdir for the test index");
+    let db_path = db_dir.path().join("web-merge-serve-home-test.sqlite");
+
+    let mut child = std::process::Command::cargo_bin("archie").expect("find the archie binary");
+    child
+        .args([
+            "--db-path",
+            db_path.to_str().expect("utf8 tempdir path"),
+            "serve",
+            "--home",
+            "--port",
+            &port.to_string(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = child.spawn().expect("spawn `archie serve --home`");
+    struct Guard(std::process::Child);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _guard = Guard(child);
+
+    wait_for_port(port, Duration::from_secs(15));
+
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        stream,
+        "GET /home/ HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp).unwrap_or(0);
+    let status: u16 = resp
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
+    assert_eq!(
+        status, 200,
+        "GET /home/ on `serve --home` must be 200; got:\n{resp}"
+    );
+}

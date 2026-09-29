@@ -30,7 +30,7 @@
         "id": "evt-fixture-0",
         "payload": {
           "data": {
-            "content": "Fix the dashboard coverage matrix."
+            "content": "Fix the home deck coverage strip."
           },
           "type": "user_message"
         },
@@ -44,7 +44,7 @@
             "action": "edit",
             "diff": "- item.tokens === \"yes\"\n+ item.token_accounting",
             "lines_changed": 6,
-            "path": "apps/dashboard/src/components/CoverageMatrix.tsx"
+            "path": "apps/home/src/deck/Strips.tsx"
           },
           "type": "file_action"
         },

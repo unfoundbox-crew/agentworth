@@ -10,6 +10,10 @@ mod exit_status;
 mod gemini;
 mod goose;
 mod grok;
+// Human-turn source parsing (insights data lane): claude and antigravity prompt histories
+// and transcript user-turns, normalized into per-turn derived features. Not a session
+// adapter, so no AgentAdapter impl.
+pub mod human_turns;
 mod herdr;
 mod hermes;
 mod kimi;

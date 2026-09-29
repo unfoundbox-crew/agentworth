@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentworth_loop::{EditLedger, Governor, Policy, SessionSpend};
-use agentworth_storage::{extract_repository_or_workspace, Percentiles, Storage};
+use agentworth_storage::{repo_key_for_dir_str, Percentiles, Storage};
 use anyhow::{anyhow, Result};
 use chrono::{Duration, Utc};
 use std::collections::BTreeMap;
@@ -202,7 +202,7 @@ pub fn run_policy_check_command(db_path: Option<PathBuf>, _ui: &Ui) -> Result<()
         }
         if let Some(cap) = spend.tokens {
             let storage = open_storage(db_path)?;
-            let repo_name = cwd.as_deref().map(extract_repository_or_workspace);
+            let repo_name = cwd.as_deref().map(repo_key_for_dir_str);
             for warning in spend_cap_warnings(&storage, cap, repo_name.as_deref())? {
                 println!("warning: {warning}");
             }
@@ -276,7 +276,7 @@ pub fn run_policy_init_command(
 
     let storage = open_storage(db_path)?;
     let machine = storage.session_token_percentiles(None)?;
-    let repo_name = cwd.as_deref().map(extract_repository_or_workspace);
+    let repo_name = cwd.as_deref().map(repo_key_for_dir_str);
     let repo_stats = repo_name
         .as_deref()
         .map(|r| storage.session_token_percentiles(Some(r)))

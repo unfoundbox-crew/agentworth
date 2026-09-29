@@ -17,13 +17,18 @@ pub use compaction::{
 pub use human::{human_prompt_text, is_human_prompt};
 pub use event::{
     CompactionEvent, EventPayload, EventType, FileActionType, HumanIntervention, ModelSwitch,
-    NormalizedEvent, OutcomeEvidence, OutcomeKind, ShellCommand, ToolCall, ToolResult,
+    NormalizedEvent, OutcomeEvidence, OutcomeKind, ShellCommand, TestOrigin, TestProvenance,
+    ToolCall, ToolResult,
 };
 pub use machine::{
     host_fingerprint, host_fingerprint_for, MachineInfo, FINGERPRINT_SALT_DEFAULT,
     FINGERPRINT_SALT_ENV, FINGERPRINT_SALT_ENV_LEGACY,
 };
-pub use provenance::{extract_repository_or_workspace, is_subagent_transcript, Provenance};
+pub use provenance::{
+    canonical_repo_key, canonical_repo_root, extract_repository_or_workspace, is_subagent_transcript,
+    repo_display_label, repo_key_for_dir, repo_key_for_dir_str, repo_key_from_root, repo_keys_match,
+    Provenance,
+};
 pub use text::{preview, tail_chars, truncate_chars};
 pub use tokens::TokenUsage;
 pub use trace::{AgentWorthTrace, IdentitySighting, TraceKind, TraceStats};

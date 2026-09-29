@@ -685,6 +685,7 @@ fn parse_kimi_record(
                                 kind: OutcomeKind::TestOrBuildPassed,
                                 summary: "Test suite executed successfully in Kimi".to_string(),
                                 confidence: 0.9,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),
@@ -702,6 +703,7 @@ fn parse_kimi_record(
                                 kind: OutcomeKind::CommitObserved,
                                 summary: "Git commit observed in Kimi tool output".to_string(),
                                 confidence: 0.85,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),

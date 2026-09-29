@@ -45,7 +45,8 @@ pub fn agent_status_json(storage: &Storage) -> Result<Value> {
             let repo = row
                 .cwd
                 .as_deref()
-                .map(agentworth_schema::extract_repository_or_workspace);
+                // `row.cwd` is a directory the harness recorded, not a transcript path.
+                .map(agentworth_schema::repo_key_for_dir_str);
             json!({
                 "session_id": row.session_id,
                 "session_short": short(&row.session_id),

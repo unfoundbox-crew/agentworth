@@ -13,7 +13,7 @@
 
 use std::io::{self, BufRead, Write as _};
 
-use agentworth_schema::extract_repository_or_workspace;
+use agentworth_schema::{extract_repository_or_workspace, repo_key_for_dir};
 use agentworth_storage::{SessionFilter, SessionOrderBy, SessionSummary, Storage};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -238,9 +238,7 @@ pub fn not_found(
 }
 
 fn current_repo() -> Option<String> {
-    std::env::current_dir()
-        .ok()
-        .map(|d| extract_repository_or_workspace(&d.to_string_lossy()))
+    std::env::current_dir().ok().map(|d| repo_key_for_dir(&d))
 }
 
 fn is_tty() -> bool {

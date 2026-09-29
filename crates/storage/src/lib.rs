@@ -1,6 +1,8 @@
 mod anchoring;
+pub mod insights;
 pub mod chunker;
 pub mod embedder;
+pub mod human_turns;
 pub mod pricing;
 pub mod vector;
 
@@ -22,6 +24,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
 pub use chunker::TrajectoryChunker;
+pub use insights::compute_insights;
 pub use embedder::LocalEmbedder;
 pub use pricing::{estimate_model_tokens_cost_usd, get_model_rates, ModelRates, MODEL_PRICING_TABLE};
 pub use vector::{SqliteVectorStore, VectorStore};
@@ -223,6 +226,14 @@ pub struct SessionSummary {
     /// `agentworth_schema::TraceStats::compaction_tokens_dropped` for how it's computed.
     #[serde(default)]
     pub compaction_tokens_dropped: u64,
+    /// The working directory the session itself recorded (`metadata.workspace.cwd`), when the
+    /// adapter captured one. This is the worktree the agent actually stood in, which
+    /// `extract_repository_or_workspace` deliberately collapses to one repo key -- so it is the
+    /// only thing that can tell two sessions of the same repository apart
+    /// (`Storage::list_sessions_for_repo_preferring_workspace`). `None` for every query that
+    /// does not select the aliased `metadata` column, and for adapters that record no cwd.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_cwd: Option<String>,
 }
 
 /// One bucket of `Storage::get_compaction_outcome_correlation`'s result: a session count for
@@ -1214,6 +1225,17 @@ impl Storage {
                 first_seen TEXT NOT NULL
             );
 
+            -- Dedup for the hook-spool-serve path (fleet decisions v1 section 6). Every
+            -- event is delivered at least once -- spool write-ahead plus the socket fast path
+            -- -- and applied exactly once: the first application claims the id, retries and
+            -- replays find it already claimed and become no-ops.
+            CREATE TABLE IF NOT EXISTS seen_hook_events (
+                event_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                hook_event_name TEXT NOT NULL,
+                seen_at TEXT NOT NULL
+            );
+
             -- Live state for the loop (docs/specs/loop.md section 1): registered / working /
             -- idle / ended, updated from Claude Code hooks rather than scanned from a tape.
             CREATE TABLE IF NOT EXISTS agent_state (
@@ -1334,6 +1356,60 @@ impl Storage {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            -- Human-turn derived features (insights data lane). NOT raw prompts: each row is
+            -- the derived features of one human turn -- classification, counts, clock, and a
+            -- bounded dedup signature -- so the insights payload's hour-by-weekday heatmap,
+            -- friction-by-trigger and vocabulary blocks read an owned table instead of a
+            -- separate prototype cache. See agentworth-adapter-sdk / adapters::human_turns for
+            -- the sources and taxonomy.
+            CREATE TABLE IF NOT EXISTS human_turns (
+                turn_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                session_id TEXT,
+                -- The turn source's own absolute file path: captured at ingestion so the
+                -- index can fill the turn↔session link (tier-2 by path, tier-3 by display
+                -- repo) without touching raw sources. Empty string on legacy rows.
+                source_path TEXT NOT NULL DEFAULT '',
+                turn_index INTEGER NOT NULL,
+                timestamp_ms INTEGER NOT NULL,
+                epoch_secs REAL NOT NULL,
+                local_hour INTEGER NOT NULL,
+                local_date TEXT NOT NULL,
+                word_count INTEGER NOT NULL,
+                char_count INTEGER NOT NULL,
+                friction_type TEXT NOT NULL,
+                dedup_sig TEXT NOT NULL UNIQUE,
+                -- Per-turn bounded mention counts as JSON [[term, uses], ...] -- derived at
+                -- parse time from the static taxonomy and carried INSIDE the row, so a merge
+                -- (which copies child-table rows wholesale) keeps the vocabulary block
+                -- working without its own table.
+                vocab_json TEXT NOT NULL DEFAULT '[]'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_human_turns_date ON human_turns(local_date);
+            CREATE INDEX IF NOT EXISTS idx_human_turns_ts ON human_turns(timestamp_ms);
+            CREATE INDEX IF NOT EXISTS idx_human_turns_friction ON human_turns(friction_type);
+
+            -- Per-source-file fingerprint record for the turn lane, same conventions as
+            -- `sources`: unchanged (size, mtime, fingerprint) files skip re-parsing.
+            CREATE TABLE IF NOT EXISTS human_turn_sources (
+                source_path TEXT PRIMARY KEY,
+                source_label TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                mtime INTEGER NOT NULL,
+                fingerprint TEXT NOT NULL,
+                turns_indexed INTEGER NOT NULL,
+                scanned_at TEXT NOT NULL
+            );
+
+            -- The ingestion pipeline version. A bump means derived outputs changed for files
+            -- that did not, so the orchestrator wipes and re-ingests everything once.
+            CREATE TABLE IF NOT EXISTS human_turn_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                ingestion_version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             "#,
         )?;
 
@@ -1352,6 +1428,22 @@ impl Storage {
                 );
                 let _ = conn.execute(
                     "ALTER TABLE session_suspensions ADD COLUMN usd_at_lift REAL",
+                    [],
+                );
+            }
+        }
+
+        // Turn-lane link-repair column: an existing index's stored turns gain the source
+        // path key (NULL-defaulted); a later re-ingest (the version bump) fills it. Legacy
+        // rows still resolve tier-1 by stored id.
+        if let Ok(mut turn_stmt) = conn.prepare("PRAGMA table_info(human_turns)") {
+            let turn_columns: Vec<String> = turn_stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(Result::ok)
+                .collect();
+            if !turn_columns.is_empty() && !turn_columns.contains(&"source_path".to_string()) {
+                let _ = conn.execute(
+                    "ALTER TABLE human_turns ADD COLUMN source_path TEXT NOT NULL DEFAULT ''",
                     [],
                 );
             }
@@ -1788,6 +1880,24 @@ impl Storage {
         Ok(reason)
     }
 
+    /// Returns `(session_id, adapter, source_path)` for every indexed session, regardless of
+    /// activity. Used with an adapter-provided `is_session_path` predicate to prune a row
+    /// whose source was never a session at all — the shape a pre-tightened discovery left
+    /// behind, which `stub_sessions` cannot catch once the row has accumulated more than one
+    /// event.
+    pub fn all_session_sources(&self) -> Result<Vec<(String, String, String)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare("SELECT session_id, adapter, source_path FROM sessions")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// Returns `(session_id, adapter, source_path)` for every indexed session that fails
     /// `NEAR_EMPTY_EVENTS_SQL_PREDICATE` -- 0 or 1 normalized events total, the shape left
     /// behind when a non-session file (config, cache, telemetry dump, ...) was accepted as a
@@ -2139,6 +2249,54 @@ impl Storage {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
         Ok(n as usize)
+    }
+
+    /// Human-turn tables (insights data lane). One batch at a time; the `dedup_sig` unique key
+    /// makes re-ingesting an unchanged turn a no-op instead of a double count. Delegates to
+    /// `human_turns::insert_human_turn_batch`.
+    pub fn insert_human_turn_batch(
+        &self,
+        turns: &[human_turns::HumanTurnRow],
+    ) -> Result<(usize, usize)> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::insert_human_turn_batch(&conn, turns)
+    }
+
+    pub fn record_human_turn_source(
+        &self,
+        src: &human_turns::HumanTurnSourceRow,
+        scanned_at: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::record_human_turn_source(&conn, src, scanned_at)
+    }
+
+    pub fn known_human_turn_sources(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (i64, i64, String)>> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::known_human_turn_sources(&conn)
+    }
+
+    /// Total stored human-turn rows; zero means the lane has never ingested anything.
+    pub fn human_turn_total(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::human_turn_total(&conn)
+    }
+
+    pub fn human_turn_ingestion_version(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::human_turn_ingestion_version(&conn)
+    }
+
+    pub fn set_human_turn_ingestion_version(&self, version: i64, now: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::set_human_turn_ingestion_version(&conn, version, now)
+    }
+
+    pub fn wipe_human_turn_data(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        human_turns::wipe_human_turn_data(&conn)
     }
 
     /// Every name ever seen attached to `session_id`, oldest first sighting first. Names are
@@ -3004,7 +3162,9 @@ impl Storage {
                 let source_path: String = row.get(2)?;
                 let repo = extract_repository_or_workspace(&source_path);
                 if let Some(needle) = &q.repo {
-                    if !repo.to_lowercase().contains(&needle.to_lowercase()) {
+                    if !(repo.to_lowercase().contains(&needle.to_lowercase())
+                        || repo_keys_match(&repo, needle))
+                    {
                         continue;
                     }
                 }
@@ -3339,7 +3499,7 @@ impl Storage {
                 continue;
             }
             if let Some(repo) = repo {
-                if extract_repository_or_workspace(&source_path) != repo {
+                if !repo_keys_match(&extract_repository_or_workspace(&source_path), repo) {
                     continue;
                 }
             }
@@ -3367,7 +3527,7 @@ impl Storage {
                 continue;
             }
             if let Some(repo) = repo {
-                if extract_repository_or_workspace(&source_path) != repo {
+                if !repo_keys_match(&extract_repository_or_workspace(&source_path), repo) {
                     continue;
                 }
             }
@@ -3762,6 +3922,45 @@ impl Storage {
         })
     }
 
+    /// Deterministic machine-insights payload over this index. See `insights::compute_insights`
+    /// for the metrics; the CLI command variant opens its own read-only connection instead of
+    /// this shared one.
+    pub fn get_insights(&self) -> Result<insights::Insights> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights::compute_insights(&conn, None, None)
+    }
+
+    /// Same payload over an explicit half-open `started_at` window: `?since=&until=` on
+    /// `/api/insights`.
+    pub fn get_insights_windowed(
+        &self,
+        window: &insights::InsightsTimeWindow,
+    ) -> Result<insights::Insights> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights::compute_insights(&conn, Some(window), None)
+    }
+
+    /// The filtered variant: every session block and every human-turn block computes only
+    /// from the slice ([`insights::InsightsDimensionFilter`]), with deltas slice-to-slice.
+    pub fn get_insights_filtered(
+        &self,
+        window: Option<&insights::InsightsTimeWindow>,
+        filter: Option<&insights::InsightsDimensionFilter>,
+    ) -> Result<insights::Insights> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights::compute_insights(&conn, window, filter)
+    }
+
+    /// The drill-through: the sessions behind one ladder rung, heatmap cell or friction
+    /// trigger (stats-shaped rows only). See `insights::insights_drill`.
+    pub fn insights_drill(
+        &self,
+        req: &insights::InsightsDrillRequest,
+    ) -> Result<insights::InsightsDrill> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights::insights_drill(&conn, req)
+    }
+
     /// Calculate rolling pacing summary for the last N hours.
     pub fn get_pacing_window(&self, hours: i64) -> Result<PacingSummary> {
         let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -4011,7 +4210,7 @@ impl Storage {
                    sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
                    sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
                    sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
-                   sessions.cache_creation_tokens
+                   sessions.cache_creation_tokens, sessions.metadata AS workspace_metadata
             FROM sessions
             LEFT JOIN sources ON sessions.source_path = sources.source_path
             WHERE ({NON_STUB_SQL_PREDICATE})
@@ -4027,7 +4226,7 @@ impl Storage {
         while let Some(row) = rows.next()? {
             scanned += 1;
             let source_path: String = row.get(2)?;
-            if extract_repository_or_workspace(&source_path) != repo {
+            if !repo_keys_match(&extract_repository_or_workspace(&source_path), repo) {
                 continue;
             }
             if !include_subagents && is_subagent_transcript(&source_path) {
@@ -4042,6 +4241,95 @@ impl Storage {
         Ok(RepoSessionPage {
             scan_exhausted: sessions.len() < limit && scanned >= REPO_SCAN_BUDGET,
             sessions,
+        })
+    }
+
+    /// Like [`Self::list_sessions_for_repo`], but when one or more sessions for `repo`
+    /// recorded a `workspace.cwd` equal to `workspace`, returns those and only those, newest
+    /// first. Falls back to the plain repo ordering when none match.
+    ///
+    /// **Why this exists.** `extract_repository_or_workspace` prunes the `--claude-worktrees-`
+    /// suffix of a Claude Code project slug, so every worktree of a repository answers to one
+    /// repo key. With four to eight agents in worktrees under `~/code/unfoundbox/agentworth`,
+    /// "newest for repo" returns whichever agent happened to run last -- not the agent standing
+    /// in *this* worktree. The repo key is still the right fallback (a session from the plain
+    /// checkout has no worktree to match), but the checkout the agent is standing in must win
+    /// first, or wake resumes the wrong conversation entirely.
+    ///
+    /// The scan cannot stop at `limit` the way `list_sessions_for_repo` does: the matching
+    /// session may be older than `limit` newer ones from other worktrees. It walks the same
+    /// `REPO_SCAN_BUDGET` window and only stops early once `limit` matches have been found.
+    pub fn list_sessions_for_repo_preferring_workspace(
+        &self,
+        repo: &str,
+        workspace: &str,
+        limit: usize,
+        include_subagents: bool,
+    ) -> Result<RepoSessionPage> {
+        if limit == 0 {
+            return Ok(RepoSessionPage {
+                sessions: Vec::new(),
+                scan_exhausted: false,
+            });
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare(&format!(
+            r#"
+            SELECT sessions.session_id, sessions.adapter, sessions.source_path, sessions.started_at,
+                   sessions.duration_seconds, sessions.total_tokens, sessions.total_events,
+                   sessions.tool_calls_count, sessions.models_used, sessions.primary_outcome,
+                   sessions.composite_score, sessions.prompt_preview, sessions.compaction_count,
+                   sessions.compaction_tokens_dropped, sources.mtime, sessions.kind,
+                   sessions.input_tokens, sessions.output_tokens, sessions.cache_read_tokens,
+                   sessions.cache_creation_tokens, sessions.metadata AS workspace_metadata
+            FROM sessions
+            LEFT JOIN sources ON sessions.source_path = sources.source_path
+            WHERE ({NON_STUB_SQL_PREDICATE})
+            ORDER BY COALESCE(sessions.ended_at, sessions.started_at) DESC
+            LIMIT {REPO_SCAN_BUDGET}
+            "#
+        ))?;
+
+        let mut rows = stmt.query([])?;
+        let mut preferred = Vec::new();
+        let mut fallback = Vec::new();
+        let mut scanned = 0usize;
+
+        while let Some(row) = rows.next()? {
+            scanned += 1;
+            let source_path: String = row.get(2)?;
+            if !repo_keys_match(&extract_repository_or_workspace(&source_path), repo) {
+                continue;
+            }
+            if !include_subagents && is_subagent_transcript(&source_path) {
+                continue;
+            }
+            let summary = row_to_session_summary(row)?;
+            let matches = summary
+                .workspace_cwd
+                .as_deref()
+                .is_some_and(|cwd| same_workspace(cwd, workspace));
+            if matches {
+                preferred.push(summary);
+                if preferred.len() >= limit {
+                    break;
+                }
+            } else if fallback.len() < limit {
+                // Keep a fallback page in case no session's cwd matches. A match can still
+                // appear later, so this can never break the loop -- see the doc comment.
+                fallback.push(summary);
+            }
+        }
+
+        // All-or-nothing: if any session recorded this exact worktree, never mix another
+        // worktree's sessions into the answer. Fewer rows is better than the wrong session.
+        let sessions = if preferred.is_empty() { fallback } else { preferred };
+        let scan_exhausted = sessions.len() < limit && scanned >= REPO_SCAN_BUDGET;
+
+        Ok(RepoSessionPage {
+            sessions,
+            scan_exhausted,
         })
     }
     /// Record (or replace) one session's risk signals. Idempotent, so a rescan overwrites
@@ -4327,6 +4615,36 @@ impl Storage {
             ],
         )?;
         Ok(())
+    }
+
+    /// True when this hook event id has already been applied. The hook-spool-serve path
+    /// delivers every event at least once; this is the check that keeps that from becoming
+    /// twice (a hook retry, a socket-plus-spool redelivery, a spool replay after a crash).
+    pub fn hook_event_seen(&self, event_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare("SELECT 1 FROM seen_hook_events WHERE event_id = ?1")?;
+        Ok(stmt.exists(params![event_id])?)
+    }
+
+    /// Claims a hook event id as applied. Returns true on the first application and false
+    /// when the id was already claimed -- the caller then applies nothing: no sequence bump,
+    /// no transition, no rewritten Stop report, no moved intent row. Call only after the
+    /// event's effects landed, so a kill between the effects and the claim replays the
+    /// (idempotent) writes rather than losing the event to a premature claim.
+    pub fn mark_hook_event_seen(
+        &self,
+        event_id: &str,
+        session_id: &str,
+        hook_event_name: &str,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let changed = conn.execute(
+            "INSERT INTO seen_hook_events (event_id, session_id, hook_event_name, seen_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(event_id) DO NOTHING",
+            params![event_id, session_id, hook_event_name, Utc::now().to_rfc3339()],
+        )?;
+        Ok(changed == 1)
     }
 
     /// Store this session's last `Stop` classification, as JSON. A session with no
@@ -5421,6 +5739,21 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
 
     let models_used = serde_json::from_str::<Vec<String>>(&models_str).unwrap_or_default();
 
+    // Read by alias, not index: only the repo lookups select `metadata AS workspace_metadata`,
+    // so every other caller of this mapper gets `None` rather than a column-order dependency.
+    let workspace_cwd = row
+        .get::<_, Option<String>>("workspace_metadata")
+        .ok()
+        .flatten()
+        .and_then(|raw| normalize_metadata(Some(raw)))
+        .and_then(|value| {
+            value
+                .get("workspace")
+                .and_then(|workspace| workspace.get("cwd"))
+                .and_then(|cwd| cwd.as_str())
+                .map(str::to_string)
+        });
+
     Ok(SessionSummary {
         session_id,
         adapter,
@@ -5443,6 +5776,7 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
         source_mtime_epoch_secs,
         compaction_count: compaction_count as usize,
         compaction_tokens_dropped: compaction_tokens_dropped as u64,
+        workspace_cwd,
     })
 }
 
@@ -5451,7 +5785,12 @@ fn row_to_session_summary(row: &rusqlite::Row) -> Result<SessionSummary> {
 /// Lives in `agentworth-schema` now (`agentworth-redaction` needs it too, and shouldn't have
 /// to pull in this crate's SQLite dependency to get one pure string function) — re-exported
 /// here so existing callers importing it from `agentworth_storage` don't need to change.
-pub use agentworth_schema::extract_repository_or_workspace;
+pub use agentworth_schema::{canonical_repo_key, extract_repository_or_workspace, repo_keys_match};
+
+/// The directory-shaped counterpart to [`extract_repository_or_workspace`]: the key for a live
+/// `cwd`, a `--workspace`, or a checkout root, resolved through the git checkout root on disk
+/// rather than guessed from the string. Re-exported for the same reason as its neighbour.
+pub use agentworth_schema::{repo_key_for_dir, repo_key_for_dir_str};
 
 /// Read `sessions.metadata` back as a value. SQL NULL, the empty string, and the literal
 /// four-character string "null" written by every scan before the NULL fix all mean the same
@@ -5467,6 +5806,25 @@ pub fn normalize_metadata(raw: Option<String>) -> Option<serde_json::Value> {
         Ok(value) => Some(value),
         // Not JSON at all: hand back what is actually stored rather than dropping it.
         Err(_) => Some(serde_json::Value::String(raw)),
+    }
+}
+
+/// True when two working-directory strings name the same directory.
+///
+/// Equal after trimming a trailing slash, or equal once both resolve through the filesystem
+/// (`/tmp` on macOS is a symlink to `/private/tmp`). A path that no longer exists cannot be
+/// canonicalized and stays a string comparison -- never an error, because a worktree whose
+/// directory is gone is still a fact about which session to prefer.
+fn same_workspace(a: &str, b: &str) -> bool {
+    fn trim(s: &str) -> &str {
+        s.trim_end_matches('/')
+    }
+    if trim(a) == trim(b) {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
     }
 }
 
@@ -5494,6 +5852,35 @@ pub fn default_db_dir() -> Result<PathBuf> {
 mod tests {
     use super::*;
     use agentworth_schema::{NormalizedEvent, Provenance};
+
+    /// The seen-table contract the loop's exactly-once rests on: first claim wins, every
+    /// later claim for the same id reports already-seen, and an old database without the
+    /// table still works because the schema is `CREATE TABLE IF NOT EXISTS`.
+    #[test]
+    fn test_hook_event_ids_claim_once_then_read_as_seen() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        assert!(
+            !storage.hook_event_seen("evt-1").expect("check"),
+            "nothing is seen on a fresh index"
+        );
+        assert!(
+            storage.mark_hook_event_seen("evt-1", "s1", "Stop").expect("claim"),
+            "the first application claims the id"
+        );
+        assert!(
+            storage.hook_event_seen("evt-1").expect("check"),
+            "the claim is visible"
+        );
+        assert!(
+            !storage.mark_hook_event_seen("evt-1", "s1", "Stop").expect("re-claim"),
+            "a retry, a redelivery and a replay all lose the race the same way"
+        );
+        assert!(
+            !storage.hook_event_seen("evt-never").expect("check"),
+            "unknown ids read unseen, never as an error"
+        );
+    }
+
     use chrono::Duration;
     use std::io::Write;
     use tempfile::NamedTempFile;
@@ -8341,6 +8728,56 @@ mod tests {
             storage.last_scanned_at().expect("last scanned").is_some(),
             "four upserts must leave a scanned_at behind"
         );
+    }
+
+    /// The bug: with four to eight agents in worktrees under one repo key, "newest for repo"
+    /// answers with another worktree's session. The recorded `workspace.cwd` must win first,
+    /// even when a session from a different worktree is newer.
+    #[test]
+    fn test_list_sessions_for_repo_prefers_the_recorded_worktree_over_recency() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        let base = Utc::now();
+        let root = "/Users/x/code/unfoundbox/agentworth";
+        let wt_a = format!("{root}/.claude/worktrees/wt-a");
+        let wt_b = format!("{root}/.claude/worktrees/wt-b");
+
+        // Same repo key for all three. Worktree B is newest, then the plain checkout, then A.
+        let seeds = [
+            ("a", format!("{wt_a}/sess-a.jsonl"), wt_a.clone(), 0),
+            ("root", format!("{root}/sess-root.jsonl"), root.to_string(), 60),
+            ("b", format!("{wt_b}/sess-b.jsonl"), wt_b.clone(), 120),
+        ];
+        for (id, path, cwd, offset) in seeds {
+            let prov = Provenance::new(path, "claude_code", 100, 1, format!("fp_{id}"));
+            let mut trace =
+                AgentWorthTrace::new(id, "claude_code", prov, base + Duration::seconds(offset));
+            trace.stats.total_events = 5;
+            trace.stats.token_usage = TokenUsage::new(100, 20, 0, 0);
+            trace.metadata = serde_json::json!({ "workspace": { "cwd": cwd } });
+            storage.upsert_trace(&trace).expect("seed session");
+        }
+
+        let page = storage
+            .list_sessions_for_repo_preferring_workspace("unfoundbox/agentworth", &wt_a, 10, false)
+            .expect("workspace lookup");
+        let ids: Vec<&str> = page.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["a"],
+            "the worktree the agent stands in wins over a newer session from another worktree"
+        );
+
+        // A directory no session recorded falls back to the plain repo ordering.
+        let page = storage
+            .list_sessions_for_repo_preferring_workspace(
+                "unfoundbox/agentworth",
+                &format!("{root}/.claude/worktrees/wt-c"),
+                10,
+                false,
+            )
+            .expect("fallback lookup");
+        let ids: Vec<&str> = page.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["b", "root", "a"], "fallback keeps newest-first repo order");
     }
 
     #[test]

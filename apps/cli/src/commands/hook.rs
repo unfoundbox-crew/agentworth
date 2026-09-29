@@ -1,10 +1,13 @@
 //! `archie hook`: the client end of the loop (docs/specs/loop.md section 1).
 //!
 //! This runs inside the agent's own process tree, on every hook, so its one hard rule is that
-//! it can never cost the agent anything: it reads stdin, spends at most 50 ms trying the
-//! socket, falls back to the spool, and exits 0 whatever happened. Nothing reaches stdout --
-//! Claude Code reads a hook's stdout, and a line there is a line in the agent's context.
-//! Failures are visible under `--verbose` on stderr and nowhere else.
+//! it can never cost the agent anything: it reads stdin, appends to the spool FIRST
+//! (write-ahead, fsynced -- the acknowledgement means the line is on disk), then spends at
+//! most 50 ms on the socket fast path, and exits 0 whatever happened. The spool line and the
+//! socket line carry the same event id, so whichever arrives -- or both -- applies exactly
+//! once. Nothing reaches stdout -- Claude Code reads a hook's stdout, and a line there is a
+//! line in the agent's context. Failures are visible under `--verbose` on stderr and nowhere
+//! else.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -93,9 +96,9 @@ pub fn run_hook_command(verbose: bool) -> anyhow::Result<()> {
     };
 
     match deliver(&event, verbose) {
-        Ok(Delivery::Socket) => note(verbose, "delivered on the socket"),
+        Ok(Delivery::Socket) => note(verbose, "spooled and delivered on the socket"),
         Ok(Delivery::Spool(path)) => {
-            note(verbose, &format!("spooled to {}", path.display()));
+            note(verbose, &format!("spooled to {} (no socket)", path.display()));
         }
         Err(e) => note(verbose, &format!("event dropped: {e:#}")),
     }
@@ -226,16 +229,23 @@ fn append_raw(dir: &std::path::Path, session_id: &str, value: &serde_json::Value
     writeln!(file, "{value}")
 }
 
+/// `Socket` means spooled AND delivered live; `Spool` means spooled with no listener.
+/// Every acknowledged event is spooled -- that is the write-ahead -- so there is no
+/// "socket only" outcome anymore.
 enum Delivery {
     Socket,
     Spool(PathBuf),
 }
 
+/// Write-ahead: the spool append (fsynced) comes before the socket attempt, so the
+/// acknowledgement -- this process exiting 0 -- means the event survives a kill -9 anywhere
+/// after it. A socket delivery that beats the next scan to the index wins nothing extra:
+/// both lines carry the same event id and the second application is a counted no-op.
 fn deliver(event: &HookEvent, verbose: bool) -> anyhow::Result<Delivery> {
+    let path = SpoolWriter::append(&spool_dir(verbose), event)?;
     let line = serde_json::to_string(event)?;
     if let Some(error) = try_socket(&line) {
-        tracing::debug!("loop: socket unavailable ({error}), spooling");
-        let path = SpoolWriter::append(&spool_dir(verbose), event)?;
+        tracing::debug!("loop: socket unavailable ({error}), spool only");
         return Ok(Delivery::Spool(path));
     }
     Ok(Delivery::Socket)

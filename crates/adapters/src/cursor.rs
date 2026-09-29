@@ -1040,6 +1040,7 @@ fn parse_cursor_record(
                                 kind: OutcomeKind::TestOrBuildPassed,
                                 summary: "Tests passed in Cursor terminal output".to_string(),
                                 confidence: 0.9,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),

@@ -113,6 +113,23 @@ export interface Space {
  */
 export type MessageKind = 'speech' | 'work' | 'system';
 
+/** What a timeline moment is. Rust mirrors these in
+ * apps/cli/src/server/home/protocol.rs (`MomentKind`); change both or neither. */
+export type MomentKind = 'speech' | 'work' | 'handoff' | 'error';
+
+/**
+ * One seekable position on a session's timeline: the same speech/work distillation the
+ * live stream is built from, for the whole session, ordered by the trace's own event
+ * sequence (`seq`). `handoff` marks a delegation the adapter surfaced as a ModelSwitch;
+ * `error` marks an error record -- the fork-on-retry point.
+ */
+export interface TimelineMoment {
+  seq: number;
+  kind: MomentKind;
+  text: string;
+  at: string;
+}
+
 export interface Message {
   id: string;
   spaceId: string;
@@ -160,6 +177,8 @@ export type ServerFrame =
   | { t: 'artifact'; artifact: Artifact }
   | { t: 'space'; space: Space }
   | { t: 'backfill'; spaceId: string; messages: Message[]; artifacts: Artifact[] }
+  /** The full seekable timeline for one office's session, sent to the requesting client only. */
+  | { t: 'timeline'; spaceId: string; moments: TimelineMoment[]; truncated: boolean }
   | { t: 'error'; code: string; detail: string };
 
 /** Whether a steer interrupts the rider now or lands after its current step. Never ambiguous. */
@@ -179,6 +198,8 @@ export type ClientFrame =
   | { t: 'prompt'; spaceId: string; text: string; mentions: string[] }
   | { t: 'seen'; spaceId: string; upto: string }
   | { t: 'fetch'; artifactId: string }
+  /** Asks for the session timeline behind one office space, for the deck's scrubber. */
+  | { t: 'timeline'; spaceId: string }
   /** Answers a blocked pane's prompt from the alert plate. Refused unless `personaId` is presently `blocked`. */
   | { t: 'answer'; directionId: string; personaId: string; key: AnswerKey; clientId?: string }
   /**

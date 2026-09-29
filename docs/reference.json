@@ -1,6 +1,6 @@
 {
   "version": "0.1.27",
-  "generatedDate": "2026-09-13",
+  "generatedDate": "2026-09-24",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -621,6 +621,16 @@
           "help": "Output the wake report as JSON",
           "default": "false",
           "possibleValues": []
+        },
+        {
+          "name": "--inject",
+          "positional": false,
+          "required": false,
+          "help": "Read an Antigravity CLI `PreInvocation` hook payload on stdin and print the `injectSteps` wake envelope on stdout (docs/specs/wake.md, \"Automation\"). Only `antigravity` today: Claude Code and Codex inject through their own hook commands",
+          "default": null,
+          "possibleValues": [
+            "antigravity"
+          ]
         }
       ]
     },
@@ -1577,28 +1587,6 @@
       ]
     },
     {
-      "path": "archie home",
-      "about": "One command for a new user: serve the built `apps/home` deck and open it. Same as `archie serve --home`, plus: fails loudly if the deck was never built into this binary, opens the browser at `/home/` instead of the API root, and does not treat an already-running `archie serve` holding the loop socket as fatal",
-      "args": [
-        {
-          "name": "--port, -p",
-          "positional": false,
-          "required": false,
-          "help": "Port to bind the server to. Reuses `archie serve`'s own default, so `archie home` and `archie serve --home` land on the same URL unless told otherwise",
-          "default": "3000",
-          "possibleValues": []
-        },
-        {
-          "name": "--no-open",
-          "positional": false,
-          "required": false,
-          "help": "Do not open the default browser",
-          "default": "false",
-          "possibleValues": []
-        }
-      ]
-    },
-    {
       "path": "archie mcp",
       "about": "Start the read-only MCP server over stdio, for a coding agent to query this machine's session index mid-session (see docs/specs/mcp-server.md). Register it once with `claude mcp add agentworth --scope user -- archie mcp`",
       "args": []
@@ -1629,7 +1617,8 @@
           "default": null,
           "possibleValues": [
             "claude",
-            "codex"
+            "codex",
+            "antigravity"
           ]
         },
         {
@@ -1719,6 +1708,82 @@
           "positional": false,
           "required": false,
           "help": "Output as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie insights",
+      "about": "Machine agent work in one deterministic report: usable sessions, tool calls, file touches, the evidence ladder, per-model burn, biggest sessions. Read-only; `--json` emits the full payload (same JSON as GET /api/insights)",
+      "args": [
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the full insights payload as formatted JSON",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--since",
+          "positional": false,
+          "required": false,
+          "help": "Window start (UTC RFC3339); inclusive",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--until",
+          "positional": false,
+          "required": false,
+          "help": "Window end (same format); exclusive. Defaults to the index's newest usable session",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--adapter",
+          "positional": false,
+          "required": false,
+          "help": "Single-select equality filter; valid values list under --json (insights.facets)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--model",
+          "positional": false,
+          "required": false,
+          "help": "Filter by a recorded per-session model usage row",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Filter by display repo over session source paths (insights.repo_label)",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie turns",
+      "about": "(Re)ingest the human-turn lane on its own -- the turn-data side of Insights, without a full scan. A taxonomy-version bump wipes and re-parses every turn source; the dedup signature keeps past encounters out. Also the repair turn for the turn↔session link (tier-2/3 need each turn's source file path, which only ingester v2+ writes)",
+      "args": [
+        {
+          "name": "--force",
+          "positional": false,
+          "required": false,
+          "help": "Re-parse every turn source regardless of fingerprints (dedup keeps stored rows stable)",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the ingest summary as JSON",
           "default": "false",
           "possibleValues": []
         }
@@ -2072,6 +2137,72 @@
     },
     {
       "method": "GET",
+      "path": "/api/insights",
+      "description": "The deterministic machine-insights payload: usable sessions, tool calls, evidence ladder, per-model burn, biggest sessions (same JSON as `agentworth insights --json`). Optional since/until window plus single-select adapter/model/repo slice filters (values validated against the payload's facets block)",
+      "queryParams": [
+        {
+          "name": "since",
+          "description": "window start (UTC RFC3339, inclusive)"
+        },
+        {
+          "name": "until",
+          "description": "window end (exclusive; requires since)"
+        },
+        {
+          "name": "adapter",
+          "description": "single-select equality slice; values validated against the payload's facets"
+        },
+        {
+          "name": "model",
+          "description": "single-select model equality over recorded per-session usage"
+        },
+        {
+          "name": "repo",
+          "description": "single-select display-repo equality"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/insights/drill",
+      "description": "Drill-through: the sessions behind one insights cut (same shape the deck's session feeds render). view=ladder|day_hour|friction + key=<rung|dow-hour|trigger>, optional since/until and the same adapter/model/repo filters",
+      "queryParams": [
+        {
+          "name": "view",
+          "description": "ladder | day_hour | friction"
+        },
+        {
+          "name": "key",
+          "description": "rung outcome | <dow>-<hour> | trigger"
+        },
+        {
+          "name": "since",
+          "description": "window start (UTC RFC3339, inclusive)"
+        },
+        {
+          "name": "until",
+          "description": "window end (exclusive; requires since)"
+        },
+        {
+          "name": "adapter",
+          "description": "single-select equality slice"
+        },
+        {
+          "name": "model",
+          "description": "single-select model equality"
+        },
+        {
+          "name": "repo",
+          "description": "single-select display-repo equality"
+        },
+        {
+          "name": "limit",
+          "description": "rows to return (default 50, ceiling 200); count is always the full total"
+        }
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/api/archaeology",
       "description": "Archaeology highlights across the whole index",
       "queryParams": []
@@ -2128,6 +2259,96 @@
       "description": "Where every agent on this machine is right now: one row per session the loop has seen, with its state (registered / working / idle / ended), when it entered that state, the repository it is working in, its terminal pane when herdr exported one, and its event sequence. Fed by the harness's own hooks (`archie hook`), not by a scan, so it is current rather than as-of-last-scan. An empty list means no hook is registered -- `archie hook print claude` prints the snippet.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object"
+      }
+    },
+    {
+      "name": "insights_get",
+      "description": "The deterministic machine-insights payload over this index -- the exact contract `agentworth insights --json` and /api/insights serve, never a hand-rolled variant: population, volume, by_adapter, ladder, verified, calls_per_turn, turn_buckets, file_modifications, top_repos, top_sessions, session_size_buckets, models, models_totals, series, tool_buckets and tool_buckets_detail, plus the human-turn blocks day_hour, friction and vocabulary, deltas, coverage_flags and the deferred list with its reasons. Optional since/until narrow the window (`until` requires `since`); absent both is all-time. Aggregates only -- no transcript text is ever returned, so there is no include_raw. Zero-data blocks come back empty with the reason in `deferred`, never zero-filled.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "adapter": {
+            "description": "Exact adapter match (e.g. `claude_code`); valid values in the payload's facets.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "Exact model match over recorded per-session model usage. Optional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Exact display-repo match over session source paths. Optional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since": {
+            "description": "RFC 3339 timestamp; only sessions (and stored human turns) starting at or after\nthis instant. Optional; omit for all-time.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "description": "RFC 3339 timestamp; requires `since` -- a window needs a start.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "insights_summary",
+      "description": "The compact insights surface: one headline row per KPI -- population, volume, verified share, calls_per_turn strict, friction rate and top trigger, the day_hour peak cell, and the deferred list -- projected from the same payload `insights_get` returns, so the two can never disagree. The series, top lists, vocabulary rows and full turn blocks stay in `insights_get`. Optional since/until as there. Aggregates only -- no transcript text is ever returned, so there is no include_raw.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "adapter": {
+            "description": "Exact adapter match (e.g. `claude_code`); valid values in the payload's facets.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "Exact model match over recorded per-session model usage. Optional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Exact display-repo match over session source paths. Optional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since": {
+            "description": "RFC 3339 timestamp; only sessions (and stored human turns) starting at or after\nthis instant. Optional; omit for all-time.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "description": "RFC 3339 timestamp; requires `since` -- a window needs a start.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       }
     },

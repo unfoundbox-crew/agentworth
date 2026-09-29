@@ -9,6 +9,10 @@ export interface DeckKeyHandlers {
   onFocusDock(): void;
   /** Escape: close consoles back to alert/cruise. */
   onEscape(): void;
+  /** "i": open/close the insights phase. Optional — only Insights-wiring decks pass it. */
+  onToggleInsights?(): void;
+  /** "a": open/close the archive phase (session list + inspector). */
+  onToggleArchive?(): void;
 }
 
 const EDITABLE = new Set(['INPUT', 'TEXTAREA']);
@@ -31,6 +35,16 @@ export function useDeckKeys(handlers: DeckKeyHandlers) {
       if (e.key === '/') {
         e.preventDefault();
         handlers.onFocusDock();
+        return;
+      }
+      if (e.key === 'i' && handlers.onToggleInsights) {
+        e.preventDefault();
+        handlers.onToggleInsights();
+        return;
+      }
+      if (e.key === 'a' && handlers.onToggleArchive) {
+        e.preventDefault();
+        handlers.onToggleArchive();
         return;
       }
       if (e.key === '0') {

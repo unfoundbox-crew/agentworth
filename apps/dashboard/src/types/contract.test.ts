@@ -28,15 +28,22 @@
  * catch a missing or renamed field.
  */
 
-import matrixFixture from './__fixtures__/matrix.json';
-import usageFixture from './__fixtures__/usage.json';
-import tracesFixture from './__fixtures__/traces.json';
-import traceDetailFixture from './__fixtures__/trace_detail.json';
-import traceEventsPageFixture from './__fixtures__/trace_events_page.json';
-import pacingFixture from './__fixtures__/pacing.json';
-import blameFixture from './__fixtures__/blame.json';
-import archaeologyFixture from './__fixtures__/archaeology.json';
-import scanFixture from './__fixtures__/scan.json';
+// One copy of each fixture, owned by the Rust side that generates them and read
+// from there by both halves of the contract check. They used to be duplicated
+// into `./__fixtures__/` here; PR #182 moved them to
+// `apps/cli/tests/fixtures/api-contract/` so the Rust tests kept working with no
+// web app present, and that is the right home regardless of whether a web app
+// exists. A second copy under apps/dashboard is what lets the two drift, which
+// is the exact bug class AGENTS.md item 2 is about -- so there is only one.
+import matrixFixture from '@api-fixtures/matrix.json';
+import usageFixture from '@api-fixtures/usage.json';
+import tracesFixture from '@api-fixtures/traces.json';
+import traceDetailFixture from '@api-fixtures/trace_detail.json';
+import traceEventsPageFixture from '@api-fixtures/trace_events_page.json';
+import pacingFixture from '@api-fixtures/pacing.json';
+import blameFixture from '@api-fixtures/blame.json';
+import archaeologyFixture from '@api-fixtures/archaeology.json';
+import scanFixture from '@api-fixtures/scan.json';
 
 import type {
   CoverageMatrixResponse,

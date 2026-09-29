@@ -9,7 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **The insights payload's human-turn blocks are real data.** `archie scan` ingests the
+  human-at-the-keyboard turn histories no session adapter owns — Claude Code's
+  `~/.claude/history.jsonl` and per-project transcript user-turns, Antigravity's
+  `history.jsonl` + brain `transcript.jsonl` `USER_INPUT` records — and stores per turn only
+  derived features (timestamp, local hour/date, word count, the six-trigger friction class,
+  bounded vocabulary mention counts). The insights payload's `day_hour` heatmap, `friction`
+  by-trigger counts and `vocabulary` streams fill from these tables with the same semantics
+  as the `tools/behavioral_insights.py` prototype, windowed by `?since=&until=`, with
+  `deltas.friction_rate` computed across the requested window. Nothing raw is stored (the
+  dedup key is a hash of timestamp + first 60 chars), unchanged files skip re-parsing by the
+  same (size, mtime, fingerprint) rule sessions use, and a taxonomy version bump wipes and
+  re-ingests every turn so an indexed answer is never staleness-served. Pre-lane payloads
+  keep the three dimensions in `deferred` with the run-`agentworth scan` reason; after a real
+  ingest they leave the list and a zero means a quiet window.
+- `archie scan`'s summary reports `human turns indexed` (inserted + deduplicated), and
+  `archie insights` prints the three turn blocks' headline numbers.
+
+### Fixed
+
+- **Turn rows survive a merge.** `human_turns` is registered in `SESSION_CHILD_TABLES` with
+  its `vocab_json` inside the row, so `archie merge` carries a merged session's turnaround
+  facts and the insights vocabulary block keeps working without a second table keyed by a
+  volatile rowid.
+
+- **Antigravity CLI sessions carry their models, and the harness can wake them.** The `agy`
+  conversation store records the model that generated each step in field 19 of its
+  `gen_metadata` blobs; the adapter read everything else out of that store and never that
+  field, so every `antigravity` row indexed with `models_used: []` while `claude_code` and
+  `codex` rows carried theirs. The adapter now reads it (parser version 3). Token usage stays
+  honestly zero: the store has no token counters anywhere, and a test guards against a future
+  estimate. `archie session wake --inject antigravity` turns an `agy` `PreInvocation` hook
+  payload into the `injectSteps` wake envelope, and `archie hook print antigravity` prints the
+  `~/.gemini/config/hooks.json` entry that points at it. Because `agy` exposes no
+  `SessionStart` hook, an on-disk marker makes the per-invocation `PreInvocation` fire the
+  wake document exactly once per conversation; see `apps/cli/src/antigravity_hook.rs`.
+
+### Fixed
+
+- **Wake resumes the worktree you are standing in, not the newest session for the repo.**
+  `extract_repository_or_workspace` prunes the `--claude-worktrees-` suffix of a Claude Code
+  project slug on purpose, which is right for carry-forward but meant that with several agents
+  in worktrees under one repository, "newest for repo" woke agent A into whichever worktree ran
+  last. Selection now prefers sessions whose recorded `workspace.cwd` equals the checkout's git
+  root and falls back to the repo ordering only when none match
+  (`Storage::list_sessions_for_repo_preferring_workspace`).
 
 ---
 

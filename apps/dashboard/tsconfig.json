@@ -24,6 +24,10 @@
     "baseUrl": ".",
     "paths": {
       "@ui/*": ["../../packages/ui/*"],
+      /* The Rust-generated API contract fixtures, read by src/types/contract.test.ts.
+         They live with the Rust tests that generate them (single copy, see that file);
+         mirrors the vite.config.ts "@api-fixtures" alias. */
+      "@api-fixtures/*": ["../cli/tests/fixtures/api-contract/*"],
       "react": ["./node_modules/@types/react"],
       "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
     },

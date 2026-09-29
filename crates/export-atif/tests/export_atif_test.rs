@@ -102,6 +102,7 @@ fn sample_trace() -> AgentWorthTrace {
             kind: OutcomeKind::TestOrBuildPassed,
             summary: "All unit tests passed successfully".to_string(),
             confidence: 0.95,
+            test_provenance: None,
         }),
     ));
 

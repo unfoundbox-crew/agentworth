@@ -467,6 +467,31 @@ pub async fn serve_home_deck(req: Request<Body>) -> impl IntoResponse {
         })
 }
 
+/// True for `/api` and everything under it. The SPA history fallback must never answer
+/// these: an unmatched API path is a 404 for the client, not `index.html`. Without this
+/// guard, `archie serve --home` (and plain `serve`) would swallow paths like
+/// `/api/insights` whenever they miss the nested `/api` table — measured against the
+/// dogfood binary that returned the dashboard shell for `/api/insights`.
+fn is_api_path(path: &str) -> bool {
+    path == "/api" || path.starts_with("/api/")
+}
+
+fn api_not_found() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        )
+        .body(Body::from(r#"{"error":"not found"}"#))
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .unwrap()
+        })
+}
+
 /// Fallback handler when serving SPA static files or embedded fallback.
 pub async fn serve_static_or_spa(
     dist_dir: Option<PathBuf>,
@@ -474,7 +499,11 @@ pub async fn serve_static_or_spa(
 ) -> impl IntoResponse {
     // Captured up front: the disk branch below moves `req` into ServeDir, and
     // the embedded branch still needs the path afterwards.
-    let embed_path = req.uri().path().trim_start_matches('/').to_string();
+    let path = req.uri().path().to_string();
+    if is_api_path(&path) {
+        return api_not_found();
+    }
+    let embed_path = path.trim_start_matches('/').to_string();
 
     // If custom or standard dist_dir exists, attempt to serve from disk
     if let Some(ref dist) = dist_dir {
@@ -536,4 +565,82 @@ pub async fn serve_static_or_spa(
                 .body(Body::empty())
                 .unwrap()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+
+    async fn body_of(res: Response<Body>) -> (StatusCode, String, Option<String>) {
+        let status = res.status();
+        let ctype = res
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let bytes = res
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        (status, String::from_utf8_lossy(&bytes).into_owned(), ctype)
+    }
+
+    #[test]
+    fn is_api_path_covers_exact_and_prefix() {
+        assert!(is_api_path("/api"));
+        assert!(is_api_path("/api/"));
+        assert!(is_api_path("/api/insights"));
+        assert!(is_api_path("/api/insights/drill"));
+        assert!(!is_api_path("/"));
+        assert!(!is_api_path("/insights"));
+        assert!(!is_api_path("/home/api"));
+        assert!(!is_api_path("/apiv2"));
+        assert!(!is_api_path("/api-docs"));
+    }
+
+    #[tokio::test]
+    async fn spa_fallback_does_not_swallow_api_insights() {
+        // dist None, so without the guard this would serve FALLBACK_HTML (or the
+        // embedded dashboard index) for any unmatched path — including /api/*.
+        let req = Request::builder()
+            .uri("/api/insights")
+            .body(Body::empty())
+            .unwrap();
+        let (status, body, ctype) =
+            body_of(serve_static_or_spa(None, req).await.into_response()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(
+            ctype
+                .as_deref()
+                .is_some_and(|c| c.starts_with("application/json")),
+            "expected JSON content-type, got {ctype:?}"
+        );
+        assert!(
+            !body.contains('<') && body.contains("not found"),
+            "/api/insights must not be treated as SPA; got: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn spa_fallback_still_serves_non_api_paths() {
+        let req = Request::builder()
+            .uri("/sessions/abc")
+            .body(Body::empty())
+            .unwrap();
+        let (status, body, ctype) =
+            body_of(serve_static_or_spa(None, req).await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            ctype.as_deref().is_some_and(|c| c.starts_with("text/html")),
+            "expected HTML SPA fallback, got {ctype:?}"
+        );
+        assert!(
+            body.contains("<html") || body.contains("<!DOCTYPE") || body.contains("<title"),
+            "non-API paths still get the SPA shell; got: {body}"
+        );
+    }
 }

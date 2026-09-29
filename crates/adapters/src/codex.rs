@@ -3,20 +3,20 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::exit_status::backfill_shell_exit_codes;
 use agentworth_adapter_sdk::{
     reuse_or_compute_fingerprint, AgentAdapter, DetectionResult, KnownSourceMap, ParseResult,
     ScanOptions, SessionSource,
 };
 use agentworth_schema::{
-    AgentWorthTrace, EventPayload, FileActionType, ModelSwitch, NormalizedEvent, OutcomeEvidence, OutcomeKind,
-    Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
+    AgentWorthTrace, CompactionEvent, EventPayload, FileActionType, ModelSwitch, NormalizedEvent,
+    OutcomeEvidence, OutcomeKind, Provenance, ShellCommand, TokenUsage, ToolCall, ToolResult,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use directories::BaseDirs;
 use serde_json::Value;
 use walkdir::WalkDir;
-use crate::exit_status::backfill_shell_exit_codes;
 
 /// Adapter for discovering and normalizing OpenAI / Codex agent sessions.
 pub struct CodexAdapter;
@@ -36,7 +36,30 @@ impl CodexAdapter {
     /// cumulative counters, and `session_meta.cwd` for the repository key. The bytes of
     /// those files never changed, so without this bump an incremental scan would keep
     /// serving the empty answer.
-    pub const PARSER_VERSION: i64 = 2;
+    ///
+    /// 3: version 2 parsed depthless. `response_item` records — where every rollout keeps
+    /// its user and assistant messages, its `function_call` / `function_call_output` tool
+    /// traffic (Codex's shell runs as a `function_call` whose argument is the whole
+    /// command line, with `apply_patch` file edits selected inside that command line),
+    /// and the file paths the run actually touched — previously fell through the
+    /// `_ => Custom` fallback and was indexed as an untyped event, which is why the
+    /// index carried no prompts, tool calls, or file-modification paths for codex.
+    /// Version 3 normalizes those records. It changes nothing about token accounting,
+    /// which is why the bump is settled here rather than the incremental scanner being
+    /// trusted to notice richer output for the same bytes.
+    ///
+    /// 4: version 3 read only the `function_call` / `function_call_output` tool pair and the
+    /// top-level message records. Newer Codex rollouts drive the same work through
+    /// `custom_tool_call` / `custom_tool_call_output` instead -- on this machine 405 of 814
+    /// rollout files carry a `custom_tool_call`, and in every one measured it is either the
+    /// shell (`name:"exec"`, its command inside a `tools.exec_command({...})` JS wrapper) or a
+    /// patch (`name:"apply_patch"`, raw patch text), never a duplicate of a `function_call`
+    /// (zero `call_id` overlap across the 30 files that carry both). Version 3 filed all of
+    /// them as untyped `Custom` events, so those sessions had no shell commands, no file
+    /// edits, and no shell-derived outcomes. Version 4 reads the pair. It also counts the
+    /// `compacted` record (101 files) as a compaction round, which version 3 dropped as
+    /// `Custom`. Same bytes, richer output, so the reparse has to be carried by this bump.
+    pub const PARSER_VERSION: i64 = 4;
 
     pub fn new() -> Self {
         Self
@@ -253,6 +276,16 @@ impl AgentAdapter for CodexAdapter {
         Path::new(strip_repo_marker(&source.path.to_string_lossy())).exists()
     }
 
+    /// The same evidence-based rule [`is_candidate_codex_file`] applies during enumeration,
+    /// exposed so the scanner can prune an indexed row whose source is a mis-indexed
+    /// non-session file (a plugin cache, a vendored `node_modules`, a skill's `evals.json`)
+    /// left by an older, looser discovery. The stored path may carry the synthetic workspace
+    /// prefix (see [`CODEX_REPO_MARKER`]), so the marker is stripped first.
+    fn is_session_path(&self, path: &Path) -> bool {
+        let raw = path.to_string_lossy();
+        is_candidate_codex_file(Path::new(strip_repo_marker(&raw)))
+    }
+
     fn capabilities(&self) -> agentworth_adapter_sdk::AdapterCapabilities {
         agentworth_adapter_sdk::AdapterCapabilities {
             prompts: true,
@@ -293,7 +326,11 @@ impl AgentAdapter for CodexAdapter {
                     }
                 }
                 if !found_nested {
-                    for entry in WalkDir::new(custom).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(custom)
+                        .max_depth(4)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
                         let path = entry.path();
                         let ps = path.to_string_lossy().to_lowercase();
                         if ps.contains("codex") {
@@ -323,7 +360,9 @@ impl AgentAdapter for CodexAdapter {
             for custom in &options.custom_paths {
                 if custom.is_file() {
                     if is_candidate_codex_file(custom) {
-                        if let Ok(source) = build_codex_source(custom, self.name(), &options.known_sources) {
+                        if let Ok(source) =
+                            build_codex_source(custom, self.name(), &options.known_sources)
+                        {
                             sources.push(source);
                         }
                     }
@@ -335,7 +374,9 @@ impl AgentAdapter for CodexAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_codex_file(path) {
-                            if let Ok(source) = build_codex_source(path, self.name(), &options.known_sources) {
+                            if let Ok(source) =
+                                build_codex_source(path, self.name(), &options.known_sources)
+                            {
                                 sources.push(source);
                             }
                         }
@@ -346,7 +387,9 @@ impl AgentAdapter for CodexAdapter {
             for root in self.session_roots() {
                 if root.is_file() {
                     if is_candidate_codex_file(&root) {
-                        if let Ok(source) = build_codex_source(&root, self.name(), &options.known_sources) {
+                        if let Ok(source) =
+                            build_codex_source(&root, self.name(), &options.known_sources)
+                        {
                             sources.push(source);
                         }
                     }
@@ -358,7 +401,9 @@ impl AgentAdapter for CodexAdapter {
                     {
                         let path = entry.path();
                         if path.is_file() && is_candidate_codex_file(path) {
-                            if let Ok(source) = build_codex_source(path, self.name(), &options.known_sources) {
+                            if let Ok(source) =
+                                build_codex_source(path, self.name(), &options.known_sources)
+                            {
                                 sources.push(source);
                             }
                         }
@@ -447,6 +492,9 @@ impl AgentAdapter for CodexAdapter {
         }
 
         backfill_shell_exit_codes(&mut trace.events);
+        trace
+            .events
+            .extend(derive_codex_outcomes(&trace, &mut state));
         trace.recalculate_stats();
 
         Ok(ParseResult {
@@ -657,6 +705,9 @@ struct CodexSessionState {
     last_invoked_model: Option<String>,
     cumulative: CodexCumulativeTokens,
     pending: Option<PendingCodexUsage>,
+    /// Directory named by the most recent `session_meta.cwd` / `turn_context.cwd`, used as
+    /// `ShellCommand.cwd`.
+    current_cwd: Option<String>,
 }
 
 /// Emit a `ModelInvocation` (preceded by a `ModelSwitch` when the model changed) for `usage`,
@@ -784,6 +835,9 @@ fn absorb_codex_metadata(
             if state.current_model.is_none() {
                 state.current_model = non_empty_str(payload, "model");
             }
+            if let Some(cwd) = non_empty_str(payload, "cwd") {
+                state.current_cwd = Some(cwd);
+            }
         }
         Some("turn_context") => {
             if let Some(model) = non_empty_str(payload, "model") {
@@ -791,6 +845,9 @@ fn absorb_codex_metadata(
             }
             if let Some(effort) = non_empty_str(payload, "effort") {
                 state.current_effort = Some(effort);
+            }
+            if let Some(cwd) = non_empty_str(payload, "cwd") {
+                state.current_cwd = Some(cwd);
             }
         }
         Some("event_msg") => match payload.get("type").and_then(|v| v.as_str()) {
@@ -917,6 +974,27 @@ fn parse_codex_record(
     }
 
     match event_type {
+        "response_item" => {
+            let Some(item) = val.get("payload").and_then(|p| p.as_object()) else {
+                // A dropped payload has nothing to normalize; recording the whole record
+                // as a Custom event is what previous versions did and stays the honest
+                // fallback.
+                *seq += 1;
+                events.push(
+                    NormalizedEvent::new(
+                        *seq,
+                        ts,
+                        EventPayload::Custom {
+                            kind: "response_item".to_string(),
+                            data: val.clone(),
+                        },
+                    )
+                    .with_raw_ref(&raw_ref),
+                );
+                return events;
+            };
+            parse_codex_response_item(item, state, seq, ts, &raw_ref, &mut events);
+        }
         "user" | "user_message" => {
             let content = if let Some(text) = val.get("content").and_then(|v| v.as_str()) {
                 text.to_string()
@@ -1072,6 +1150,7 @@ fn parse_codex_record(
                                 kind: OutcomeKind::TestOrBuildPassed,
                                 summary: "Test suite passed in tool result".to_string(),
                                 confidence: 0.9,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),
@@ -1089,6 +1168,7 @@ fn parse_codex_record(
                                 kind: OutcomeKind::CommitObserved,
                                 summary: "Git commit observed in tool result".to_string(),
                                 confidence: 0.85,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),
@@ -1118,6 +1198,10 @@ fn parse_codex_record(
                 .with_raw_ref(&raw_ref),
             );
         }
+
+        // Session compaction: Codex replaces the conversation window with a summary and
+        // records the round at the top level (101 of 814 rollout files on this machine).
+        "compacted" => push_codex_compaction(seq, ts, &raw_ref, &mut events),
 
         _ => {
             *seq += 1;
@@ -1223,6 +1307,671 @@ fn extract_text_from_array(arr: &[Value]) -> String {
     texts.join("\n")
 }
 
+// ---------------------------------------------------------------------------
+// Depth extraction: `response_item` records.
+//
+// Version 2 parsed depthless — every `response_item` fell through to the `_ => Custom`
+// fallback in `parse_codex_record`, so ~1000 indexed sessions carried models and tokens
+// but no prompts, no tool traffic, no file-modification paths, and no outcome evidence.
+// Everything below reads what that arm left on the floor. It only ADDS events: model,
+// effort and token accounting run through the same paths as before. PARSER_VERSION
+// carries the reparse.
+// ---------------------------------------------------------------------------
+
+/// Cap on a shell command's stored text. An `exec_command` argument is the whole command
+/// line — including multi-line here-docs that embed patch content — and multi-KB pasted
+/// payloads would travel into every `ShellCommand::command`. The first
+/// [`CODEX_CMD_TEXT_MAX`] bytes keep every shape signal the outcome ladder reads
+/// (test/build/commit/CI markers, `apply_patch` sections); the original record stays in
+/// the rollout.
+const CODEX_CMD_TEXT_MAX: usize = 4 * 1024;
+
+fn parse_codex_response_item(
+    item: &serde_json::Map<String, Value>,
+    state: &mut CodexSessionState,
+    seq: &mut u64,
+    ts: DateTime<Utc>,
+    raw_ref: &str,
+    events: &mut Vec<NormalizedEvent>,
+) {
+    match item.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+        "message" => parse_codex_item_message(item, seq, ts, raw_ref, events),
+        "function_call" => parse_codex_item_function_call(item, state, seq, ts, raw_ref, events),
+        "function_call_output" => {
+            parse_codex_item_function_call_output(item, seq, ts, raw_ref, events)
+        }
+        // Newer rollouts drive shell and patch work through this pair instead of
+        // `function_call`/`function_call_output`; the two shapes never describe the same
+        // call (zero `call_id` overlap measured), so both are read.
+        "custom_tool_call" => {
+            parse_codex_item_custom_tool_call(item, state, seq, ts, raw_ref, events)
+        }
+        "custom_tool_call_output" => {
+            parse_codex_item_custom_tool_call_output(item, seq, ts, raw_ref, events)
+        }
+        // The other compaction shape: an opaque `{"type":"compaction","encrypted_content":..}`
+        // item whose content is not readable, so only the round itself is recorded. It does
+        // not co-occur with a top-level `compacted` record.
+        "compaction" => push_codex_compaction(seq, ts, raw_ref, events),
+        // Reasoning summaries are neither the prompt nor the answer; every real rollout
+        // carries one per turn and none of them is evidence. Custom is reserved for
+        // records this adapter did not identify — filing a known kind as unknown would
+        // be a lie.
+        "reasoning" => {}
+        other => {
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::Custom {
+                        kind: other.to_string(),
+                        data: Value::Object(item.clone()),
+                    },
+                )
+                .with_raw_ref(raw_ref),
+            );
+        }
+    }
+}
+
+/// A `response_item` message record (role `user` / `assistant`, text in
+/// `payload.content` blocks). Codex writes the environment and user-instruction
+/// wrappers as `user` messages at every turn open; they are harness plumbing, not a
+/// human turn, and are dropped rather than nucleating a fake prompt count. The
+/// `developer` role is harness-authored instructions: dropped for the same reason.
+fn parse_codex_item_message(
+    item: &serde_json::Map<String, Value>,
+    seq: &mut u64,
+    ts: DateTime<Utc>,
+    raw_ref: &str,
+    events: &mut Vec<NormalizedEvent>,
+) {
+    let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("");
+    let content = item
+        .get("content")
+        .and_then(|v| v.as_array())
+        .map(|arr| extract_text_from_array(arr))
+        .unwrap_or_default();
+    if content.is_empty() {
+        return;
+    }
+
+    if role == "user" {
+        // `<environment_context>…`, `<user_instructions>…`, approval rollups.
+        if content.trim_start().starts_with('<') {
+            return;
+        }
+        *seq += 1;
+        events.push(
+            NormalizedEvent::new(*seq, ts, EventPayload::UserMessage { content })
+                .with_raw_ref(raw_ref),
+        );
+    } else if role == "assistant" {
+        *seq += 1;
+        events.push(
+            NormalizedEvent::new(
+                *seq,
+                ts,
+                EventPayload::AssistantMessage {
+                    content,
+                    thinking: None,
+                },
+            )
+            .with_raw_ref(raw_ref),
+        );
+    }
+}
+
+/// The shell-shaped `function_call` name. Measured across the 30 real rollouts on this
+/// machine that carry function calls, `exec_command` is the whole of the shell surface.
+fn is_codex_shell_call(name: &str) -> bool {
+    name == "exec_command"
+}
+
+/// The command text a shell call carries. Codex's shape is `{ "cmd": "<line>" }`; the
+/// documented-older `{ "command": [argv...] }` is read as a fallback.
+fn codex_command_of(args: &Value) -> Option<String> {
+    match args {
+        Value::Object(map) => {
+            if let Some(Value::String(cmd)) = map.get("cmd") {
+                return Some(cmd.clone()).filter(|c| !c.is_empty());
+            }
+            match map.get("command")? {
+                Value::String(cmd) => Some(cmd.clone()).filter(|c| !c.is_empty()),
+                Value::Array(argv) => Some(
+                    argv.iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
+                .filter(|joined| !joined.is_empty()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The paths an `apply_patch` command names, by patch section: `*** Update File:`
+/// edits an existing file (`Edit`), `*** Add File:` creates one (`Write`),
+/// `*** Delete File:` removes one (`Delete`). Real rollouts record no file
+/// modification anywhere else — blame and artifact evidence hang off these sections.
+#[allow(
+    clippy::string_slice,
+    reason = "idx comes from find() on an ASCII needle, offset by its own byte length: always a char boundary"
+)]
+fn codex_apply_patch_files(cmd: &str) -> Vec<(FileActionType, String)> {
+    let mut out = Vec::new();
+    for line in cmd.lines() {
+        for (section, action) in [
+            ("*** Update File: ", FileActionType::Edit),
+            ("*** Add File: ", FileActionType::Write),
+            ("*** Delete File: ", FileActionType::Delete),
+        ] {
+            if let Some(idx) = line.find(section) {
+                #[allow(
+                    clippy::string_slice,
+                    reason = "idx is at an ASCII needle, offset by its own byte length: always a char boundary"
+                )]
+                let path = line[idx + section.len()..].trim();
+                if !path.is_empty() {
+                    out.push((action, path.to_string()));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn parse_codex_item_function_call(
+    item: &serde_json::Map<String, Value>,
+    state: &mut CodexSessionState,
+    seq: &mut u64,
+    ts: DateTime<Utc>,
+    raw_ref: &str,
+    events: &mut Vec<NormalizedEvent>,
+) {
+    let name = item
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let call_id = item
+        .get("call_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    // `arguments` is a JSON object serialized as a string per call; a shape the writer
+    // would not have produced degrades to its raw text rather than losing the call.
+    let arguments: Value = match item.get("arguments") {
+        Some(Value::String(s)) => {
+            serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.clone()))
+        }
+        Some(v) => v.clone(),
+        _ => Value::Null,
+    };
+
+    *seq += 1;
+    events.push(
+        NormalizedEvent::new(
+            *seq,
+            ts,
+            EventPayload::ToolCall(ToolCall {
+                id: call_id,
+                name: name.clone(),
+                arguments: arguments.clone(),
+            }),
+        )
+        .with_raw_ref(raw_ref),
+    );
+
+    if !is_codex_shell_call(&name) {
+        return;
+    }
+    let Some(raw_command) = codex_command_of(&arguments) else {
+        return;
+    };
+    // Bounded before storage: a multi-KB pasted payload stays in the rollout, not in
+    // every normalized `ShellCommand`. The first [`CODEX_CMD_TEXT_MAX`] chars keep
+    // every shape signal the ladder reads.
+    let command: String = raw_command.chars().take(CODEX_CMD_TEXT_MAX).collect();
+
+    // A `ShellCommand` emitted directly behind its own `ToolCall` is what
+    // `crate::exit_status` adjacency requires: the result keyed by this call id has to
+    // stitch back onto the command this exact call opened.
+    *seq += 1;
+    events.push(
+        NormalizedEvent::new(
+            *seq,
+            ts,
+            EventPayload::ShellCommand(ShellCommand {
+                command: command.clone(),
+                cwd: state.current_cwd.clone(),
+                // The request envelope carries no exit status;
+                // `backfill_shell_exit_codes` fills it in from the
+                // `function_call_output` that closed the call.
+                exit_code: None,
+                output: None,
+            }),
+        )
+        .with_raw_ref(raw_ref),
+    );
+
+    // The patch walk runs on the stored command (the same bounded text, so a patch
+    // section past the cap would be missed — bounded at a size every real apply_patch
+    // fits inside).
+    for (action, path) in codex_apply_patch_files(&command) {
+        *seq += 1;
+        events.push(
+            NormalizedEvent::new(
+                *seq,
+                ts,
+                EventPayload::FileAction {
+                    path,
+                    action,
+                    diff: None,
+                    lines_changed: None,
+                },
+            )
+            .with_raw_ref(raw_ref),
+        );
+        // A patch the agent drove through the shell is the artifact-changed rung —
+        // evidence, not inference: the shell command carries the file name and the
+        // call's result (which arrives separately) records the observed exit.
+        *seq += 1;
+        events.push(
+            NormalizedEvent::new(
+                *seq,
+                ts,
+                EventPayload::OutcomeEvidence(OutcomeEvidence {
+                    kind: OutcomeKind::ArtifactChanged,
+                    summary: "File modified via apply_patch".to_string(),
+                    confidence: 0.7,
+                    test_provenance: None,
+                }),
+            )
+            .with_raw_ref(raw_ref),
+        );
+    }
+}
+
+/// The exit status the Codex harness's own output envelope states
+/// ("Process exited with code N"). The envelope is on every measured `exec_command`
+/// result; `None` when a result does not carry one.
+#[allow(
+    clippy::string_slice,
+    reason = "idx comes from find() on an ASCII needle, offset by its own byte length: always a char boundary"
+)]
+fn codex_envelope_exit_code(text: &str) -> Option<i32> {
+    let needle = "Process exited with code";
+    let idx = text.find(needle)?;
+    let digits: String = text[idx + needle.len()..]
+        .trim_start_matches(|c: char| !c.is_ascii_digit())
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse::<i32>().ok()
+}
+
+fn parse_codex_item_function_call_output(
+    item: &serde_json::Map<String, Value>,
+    seq: &mut u64,
+    ts: DateTime<Utc>,
+    raw_ref: &str,
+    events: &mut Vec<NormalizedEvent>,
+) {
+    let output_text = crate::exit_status::result_text(item.get("output").unwrap_or(&Value::Null));
+    // The envelope states the exit status outright; the error flag is that fact
+    // verbatim. A result without a code phrase — a plain tool answer like the js
+    // runner's — stays unflagged rather than guessed at.
+    let is_error = codex_envelope_exit_code(&output_text)
+        .map(|code| code != 0)
+        .unwrap_or(false);
+
+    *seq += 1;
+    events.push(
+        NormalizedEvent::new(
+            *seq,
+            ts,
+            EventPayload::ToolResult(ToolResult {
+                call_id: item
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                name: item.get("name").and_then(|v| v.as_str()).map(String::from),
+                output: Value::String(output_text),
+                is_error,
+            }),
+        )
+        .with_raw_ref(raw_ref),
+    );
+}
+
+/// Derive outcome evidence from the shell commands and their results this adapter
+/// already normalized. Evidence walks `command shape × the command's own exit code`:
+/// a passing test is a test- or build-shaped command whose execution exited 0, a
+/// commit is `git commit` doing the same, a CI interaction is a `gh pr` / `gh run`
+/// command that did. What it deliberately does not lean on: the assistant message's
+/// own phrasing (the ladder's weakest rung, and no phrasing justifies a rank), a
+/// test-suite pass word inside a failed run's output, or a non-shell call's error
+/// flag — only shell-shaped commands shape this adapter's ladder.
+///
+/// Called at the end of `parse`, after `backfill_shell_exit_codes` has stitched the
+/// exit statuses on, so a shell command's evidence reads at its real exit code.
+fn derive_codex_outcomes(
+    trace: &AgentWorthTrace,
+    _state: &mut CodexSessionState,
+) -> Vec<NormalizedEvent> {
+    let ts = trace.ended_at.unwrap_or(trace.started_at);
+    let mut next_seq = trace.events.iter().map(|e| e.sequence).max().unwrap_or(0);
+    let mut evidence = Vec::new();
+
+    for event in trace.events.iter() {
+        let EventPayload::ShellCommand(cmd) = &event.payload else {
+            continue;
+        };
+        if cmd.exit_code != Some(0) {
+            // A never-answered or failed command earns no evidence. Nothing here
+            // claims "proved" on a word.
+            continue;
+        }
+        let kind = if is_test_or_build_command(&cmd.command) {
+            OutcomeKind::TestOrBuildPassed
+        } else if is_ci_command(&cmd.command) {
+            OutcomeKind::CiOrDeploymentVerified
+        } else if is_commit_command(&cmd.command) {
+            OutcomeKind::CommitObserved
+        } else {
+            continue;
+        };
+        let summary = outcome_summary(&cmd.command);
+        next_seq += 1;
+        evidence.push(
+            NormalizedEvent::new(
+                next_seq,
+                ts,
+                EventPayload::OutcomeEvidence(OutcomeEvidence {
+                    kind,
+                    summary,
+                    confidence: 0.9,
+                    test_provenance: None,
+                }),
+            )
+            .with_raw_ref(event.raw_ref.clone().unwrap_or_default()),
+        );
+    }
+
+    evidence
+}
+
+/// One bounded line for the evidence summary. The raw command stays on its
+/// `ShellCommand` event and in the raw record; the summary only has to be readable.
+fn outcome_summary(command: &str) -> String {
+    let line = command
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("command");
+    if line.chars().count() > 120 {
+        let clipped: String = line.chars().take(117).collect();
+        format!("{}...", clipped)
+    } else {
+        line.to_string()
+    }
+}
+
+/// Commands that put a test or build on the record. Deliberately narrow — each entry
+/// is an invocation that either runs a test suite or compiles shipped code, and none
+/// of them is satisfiable by anything else on the line.
+fn is_test_or_build_command(cmd: &str) -> bool {
+    let lower = cmd.to_lowercase();
+    lower.contains("cargo test")
+        || lower.contains("cargo build")
+        || lower.contains("cargo check")
+        || lower.contains("cargo clippy")
+        || lower.contains("cargo nextest")
+        || lower.contains("cargo bench")
+        || lower.contains("pytest")
+        || lower.contains("go test")
+        || lower.contains(" npm test")
+        || lower.contains("npm run build")
+        || lower.contains("yarn test")
+        || lower.contains("make test")
+        || lower.contains("make build")
+}
+
+/// CI/PR interactions: `gh pr` / `gh run` — a run step or a PR the agent itself drove.
+/// A passing `gh pr` call is the strongest rung reachable in a rollout.
+fn is_ci_command(cmd: &str) -> bool {
+    let lower = cmd.to_lowercase();
+    lower.starts_with("gh pr ") || lower.starts_with("gh run ")
+}
+
+fn is_commit_command(cmd: &str) -> bool {
+    let lower = cmd.to_lowercase();
+    lower.starts_with("git commit")
+}
+
+/// The `custom_tool_call` request. `input` replaces `arguments`: for the shell it is a short
+/// JavaScript wrapper (`const r = await tools.exec_command({...}); text(r.output);`) carrying
+/// the real command inside a `tools.exec_command(...)` argument; for `apply_patch` it is the
+/// raw patch text. Both are recognized, so a custom-call session yields the same
+/// `ToolCall` + `ShellCommand` / `FileAction` events its `function_call` twin would.
+fn parse_codex_item_custom_tool_call(
+    item: &serde_json::Map<String, Value>,
+    state: &mut CodexSessionState,
+    seq: &mut u64,
+    ts: DateTime<Utc>,
+    raw_ref: &str,
+    events: &mut Vec<NormalizedEvent>,
+) {
+    let name = item
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let call_id = item
+        .get("call_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    // Bounded before storage, same as a `function_call`'s shell text: the original stays in
+    // the rollout, and the cap keeps a multi-KB pasted payload out of every event.
+    let input: String = item
+        .get("input")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .chars()
+        .take(CODEX_CMD_TEXT_MAX)
+        .collect();
+
+    *seq += 1;
+    events.push(
+        NormalizedEvent::new(
+            *seq,
+            ts,
+            EventPayload::ToolCall(ToolCall {
+                id: call_id,
+                name: name.clone(),
+                arguments: Value::String(input.clone()),
+            }),
+        )
+        .with_raw_ref(raw_ref),
+    );
+
+    if name == "exec" {
+        let Some(args) = codex_custom_exec_args(&input) else {
+            return;
+        };
+        let Some(command) = codex_command_of(&args) else {
+            return;
+        };
+        *seq += 1;
+        events.push(
+            NormalizedEvent::new(
+                *seq,
+                ts,
+                EventPayload::ShellCommand(ShellCommand {
+                    command,
+                    cwd: args
+                        .get("workdir")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .or_else(|| state.current_cwd.clone()),
+                    // The request carries no exit status; `backfill_shell_exit_codes` fills
+                    // it from the `custom_tool_call_output` that closes this call.
+                    exit_code: None,
+                    output: None,
+                }),
+            )
+            .with_raw_ref(raw_ref),
+        );
+    } else if name == "apply_patch" {
+        for (action, path) in codex_apply_patch_files(&input) {
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::FileAction {
+                        path,
+                        action,
+                        diff: None,
+                        lines_changed: None,
+                    },
+                )
+                .with_raw_ref(raw_ref),
+            );
+            *seq += 1;
+            events.push(
+                NormalizedEvent::new(
+                    *seq,
+                    ts,
+                    EventPayload::OutcomeEvidence(OutcomeEvidence {
+                        kind: OutcomeKind::ArtifactChanged,
+                        summary: "File modified via apply_patch".to_string(),
+                        confidence: 0.7,
+                        test_provenance: None,
+                    }),
+                )
+                .with_raw_ref(raw_ref),
+            );
+        }
+    }
+}
+
+/// The `custom_tool_call_output` result. It carries `output` (not `content`) and pairs by
+/// `call_id`, like a `function_call_output`, but its envelope is the exec wrapper's own
+/// ("Script completed" / "Script failed" / "Script error:"), not the shell's "Process exited
+/// with code N" — measured over a 200-file sample: 0 "Process exited" against 1402 "Script
+/// completed" and 21 "Script failed". A failed script carries an explicit `Script error:`;
+/// a completed one is the wrapper reporting the command returned without raising, which is
+/// the same kind of deterministic harness envelope `codex_envelope_exit_code` reads.
+fn parse_codex_item_custom_tool_call_output(
+    item: &serde_json::Map<String, Value>,
+    seq: &mut u64,
+    ts: DateTime<Utc>,
+    raw_ref: &str,
+    events: &mut Vec<NormalizedEvent>,
+) {
+    let output_text = crate::exit_status::result_text(item.get("output").unwrap_or(&Value::Null));
+    let is_error = match codex_envelope_exit_code(&output_text) {
+        Some(code) => code != 0,
+        None => output_text.contains("Script failed") || output_text.contains("Script error"),
+    };
+
+    *seq += 1;
+    events.push(
+        NormalizedEvent::new(
+            *seq,
+            ts,
+            EventPayload::ToolResult(ToolResult {
+                call_id: item
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                name: None,
+                output: Value::String(output_text),
+                is_error,
+            }),
+        )
+        .with_raw_ref(raw_ref),
+    );
+}
+
+/// The JSON argument to the `tools.exec_command(...)` call embedded in a custom `exec`
+/// request's JavaScript input. `None` for any input that does not carry one (an
+/// `apply_patch` script, a future shape) rather than guessing a command out of prose.
+fn codex_custom_exec_args(input: &str) -> Option<Value> {
+    const MARKER: &str = "tools.exec_command(";
+    let idx = input.find(MARKER)?;
+    let rest = input.get(idx + MARKER.len()..)?;
+    let start = rest.find('{')?;
+    let obj = balanced_json_object(rest.get(start..)?)?;
+    serde_json::from_str(obj).ok()
+}
+
+/// The leading brace-balanced `{...}` substring of `s`, respecting JSON string quoting and
+/// escapes. `tools.exec_command` arguments are a JSON object embedded in JavaScript, and a
+/// command line may itself contain braces (`awk '{print}'`), so a naive depth count would
+/// stop early. `None` when the braces never balance (a truncated or non-JSON input).
+fn balanced_json_object(s: &str) -> Option<&str> {
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, ch) in s.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return s.get(..=i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Record one compaction round. The trigger is not stated in any measured record and
+/// `CompactionEvent` keeps it free-form, so it is labelled `auto` — Codex compacts the
+/// window itself — rather than guessed at, and no token counts are invented. What this
+/// buys is the round count (`TraceStats::compaction_count`) and the per-session record that
+/// a session was compacted at all.
+fn push_codex_compaction(
+    seq: &mut u64,
+    ts: DateTime<Utc>,
+    raw_ref: &str,
+    events: &mut Vec<NormalizedEvent>,
+) {
+    *seq += 1;
+    events.push(
+        NormalizedEvent::new(
+            *seq,
+            ts,
+            EventPayload::Compaction(CompactionEvent {
+                trigger: "auto".to_string(),
+                pre_tokens: None,
+                post_tokens: None,
+                dropped_tokens: None,
+                duration_ms: None,
+            }),
+        )
+        .with_raw_ref(raw_ref),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1299,7 +2048,8 @@ mod tests {
         let codex_dir = temp.path().join(".codex").join("sessions");
         std::fs::create_dir_all(&codex_dir).unwrap();
 
-        let session_file = codex_dir.join("rollout-2026-01-01T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl");
+        let session_file = codex_dir
+            .join("rollout-2026-01-01T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl");
         let mut f = File::create(&session_file).unwrap();
         writeln!(f, "{{\"role\":\"user\",\"content\":\"test\"}}").unwrap();
 
@@ -1413,7 +2163,8 @@ mod tests {
         std::fs::create_dir_all(&sessions_dir).unwrap();
         File::create(sessions_dir.join("config.json")).unwrap();
         let mut real = File::create(
-            sessions_dir.join("rollout-2026-01-01T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl"),
+            sessions_dir
+                .join("rollout-2026-01-01T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl"),
         )
         .unwrap();
         writeln!(real, "{{\"role\":\"user\",\"content\":\"test\"}}").unwrap();
@@ -1426,7 +2177,263 @@ mod tests {
         };
 
         let enumerated = adapter.enumerate(&options).unwrap();
-        assert_eq!(enumerated.len(), 1, "only the rollout-*.jsonl file should be enumerated");
+        assert_eq!(
+            enumerated.len(),
+            1,
+            "only the rollout-*.jsonl file should be enumerated"
+        );
         assert!(enumerated[0].path.to_string_lossy().ends_with(".jsonl"));
+    }
+
+    /// The discovery predicate the scanner uses to prune a row whose source is not a session.
+    /// It must accept a real rollout (including one carrying the synthetic workspace prefix)
+    /// and reject every non-session file shape this machine's index actually held.
+    #[test]
+    fn test_is_session_path_accepts_rollouts_and_rejects_non_session_files() {
+        let adapter = CodexAdapter::new();
+
+        assert!(adapter.is_session_path(Path::new(
+            "/Users/example/.codex/sessions/2026/01/02/rollout-2026-01-02T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl"
+        )));
+        assert!(adapter.is_session_path(Path::new(
+            "/Users/example/.codex/archived_sessions/rollout-2026-01-02T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl"
+        )));
+        // The identity string enumerate() builds carries a workspace prefix + marker.
+        assert!(adapter.is_session_path(Path::new(
+            "/Users/example/code/acme/widget/.codex-session.jsonl::codex-repo::/Users/example/.codex/sessions/2026/01/02/rollout-2026-01-02T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl"
+        )));
+
+        for junk in [
+            "/Users/example/.codex/worktrees/7bc9/app/node_modules/.pnpm/registry@1/node_modules/language-subtag-registry/data/json/registry.json",
+            "/Users/example/.codex/plugins/cache/openai-bundled/chrome/26.8/docs/documents.json",
+            "/Users/example/.codex/.tmp/plugins/.agents/plugins/api_marketplace.json",
+            "/Users/example/.codex/plugins/cache/openai-curated/pkg/skills/s/evals/evals.json",
+            "/Users/example/.codex/cache/codex_app_directory.json",
+        ] {
+            assert!(
+                !adapter.is_session_path(Path::new(junk)),
+                "a non-session file must be rejected: {junk}"
+            );
+        }
+    }
+
+    /// The real over-reach: an older discovery walked all of `~/.codex`, so plugin caches,
+    /// `.tmp` marketplace data, `skills/**/evals`, and vendored `node_modules` JSON were all
+    /// indexed as sessions. Enumeration must yield exactly the two real rollouts and reject
+    /// every decoy, whatever directory it sits in.
+    #[test]
+    fn test_enumerate_rejects_plugin_cache_tmp_and_skills_decoys_under_codex_root() {
+        let temp = tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+
+        let live_session = codex
+            .join("sessions")
+            .join("2026")
+            .join("01")
+            .join("02")
+            .join("rollout-2026-01-02T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl");
+        std::fs::create_dir_all(live_session.parent().unwrap()).unwrap();
+        writeln!(
+            File::create(&live_session).unwrap(),
+            "{{\"role\":\"user\",\"content\":\"hi\"}}"
+        )
+        .unwrap();
+
+        let archived = codex
+            .join("archived_sessions")
+            .join("rollout-2026-01-03T00-00-00-019eed64-07e0-7ad0-a4bd-3ec244120cdb.jsonl");
+        std::fs::create_dir_all(archived.parent().unwrap()).unwrap();
+        writeln!(
+            File::create(&archived).unwrap(),
+            "{{\"role\":\"user\",\"content\":\"hi\"}}"
+        )
+        .unwrap();
+
+        for decoy in [
+            codex.join("plugins/cache/openai-bundled/chrome/26.8/docs/documents.json"),
+            codex.join("plugins/cache/openai-bundled/codex-app-tools/0.1.3/desktop-mcp.json"),
+            codex.join(".tmp/plugins/.agents/plugins/api_marketplace.json"),
+            codex.join("plugins/cache/openai-curated/pkg/skills/x/evals/evals.json"),
+            // `node_modules` is skipped by the walk filter too; listed so removing that
+            // filter alone would still not index it, because the filename rule rejects it.
+            codex.join("worktrees/7bc9/app/node_modules/pkg/registry.json"),
+        ] {
+            std::fs::create_dir_all(decoy.parent().unwrap()).unwrap();
+            File::create(&decoy).unwrap();
+        }
+
+        let adapter = CodexAdapter::new();
+        let options = ScanOptions {
+            custom_paths: vec![temp.path().to_path_buf()],
+            force: false,
+            ..Default::default()
+        };
+
+        let enumerated = adapter.enumerate(&options).unwrap();
+        assert_eq!(
+            enumerated.len(),
+            2,
+            "only the sessions/ and archived_sessions/ rollouts should enumerate, got {:?}",
+            enumerated
+                .iter()
+                .map(|s| s.path.clone())
+                .collect::<Vec<_>>()
+        );
+        for source in &enumerated {
+            assert!(
+                source.path.to_string_lossy().contains("rollout-"),
+                "every enumerated source must be a rollout: {:?}",
+                source.path
+            );
+        }
+    }
+
+    /// `custom_tool_call` is how 405 of 814 rollout files on this machine drive the shell
+    /// (`name:"exec"`, command inside a `tools.exec_command({...})` JS wrapper) and patches
+    /// (`name:"apply_patch"`). Version 3 filed it as an untyped `Custom` event, so those
+    /// files had no `ShellCommand`, no exit status, and no shell-derived outcome.
+    #[test]
+    fn test_parse_custom_tool_call_exec_binds_the_shell_command_and_its_exit() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = concat!(
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol","cwd":"/w"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"call_1","input":"const r = await tools.exec_command({\"cmd\":\"cargo test --workspace\",\"workdir\":\"/w\"}); text(r.output);\n"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:02Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_1","output":[{"type":"input_text","text":"Script completed\nWall time 1.2 seconds\nOutput:\ntest result: ok. 5 passed"}]}}"#,
+            "\n",
+        );
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CodexAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let trace = adapter.parse(&source).expect("parse failed").trace;
+
+        assert_eq!(trace.stats.tools_used.get("exec"), Some(&1));
+        let shell = trace
+            .events
+            .iter()
+            .find_map(|e| match &e.payload {
+                EventPayload::ShellCommand(c) => Some(c),
+                _ => None,
+            })
+            .expect("a custom exec call must yield a ShellCommand");
+        assert!(shell.command.contains("cargo test --workspace"));
+        assert_eq!(
+            shell.exit_code,
+            Some(0),
+            "`Script completed` is the wrapper's success envelope"
+        );
+        assert!(
+            trace.events.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::OutcomeEvidence(o) if o.kind == OutcomeKind::TestOrBuildPassed
+            )),
+            "a passing test-shaped custom command earns the test/build rung"
+        );
+    }
+
+    /// A custom `exec` whose output envelope says the script failed must not be recorded as
+    /// a passing command.
+    #[test]
+    fn test_parse_custom_tool_call_exec_failure_is_not_a_pass() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = concat!(
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol","cwd":"/w"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"call_9","input":"const r = await tools.exec_command({\"cmd\":\"cargo test\",\"workdir\":\"/w\"}); text(r.output);\n"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:02Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_9","output":[{"type":"input_text","text":"Script failed\nWall time 0.1 seconds\nOutput:\n"},{"type":"input_text","text":"Script error:\ntest failed"}]}}"#,
+            "\n",
+        );
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CodexAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let trace = adapter.parse(&source).expect("parse failed").trace;
+
+        assert!(
+            !trace.events.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::OutcomeEvidence(o) if o.kind == OutcomeKind::TestOrBuildPassed
+            )),
+            "a failed script must not earn the test/build rung"
+        );
+    }
+
+    /// The custom patch path: `name:"apply_patch"` carries the raw patch text as `input`, so
+    /// its file sections are the same artifact evidence the `function_call` path derives.
+    #[test]
+    fn test_parse_custom_tool_call_apply_patch_records_file_actions() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = concat!(
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol","cwd":"/w"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"call_2","input":"*** Begin Patch\n*** Update File: /Users/example/code/acme/widget/src/lib.rs\n@@\n-old\n+new\n*** End Patch\n"}}"#,
+            "\n",
+        );
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CodexAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let trace = adapter.parse(&source).expect("parse failed").trace;
+
+        let (path, action) = trace
+            .events
+            .iter()
+            .find_map(|e| match &e.payload {
+                EventPayload::FileAction { path, action, .. } => Some((path.clone(), *action)),
+                _ => None,
+            })
+            .expect("apply_patch must yield a FileAction");
+        assert_eq!(path, "/Users/example/code/acme/widget/src/lib.rs");
+        assert_eq!(action, FileActionType::Edit);
+    }
+
+    /// A `compacted` record is a compaction round; version 3 dropped it as `Custom`, so every
+    /// codex row read `compaction_count = 0` even for the 101 files that compact.
+    #[test]
+    fn test_parse_counts_a_compacted_record_as_a_compaction_round() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = concat!(
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol","cwd":"/w"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:01Z","type":"compacted","payload":{"window_number":1,"message":"summary of the window","replacement_history":[],"compaction_response_id":"cmp_1"}}"#,
+            "\n",
+        );
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CodexAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let trace = adapter.parse(&source).expect("parse failed").trace;
+
+        assert_eq!(trace.stats.compaction_count, 1);
+    }
+
+    /// One prompt can be written twice: as an `event_msg` (`user_message` / `agent_message`)
+    /// and again as a `response_item` `message`. The adapter reads the `response_item` copy,
+    /// so the doubled record must not double the count -- a naive fix that also read
+    /// `event_msg` messages would.
+    #[test]
+    fn test_parse_does_not_double_count_a_message_present_in_event_msg_and_response_item() {
+        let mut temp = NamedTempFile::new().unwrap();
+        let sample = concat!(
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"hello there"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"hello there"}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:01Z","type":"event_msg","payload":{"type":"agent_message","message":"hi back"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"hi back"}]}}"#,
+            "\n",
+        );
+        temp.write_all(sample.as_bytes()).unwrap();
+
+        let adapter = CodexAdapter::new();
+        let source = SessionSource::from_path(temp.path(), adapter.name()).unwrap();
+        let trace = adapter.parse(&source).expect("parse failed").trace;
+
+        assert_eq!(trace.stats.user_messages_count, 1);
+        assert_eq!(trace.stats.assistant_messages_count, 1);
     }
 }

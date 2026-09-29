@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { Artifact, Direction, HomeEnv, Message, Persona, ServerFrame, Space, Stop } from '../protocol';
+import type { Artifact, Direction, HomeEnv, Message, Persona, ServerFrame, Space, Stop, TimelineMoment } from '../protocol';
 import { plain, type Theme } from './theme';
 
 export type Connection = 'connecting' | 'open' | 'closed';
@@ -24,6 +24,8 @@ export interface State {
   artifacts: Record<string, Artifact>;
   currentSpace: string | null;
   drawer: { open: boolean; artifactId: string | null };
+  /** Per-space session timeline for the course scrubber; empty until the deck asks. */
+  timelines: Record<string, { moments: TimelineMoment[]; truncated: boolean }>;
 }
 
 const initial: State = {
@@ -43,6 +45,7 @@ const initial: State = {
   artifacts: {},
   currentSpace: null,
   drawer: { open: false, artifactId: null },
+  timelines: {},
 };
 
 type Action =
@@ -144,6 +147,11 @@ function applyFrame(s: State, f: ServerFrame): State {
         ...s,
         messages: { ...s.messages, [f.spaceId]: f.messages },
         artifacts: { ...s.artifacts, ...Object.fromEntries(f.artifacts.map((a) => [a.id, a])) },
+      };
+    case 'timeline':
+      return {
+        ...s,
+        timelines: { ...s.timelines, [f.spaceId]: { moments: f.moments, truncated: f.truncated } },
       };
     case 'error':
       console.warn('gateway', f.code, f.detail);

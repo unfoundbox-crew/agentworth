@@ -600,6 +600,7 @@ fn parse_zhipu_record(
                                 kind: OutcomeKind::TestOrBuildPassed,
                                 summary: "Test or build executed successfully in Zhipu session".to_string(),
                                 confidence: 0.9,
+                                test_provenance: None,
                             }),
                         )
                         .with_raw_ref(&raw_ref),

@@ -247,6 +247,29 @@ pub trait AgentAdapter: Send + Sync {
         source.path.exists()
     }
 
+    /// Whether `path` is, by this adapter's own evidence-based discovery rule, a session
+    /// source at all -- independent of whether it is currently *discoverable* (present on
+    /// disk, inside the adapter's registered roots, in today's scan scope).
+    ///
+    /// The scanner uses this to clean up after a since-tightened adapter: a full scan knows
+    /// the exact set of currently-valid sources, and an indexed row whose `(adapter,
+    /// source_path)` is not among them may still be a real session that is merely
+    /// unavailable (a deleted file, a source on another machine). This predicate is the
+    /// tie-breaker -- a path it rejects was never a session, so the row is not a thin
+    /// session, it is a mis-indexed non-session file and can be pruned. It must apply the
+    /// same rule `enumerate()` applies to a file, so "rejected here" means exactly "would
+    /// not be yielded there".
+    ///
+    /// Defaults to `true` -- "I cannot judge", which leaves every indexed row alone. An
+    /// adapter whose discovery walks a directory that also holds non-session files (config
+    /// caches, vendored repos, marketplace data) overrides this with its own filename/shape
+    /// rule. `path` may be the adapter's synthetic identity string rather than a real path
+    /// (see `SessionSource`), so an overriding adapter must strip whatever wrapper it added.
+    fn is_session_path(&self, path: &Path) -> bool {
+        let _ = path;
+        true
+    }
+
     /// Detect whether this agent's history directories exist on the local system.
     fn detect(&self, options: &ScanOptions) -> Result<DetectionResult>;
 

@@ -24,6 +24,10 @@ mod threat_digest;
 mod autopsy;
 #[path = "commands/recall.rs"]
 mod recall;
+#[path = "commands/insights.rs"]
+mod insights;
+#[path = "commands/turns.rs"]
+mod turns;
 #[path = "commands/bisect.rs"]
 mod bisect;
 #[path = "commands/pr_blame.rs"]
@@ -49,8 +53,6 @@ mod asks_command;
 // Same collision, same fix again: `commands::wake` would clash with `crate::wake`.
 #[path = "commands/wake.rs"]
 mod wake_command;
-#[path = "commands/home_cmd.rs"]
-mod home_cmd;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -152,6 +154,10 @@ pub const OLD_MCP_TOOL_NAMES: &[(&str, &str)] = &[
     ("suspect_commits", "repo_suspect"),
 ];
 
+/// What `archie home` says on its way out. A const so the grammar test can assert the
+/// pointer without running the dispatcher.
+pub const HOME_GONE_MESSAGE: &str = "`archie home` is gone; use `archie serve --open`";
+
 /// `archie completions --help`. The three install lines are clap_complete's own documented
 /// ones (crate 4.6.9, verified on docs.rs 2026-09-02), which is why they source the binary
 /// rather than a committed file: the crate states that the shell code and the binary must
@@ -212,12 +218,12 @@ enum Commands {
     },
 
     /// Start the local API server and interactive explorer UI
+    #[command(visible_alias = "web")]
     Serve(ServeArgs),
 
-    /// One command for a new user: serve the built `apps/home` deck and open it. Same as
-    /// `archie serve --home`, plus: fails loudly if the deck was never built into this
-    /// binary, opens the browser at `/home/` instead of the API root, and does not treat an
-    /// already-running `archie serve` holding the loop socket as fatal
+    /// Dead spelling: `archie home` is gone; use `archie serve --open`. Still parses
+    /// (hidden) so invoking it fails with that pointer instead of a bare clap error.
+    #[command(hide = true)]
     Home(HomeArgs),
 
     /// Start the read-only MCP server over stdio, for a coding agent to query this machine's
@@ -244,6 +250,18 @@ enum Commands {
         #[command(subcommand)]
         action: PolicyCommand,
     },
+
+    /// Machine agent work in one deterministic report: usable sessions, tool calls, file
+    /// touches, the evidence ladder, per-model burn, biggest sessions. Read-only; `--json` emits
+    /// the full payload (same JSON as GET /api/insights).
+    Insights(InsightsArgs),
+
+    /// (Re)ingest the human-turn lane on its own -- the turn-data side of Insights, without
+    /// a full scan. A taxonomy-version bump wipes and re-parses every turn source; the
+    /// dedup signature keeps past encounters out. Also the repair turn for the
+    /// turn↔session link (tier-2/3 need each turn's source file path, which only ingester
+    /// v2+ writes).
+    Turns(TurnsArgs),
 
     /// Check local environment, adapter discoveries, and SQLite database health
     Doctor(DoctorArgs),
@@ -438,7 +456,7 @@ enum HookCommand {
     Print {
         /// The harness to print for. Both are verified against that harness's own hooks
         /// reference (docs/specs/loop.md, docs/specs/governor.md)
-        #[arg(value_parser = ["claude", "codex"])]
+        #[arg(value_parser = ["claude", "codex", "antigravity"])]
         harness: String,
 
         /// Also register the sync gates, so the governor can stop a turn. Claude Code only:
@@ -922,14 +940,46 @@ struct ServeArgs {
 
 #[derive(clap::Args, Debug, PartialEq)]
 struct HomeArgs {
-    /// Port to bind the server to. Reuses `archie serve`'s own default, so `archie home`
-    /// and `archie serve --home` land on the same URL unless told otherwise
+    /// Dead spelling: kept so `archie home --port N` still parses and fails with the
+    /// `serve --open` pointer instead of a bare clap error. Never read.
     #[arg(short, long, default_value_t = crate::DEFAULT_PORT)]
     port: u16,
 
-    /// Do not open the default browser
+    /// Dead spelling: see `port` above.
     #[arg(long)]
     no_open: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct TurnsArgs {
+    /// Re-parse every turn source regardless of fingerprints (dedup keeps stored rows stable)
+    #[arg(long)]
+    force: bool,
+    /// Output the ingest summary as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct InsightsArgs {
+    /// Output the full insights payload as formatted JSON
+    #[arg(long)]
+    json: bool,
+    /// Window start (UTC RFC3339); inclusive
+    #[arg(long)]
+    since: Option<String>,
+    /// Window end (same format); exclusive. Defaults to the index's newest usable session
+    #[arg(long)]
+    until: Option<String>,
+    /// Single-select equality filter; valid values list under --json (insights.facets)
+    #[arg(long)]
+    adapter: Option<String>,
+    /// Filter by a recorded per-session model usage row
+    #[arg(long)]
+    model: Option<String>,
+    /// Filter by display repo over session source paths (insights.repo_label)
+    #[arg(long)]
+    repo: Option<String>,
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
@@ -1060,6 +1110,12 @@ struct WakeArgs {
     /// Output the wake report as JSON
     #[arg(long)]
     json: bool,
+
+    /// Read an Antigravity CLI `PreInvocation` hook payload on stdin and print the
+    /// `injectSteps` wake envelope on stdout (docs/specs/wake.md, "Automation"). Only
+    /// `antigravity` today: Claude Code and Codex inject through their own hook commands
+    #[arg(long, value_parser = ["antigravity"], value_name = "HARNESS")]
+    inject: Option<String>,
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
@@ -1478,6 +1534,8 @@ enum Action {
     Hook(Option<HookCommand>, bool),
     Policy(PolicyCommand),
     Doctor(DoctorArgs),
+    Insights(InsightsArgs),
+    Turns(TurnsArgs),
     Docs(DocsArgs),
     Config(ConfigAction),
     Version(VersionArgs),
@@ -1503,6 +1561,8 @@ fn normalize(command: Commands) -> Action {
         Commands::Hook { action, gate } => Action::Hook(action, gate),
         Commands::Policy { action } => Action::Policy(action),
         Commands::Doctor(a) => Action::Doctor(a),
+        Commands::Insights(a) => Action::Insights(a),
+        Commands::Turns(a) => Action::Turns(a),
         Commands::Docs(a) => Action::Docs(a),
         Commands::Config { action } => Action::Config(action),
         Commands::Version(a) => Action::Version(a),
@@ -1637,6 +1697,23 @@ pub fn run() -> Result<()> {
         }
         Action::Scan(a) => {
             run_scan_command(a.paths, a.force, a.include_stubs, resolve_json(a.json), cli.db_path, &ui)?;
+        }
+        Action::Insights(a) => {
+            insights::run_insights_command(
+                insights::InsightsCommandArgs {
+                    json: resolve_json(a.json),
+                    since: a.since,
+                    until: a.until,
+                    adapter: a.adapter,
+                    model: a.model,
+                    repo: a.repo,
+                    db_path: cli.db_path,
+                },
+                &ui,
+            )?;
+        }
+        Action::Turns(a) => {
+            turns::run_turns_command(a.force, resolve_json(a.json), cli.db_path, &ui)?;
         }
         Action::Stats { action: None, args } => {
             run_stats_command(resolve_json(args.json), cli.db_path, &ui)?;
@@ -1799,14 +1876,18 @@ pub fn run() -> Result<()> {
             )?;
         }
         Action::Session(SessionCommand::Wake(a)) => {
-            wake_command::run_wake_command(
-                a.workspace,
-                a.repo,
-                a.redact,
-                resolve_json(a.json),
-                cli.db_path,
-                &ui,
-            )?;
+            if a.inject.as_deref() == Some("antigravity") {
+                crate::antigravity_hook::run_antigravity_inject(a.redact, cli.db_path)?;
+            } else {
+                wake_command::run_wake_command(
+                    a.workspace,
+                    a.repo,
+                    a.redact,
+                    resolve_json(a.json),
+                    cli.db_path,
+                    &ui,
+                )?;
+            }
         }
         Action::Session(SessionCommand::Drift(a)) => {
             crate::commands::run_session_drift_command(
@@ -1985,15 +2066,8 @@ pub fn run() -> Result<()> {
                 &ui,
             ))?;
         }
-        Action::Home(a) => {
-            home_cmd::run_home_command(
-                home_cmd::HomeCommandArgs {
-                    port: a.port,
-                    no_open: a.no_open,
-                },
-                cli.db_path,
-                &ui,
-            )?;
+        Action::Home(_) => {
+            anyhow::bail!("{HOME_GONE_MESSAGE}");
         }
         Action::Hook(None, true) => {
             crate::commands::run_gate_command(cli.verbose)?;
@@ -2005,7 +2079,8 @@ pub fn run() -> Result<()> {
             match harness.as_str() {
                 "claude" => crate::commands::print_claude_snippet(govern)?,
                 "codex" => crate::commands::print_codex_snippet()?,
-                other => anyhow::bail!("no hook snippet for {other}; `claude` and `codex` are the harnesses"),
+                "antigravity" => crate::antigravity_hook::print_antigravity_snippet()?,
+                other => anyhow::bail!("no hook snippet for {other}; `claude`, `codex` and `antigravity` are the harnesses"),
             }
         }
         Action::Policy(PolicyCommand::Init(a)) => {
@@ -2132,7 +2207,7 @@ pub fn cli_command() -> clap::Command {
     Cli::command()
 }
 
-fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
+pub(crate) fn open_storage(db_path: Option<PathBuf>) -> Result<Arc<Storage>> {
     if let Some(path) = db_path {
         Ok(Arc::new(Storage::open_path(&path)?))
     } else {
@@ -2195,10 +2270,17 @@ fn run_scan_command(
     match crate::loop_runtime::ingest_default_spool(storage.clone()) {
         Ok(ingest) if ingest.events > 0 => {
             if !json {
-                println!(
-                    "Loop: ingested {} hook event(s) from the spool",
-                    ingest.events
-                );
+                if ingest.duplicates > 0 {
+                    println!(
+                        "Loop: ingested {} hook event(s) from the spool ({} duplicate(s) deduplicated)",
+                        ingest.events, ingest.duplicates
+                    );
+                } else {
+                    println!(
+                        "Loop: ingested {} hook event(s) from the spool",
+                        ingest.events
+                    );
+                }
             }
         }
         Ok(_) => {}
@@ -3015,6 +3097,7 @@ fn print_scan_summary(summary: &ScanSummary, ui: &crate::ui::Ui) {
         pruned: summary.stub_sessions_removed,
         total_tokens: summary.aggregate_stats.token_usage.total(),
         adapters: ranked(&summary.aggregate_stats.sessions_by_adapter, 5),
+        human_turns: summary.human_turns.total_turns(),
     };
     print!("{}", crate::ui::views::scan_summary(ui, &view));
 }
@@ -4860,6 +4943,9 @@ mod grammar_tests {
 
     /// The alias table and the clap tree have to describe the same set. Without this, a
     /// hidden variant could quietly exist with nothing documenting what replaced it.
+    /// `home` is exempt: it is dead, not aliased -- it parses only to 404 with the
+    /// `serve --open` pointer (see `HOME_GONE_MESSAGE`), so it has no row in
+    /// OLD_CLI_SPELLINGS and never will.
     #[test]
     fn every_hidden_command_has_a_row() {
         let mut cmd = cli_command();
@@ -4871,11 +4957,18 @@ mod grammar_tests {
             .collect();
 
         for name in &hidden {
+            if name == "home" {
+                continue;
+            }
             assert!(
                 OLD_CLI_SPELLINGS.iter().any(|(old, _)| old == name),
                 "hidden command `{name}` has no row in OLD_CLI_SPELLINGS"
             );
         }
+        assert!(
+            !OLD_CLI_SPELLINGS.iter().any(|(old, _)| *old == "home"),
+            "dead `home` must not be listed as an alias: it 404s, it does not dispatch"
+        );
         for (old, _) in OLD_CLI_SPELLINGS {
             assert!(
                 hidden.iter().any(|n| n == old),
@@ -4901,7 +4994,7 @@ mod grammar_tests {
             .collect();
 
         for expected in [
-            "session", "agent", "repo", "window", "stats", "scan", "serve", "home", "mcp",
+            "session", "agent", "repo", "window", "stats", "scan", "serve", "mcp",
             "doctor", "docs", "config", "version", "update", "completions", "merge", "tui",
         ] {
             assert!(
@@ -4909,6 +5002,43 @@ mod grammar_tests {
                 "`{expected}` should be visible in --help; visible: {visible:?}"
             );
         }
+    }
+
+    /// web_merge (decisions-v1 row W): `web` is how `serve` is spelled twice. It must
+    /// normalize to exactly the same `Action`, flags included.
+    #[test]
+    fn web_alias_reaches_serve() {
+        assert_eq!(action(&["web"]), action(&["serve"]));
+        assert_eq!(
+            action(&["web", "--open", "--port", "4321"]),
+            action(&["serve", "--open", "--port", "4321"])
+        );
+    }
+
+    /// web_merge (decisions-v1 row W): `home` is dead but still parses, so invoking it
+    /// fails with a pointer instead of a bare clap error. It must be hidden from `--help`.
+    #[test]
+    fn home_is_hidden() {
+        let mut cmd = cli_command();
+        cmd.build();
+        let home = cmd
+            .get_subcommands()
+            .find(|s| s.get_name() == "home")
+            .expect("dead `home` spelling still parses so it can 404 with a pointer");
+        assert!(
+            home.is_hide_set(),
+            "`home` is dead; it must be hidden, with `serve --open` the live spelling"
+        );
+    }
+
+    /// The dead spelling's 404 names the live one. Asserted on the const so the pointer
+    /// cannot rot while the dispatch arm that prints it stays green.
+    #[test]
+    fn home_dead_message_points_to_serve_open() {
+        assert!(
+            HOME_GONE_MESSAGE.contains("serve --open"),
+            "the `home` 404 must point at `serve --open`; got: {HOME_GONE_MESSAGE}"
+        );
     }
 
     /// A bare `archie` is the cockpit, and `archie tui` is the same thing said out loud.

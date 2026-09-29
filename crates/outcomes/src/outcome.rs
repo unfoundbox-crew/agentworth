@@ -96,6 +96,7 @@ impl OutcomeDetector {
                             kind: OutcomeKind::ArtifactChanged,
                             summary: format!("File {:?} operation on '{}'", action, path),
                             confidence: 0.60,
+                            test_provenance: None,
                         },
                     ));
                 }
@@ -169,6 +170,7 @@ impl OutcomeDetector {
                     tool.name
                 ),
                 confidence: 0.60,
+                test_provenance: None,
             });
         }
 
@@ -251,6 +253,7 @@ impl OutcomeDetector {
                         cmd_str
                     ),
                     confidence: 0.45,
+                    test_provenance: None,
                 });
             }
 
@@ -258,6 +261,7 @@ impl OutcomeDetector {
                 kind: OutcomeKind::CiOrDeploymentVerified,
                 summary: format!("Deployment or CI command exited 0: '{}'", cmd_str),
                 confidence: 0.98,
+                test_provenance: None,
             });
         }
 
@@ -268,6 +272,7 @@ impl OutcomeDetector {
                 kind: OutcomeKind::CommitObserved,
                 summary: format!("Git commit command observed: '{}'", cmd_str),
                 confidence: conf,
+                test_provenance: None,
             });
         }
 
@@ -298,6 +303,7 @@ impl OutcomeDetector {
                         cmd_str
                     ),
                     confidence: 0.35,
+                    test_provenance: None,
                 });
             }
 
@@ -305,6 +311,7 @@ impl OutcomeDetector {
                 kind: OutcomeKind::TestOrBuildPassed,
                 summary: format!("Test or build suite exited 0: '{}'", cmd_str),
                 confidence: 0.85,
+                test_provenance: None,
             });
         }
 
@@ -337,6 +344,7 @@ impl OutcomeDetector {
                 kind: OutcomeKind::CiOrDeploymentVerified,
                 summary: "External CI or deployment success output verified".to_string(),
                 confidence: 0.95,
+                test_provenance: None,
             });
         }
 
@@ -351,6 +359,7 @@ impl OutcomeDetector {
                 kind: OutcomeKind::CommitObserved,
                 summary: "Git commit creation output observed".to_string(),
                 confidence: 0.88,
+                test_provenance: None,
             });
         }
 
@@ -368,6 +377,7 @@ impl OutcomeDetector {
                 kind: OutcomeKind::TestOrBuildPassed,
                 summary: "Test suite execution output verified passed".to_string(),
                 confidence: 0.85,
+                test_provenance: None,
             });
         }
 
@@ -407,6 +417,7 @@ impl OutcomeDetector {
                     kind: OutcomeKind::DoneClaimed,
                     summary: format!("Agent self-claimed completion: '{}'", phrase),
                     confidence: 0.35,
+                    test_provenance: None,
                 });
             }
         }
@@ -423,6 +434,18 @@ pub fn outcome_rank(kind: OutcomeKind) -> u8 {
         OutcomeKind::CommitObserved => 4,
         OutcomeKind::CiOrDeploymentVerified => 5,
     }
+}
+
+/// The `held_out` promotion gate (fleet spec §6, decisions-v1 row R):
+/// promotion on agent-chosen tests only FAILS.
+///
+/// True iff at least one test/build pass in the evidence is backed by a
+/// held-out verifier the agent neither wrote nor picked. Evidence without
+/// provenance (`None` — what the detector emits when it observes a pass but
+/// cannot know who wrote the test) fails closed: present, but not promotable
+/// until authorship is attached.
+pub fn promotion_eligible(evidence: &[OutcomeEvidence]) -> bool {
+    evidence.iter().any(|e| e.is_held_out_pass())
 }
 
 /// Matches a command string that requests a CI run, PR, or deployment — independent of
