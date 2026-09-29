@@ -50,7 +50,8 @@ const EXPECTED_API_ROUTES: &[(&str, &str)] = &[
 ];
 
 /// Non-`/api` routes `create_router` registers: the home-deck trio plus the `/ws`
-/// gateway. Everything else falls through to the dashboard SPA fallback.
+/// gateway. Unmatched non-API paths fall through to the dashboard SPA fallback;
+/// unmatched `/api/*` returns a JSON 404 instead (never HTML).
 const EXPECTED_NON_API_PATHS: &[&str] = &["/home", "/home/", "/home/any/inner/route", "/ws"];
 
 fn test_router(home_deck_enabled: bool) -> axum::Router {
@@ -147,16 +148,30 @@ async fn one_table_across_spellings() {
         }
     }
 
-    // The fallback signature, captured dynamically: an unregistered path proves what
-    // "no such route" looks like on this build (dist None, deck unbuilt or not).
+    // The SPA fallback signature, captured from a non-API path: unmatched dashboard
+    // history routes still get the shell. `/api/*` must NOT share that signature — an
+    // unmatched API path is a JSON 404, never HTML (COS dogfood: `serve --home` was
+    // swallowing `/api/insights` into the SPA).
     let (fallback_status, fallback_body) =
-        raw(test_router(false), "GET", "/api/no-such-route-xyz").await;
-    for near_miss in ["/hom", "/homee", "/api/trace", "/api/scans"] {
+        raw(test_router(false), "GET", "/no-such-spa-route-xyz").await;
+    for near_miss in ["/hom", "/homee"] {
         let (status, body) = raw(test_router(false), "GET", near_miss).await;
         assert_eq!(
             (status, body),
             (fallback_status, fallback_body.clone()),
             "{near_miss} must fall through to the SPA fallback, not a registered route"
+        );
+    }
+    for api_miss in ["/api/no-such-route-xyz", "/api/trace", "/api/scans"] {
+        let (status, body) = raw(test_router(false), "GET", api_miss).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{api_miss} must be 404, not SPA");
+        assert!(
+            (status, body.clone()) != (fallback_status, fallback_body.clone()),
+            "{api_miss} must not be treated as SPA fallback"
+        );
+        assert!(
+            !body.contains('<') && body.contains("not found"),
+            "{api_miss} must be a JSON API 404, not HTML; got: {body}"
         );
     }
 
@@ -167,6 +182,35 @@ async fn one_table_across_spellings() {
         assert!(
             (status, body.clone()) != (fallback_status, fallback_body.clone()),
             "{path} must be a registered route, not the fallback"
+        );
+    }
+}
+
+/// COS dogfood P0: with the home deck enabled, `/api/insights` must answer as the API
+/// (JSON schema v2), never as the SPA shell. Same table as plain `serve` — `--home` only
+/// gates `/home*` and `/ws`, it must not change how `/api/*` falls through.
+#[tokio::test]
+async fn home_deck_does_not_spa_fallback_api_insights() {
+    for enabled in [false, true] {
+        let (status, body) = raw(test_router(enabled), "GET", "/api/insights").await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "GET /api/insights must be 200 with home_deck_enabled={enabled}; got {status}"
+        );
+        // Insights JSON can contain '<' in bucket labels ("< 10M"); refuse HTML by
+        // shape (must parse as JSON object), not by scanning for that character.
+        assert!(
+            !body.trim_start().starts_with('<'),
+            "GET /api/insights must not be HTML (SPA) with home_deck_enabled={enabled}; got: {body}"
+        );
+        let json: serde_json::Value = serde_json::from_str(&body)
+            .unwrap_or_else(|e| panic!("expected JSON: {e}; body={body}"));
+        assert!(json.is_object(), "insights body must be a JSON object");
+        assert_eq!(
+            json["schema_version"],
+            2,
+            "insights schema_version must be 2 with home_deck_enabled={enabled}; got {json}"
         );
     }
 }
