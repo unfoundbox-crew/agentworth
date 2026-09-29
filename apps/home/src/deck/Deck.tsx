@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useHome, orderDirections, dispatch } from '../model/store';
-import { parseInsightsDeepLink, syncInsightsHash } from '../model/insights';
+import { parseHomeLocation, syncInsightsPath } from '../model/route';
 import { gateway } from '../ws/client';
 import type { Direction, Harness } from '../protocol';
 import { Cruise } from './Cruise';
@@ -53,21 +53,33 @@ export function Deck() {
   const consoleOpen = useHome((s) => s.consoleOpen);
   const dockRef = useRef<DockHandle>(null);
   const [flow, setFlow] = useState<Flow>({ phase: 'none' });
-  // Deep link: `…/#insights` opens the insights phase, same state the `i` key
-  // drives (keys.ts owns the keyboard; the URL is only a second entry path).
-  const [insightsOpen, setInsightsOpen] = useState(() => (typeof window === 'undefined' ? false : parseInsightsDeepLink(window.location.hash)));
+  // Deep link: `/home/insights` (or legacy `#insights`) opens the insights phase —
+  // same state the `i` key drives (keys.ts owns the keyboard; the URL is a second
+  // entry path). `/home/s/<id>` is parsed here for P2 session UI; unused until then.
+  const [insightsOpen, setInsightsOpen] = useState(() =>
+    typeof window === 'undefined'
+      ? false
+      : parseHomeLocation(window.location.pathname, window.location.hash).insights
+  );
 
-  // Mirror phase → URL, so i, Escape and the deep link all leave the same hash behind.
+  // Mirror phase → path, so i, Escape and the deep link all leave `/home/insights`.
   useEffect(() => {
-    syncInsightsHash(insightsOpen);
+    syncInsightsPath(insightsOpen);
   }, [insightsOpen]);
 
-  // A pasted/back-navigated #insights opens or leaves the phase without stealing focus.
+  // Pasted / back-navigated `/insights` (or legacy hash) opens or leaves the phase.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const onHash = () => setInsightsOpen(parseInsightsDeepLink(window.location.hash));
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
+    const onChange = () =>
+      setInsightsOpen(parseHomeLocation(window.location.pathname, window.location.hash).insights);
+    window.addEventListener('popstate', onChange);
+    window.addEventListener('hashchange', onChange);
+    window.addEventListener('agentworth-home-route-change', onChange);
+    return () => {
+      window.removeEventListener('popstate', onChange);
+      window.removeEventListener('hashchange', onChange);
+      window.removeEventListener('agentworth-home-route-change', onChange);
+    };
   }, []);
 
   const ordered = orderDirections(Object.values(directions));
