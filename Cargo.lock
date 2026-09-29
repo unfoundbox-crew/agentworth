@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentworth-adapter-sdk"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "agentworth-schema",
  "anyhow",
@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-adapters"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "agentworth-adapter-sdk",
  "agentworth-schema",
@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-cli"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "agentworth-adapter-sdk",
  "agentworth-adapters",
@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-core"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "agentworth-adapter-sdk",
  "agentworth-adapters",
@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-export-atif"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "agentworth-redaction",
  "agentworth-schema",
@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-loop"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "anyhow",
  "chrono",
@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-outcomes"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "agentworth-schema",
  "anyhow",
@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-redaction"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "agentworth-outcomes",
  "agentworth-schema",
@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-schema"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "chrono",
  "hex",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-scoring"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "agentworth-outcomes",
  "agentworth-schema",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "agentworth-storage"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "agentworth-adapter-sdk",
  "agentworth-outcomes",
