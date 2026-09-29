@@ -12,7 +12,7 @@ use std::sync::Arc;
 use agentworth_core::Scanner;
 use agentworth_outcomes::{OutcomeDetector, RecoveryDetector};
 use agentworth_redaction::{repository_identity_rule, Redactor};
-use agentworth_schema::{extract_repository_or_workspace, repo_key_for_dir};
+use agentworth_schema::{extract_repository_or_workspace, repo_key_for_dir, repo_keys_match};
 use agentworth_scoring::TraceScorer;
 // `OUTCOME_RATE_DEFAULT_MIN_N` is defined once in storage, beside the query that applies it,
 // so the CLI, `stats_outcomes` and `stats_ladder` cannot drift apart on the sample floor.
@@ -256,7 +256,7 @@ impl AgentWorthMcpServer {
         let mut filtered: Vec<_> = match &repo {
             Some(r) => sessions
                 .into_iter()
-                .filter(|s| extract_repository_or_workspace(&s.source_path) == *r)
+                .filter(|s| repo_keys_match(&extract_repository_or_workspace(&s.source_path), r))
                 .collect(),
             None => sessions,
         };
@@ -888,7 +888,10 @@ impl AgentWorthMcpServer {
         };
         // `workspace` is a directory: key it through the checkout root, the same way
         // `archie session wake` does, so the MCP tool and the CLI never disagree.
-        let repo = params.repo.unwrap_or_else(|| repo_key_for_dir(&workspace));
+        let repo = agentworth_schema::canonical_repo_key(
+            &params.repo.unwrap_or_else(|| repo_key_for_dir(&workspace)),
+        )
+        .to_string();
         let include_raw = params.include_raw;
 
         let storage = self.storage.clone();

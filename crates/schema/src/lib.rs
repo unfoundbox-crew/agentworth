@@ -25,8 +25,9 @@ pub use machine::{
     FINGERPRINT_SALT_ENV, FINGERPRINT_SALT_ENV_LEGACY,
 };
 pub use provenance::{
-    canonical_repo_root, extract_repository_or_workspace, is_subagent_transcript, repo_display_label,
-    repo_key_for_dir, repo_key_for_dir_str, repo_key_from_root, Provenance,
+    canonical_repo_key, canonical_repo_root, extract_repository_or_workspace, is_subagent_transcript,
+    repo_display_label, repo_key_for_dir, repo_key_for_dir_str, repo_key_from_root, repo_keys_match,
+    Provenance,
 };
 pub use text::{preview, tail_chars, truncate_chars};
 pub use tokens::TokenUsage;

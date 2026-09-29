@@ -39,11 +39,19 @@ impl Provenance {
 /// Moved here from `agentworth-storage` (still re-exported from there for existing callers)
 /// so `agentworth-redaction` can derive a trace's own project identity to redact it, without
 /// pulling in storage's SQLite dependency for one pure string function.
+///
+/// The result is passed through [`canonical_repo_key`] so a relocated checkout
+/// (`crew/agentworth`) and the historical key sessions were indexed under
+/// (`unfoundbox/agentworth`) collapse to one identity.
+pub fn extract_repository_or_workspace(source_path: &str) -> String {
+    canonical_repo_key(&extract_repository_or_workspace_raw(source_path)).to_string()
+}
+
 #[allow(
     clippy::string_slice,
     reason = "every idx comes from find() on an ASCII literal, offset by its own byte length: always a char boundary"
 )]
-pub fn extract_repository_or_workspace(source_path: &str) -> String {
+fn extract_repository_or_workspace_raw(source_path: &str) -> String {
     let path = Path::new(source_path);
     let path_str = source_path.replace('\\', "/");
 
@@ -175,25 +183,90 @@ pub fn canonical_repo_root(dir: &Path) -> Option<PathBuf> {
         if dot_git.is_dir() {
             return Some(candidate.to_path_buf());
         }
-        if dot_git.is_file() && linked_worktree.is_none() {
-            linked_worktree = Some(candidate.to_path_buf());
+        if dot_git.is_file() {
+            // A linked worktree whose main checkout is not an ancestor (sibling worktrees
+            // under `git worktree add ../foo`) still belongs to that main checkout. Parse
+            // `gitdir: <main>/.git/worktrees/<name>` and key as the main root when we can.
+            if let Some(main) = main_checkout_from_gitfile(&dot_git) {
+                return Some(main);
+            }
+            if linked_worktree.is_none() {
+                linked_worktree = Some(candidate.to_path_buf());
+            }
         }
         current = candidate.parent();
     }
-    // A worktree (or submodule) whose owning checkout is not one of its ancestors. It is still
-    // a checkout, so it keys as itself rather than as nothing.
+    // A worktree (or submodule) whose owning checkout is not one of its ancestors and whose
+    // gitdir we could not resolve. It is still a checkout, so it keys as itself rather than
+    // as nothing.
     linked_worktree
 }
 
-/// The key a canonical checkout root reduces to: its last two path components.
+/// When `.git` is a *file* pointing at `<main>/.git/worktrees/<name>`, return `<main>`.
+///
+/// Relative gitdir paths are resolved against the worktree directory that holds the gitfile.
+/// Anything that is not a linked-worktree gitdir (submodules, bare oddities) returns `None`
+/// so the caller can fall back.
+fn main_checkout_from_gitfile(gitfile: &Path) -> Option<PathBuf> {
+    let contents = std::fs::read_to_string(gitfile).ok()?;
+    let raw = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:").map(str::trim))?;
+    let gitdir = {
+        let p = Path::new(raw);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            gitfile.parent()?.join(p)
+        }
+    };
+    let gitdir = std::fs::canonicalize(gitdir).ok()?;
+    // <main>/.git/worktrees/<name>
+    let worktrees_dir = gitdir.parent()?;
+    if worktrees_dir.file_name()?.to_str()? != "worktrees" {
+        return None;
+    }
+    let git_dir = worktrees_dir.parent()?;
+    if git_dir.file_name()?.to_str()? != ".git" {
+        return None;
+    }
+    Some(git_dir.parent()?.to_path_buf())
+}
+
+/// The key a canonical checkout root reduces to: its last two path components,
+/// then [`canonical_repo_key`] so known checkout relocations share one identity.
 pub fn repo_key_from_root(root: &Path) -> String {
     let as_str = root.to_string_lossy().replace('\\', "/");
     let components: Vec<&str> = as_str.split('/').filter(|c| !c.is_empty()).collect();
-    match components.len() {
+    let raw = match components.len() {
         0 => "unknown".to_string(),
         1 => components[0].to_string(),
         n => format!("{}/{}", components[n - 2], components[n - 1]),
+    };
+    canonical_repo_key(&raw).to_string()
+}
+
+/// Collapse known checkout relocations onto the key sessions already use in the index.
+///
+/// COS dogfood: the agentworth checkout moved from `~/code/unfoundbox/agentworth` to
+/// `~/code/crew/agentworth`. Claude project slugs (and therefore every indexed session)
+/// still key as `unfoundbox/agentworth`. Without this remap, `archie session wake` from
+/// the crew path looks up `crew/agentworth` and reports zero sessions.
+///
+/// The historical key stays the canonical answer so existing index rows, MCP filters, and
+/// `--repo unfoundbox/agentworth` keep working. The path-derived `crew/agentworth` is an
+/// alias that resolves here; [`repo_keys_match`] treats both as equal at filter sites that
+/// compare a user-supplied needle against a session key.
+pub fn canonical_repo_key(key: &str) -> &str {
+    match key {
+        "crew/agentworth" => "unfoundbox/agentworth",
+        other => other,
     }
+}
+
+/// True when two repo keys name the same repository, including known relocation aliases.
+pub fn repo_keys_match(a: &str, b: &str) -> bool {
+    canonical_repo_key(a) == canonical_repo_key(b)
 }
 
 /// The human-readable label for a repo key. Today the key is already `parent/repo`-shaped, so
@@ -406,6 +479,55 @@ mod tests {
         assert_eq!(repo_key_from_root(Path::new("/solo")), "solo");
         assert_eq!(repo_key_from_root(Path::new("/")), "unknown");
     }
+
+    /// The COS dogfood bug: checkout relocated to `~/code/crew/agentworth` while every
+    /// indexed session still keys as `unfoundbox/agentworth` from the old Claude project
+    /// slug. Live cwd and slug must agree on the historical key.
+    #[test]
+    fn test_crew_agentworth_aliases_to_unfoundbox_agentworth() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cwd = checkout(&tmp, "code/crew/agentworth", "code/crew/agentworth");
+        assert_eq!(repo_key_for_dir(&cwd), "unfoundbox/agentworth");
+        assert_eq!(
+            extract_repository_or_workspace(
+                "/Users/dev/.claude/projects/-Users-dev-code-crew-agentworth/abc.jsonl"
+            ),
+            "unfoundbox/agentworth"
+        );
+        assert_eq!(
+            extract_repository_or_workspace(
+                "/Users/dev/.claude/projects/-Users-dev-code-unfoundbox-agentworth/abc.jsonl"
+            ),
+            "unfoundbox/agentworth"
+        );
+        assert!(repo_keys_match("crew/agentworth", "unfoundbox/agentworth"));
+        assert_eq!(canonical_repo_key("crew/agentworth"), "unfoundbox/agentworth");
+        assert_eq!(canonical_repo_key("unfoundbox/agentworth"), "unfoundbox/agentworth");
+        assert_eq!(canonical_repo_key("crew/other"), "crew/other");
+    }
+
+    /// A sibling worktree created with `git worktree add ../name` is not under the main
+    /// checkout on disk, but its gitfile points at `<main>/.git/worktrees/<name>`. Resolve
+    /// that link so wake from the worktree shares the main checkout's repo key.
+    #[test]
+    fn test_sibling_worktree_keys_as_main_checkout_via_gitdir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let main = checkout(&tmp, "code/crew/agentworth", "code/crew/agentworth");
+        // Real git worktree layout: <main>/.git/worktrees/<name>/
+        let wt_gitdir = main.join(".git/worktrees/agentworth-fix");
+        std::fs::create_dir_all(&wt_gitdir).expect("mkdir worktrees entry");
+        let sibling = tmp.path().join("code/crew/agentworth-fix");
+        std::fs::create_dir_all(&sibling).expect("mkdir sibling");
+        std::fs::write(
+            sibling.join(".git"),
+            format!("gitdir: {}\n", wt_gitdir.display()),
+        )
+        .expect("write gitfile");
+
+        assert_eq!(repo_key_for_dir(&sibling), "unfoundbox/agentworth");
+        assert_eq!(repo_key_for_dir(&sibling), repo_key_for_dir(&main));
+    }
+
 
     #[test]
     fn test_provenance_serde() {

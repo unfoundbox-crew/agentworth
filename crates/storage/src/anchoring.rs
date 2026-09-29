@@ -19,7 +19,7 @@
 //! **unanchored** — dropped, and counted, so a caller can say how much evidence it could not
 //! place instead of quietly reporting a smaller number.
 
-use agentworth_schema::extract_repository_or_workspace;
+use agentworth_schema::{extract_repository_or_workspace, repo_keys_match};
 
 /// Why a candidate row was accepted, or the fact that it was not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +100,7 @@ pub(crate) fn anchor_path(
         return (Anchor::Unanchored, None);
     }
 
-    if extract_repository_or_workspace(session_source_path) == repo_identity {
+    if repo_keys_match(&extract_repository_or_workspace(session_source_path), repo_identity) {
         (Anchor::RelativeToSessionRepo, Some(cleaned.to_string()))
     } else {
         (Anchor::Unanchored, None)
