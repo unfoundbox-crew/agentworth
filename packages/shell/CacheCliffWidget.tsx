@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { formatUSD, formatTokens } from "../utils/formatters";
+import { formatUSD, formatTokens } from './formatters';
 import { AlertCircle, Zap } from "lucide-react";
 
 interface CacheCliffWidgetProps {

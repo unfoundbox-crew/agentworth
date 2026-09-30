@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AggregateStats } from '../types';
 import { fetchAggregateStats, EMPTY_AGGREGATE_STATS } from '../api';
 import { VerdictBoard } from '../components/VerdictBoard';
-import { CacheCliffWidget } from '../components/CacheCliffWidget';
+import { CacheCliffWidget } from '@shell/CacheCliffWidget';
 import { FleetStrip } from './FleetStrip';
 
 /**
