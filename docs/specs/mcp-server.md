@@ -390,6 +390,11 @@ No environment variables, no auth — stdio servers run as the local user's
 own process, same trust boundary as running `agentworth` from a terminal
 already has.
 
+For **Pi**, the same stdio server registers via `pi mcp add agentworth -- archie mcp`
+(or a hand-written `~/.pi/agent/mcp.json` entry). Pi's default MCP exposure is
+`codemode`, which auto-activates the built-in codemode tool when the server
+connects — see `docs/dogfood/pi-mcp.md`.
+
 ## Why this beats a better dashboard
 
 A dashboard needs a human to open it, read it, and retype what mattered
