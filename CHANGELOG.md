@@ -9,8 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.1.28] - 2026-09-30
+
+Version honesty bump: tip has been advertising `0.1.27` while already shipping tip
+features under the 0.1.x line (insights lane, Codex parser v4, home/app-merge,
+repo-key wake, agy token accounting, and related adapters). Cargo + npm pins move in
+sync to `0.1.28` as a **patch** label-honesty bump — tip features continue to ship on
+0.1.x rather than opening a 0.2 line. **npm publish and the GitHub release tag remain
+a separate COS-approved step** — this release only stops the label lying.
+
 ### Added
 
+- **Insights as a first-class lane.** Core query windows/deltas, MCP tools, deck insights
+  dashboard, slice-and-drill filters, turn-link repair, and human-turn ingest fill the
+  insights payload that `0.1.27` did not ship.
 - **The insights payload's human-turn blocks are real data.** `archie scan` ingests the
   human-at-the-keyboard turn histories no session adapter owns — Claude Code's
   `~/.claude/history.jsonl` and per-project transcript user-turns, Antigravity's
@@ -27,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ingest they leave the list and a zero means a quiet window.
 - `archie scan`'s summary reports `human turns indexed` (inserted + deduplicated), and
   `archie insights` prints the three turn blocks' headline numbers.
+- **Home / app-merge deck.** Path deep links for `/insights` and `/s/<id>`, archive phase
+  (`SessionList` + `InspectorPane`), and the restored dashboard surface after the #182
+  revert path.
+- **Codex adapter depth + parser v4.** Prompts, tool calls, shell outcome ladder; discovery
+  rejects non-session files and prunes stale rows; parser-version guards at 4.
+- **Repo-key wake canonicalization.** `crew/agentworth` aliases to `unfoundbox/agentworth`
+  so wake finds the right sessions across rename paths.
+- **Agy token accounting.** Antigravity `gen_metadata` usage varints land in the token
+  counters where the store actually carries them.
 
 ### Fixed
 
@@ -39,15 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conversation store records the model that generated each step in field 19 of its
   `gen_metadata` blobs; the adapter read everything else out of that store and never that
   field, so every `antigravity` row indexed with `models_used: []` while `claude_code` and
-  `codex` rows carried theirs. The adapter now reads it (parser version 3). Token usage stays
-  honestly zero: the store has no token counters anywhere, and a test guards against a future
-  estimate. `archie session wake --inject antigravity` turns an `agy` `PreInvocation` hook
+  `codex` rows carried theirs. The adapter now reads it (parser version 3). Later tip work also reads
+  `gen_metadata` usage varints into token counters where the store actually carries them
+  (see Added above). `archie session wake --inject antigravity` turns an `agy` `PreInvocation` hook
   payload into the `injectSteps` wake envelope, and `archie hook print antigravity` prints the
   `~/.gemini/config/hooks.json` entry that points at it. Because `agy` exposes no
   `SessionStart` hook, an on-disk marker makes the per-invocation `PreInvocation` fire the
   wake document exactly once per conversation; see `apps/cli/src/antigravity_hook.rs`.
-
-### Fixed
 
 - **Wake resumes the worktree you are standing in, not the newest session for the repo.**
   `extract_repository_or_workspace` prunes the `--claude-worktrees-` suffix of a Claude Code
@@ -56,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last. Selection now prefers sessions whose recorded `workspace.cwd` equals the checkout's git
   root and falls back to the repo ordering only when none match
   (`Storage::list_sessions_for_repo_preferring_workspace`).
+
+- **Claude / Codex discovery scope.** Non-session files rejected at discovery; stale rows
+  pruned so the index does not advertise ghosts.
 
 ---
 
