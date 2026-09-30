@@ -24,6 +24,7 @@
     "baseUrl": ".",
     "paths": {
       "@ui/*": ["../../packages/ui/*"],
+      "@shell/*": ["../../packages/shell/*"],
       /* The Rust-generated API contract fixtures, read by src/types/contract.test.ts.
          They live with the Rust tests that generate them (single copy, see that file);
          mirrors the vite.config.ts "@api-fixtures" alias. */
@@ -38,6 +39,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "../../packages/ui"],
+  "include": ["src", "../../packages/ui", "../../packages/shell"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

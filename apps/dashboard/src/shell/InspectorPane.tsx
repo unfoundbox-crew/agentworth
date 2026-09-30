@@ -3,7 +3,7 @@ import { AgentWorthTrace } from '../types';
 import { formatDate, formatDuration } from '../utils/formatters';
 import { useSessions } from '../hooks/useSessions';
 import { useTraceDetail } from '../hooks/useTraceDetail';
-import { OutcomeLadder, captionsFromOutcomes, determineReachedLevel } from './OutcomeLadder';
+import { OutcomeLadder, captionsFromOutcomes, determineReachedLevel } from '@shell/OutcomeLadder';
 import { TrajectoryView } from './TrajectoryView';
 import { OverviewPane } from './OverviewPane';
 import { ScoreBreakdown } from './ScoreBreakdown';

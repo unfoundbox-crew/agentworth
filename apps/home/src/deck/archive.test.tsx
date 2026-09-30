@@ -17,11 +17,10 @@ describe('deck archive phase', () => {
     expect(html).toContain('data-testid="archive-phase"');
     expect(html).toContain('Archive');
     expect(html).toContain('Select a session on the left');
+    expect(html).toContain('⌘K');
   });
 
   it('shows the selected session id in the inspector header once chosen', () => {
-    // Without effects the inspector still paints the header shell for a
-    // selected id (loading state); assert the id is visible in markup.
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.resolve({ ok: false, status: 404 }))
@@ -31,5 +30,18 @@ describe('deck archive phase', () => {
     );
     expect(html).toContain('sess_demo_1');
     vi.unstubAllGlobals();
+  });
+
+  it('exposes Overview / Coverage / Archaeology / Exports rail targets', () => {
+    const html = renderToStaticMarkup(
+      <Archive sessionId={null} onNavigate={() => {}} />
+    );
+    // Rail buttons are always in the DOM; labels come from Rail.tsx.
+    expect(html).toMatch(/Overview/i);
+    expect(html).toMatch(/Coverage/i);
+    expect(html).toMatch(/Archaeology/i);
+    expect(html).toMatch(/Exports/i);
+    // Placeholders from the first P3 slice must be gone.
+    expect(html).not.toContain('lands in the next P3 implement PR');
   });
 });

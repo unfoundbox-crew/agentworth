@@ -17,11 +17,12 @@
     "baseUrl": ".",
     "paths": {
       "@ui/*": ["../../packages/ui/*"],
+      "@shell/*": ["../../packages/shell/*"],
       "react": ["./node_modules/@types/react"],
       "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
     }
   },
-  "include": ["src", "../../packages/ui"],
+  "include": ["src", "../../packages/ui", "../../packages/shell"],
   "exclude": ["src/mock"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

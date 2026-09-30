@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { NormalizedEvent } from '../types';
-import { TrajectoryScrubber } from './TrajectoryScrubber';
+import { TrajectoryScrubber } from '@shell/TrajectoryScrubber';
 import { EventDetail, RawPayload, getPrimaryText, getResultPreview, getRoleLabel, getRoleWeight } from './EventDetail';
 import '../trajectory.css';
 
