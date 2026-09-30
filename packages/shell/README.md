@@ -11,16 +11,25 @@ Shared archive/dashboard shell widgets extracted during app-merge P3
 | `OutcomeLadder.tsx` | Same |
 | `CacheCliffWidget.tsx` | Identical in both apps' `components/` |
 | `ExportModal.tsx` | Near-identical; apps inject `performClientSideRedaction` / `convertToAtif` |
+| `VerdictBoard.tsx` | Byte-identical twins → `@shell/VerdictBoard` (keep-winner §4) |
+| `FleetStrip.tsx` | Near-identical; **required** `onOpenSession`; co-located `useFleet.ts` |
+| `useFleet.ts` | Polling hook for FleetStrip (was duplicated under each app's `hooks/`) |
 
 Supporting pieces owned here because the twins import them: `types.ts`
 (minimal), `eventGroups.ts`, `timeAxis.ts`, `ladderIcons.tsx`, `formatters.ts`
-(token/USD helpers for CacheCliff).
+(token/USD helpers + `getAdapterBadge`).
 
-Import via the `@shell/*` alias (mirrors `@ui/*`). Do **not** delete
-`TrackScrubber` / `VerdictBoard` / `FleetStrip` variants without a keep-winner.
+Import via the `@shell/*` alias (mirrors `@ui/*`). Lucide is a peer dependency
+resolved from each app's install (Vite + tsconfig path aliases — same pattern
+as CacheCliff / ExportModal).
 
-## Still app-local (temporary forks)
+## Keep in the apps (do not delete / unify)
 
-`VerdictBoard`, `FleetStrip`, `CommandPalette`, and related rail chrome still
-live under each app. Do not add further home copies of shell widgets —
-extend this package instead.
+| Module | Why |
+| :--- | :--- |
+| `apps/home/src/deck/TrackScrubber.tsx` | Deck course track — different job from `TrajectoryScrubber` |
+| `apps/home/src/deck/Ambient.tsx` | Deck ambient strip — not a FleetStrip twin |
+
+`CommandPalette` and related rail chrome may still live under each app until a
+later extract. Do not add further home copies of shell widgets — extend this
+package instead.

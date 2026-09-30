@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { AggregateStats } from '../types';
 import { fetchAggregateStats, EMPTY_AGGREGATE_STATS } from '../api';
-import { VerdictBoard } from '../components/VerdictBoard';
 import { CacheCliffWidget } from '@shell/CacheCliffWidget';
-import { FleetStrip } from './FleetStrip';
+import { VerdictBoard } from '@shell/VerdictBoard';
+import { FleetStrip } from '@shell/FleetStrip';
 
 /**
  * Rail "Overview" view — aggregate evidence ladder + cache-cliff + fleet strip.

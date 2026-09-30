@@ -1,5 +1,5 @@
-import { RUNNING_WINDOW_SECS, useFleet } from '../hooks/useFleet';
-import { getAdapterBadge, formatTokens, formatUSD } from '../utils/formatters';
+import { RUNNING_WINDOW_SECS, useFleet } from './useFleet';
+import { getAdapterBadge, formatTokens, formatUSD } from './formatters';
 
 export interface FleetStripProps {
   /**
