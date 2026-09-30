@@ -9,6 +9,7 @@ import { ExportsPane } from './shell/ExportsPane';
 import { CommandPalette } from './shell/CommandPalette';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useArchiveKeys } from './useArchiveKeys';
+import { useLiveTail } from './hooks/useLiveTail';
 import './archive-shell.css';
 import './panes.css';
 import './widgets.css';
@@ -34,6 +35,7 @@ const TOAST_DURATION_MS = 1800;
  */
 export function Archive({ sessionId, onNavigate }: ArchiveProps) {
   const [liveTail, setLiveTail] = useState(false);
+  const liveTailStream = useLiveTail(liveTail);
   const [trajectoryFocused, setTrajectoryFocused] = useState(false);
   const [activeView, setActiveView] = useState<RailViewId>('sessions');
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -86,31 +88,19 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
           type="button"
           className="livetail-btn"
           aria-pressed={liveTail}
+          data-stream={liveTail ? liveTailStream.status : 'idle'}
           onClick={toggleLiveTail}
-          title="Live tail (SSE follow-up — dashboard #213 is on main; archive wiring next)"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            appearance: 'none',
-            border: '0.5px solid var(--mv-border)',
-            borderRadius: 6,
-            background: liveTail ? 'var(--mv-accent-soft)' : 'transparent',
-            color: 'var(--mv-muted)',
-            fontSize: 10,
-            padding: '4px 8px',
-            cursor: 'pointer',
-          }}
+          title={
+            liveTail
+              ? liveTailStream.status === 'open'
+                ? 'Live tail connected to /api/live-tail'
+                : liveTailStream.status === 'error'
+                  ? 'Live tail stream interrupted — retrying'
+                  : 'Connecting to /api/live-tail…'
+              : 'Watch session files via /api/live-tail'
+          }
         >
-          <span
-            aria-hidden
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: '50%',
-              background: liveTail ? 'var(--mv-success)' : 'var(--mv-faint)',
-            }}
-          />
+          <span className="livetail-dot" aria-hidden="true" />
           Live Tail
         </button>
         <button
@@ -152,6 +142,7 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
                       navRef.current = nav;
                     }}
                     liveTail={liveTail}
+                    reloadSignal={liveTailStream.changeEpoch}
                   />
                 </ErrorBoundary>
               </div>
@@ -162,6 +153,7 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
                 <InspectorPane
                   sessionId={sessionId}
                   liveTail={liveTail}
+                  liveTailStream={liveTailStream}
                   trajectoryFocused={trajectoryFocused}
                   onToggleTrajectoryFocus={() => setTrajectoryFocused((v) => !v)}
                 />
@@ -176,6 +168,7 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
                   setActiveView('sessions');
                   onNavigate(`/s/${encodeURIComponent(id)}`);
                 }}
+                liveTailRefreshSignal={liveTailStream.changeEpoch}
               />
             </ErrorBoundary>
           </div>

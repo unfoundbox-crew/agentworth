@@ -138,3 +138,59 @@
   height: 100%;
   overflow: auto;
 }
+
+
+/* Live Tail toggle — mirrors apps/dashboard shell.css (#213) */
+.shell-root .livetail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  appearance: none;
+  border: 0.5px solid var(--mv-border);
+  background: transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--mv-muted);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: border-color 140ms ease-out, color 140ms ease-out, background 140ms ease-out;
+}
+.shell-root .livetail-btn:hover {
+  color: var(--mv-text);
+  border-color: var(--mv-accent-border);
+}
+.shell-root .livetail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mv-faint);
+  flex: 0 0 auto;
+}
+.shell-root .livetail-btn[aria-pressed='true'] {
+  border-color: var(--mv-accent-border);
+  background: var(--mv-accent-soft);
+  color: var(--mv-ink);
+}
+.shell-root .livetail-btn[aria-pressed='true'] .livetail-dot {
+  background: var(--mv-success);
+  animation: shell-pulse-dot 1.4s ease-in-out infinite;
+}
+.shell-root .livetail-btn[data-stream='error'] .livetail-dot {
+  background: var(--mv-warn);
+  animation: none;
+}
+.shell-root .livetail-btn[data-stream='connecting'] .livetail-dot {
+  background: var(--mv-accent);
+  animation: shell-pulse-dot 1.4s ease-in-out infinite;
+}
+@keyframes shell-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
