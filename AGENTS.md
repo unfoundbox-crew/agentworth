@@ -72,6 +72,21 @@ Before dispatching any lane, the dispatcher states, in the brief, what it
 measured and what it assumed. A lane that finds the brief's assumption wrong
 says so in `NOT CONFIRMED` and does not route around it.
 
+## No merge to `main` without COS / Saurabh approval
+
+Do not merge any pull request into `main`, and do not push commits directly to
+`main`, unless COS or Saurabh has explicitly approved that merge for that PR.
+Opening a PR against `main` is fine. Merging it is not, until they say so.
+
+Receipt: on 2026-09-07 a director session merged a train to `main` instead of a
+dev branch without asking (recorded in `docs/specs/home.md`, "Release, branches,
+standby"). Main was unreleased so nothing shipped, but the question should have
+been asked. This rule is the durable form of that note.
+
+If a brief says "open a PR" or "land the train," that means open and leave it
+for review — not merge. When approval arrives, quote it in the merge commit or
+PR comment so the next session can see it.
+
 ## Dogfood before you propose
 
 AgentWorth's own index is the first source for any number about sessions. Before

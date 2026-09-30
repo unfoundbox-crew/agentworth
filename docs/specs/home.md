@@ -118,7 +118,9 @@ a socket script, or a partner's pane.
   not before. Work in progress lives on a dev branch and is tested locally.
   On 2026-09-07 the director merged the train to main instead of a dev branch
   without asking; main is unreleased, so nothing shipped, but the question
-  should have been asked. Recorded so the next merge asks first.
+  should have been asked. Recorded so the next merge asks first. Durable rule:
+  **no merge to `main` without explicit COS / Saurabh approval** — see
+  `AGENTS.md`, "No merge to `main` without COS / Saurabh approval".
 - **Standby seats (Saurabh, 12:52):** "I don't want to kill them but keep them on
   standby so my mental load is reduced." A seat can be put on standby: alive,
   out of the seats column and off the course, one count in the status bar,
