@@ -7,7 +7,8 @@ What is left and in what order, with the lane spec for building it: `docs/ROADMA
 | Spec | Status | PR |
 | :--- | :--- | :--- |
 | `agent-bus.md` | proposed 2026-09-07, not built | — |
-| `app-merge.md` | product call locked 2026-09-30; P1+P2 merged; P4/P5 blocked | #204, #205 |
+| `app-merge.md` | product call locked 2026-09-30; P1+P2 merged; P3 SPEC; P4/P5 blocked | #204, #205, #212 |
+| `app-merge-p3-parity.md` | proposed 2026-09-30; SPEC only — P3 deck parity / safe dedupe | — |
 | `archie-bench.md` | built (the local table) | #124 |
 | `archie.md` | proposed (umbrella spec) | — |
 | `asks.md` | built | #97 |
