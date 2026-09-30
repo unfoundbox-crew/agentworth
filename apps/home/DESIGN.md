@@ -3,6 +3,10 @@
 Status: draft, 2026-09-07. This is agentworth's own design doc for `apps/home`.
 It is not MotionVector's design system, and it is not the dashboard's.
 
+App-merge (product call, 2026-09-30): archive stays a phase of this deck through
+P3; do not delete `apps/dashboard` or flip root until COS relaunches P4. See
+`docs/specs/app-merge.md`.
+
 ## What it is for
 
 One window to run a fleet of coding agents for a whole day without a terminal

@@ -17,6 +17,7 @@ The immediate product is not a marketplace.
 - `docs/DECISION-INBOX.md` — dated status at the top; the body below it is a historical log.
 - `CHANGELOG.md` — what shipped per release.
 - `README.md` — the user-facing description of the product.
+- `docs/specs/app-merge.md` — home/dashboard merge plan; archive stays a phase through P3; do not delete `apps/dashboard` or flip root until COS relaunches P4.
 - `CLAUDE.md` — a symlink to this file, so Claude Code sessions load it too.
 
 To check any of these is still current: `git log -1 <path>` for when it last changed, and `gh pr view <N>` for any PR number it cites.
@@ -147,6 +148,14 @@ apps/
 packages/
   npm-wrapper/
 ```
+
+## App-merge: archive phase through P3; dashboard stays
+
+`apps/home` is absorbing the explorer. P1 (routes) and P2 (archive phase) have
+merged. **Keep archive-as-phase through P3.** Do **not** delete `apps/dashboard`
+and do **not** flip the serve root to the home deck until after P3 is dogfooded
+and COS explicitly relaunches P4. That call blocks P4 and P5. Full phase table
+and rationale: `docs/specs/app-merge.md`. Closed early delete: PR #182.
 
 ## Adapter contract
 

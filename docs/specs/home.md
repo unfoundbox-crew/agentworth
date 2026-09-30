@@ -143,3 +143,13 @@ a socket script, or a partner's pane.
 5. After the first ride: the blank line shows only when active directions reach zero, or when summoned with the new-direction hotkey.
 
 The paper on the human interface tax waits for this screen to exist.
+
+## App-merge product call (2026-09-30)
+
+The home deck and the legacy dashboard are mid-merge. **Keep archive-as-phase
+through P3.** Do **not** delete `apps/dashboard` and do **not** flip the serve
+root until after P3 dogfood and COS explicitly relaunches P4. That blocks P4
+and P5.
+
+Canonical phase table and rationale: `docs/specs/app-merge.md`. P1 #204 and
+P2 #205 are merged; the early delete attempt was #182 (closed).
