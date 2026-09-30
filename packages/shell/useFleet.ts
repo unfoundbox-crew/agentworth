@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SessionSummary, UsageResponse } from '../types';
+import type { FleetSessionSummary, FleetUsageResponse } from './types';
 
 /** How recently a session file must have been written to count as probably running. */
 export const RUNNING_WINDOW_SECS = 5 * 60;
@@ -40,12 +40,12 @@ async function fetchJson<T>(url: string): Promise<Maybe<T>> {
 }
 
 export interface RunningSession {
-  session: SessionSummary;
+  session: FleetSessionSummary;
   /** Seconds since the session file was last written. */
   ageSecs: number;
 }
 
-/** The strip's own summary of "today", derived from `UsageResponse.daily`. */
+/** The strip's own summary of "today", derived from `FleetUsageResponse.daily`. */
 export interface TodaySpend {
   total_cost_usd: number;
   /** Raw sum of the four counters, cache reads at face value — context volume, not spend. */
@@ -86,7 +86,7 @@ export interface FleetState {
  * across every adapter row that shares it. `null` means the response carried no daily rows
  * at all, which the caller reports as unavailable rather than as a zero.
  */
-function summarizeLatestDay(usage: UsageResponse): TodaySpend | null {
+function summarizeLatestDay(usage: FleetUsageResponse): TodaySpend | null {
   const daily = usage.daily;
   if (!Array.isArray(daily) || daily.length === 0) return null;
   const latestPeriod = daily[0].period;
@@ -121,10 +121,10 @@ export function useFleet(enabled: boolean, refreshSignal = 0): FleetState {
 
   const poll = useCallback(async () => {
     const [traces, usage] = await Promise.all([
-      fetchJson<SessionSummary[]>(`/api/traces?limit=${POLL_LIMIT}`),
+      fetchJson<FleetSessionSummary[]>(`/api/traces?limit=${POLL_LIMIT}`),
       // The route ignores any `?period=` query string and always returns all three
-      // rollups -- see `UsageResponse` in apps/cli/src/server/routes.rs.
-      fetchJson<UsageResponse>('/api/usage'),
+      // rollups -- see `FleetUsageResponse` in apps/cli/src/server/routes.rs.
+      fetchJson<FleetUsageResponse>('/api/usage'),
     ]);
     const spend: Maybe<TodaySpend> =
       usage.state === 'ok'

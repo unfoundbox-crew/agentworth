@@ -71,20 +71,19 @@ Measured 2026-09-30 (MD5):
 once the deck (and dashboard, while it still embeds them) import the shared
 module and tests pass.
 
-### 4. Do **not** delete without a keep-winner
+### 4. Keep-winners (COS written decisions)
 
-These exist as **variants**, not byte-identical twins. Leave them alone in
-P3 unless a separate keep-winner decision is recorded:
+Recorded keep-winners for P3. Do not reopen without a new COS call.
 
-| Component | Why it stays |
-| :--- | :--- |
-| `TrackScrubber` (`apps/home/src/deck/TrackScrubber.tsx`) | Deck track scrubber — different job from archive `TrajectoryScrubber` |
-| `VerdictBoard` (`apps/dashboard/src/components/VerdictBoard.tsx`) | Overview building block; may move/share, but do not delete a "variant" blindly |
-| `FleetStrip` (`apps/dashboard/src/shell/FleetStrip.tsx`) | Same — fleet strip vs deck ambient strip are not proven identical |
+| Pair | Decision | Notes |
+| :--- | :--- | :--- |
+| `TrackScrubber` vs `TrajectoryScrubber` | **BOTH KEEP** | `apps/home/src/deck/TrackScrubber.tsx` stays (deck course track). `packages/shell/TrajectoryScrubber.tsx` stays (archive/dashboard trajectory). Do **not** delete or unify. |
+| `VerdictBoard` twins | **Extract → `packages/shell`** | Dashboard + home archive copies were byte-identical. Authoritative module: `packages/shell/VerdictBoard.tsx`. App twins deleted after rewire to `@shell/VerdictBoard`. `OutcomeLadder` already lives in `packages/shell` — keep; no `LadderFunnel` in repo. |
+| `FleetStrip` vs `Ambient` | **FleetStrip → `packages/shell`; Ambient KEEP** | `apps/home/src/deck/Ambient.tsx` stays — do **not** delete or merge into FleetStrip. Shared strip: `packages/shell/FleetStrip.tsx` with **required** `onOpenSession` (dashboard call sites pass navigate/open). App FleetStrip twins deleted after rewire. |
 
-Porting Overview will **use** VerdictBoard / FleetStrip (or shared
-extractions). Deleting the dashboard copies of those without an explicit
-keep-winner is out of scope for P3.
+Earlier wording treated VerdictBoard / FleetStrip as "do not delete without a
+keep-winner." Those keep-winners are now written above; the extract+delete of
+the **app twins** (not TrackScrubber / Ambient) is in scope.
 
 ## Success criteria
 
@@ -99,8 +98,9 @@ keep-winner is out of scope for P3.
    until P4).
 4. `TrajectoryScrubber` + `OutcomeLadder` exist in at most one authoritative
    module after cutover (shared package or single app path).
-5. `TrackScrubber` / `VerdictBoard` / `FleetStrip` variants are **not**
-   deleted in this phase without a written keep-winner.
+5. Keep-winners in §4 are honoured: `TrackScrubber` + `Ambient` remain in
+   place; VerdictBoard / FleetStrip app twins may be deleted only after
+   shared `@shell` import.
 6. `apps/dashboard` remains in the tree and still builds; serve root
    unchanged.
 7. Docs: this SPEC + `docs/specs/app-merge.md` phase table updated to
@@ -115,7 +115,7 @@ keep-winner is out of scope for P3.
 - Visual redesign of the deck or a new design system.
 - Pi / OpenAI adapter work, live-tail (#213), honesty matrix (#215) — other
   trains.
-- Deleting `TrackScrubber` / `VerdictBoard` / `FleetStrip` "because P3."
+- Deleting `TrackScrubber` or `Ambient` "because P3." (keep-winners in §4).
 - Merging implement PRs to `main` without approval.
 
 ## Suggested implement stack (after this SPEC PR)
@@ -127,7 +127,7 @@ Prefer quality over speed. Suggested order for follow-up PRs (not this one):
 | A | Shared extract of identical `TrajectoryScrubber` + `OutcomeLadder` | Lowest risk; proves package wiring |
 | B | Port Coverage + Archaeology (API already typed in archive) | Self-contained panes |
 | C | Port Exports + Command palette | Palette must know new targets |
-| D | Port Overview (VerdictBoard / FleetStrip — share or wrap, do not delete variants) | Highest product surface |
+| D | Port Overview (VerdictBoard / FleetStrip — share per §4 keep-winners) | Highest product surface |
 | E | Dedupe remaining dual imports; update Archive / DESIGN comments; dogfood checklist | Stop before P4 |
 
 Each step is its own PR when possible. Do not batch a giant delete with the

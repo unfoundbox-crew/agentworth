@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { AggregateStats } from '../types';
 import { fetchAggregateStats, EMPTY_AGGREGATE_STATS } from '../services/api';
-import { VerdictBoard } from '../components/VerdictBoard';
 import { CacheCliffWidget } from '@shell/CacheCliffWidget';
-import { FleetStrip } from './FleetStrip';
+import { VerdictBoard } from '@shell/VerdictBoard';
+import { FleetStrip } from '@shell/FleetStrip';
+import { useRoute } from '../hooks/useRoute';
 
 /**
  * Rail "Overview" view — the aggregate evidence ladder plus the cache-cliff
@@ -18,6 +19,10 @@ export interface OverviewPaneProps {
 }
 
 export function OverviewPane({ onOpenSession, liveTailRefreshSignal = 0 }: OverviewPaneProps) {
+  const { navigate } = useRoute();
+  const openSession =
+    onOpenSession ??
+    ((id: string) => navigate(`/s/${encodeURIComponent(id)}`));
   const [stats, setStats] = useState<AggregateStats>(EMPTY_AGGREGATE_STATS);
   const [loading, setLoading] = useState(true);
 
@@ -39,7 +44,7 @@ export function OverviewPane({ onOpenSession, liveTailRefreshSignal = 0 }: Overv
     <div className="view-region">
       {loading && <div className="shell-inspector-loading">Loading overview…</div>}
       <div className="view-stack">
-        <FleetStrip onOpenSession={onOpenSession} refreshSignal={liveTailRefreshSignal} />
+        <FleetStrip onOpenSession={openSession} refreshSignal={liveTailRefreshSignal} />
         <VerdictBoard stats={stats} />
         <CacheCliffWidget />
       </div>

@@ -99,3 +99,38 @@ export interface NormalizedEvent {
   payload: EventPayload;
   raw_ref?: string;
 }
+
+/** Minimal aggregate shape VerdictBoard reads (apps may pass a wider AggregateStats). */
+export interface OutcomeDistribution {
+  ci_or_deployment_verified: number;
+  commit_observed: number;
+  test_or_build_passed: number;
+  artifact_changed: number;
+  done_claimed: number;
+  unresolved: number;
+}
+
+export interface AggregateStats {
+  total_sessions: number;
+  verified_outcomes_count: number;
+  outcome_distribution?: OutcomeDistribution;
+}
+
+/** Minimal session row FleetStrip / useFleet need from GET /api/traces. */
+export interface FleetSessionSummary {
+  session_id: string;
+  adapter: string;
+  source_mtime_epoch_secs?: number;
+}
+
+/** Minimal usage row for today's spend line on FleetStrip. */
+export interface FleetUsagePeriodSummary {
+  period: string;
+  estimated_cost_usd: number;
+  total_tokens: number;
+  cost_weighted_tokens?: number;
+}
+
+export interface FleetUsageResponse {
+  daily: FleetUsagePeriodSummary[];
+}

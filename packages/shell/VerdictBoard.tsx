@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { AggregateStats, OutcomeKind } from "../types";
+import type { AggregateStats, OutcomeKind } from './types';
 import { CheckCircle2, GitCommit, Terminal, FileCode, MessageSquare } from "lucide-react";
 
 interface VerdictBoardProps {
