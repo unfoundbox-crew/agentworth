@@ -739,14 +739,7 @@ File change lineage matching session histories
 
 ### `GET /api/matrix`
 
-Adapter extraction coverage and capabilities matrix. Each row is one registered
-adapter (`AgentAdapter::name()`). `sessions_count` uses the API non-stub
-predicate (`kind = 'conversation' AND total_events > 1 AND (total_tokens > 0 OR
-tool_calls_count > 0)`) and sums every name in `identity_names()` — so the
-`gemini` row folds both `gemini` (CLI) and `antigravity` (agy) index identities.
-Capability flags follow tip parsers (Codex `PARSER_VERSION` 4 with
-prompts/tools/shell/outcomes; Pi `PARSER_VERSION` 2 with tools/tokens/outcomes,
-not events-only). Honest measured depth: `docs/capability-matrix.md`.
+Adapter extraction coverage and capabilities matrix
 
 ### `GET /api/insights`
 
