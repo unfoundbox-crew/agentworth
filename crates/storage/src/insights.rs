@@ -732,9 +732,14 @@ fn dimension_predicate_on(filter: &InsightsDimensionFilter, s: &str) -> String {
 /// The repair is measured instead as the link-health counter (`query_turn_link`) and applied
 /// to filtered aggregates via `turn_link_exists`, both with one label call per row.
 pub fn turn_session_match(alias_t: &str, alias_s: &str) -> String {
+    // Codex history.jsonl stores the bare UUID; Codex session rows use the rollout
+    // stem `rollout-…-<uuid>`. Exact id equality under-links; the third OR is the
+    // SPEC-preferred UUID-in-rollout-stem repair, scoped to source='codex'.
     format!(
         "(({t}.session_id IS NOT NULL AND {t}.session_id={s}.session_id) OR \
-          ({t}.source_path<>'' AND {t}.source_path={s}.source_path))",
+          ({t}.source_path<>'' AND {t}.source_path={s}.source_path) OR \
+          ({t}.source='codex' AND {t}.session_id IS NOT NULL AND {t}.session_id<>'' \
+           AND {s}.session_id LIKE '%-' || {t}.session_id))",
         t = alias_t,
         s = alias_s
     )
@@ -768,6 +773,9 @@ fn build_turn_link_sets(conn: &Connection, filter: &InsightsDimensionFilter) -> 
 fn turn_link_predicate(_filter: &InsightsDimensionFilter) -> String {
     "(t.session_id IS NOT NULL AND t.session_id IN (SELECT session_id FROM ins_slice_sessions)) \
      OR (t.source_path<>'' AND t.source_path IN (SELECT source_path FROM ins_slice_sessions)) \
+     OR (t.source='codex' AND t.session_id IS NOT NULL AND t.session_id<>'' \
+         AND EXISTS (SELECT 1 FROM ins_slice_sessions s \
+                     WHERE s.session_id LIKE '%-' || t.session_id)) \
      OR (insights_repo_label(t.source_path)<>'' \
          AND insights_repo_label(t.source_path) IN (SELECT rl FROM ins_slice_sessions))"
         .to_string()
@@ -793,8 +801,14 @@ fn query_turn_link(
         conn,
         format!("SELECT COUNT(*) FROM human_turns t WHERE {tp}"),
     )?;
-    let linked_by_id = one("AND t.session_id IS NOT NULL AND t.session_id=s.session_id")?;
-    let already_id = "NOT EXISTS (SELECT 1 FROM sessions s2 WHERE s2.session_id=t.session_id AND \
+    let linked_by_id = one(
+        "AND t.session_id IS NOT NULL AND (t.session_id=s.session_id \
+         OR (t.source='codex' AND t.session_id<>'' AND s.session_id LIKE '%-' || t.session_id))",
+    )?;
+    let already_id = "NOT EXISTS (SELECT 1 FROM sessions s2 WHERE \
+                      (s2.session_id=t.session_id \
+                       OR (t.source='codex' AND t.session_id IS NOT NULL AND t.session_id<>'' \
+                           AND s2.session_id LIKE '%-' || t.session_id)) AND \
                       s2.kind='conversation' AND s2.total_events>1 AND s2.started_at>'2020-01-01')";
     let linked_by_path = one(&format!(
         "AND t.source_path<>'' AND t.source_path=s.source_path AND {already_id}"
@@ -2670,6 +2684,23 @@ mod tests {
             tl.linked_by_path, 2,
             "sess-z loses the exact id; its path still links"
         );
+    }
+
+    #[test]
+    fn codex_history_uuid_links_via_rollout_stem_suffix() {
+        // history.jsonl stores bare UUID; Codex sessions.session_id is the rollout stem.
+        let dir = TempDir::new().unwrap();
+        let storage = crate::Storage::open_path(&dir.path().join("codex-link.db")).unwrap();
+        let uuid = "019c617f-ce70-7971-92de-93d8ff78ecbc";
+        let stem = format!("rollout-2026-02-15T19-01-31-{uuid}");
+        seed_link_session(&storage, &stem, "codex", "/tmp/codex/rollout.jsonl", (2, 15));
+        storage
+            .insert_human_turn_batch(&[turn_row("codex", Some(uuid), "/tmp/codex/history.jsonl", 1)])
+            .unwrap();
+        let tl = storage.get_insights().unwrap().turn_link;
+        assert_eq!(tl.total, 1);
+        assert_eq!(tl.linked_by_id, 1, "UUID-in-rollout-stem counts as id-tier: {tl:?}");
+        assert_eq!(tl.unmatched, 0);
     }
 
     #[test]

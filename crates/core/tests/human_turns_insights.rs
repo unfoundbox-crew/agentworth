@@ -271,3 +271,74 @@ fn empty_index_defers_the_turn_blocks_with_a_stated_reason() {
     assert!(insights.vocabulary.is_empty());
     assert!(insights.deltas.friction_rate.reason.is_some());
 }
+
+/// Codex `~/.codex/history.jsonl` (via rooted `codex-home/`) lands in human_turns and
+/// feeds the same day_hour / friction aggregates — no new insights endpoint.
+#[test]
+fn codex_history_feeds_day_hour_and_friction() {
+    use std::fs;
+
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let codex_home = root.join("codex-home");
+    fs::create_dir_all(&codex_home).unwrap();
+    // Epoch seconds (not ms), matching measured Codex history.jsonl.
+    let line = r#"{"session_id":"019c617f-ce70-7971-92de-93d8ff78ecbc","ts":1770294600,"text":"stop looping again on the rust build"}"#;
+    fs::write(codex_home.join("history.jsonl"), format!("{line}\n")).unwrap();
+
+    let storage = Storage::open_path(&root.join("codex-turns.db")).unwrap();
+    let summary = run_ingest(root, &storage);
+    assert_eq!(summary.sources_found, 1, "only codex history present");
+    assert_eq!(summary.turns_inserted, 1);
+    assert_eq!(summary.turns_degraded, 0);
+    assert_eq!(storage.human_turn_total().unwrap(), 1);
+
+    let insights = storage.get_insights().unwrap();
+    assert!(
+        !insights.friction.is_empty(),
+        "Codex turn with loop_interruption should clear deferred friction"
+    );
+    let fric: Vec<&str> = insights.friction.iter().map(|r| r.trigger.as_str()).collect();
+    assert!(
+        fric.contains(&"loop_interruption"),
+        "expected loop_interruption from Codex text, got {fric:?}"
+    );
+    assert!(
+        !insights.day_hour.is_empty(),
+        "Codex turn must appear in day_hour"
+    );
+    assert_eq!(
+        storage.human_turn_ingestion_version().unwrap(),
+        agentworth_adapters::human_turns::INGESTION_VERSION
+    );
+    assert_eq!(agentworth_adapters::human_turns::INGESTION_VERSION, 3);
+}
+
+/// Degenerate Codex lines (empty text / missing fields) skip quietly — never an error.
+#[test]
+fn codex_history_skips_degenerates_without_error() {
+    use std::fs;
+
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let codex_home = root.join("codex-home");
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::write(
+        codex_home.join("history.jsonl"),
+        [
+            r#"{"session_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","ts":1770294600,"text":"x"}"#, // too short after clean
+            r#"{"session_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","ts":1770294700}"#, // missing text
+            "not-json",
+            r#"{"session_id":"cccccccc-cccc-cccc-cccc-cccccccccccc","ts":1770294800,"text":"please proceed with the cargo check"}"#,
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+
+    let storage = Storage::open_path(&root.join("codex-degen.db")).unwrap();
+    let summary = run_ingest(root, &storage);
+    assert_eq!(summary.errors, 0);
+    assert_eq!(summary.turns_inserted, 1, "only the well-formed autonomy_nudge turn");
+    assert!(summary.turns_degraded >= 3);
+}

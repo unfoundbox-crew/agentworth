@@ -9,6 +9,7 @@
 //!   (`{display, timestamp, conversationId}`)
 //! - `~/.gemini/antigravity-cli/brain/<session>/transcript.jsonl` — Antigravity `USER_INPUT`
 //!   records (`{content, created_at}`)
+//! - `~/.codex/history.jsonl` — Codex CLI prompt history (`{session_id, ts(epoch secs), text}`)
 //!
 //! This is a human-input source, not an agent-conversation source, so it does NOT implement
 //! `AgentAdapter` (whose sources normalize into session traces); it follows the same shape —
@@ -36,16 +37,17 @@ pub use pipeline::HumanTurn;
 pub use taxonomy::INGESTION_VERSION;
 pub use taxonomy::VOCAB_CLUSTERS;
 
-/// The two source families, matching the Python builder's `source` column.
+/// The source families, matching the Python builder's `source` column (plus Codex).
 pub const CLAUDE: &str = "claude";
 pub const ANTIGRAVITY: &str = "antigravity";
+pub const CODEX: &str = "codex";
 
 /// One discovered turn-bearing file, fingerprinted with the same sampling hash session
 /// sources use, so unchanged files skip re-parsing on rescan.
 #[derive(Debug, Clone)]
 pub struct TurnFileSource {
     pub path: PathBuf,
-    /// `claude` or `antigravity`.
+    /// `claude`, `antigravity`, or `codex`.
     pub source: &'static str,
     /// Session id the path itself carries, when it does (transcript layouts).
     pub path_session_id: Option<String>,
@@ -58,11 +60,13 @@ pub struct TurnFileSource {
 pub type FixedTime = chrono_::FixedOffset;
 
 /// Detect / enumerate / parse the human-turn sources. `claude_home` carries
-/// `history.jsonl` and `projects/`; `antigravity_home` carries `history.jsonl` and `brain/`.
+/// `history.jsonl` and `projects/`; `antigravity_home` carries `history.jsonl` and `brain/`;
+/// `codex_home` carries `history.jsonl` only (rollouts stay on the session adapter).
 #[derive(Debug, Clone)]
 pub struct HumanTurnIngestor {
     pub claude_home: PathBuf,
     pub antigravity_home: PathBuf,
+    pub codex_home: PathBuf,
     /// `None` uses the system's current local offset; tests pin one.
     pub local_offset: Option<chrono_::FixedOffset>,
 }
@@ -76,16 +80,18 @@ impl HumanTurnIngestor {
         Self {
             claude_home: home.join(".claude"),
             antigravity_home: home.join(".gemini").join("antigravity-cli"),
+            codex_home: home.join(".codex"),
             local_offset: None,
         }
     }
 
-    /// A synthetic root for tests: `<root>/claude-home/...` and
-    /// `<root>/gemini-home/antigravity-cli/...`.
+    /// A synthetic root for tests: `<root>/claude-home/...`,
+    /// `<root>/gemini-home/antigravity-cli/...`, and `<root>/codex-home/...`.
     pub fn rooted(root: &Path, local_offset: chrono_::FixedOffset) -> Self {
         Self {
             claude_home: root.join("claude-home"),
             antigravity_home: root.join("gemini-home").join("antigravity-cli"),
+            codex_home: root.join("codex-home"),
             local_offset: Some(local_offset),
         }
     }
@@ -93,7 +99,7 @@ impl HumanTurnIngestor {
     /// Cheap presence check for the two roots; never fails (an absent source is a verdict,
     /// not an error).
     pub fn detect(&self) -> Result<bool> {
-        Ok(self.claude_home.exists() || self.antigravity_home.exists())
+        Ok(self.claude_home.exists() || self.antigravity_home.exists() || self.codex_home.exists())
     }
 
     /// Every file under the homes that carries human turns, with fingerprints. Sorted by
@@ -103,6 +109,7 @@ impl HumanTurnIngestor {
         for (home, source) in [
             (&self.claude_home, CLAUDE),
             (&self.antigravity_home, ANTIGRAVITY),
+            (&self.codex_home, CODEX),
         ] {
             if let Some(src) = self.single_file(&home.join("history.jsonl"), source, None)? {
                 out.push(src);

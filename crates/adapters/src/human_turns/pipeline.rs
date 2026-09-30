@@ -93,6 +93,7 @@ fn fields<'v>(
     match source {
         "claude" => claude_record_fields(value),
         "antigravity" => agy_record_fields(value),
+        "codex" => codex_record_fields(value),
         _ => None,
     }
 }
@@ -162,6 +163,22 @@ fn agy_record_fields<'v>(
                 .map(str::to_string),
         ))
     }
+}
+
+/// Codex `~/.codex/history.jsonl` rows: `{session_id, ts, text}` — `ts` is epoch **seconds**
+/// (integer). Claude history uses ms; `parse_timestamp` already treats values ≤ 1e12 as
+/// seconds when under the ms threshold.
+fn codex_record_fields<'v>(
+    value: &'v Value,
+) -> Option<(std::borrow::Cow<'v, str>, &'v Value, Option<String>)> {
+    Some((
+        std::borrow::Cow::Borrowed(value.get("text")?.as_str()?),
+        value.get("ts")?,
+        value
+            .get("session_id")
+            .and_then(|s| s.as_str())
+            .map(str::to_string),
+    ))
 }
 
 /// Local hour and local date from epoch seconds against a fixed offset (or the system's
