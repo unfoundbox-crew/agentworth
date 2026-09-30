@@ -17,7 +17,10 @@ pub const NONE: &str = "none";
 ///
 /// Version 2: turn rows carry their source file's `source_path` — the turn↔session link
 /// repair keys — which legacy stored rows lack entirely.
-pub const INGESTION_VERSION: i64 = 2;
+///
+/// Version 3: Codex `~/.codex/history.jsonl` joins the human-turn population (`source =
+/// "codex"`). Fingerprints alone cannot say the source set grew; wipe + re-ingest.
+pub const INGESTION_VERSION: i64 = 3;
 
 /// The dashboard's friction vocabulary, first match wins — definitions and order quoted
 /// character-for-character from the builder's `FRICTION_RULES`.
