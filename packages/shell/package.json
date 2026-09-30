@@ -1,0 +1,9 @@
+{
+  "name": "@agentworth/shell",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "peerDependencies": {
+    "lucide-react": "^0.475.0"
+  }
+}

@@ -30,7 +30,8 @@
          mirrors the vite.config.ts "@api-fixtures" alias. */
       "@api-fixtures/*": ["../cli/tests/fixtures/api-contract/*"],
       "react": ["./node_modules/@types/react"],
-      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "lucide-react": ["./node_modules/lucide-react"]
     },
 
     /* Linting */
