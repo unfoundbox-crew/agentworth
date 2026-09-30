@@ -1317,17 +1317,22 @@ fn register_repo_label_fn(conn: &Connection) {
 /// is not that shape. Extracted once per session into the TEMP slice set / IN-set so
 /// turn↔session repair is an equality probe — never `LIKE '%-'||uuid`.
 pub fn codex_uuid_from_stem(session_id: &str) -> String {
-    const UUID_LEN: usize = 36; // 8-4-4-4-12
-    if session_id.len() <= UUID_LEN {
+    // Split from the right so a multibyte timestamp/prefix can never make the UUID
+    // boundary land in the middle of a UTF-8 code point.
+    let mut parts = session_id.rsplitn(6, '-');
+    let (Some(tail_12), Some(group_4_3), Some(group_4_2), Some(group_4_1), Some(head_8), Some(_prefix)) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
         return String::new();
-    }
-    let start = session_id.len() - UUID_LEN;
-    if session_id.as_bytes().get(start - 1) != Some(&b'-') {
-        return String::new();
-    }
-    let candidate = &session_id[start..];
-    if is_uuid_shape(candidate) {
-        candidate.to_string()
+    };
+    let candidate = format!("{head_8}-{group_4_1}-{group_4_2}-{group_4_3}-{tail_12}");
+    if is_uuid_shape(&candidate) {
+        candidate
     } else {
         String::new()
     }
@@ -2768,6 +2773,10 @@ mod tests {
         let uuid = "019c617f-ce70-7971-92de-93d8ff78ecbc";
         assert_eq!(
             codex_uuid_from_stem(&format!("rollout-2026-02-15T19-01-31-{uuid}")),
+            uuid
+        );
+        assert_eq!(
+            codex_uuid_from_stem(&format!("rollout-🦀-{uuid}")),
             uuid
         );
         assert_eq!(codex_uuid_from_stem(uuid), "");
