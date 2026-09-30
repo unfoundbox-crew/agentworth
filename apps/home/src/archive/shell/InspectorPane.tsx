@@ -3,7 +3,7 @@ import { AgentWorthTrace } from '../types';
 import { formatDate, formatDuration } from '../utils/formatters';
 import { useSessions } from '../hooks/useSessions';
 import { useTraceDetail } from '../hooks/useTraceDetail';
-import { OutcomeLadder, captionsFromOutcomes, determineReachedLevel } from './OutcomeLadder';
+import { OutcomeLadder, captionsFromOutcomes, determineReachedLevel } from '@shell/OutcomeLadder';
 import { TrajectoryView } from './TrajectoryView';
 import { ScoreBreakdown } from './ScoreBreakdown';
 import { TokenEconomics } from './TokenEconomics';
@@ -58,8 +58,7 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
 
   if (!sessionId) {
     // Empty inspector: pick a session. Overview rail view is a follow-up
-    // P3 PR (VerdictBoard / FleetStrip share); Coverage / Archaeology are
-    // on the archive rail now (docs/specs/app-merge-p3-parity.md).
+    // Overview / Exports / palette live on the archive rail (P3).
     return (
       <section className="shell-inspector-pane" tabIndex={-1}>
         <p className="shell-inspector-empty">

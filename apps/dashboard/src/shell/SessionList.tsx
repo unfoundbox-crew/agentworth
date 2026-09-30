@@ -3,7 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSessions } from '../hooks/useSessions';
 import { useResizableWidth } from '../hooks/useResizableWidth';
 import { SessionSummary } from '../types';
-import { determineReachedLevel } from './OutcomeLadder';
+import { determineReachedLevel } from '@shell/OutcomeLadder';
 import { formatTokens } from '../utils/formatters';
 import {
   flattenGroups,

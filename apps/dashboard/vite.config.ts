@@ -28,6 +28,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@ui': path.resolve(__dirname, '../../packages/ui'),
+      '@shell': path.resolve(__dirname, '../../packages/shell'),
       // Single copy of the Rust-generated API contract fixtures; mirrors the
       // tsconfig.json "@api-fixtures/*" path.
       '@api-fixtures': path.resolve(__dirname, '../cli/tests/fixtures/api-contract'),

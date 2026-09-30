@@ -6,6 +6,9 @@ export interface UseArchiveKeysOptions {
   exitTrajectoryFocus?: () => boolean;
   navRef: RefObject<ShellNav | null>;
   focusInspector: () => void;
+  paletteOpen?: boolean;
+  openPalette?: () => void;
+  closePalette?: () => void;
 }
 
 function isTypingTarget(el: EventTarget | null): boolean {
@@ -15,15 +18,37 @@ function isTypingTarget(el: EventTarget | null): boolean {
 }
 
 /**
- * j/k/Enter/`/` for the archive phase. Escape is owned by Deck (closes the
- * phase). Palette (⌘K) stays out of scope for P2.
+ * j/k/Enter/`/` for the archive phase, plus ⌘/Ctrl+K for the command palette.
+ * Escape closes the palette first; otherwise Deck owns leaving the phase.
  */
 export function useArchiveKeys(opts: UseArchiveKeysOptions): void {
-  const { navRef, focusInspector, exitTrajectoryFocus } = opts;
+  const {
+    navRef,
+    focusInspector,
+    exitTrajectoryFocus,
+    paletteOpen = false,
+    openPalette,
+    closePalette,
+  } = opts;
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      const isPaletteToggle = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k';
+      if (isPaletteToggle && openPalette && closePalette) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (paletteOpen) closePalette();
+        else openPalette();
+        return;
+      }
+
       if (e.key === 'Escape') {
+        if (paletteOpen && closePalette) {
+          e.preventDefault();
+          e.stopPropagation();
+          closePalette();
+          return;
+        }
         if (exitTrajectoryFocus && exitTrajectoryFocus()) {
           e.preventDefault();
           e.stopPropagation();
@@ -31,6 +56,7 @@ export function useArchiveKeys(opts: UseArchiveKeysOptions): void {
         return;
       }
 
+      if (paletteOpen) return;
       if (isTypingTarget(e.target)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
@@ -57,8 +83,15 @@ export function useArchiveKeys(opts: UseArchiveKeysOptions): void {
       }
     }
 
-    // Capture so `/` reaches us before Deck's focus-dock handler.
+    // Capture so `/` and ⌘K reach us before Deck's handlers.
     document.addEventListener('keydown', onKeyDown, true);
     return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [navRef, focusInspector, exitTrajectoryFocus]);
+  }, [
+    navRef,
+    focusInspector,
+    exitTrajectoryFocus,
+    paletteOpen,
+    openPalette,
+    closePalette,
+  ]);
 }

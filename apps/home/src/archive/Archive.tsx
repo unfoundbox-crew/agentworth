@@ -1,13 +1,17 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SessionList, type ShellNav } from './shell/SessionList';
 import { InspectorPane } from './shell/InspectorPane';
 import { Rail, type RailViewId } from './shell/Rail';
 import { CoveragePane } from './shell/CoveragePane';
 import { ArchaeologyPane } from './shell/ArchaeologyPane';
+import { OverviewPane } from './shell/OverviewPane';
+import { ExportsPane } from './shell/ExportsPane';
+import { CommandPalette } from './shell/CommandPalette';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useArchiveKeys } from './useArchiveKeys';
 import './archive-shell.css';
 import './panes.css';
+import './widgets.css';
 import './list.css';
 import './inspector.css';
 import './trajectory.css';
@@ -19,22 +23,24 @@ export interface ArchiveProps {
   onNavigate: (appPath: string) => void;
 }
 
+const TOAST_DURATION_MS = 1800;
+
 /**
  * Archive phase — session list + inspector inside the deck shell, plus the
- * P3 rail views that used to live only on `apps/dashboard`.
- *
- * P3 (this slice): Coverage + Archaeology are live. Overview / Exports rail
- * buttons are present for parity with the dashboard rail and show an honest
- * placeholder until the next implement PR (FleetStrip/VerdictBoard share and
- * ExportModal). Command palette stays follow-up. Do not delete dashboard;
- * do not flip serve root (see `docs/specs/app-merge-p3-parity.md`).
+ * P3 rail views (Overview / Coverage / Archaeology / Exports) and command
+ * palette. Shared twins live in `packages/shell` (TrajectoryScrubber,
+ * OutcomeLadder). Do not delete `apps/dashboard`; do not flip serve root
+ * (see `docs/specs/app-merge-p3-parity.md`).
  */
 export function Archive({ sessionId, onNavigate }: ArchiveProps) {
   const [liveTail, setLiveTail] = useState(false);
   const [trajectoryFocused, setTrajectoryFocused] = useState(false);
   const [activeView, setActiveView] = useState<RailViewId>('sessions');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const navRef = useRef<ShellNav | null>(null);
   const inspectorRegionRef = useRef<HTMLDivElement>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
   const exitTrajectoryFocus = useCallback(() => {
     if (!trajectoryFocused) return false;
@@ -46,10 +52,29 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
     inspectorRegionRef.current?.focus();
   }, []);
 
+  const openPalette = useCallback(() => setPaletteOpen(true), []);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  const toggleLiveTail = useCallback(() => setLiveTail((v) => !v), []);
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToastMessage(null), TOAST_DURATION_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
   useArchiveKeys({
     exitTrajectoryFocus,
     navRef,
     focusInspector,
+    paletteOpen,
+    openPalette,
+    closePalette,
   });
 
   return (
@@ -61,8 +86,8 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
           type="button"
           className="livetail-btn"
           aria-pressed={liveTail}
-          onClick={() => setLiveTail((v) => !v)}
-          title="Live tail (stream not yet wired in the deck archive)"
+          onClick={toggleLiveTail}
+          title="Live tail (SSE follow-up — dashboard #213 is on main; archive wiring next)"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -88,8 +113,27 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
           />
           Live Tail
         </button>
+        <button
+          type="button"
+          className="kbd-chip"
+          onClick={openPalette}
+          title="Open command palette"
+          style={{
+            appearance: 'none',
+            border: '0.5px solid var(--mv-border)',
+            borderRadius: 6,
+            background: 'transparent',
+            color: 'var(--mv-muted)',
+            fontSize: 10,
+            padding: '4px 8px',
+            cursor: 'pointer',
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          ⌘K
+        </button>
         <span className="archive-topbar-hint">
-          <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>/</kbd> filter · <kbd>esc</kbd> leave
+          <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>/</kbd> filter · <kbd>⌘K</kbd> palette · <kbd>esc</kbd> leave
         </span>
       </div>
 
@@ -124,6 +168,17 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
               </ErrorBoundary>
             </div>
           </>
+        ) : activeView === 'overview' ? (
+          <div className="archive-view-fill">
+            <ErrorBoundary label="Overview">
+              <OverviewPane
+                onOpenSession={(id) => {
+                  setActiveView('sessions');
+                  onNavigate(`/s/${encodeURIComponent(id)}`);
+                }}
+              />
+            </ErrorBoundary>
+          </div>
         ) : activeView === 'coverage' ? (
           <div className="archive-view-fill">
             <ErrorBoundary label="Coverage">
@@ -138,15 +193,25 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
           </div>
         ) : (
           <div className="archive-view-fill">
-            <div className="view-region">
-              <div className="shell-inspector-empty">
-                {activeView === 'overview'
-                  ? 'Overview (VerdictBoard / FleetStrip) lands in the next P3 implement PR — Coverage and Archaeology are live on this rail.'
-                  : 'Exports lands in the next P3 implement PR — pick Coverage or Archaeology on the rail, or return to Sessions.'}
-              </div>
-            </div>
+            <ErrorBoundary label="Exports">
+              <ExportsPane sessionId={sessionId} />
+            </ErrorBoundary>
           </div>
         )}
+      </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={closePalette}
+        liveTail={liveTail}
+        onToggleLiveTail={toggleLiveTail}
+        sessionId={sessionId}
+        showToast={showToast}
+        onNavigateView={setActiveView}
+      />
+
+      <div className={`toast${toastMessage ? ' show' : ''}`} role="status" aria-live="polite">
+        {toastMessage}
       </div>
     </div>
   );

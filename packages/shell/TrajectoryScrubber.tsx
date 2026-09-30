@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { NormalizedEvent } from '../types';
-import { EventGroup, getEventGroup } from './EventDetail';
-import { Axis, buildAxis, formatDuration, formatRange } from '../utils/timeAxis';
+import { NormalizedEvent } from './types';
+import { EventGroup, getEventGroup } from './eventGroups';
+import { Axis, buildAxis, formatDuration, formatRange } from './timeAxis';
 
 const ROWS: { key: EventGroup; label: string }[] = [
   { key: 'messages', label: 'Msgs' },

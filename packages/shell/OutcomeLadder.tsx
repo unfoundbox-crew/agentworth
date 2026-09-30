@@ -1,5 +1,5 @@
-import { OutcomeEvidence, OutcomeKind } from '../types';
-import { IconVerified, IconUnflown } from './dsIcons';
+import { OutcomeEvidence, OutcomeKind } from './types';
+import { IconVerified, IconUnflown } from './ladderIcons';
 
 export interface LadderRungDef {
   level: 1 | 2 | 3 | 4 | 5;

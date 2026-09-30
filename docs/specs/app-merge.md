@@ -27,7 +27,7 @@ honest here so a later session does not re-open a closed product call.
 | :--- | :--- | :--- |
 | P1 | Path deep links inside the deck: `/home/insights`, `/home/s/<id>` | Merged — #204 |
 | P2 | Archive phase in the deck: `SessionList` + `InspectorPane`, `a` key | Merged — #205 |
-| P3 | Parity / kill duplicates: rail overview, coverage, archaeology, exports, command palette, shared-package dedupe. Archive remains a phase. Detail: `docs/specs/app-merge-p3-parity.md`. | SPEC proposed 2026-09-30; implement not started |
+| P3 | Parity / kill duplicates: rail overview, coverage, archaeology, exports, command palette, shared-package dedupe. Archive remains a phase. Detail: `docs/specs/app-merge-p3-parity.md`. | SPEC on main (#217); implement in flight (#218 + stacked Overview/Exports/palette) |
 | P4 | Flip root / delete `apps/dashboard` | **Blocked** — needs P3 dogfood + COS relaunch |
 | P5 | Follow-ons after P4 (e.g. voice / #144, promote-to-default paths) | **Blocked** on P4 |
 
