@@ -14,12 +14,21 @@ import { ContextComposition } from './ContextComposition';
 import { Compaction } from './Compaction';
 import { ProvenanceBlock } from './ProvenanceBlock';
 import { analyzeComposition } from '../utils/contextComposition';
+import {
+  liveTailBannerText,
+  type LiveTailState,
+} from '../hooks/useLiveTail';
 
 export interface InspectorPaneProps {
   trajectoryFocused?: boolean;
   onToggleTrajectoryFocus?: () => void;
   sessionId: string | null;
+  /** Whether the top-bar Live Tail toggle is on. */
   liveTail: boolean;
+  /** Live SSE state for the banner; ignored when liveTail is false. */
+  liveTailStream?: LiveTailState;
+  /** Forwarded into the empty-state OverviewPane fleet strip. */
+  liveTailRefreshSignal?: number;
 }
 
 const DASH = '—';
@@ -37,7 +46,14 @@ function collectChangedFiles(trace: AgentWorthTrace): string[] {
   return Array.from(seen);
 }
 
-export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggleTrajectoryFocus }: InspectorPaneProps) {
+export function InspectorPane({
+  sessionId,
+  liveTail,
+  liveTailStream,
+  liveTailRefreshSignal = 0,
+  trajectoryFocused,
+  onToggleTrajectoryFocus,
+}: InspectorPaneProps) {
   const { sessions } = useSessions();
   // Fetches the first 500 events for a fast paint, then pages the rest in
   // from /events in the background (#72) — see the hook for the two-phase
@@ -63,7 +79,7 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
     // item nobody would think to click first.
     return (
       <section className="shell-inspector-pane" tabIndex={-1}>
-        <OverviewPane />
+        <OverviewPane liveTailRefreshSignal={liveTailRefreshSignal} />
         <p className="shell-inspector-empty">
           Select a session on the left, or press <kbd>j</kbd> to start.
         </p>
@@ -113,9 +129,19 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
       </div>
 
       {liveTail && (
-        <div className="shell-livetail-banner">
-          <span className="shell-livetail-dot" />
-          Live tail — awaiting stream, not yet wired.
+        <div
+          className={
+            'shell-livetail-banner' +
+            (liveTailStream?.status === 'open' ? ' is-live' : '') +
+            (liveTailStream?.status === 'error' ? ' is-error' : '')
+          }
+          role="status"
+          aria-live="polite"
+        >
+          <span className="shell-livetail-dot" aria-hidden="true" />
+          {liveTailStream
+            ? liveTailBannerText(liveTailStream)
+            : 'Live tail — connecting…'}
         </div>
       )}
 

@@ -108,7 +108,7 @@ function summarizeLatestDay(usage: UsageResponse): TodaySpend | null {
  * Polling pauses while the tab is hidden and refetches immediately on return,
  * and a failed refresh keeps the last good data rather than blanking the strip.
  */
-export function useFleet(enabled: boolean): FleetState {
+export function useFleet(enabled: boolean, refreshSignal = 0): FleetState {
   const [state, setState] = useState<FleetState>({
     running: [],
     mtimeAvailable: false,
@@ -185,6 +185,13 @@ export function useFleet(enabled: boolean): FleetState {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [enabled, poll]);
+
+  // Live-tail SSE bumps refreshSignal so the strip re-reads without waiting
+  // for the 30s poll — observation, not a redesign of the chips themselves.
+  useEffect(() => {
+    if (!enabled || refreshSignal === 0) return;
+    void poll();
+  }, [enabled, refreshSignal, poll]);
 
   return state;
 }

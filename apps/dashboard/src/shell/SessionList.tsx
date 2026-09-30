@@ -665,7 +665,7 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
         <span className="shell-hint">
           <kbd>esc</kbd> back
         </span>
-        {liveTail && <span className="shell-hint shell-hint-live">live tail on</span>}
+        {liveTail && <span className="shell-hint shell-hint-live">live tail</span>}
       </div>
 
       {listWidth.collapsed ? (

@@ -9,6 +9,12 @@ export interface FleetStripProps {
    * and plain navigation is enough.
    */
   onOpenSession?: (sessionId: string) => void;
+  /**
+   * Bumped by the live-tail SSE hook when a watched session file changes, so
+   * the strip refetches instead of waiting for its 30s poll. Optional — the
+   * strip still works on poll alone when live tail is off.
+   */
+  refreshSignal?: number;
 }
 
 const MAX_CHIPS = 8;
@@ -23,13 +29,13 @@ function relativeAge(secs: number): string {
  * What is running, and what it is costing. Two lines, above the aggregate
  * widgets.
  *
- * Everything here is inferred from when a session file was last written, not
- * observed from a running process — there is no watcher and no stream. The
- * wording, the dashed chip borders and the tooltips all say that rather than
- * implying certainty the data does not carry.
+ * Everything here is still inferred from when a session file was last written,
+ * not from a process table — the chips stay dashed. When live tail is on, an
+ * SSE change only accelerates the next poll; it does not turn inference into
+ * observation. The wording and tooltips keep saying that.
  */
-export function FleetStrip({ onOpenSession }: FleetStripProps) {
-  const fleet = useFleet(true);
+export function FleetStrip({ onOpenSession, refreshSignal = 0 }: FleetStripProps) {
+  const fleet = useFleet(true, refreshSignal);
   const { navigate } = useRoute();
   const open = (id: string) =>
     onOpenSession ? onOpenSession(id) : navigate(`/s/${encodeURIComponent(id)}`);
