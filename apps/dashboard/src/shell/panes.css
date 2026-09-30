@@ -402,6 +402,22 @@
   background: var(--mv-faint);
   flex: 0 0 auto;
 }
+.shell-root .shell-livetail-banner.is-live {
+  border-style: solid;
+  border-color: var(--mv-accent-border);
+  color: var(--mv-ink);
+}
+.shell-root .shell-livetail-banner.is-live .shell-livetail-dot {
+  background: var(--mv-success);
+  animation: shell-pulse-dot 1.4s ease-in-out infinite;
+}
+.shell-root .shell-livetail-banner.is-error {
+  border-color: var(--mv-warn);
+  color: var(--mv-warn);
+}
+.shell-root .shell-livetail-banner.is-error .shell-livetail-dot {
+  background: var(--mv-warn);
+}
 
 .shell-root .shell-section-title {
   font-size: 10.5px;

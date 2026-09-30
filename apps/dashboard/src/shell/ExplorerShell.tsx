@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { runScan } from '../services/api';
 import { useRoute } from '../hooks/useRoute';
 import { useShellKeys } from '../hooks/useShellKeys';
+import { useLiveTail } from '../hooks/useLiveTail';
 import type { ShellNav } from '../hooks/useShellKeys';
 import { Rail } from './Rail';
 import type { RailViewId } from './Rail';
@@ -36,6 +37,7 @@ const TOAST_DURATION_MS = 1800;
 export function ExplorerShell() {
   const { sessionId, navigate } = useRoute();
   const [liveTail, setLiveTail] = useState(false);
+  const liveTailStream = useLiveTail(liveTail);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<RailViewId>('sessions');
@@ -134,7 +136,17 @@ export function ExplorerShell() {
           type="button"
           className="livetail-btn"
           aria-pressed={liveTail}
+          data-stream={liveTail ? liveTailStream.status : 'idle'}
           onClick={toggleLiveTail}
+          title={
+            liveTail
+              ? liveTailStream.status === 'open'
+                ? 'Live tail connected to /api/live-tail'
+                : liveTailStream.status === 'error'
+                  ? 'Live tail stream interrupted — retrying'
+                  : 'Connecting to /api/live-tail…'
+              : 'Watch session files via /api/live-tail'
+          }
         >
           <span className="livetail-dot" aria-hidden="true" />
           Live Tail
@@ -162,7 +174,7 @@ export function ExplorerShell() {
                       navRef.current = nav;
                     }}
                     liveTail={liveTail}
-                    reloadSignal={scanSignal}
+                    reloadSignal={scanSignal + liveTailStream.changeEpoch}
                   />
                 </ErrorBoundary>
               </div>
@@ -173,6 +185,8 @@ export function ExplorerShell() {
                 <InspectorPane
                   sessionId={sessionId}
                   liveTail={liveTail}
+                  liveTailStream={liveTailStream}
+                  liveTailRefreshSignal={liveTailStream.changeEpoch}
                   trajectoryFocused={trajectoryFocused}
                   onToggleTrajectoryFocus={() => setTrajectoryFocused((v) => !v)}
                 />
@@ -186,6 +200,7 @@ export function ExplorerShell() {
                 setActiveView('sessions');
                 navigate(`/s/${encodeURIComponent(id)}`);
               }}
+              liveTailRefreshSignal={liveTailStream.changeEpoch}
             />
           </ErrorBoundary>
         ) : activeView === 'coverage' ? (

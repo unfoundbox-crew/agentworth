@@ -111,6 +111,16 @@
   animation: shell-pulse-dot 1.4s ease-in-out infinite;
 }
 
+.shell-root .livetail-btn[data-stream='error'] .livetail-dot {
+  background: var(--mv-warn);
+  animation: none;
+}
+
+.shell-root .livetail-btn[data-stream='connecting'] .livetail-dot {
+  background: var(--mv-accent);
+  animation: shell-pulse-dot 1.4s ease-in-out infinite;
+}
+
 @keyframes shell-pulse-dot {
   0%,
   100% {

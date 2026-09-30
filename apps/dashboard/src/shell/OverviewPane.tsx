@@ -13,9 +13,11 @@ import { FleetStrip } from './FleetStrip';
 export interface OverviewPaneProps {
   /** Opens a session in the inspector; the shell switches the rail view. */
   onOpenSession?: (sessionId: string) => void;
+  /** Forwarded to FleetStrip so live-tail SSE can refresh the running chips. */
+  liveTailRefreshSignal?: number;
 }
 
-export function OverviewPane({ onOpenSession }: OverviewPaneProps) {
+export function OverviewPane({ onOpenSession, liveTailRefreshSignal = 0 }: OverviewPaneProps) {
   const [stats, setStats] = useState<AggregateStats>(EMPTY_AGGREGATE_STATS);
   const [loading, setLoading] = useState(true);
 
@@ -37,7 +39,7 @@ export function OverviewPane({ onOpenSession }: OverviewPaneProps) {
     <div className="view-region">
       {loading && <div className="shell-inspector-loading">Loading overview…</div>}
       <div className="view-stack">
-        <FleetStrip onOpenSession={onOpenSession} />
+        <FleetStrip onOpenSession={onOpenSession} refreshSignal={liveTailRefreshSignal} />
         <VerdictBoard stats={stats} />
         <CacheCliffWidget />
       </div>
