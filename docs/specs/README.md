@@ -7,6 +7,7 @@ What is left and in what order, with the lane spec for building it: `docs/ROADMA
 | Spec | Status | PR |
 | :--- | :--- | :--- |
 | `agent-bus.md` | proposed 2026-09-07, not built | — |
+| `app-merge.md` | product call locked 2026-09-30; P1+P2 merged; P4/P5 blocked | #204, #205 |
 | `archie-bench.md` | built (the local table) | #124 |
 | `archie.md` | proposed (umbrella spec) | — |
 | `asks.md` | built | #97 |

@@ -21,3 +21,12 @@ the deck itself, never for a user who just wants to see it.
 Rebuilding after a change to this app: `npm run build` here, then rebuild `archie` (`cargo
 build -p agentworth-cli --bin archie`) so the new `dist/` gets embedded. If `dist/` was
 never built, `archie home` fails loudly rather than serving a blank page.
+
+## Archive product call (through P3)
+
+The archive (session list + inspector) is a **phase** of this deck (`a` /
+`/home/s/<id>`), not a cue to remove `apps/dashboard`. Keep that shape through
+**P3**. Do not delete `apps/dashboard` or flip the binary's serve root until
+after P3 dogfood and COS relaunches **P4**. P4 and P5 are blocked until then.
+
+Phases, receipts, and the closed early-delete PR: `docs/specs/app-merge.md`.
