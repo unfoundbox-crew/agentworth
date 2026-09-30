@@ -29,6 +29,8 @@ export default defineConfig({
     alias: {
       '@ui': path.resolve(__dirname, '../../packages/ui'),
       '@shell': path.resolve(__dirname, '../../packages/shell'),
+      // Shared shell sources declare lucide-react as a peer; resolve it from this app's install.
+      'lucide-react': path.resolve(__dirname, 'node_modules/lucide-react'),
       // Single copy of the Rust-generated API contract fixtures; mirrors the
       // tsconfig.json "@api-fixtures/*" path.
       '@api-fixtures': path.resolve(__dirname, '../cli/tests/fixtures/api-contract'),

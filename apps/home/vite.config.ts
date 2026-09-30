@@ -17,6 +17,8 @@ export default defineConfig({
     alias: {
       '@ui': path.resolve(__dirname, '../../packages/ui'),
       '@shell': path.resolve(__dirname, '../../packages/shell'),
+      // Shared shell sources declare lucide-react as a peer; resolve it from this app's install.
+      'lucide-react': path.resolve(__dirname, 'node_modules/lucide-react'),
     },
   },
   server: {
