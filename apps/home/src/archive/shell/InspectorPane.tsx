@@ -57,8 +57,9 @@ export function InspectorPane({ sessionId, liveTail, trajectoryFocused, onToggle
   );
 
   if (!sessionId) {
-    // P2: no OverviewPane (VerdictBoard / FleetStrip stay on the dashboard
-    // until P3 parity). Empty inspector is an honest prompt to pick a row.
+    // Empty inspector: pick a session. Overview rail view is a follow-up
+    // P3 PR (VerdictBoard / FleetStrip share); Coverage / Archaeology are
+    // on the archive rail now (docs/specs/app-merge-p3-parity.md).
     return (
       <section className="shell-inspector-pane" tabIndex={-1}>
         <p className="shell-inspector-empty">

@@ -1,6 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
 import { SessionList, type ShellNav } from './shell/SessionList';
 import { InspectorPane } from './shell/InspectorPane';
+import { Rail, type RailViewId } from './shell/Rail';
+import { CoveragePane } from './shell/CoveragePane';
+import { ArchaeologyPane } from './shell/ArchaeologyPane';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useArchiveKeys } from './useArchiveKeys';
 import './archive-shell.css';
 import './panes.css';
@@ -16,15 +20,19 @@ export interface ArchiveProps {
 }
 
 /**
- * Archive phase — session list + inspector inside the deck shell.
+ * Archive phase — session list + inspector inside the deck shell, plus the
+ * P3 rail views that used to live only on `apps/dashboard`.
  *
- * Port of the dashboard explorer's sessions view (SessionList + InspectorPane),
- * wired to P1's `/s/<id>` path. Rail / overview / coverage / archaeology /
- * exports and the command palette stay on the dashboard until P3.
+ * P3 (this slice): Coverage + Archaeology are live. Overview / Exports rail
+ * buttons are present for parity with the dashboard rail and show an honest
+ * placeholder until the next implement PR (FleetStrip/VerdictBoard share and
+ * ExportModal). Command palette stays follow-up. Do not delete dashboard;
+ * do not flip serve root (see `docs/specs/app-merge-p3-parity.md`).
  */
 export function Archive({ sessionId, onNavigate }: ArchiveProps) {
   const [liveTail, setLiveTail] = useState(false);
   const [trajectoryFocused, setTrajectoryFocused] = useState(false);
+  const [activeView, setActiveView] = useState<RailViewId>('sessions');
   const navRef = useRef<ShellNav | null>(null);
   const inspectorRegionRef = useRef<HTMLDivElement>(null);
 
@@ -54,7 +62,7 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
           className="livetail-btn"
           aria-pressed={liveTail}
           onClick={() => setLiveTail((v) => !v)}
-          title="Live tail (stream not yet wired)"
+          title="Live tail (stream not yet wired in the deck archive)"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -86,27 +94,59 @@ export function Archive({ sessionId, onNavigate }: ArchiveProps) {
       </div>
 
       <div className="shell-body">
-        {!trajectoryFocused && (
-          <div className="list-region">
-            <SessionList
-              selectedId={sessionId}
-              onSelect={(id) => onNavigate(`/s/${encodeURIComponent(id)}`)}
-              registerNav={(nav) => {
-                navRef.current = nav;
-              }}
-              liveTail={liveTail}
-            />
+        <Rail activeView={activeView} onSelect={setActiveView} />
+
+        {activeView === 'sessions' ? (
+          <>
+            {!trajectoryFocused && (
+              <div className="list-region">
+                <ErrorBoundary label="Session list">
+                  <SessionList
+                    selectedId={sessionId}
+                    onSelect={(id) => onNavigate(`/s/${encodeURIComponent(id)}`)}
+                    registerNav={(nav) => {
+                      navRef.current = nav;
+                    }}
+                    liveTail={liveTail}
+                  />
+                </ErrorBoundary>
+              </div>
+            )}
+
+            <div className="inspector-region" ref={inspectorRegionRef} tabIndex={-1}>
+              <ErrorBoundary label="Session inspector">
+                <InspectorPane
+                  sessionId={sessionId}
+                  liveTail={liveTail}
+                  trajectoryFocused={trajectoryFocused}
+                  onToggleTrajectoryFocus={() => setTrajectoryFocused((v) => !v)}
+                />
+              </ErrorBoundary>
+            </div>
+          </>
+        ) : activeView === 'coverage' ? (
+          <div className="archive-view-fill">
+            <ErrorBoundary label="Coverage">
+              <CoveragePane />
+            </ErrorBoundary>
+          </div>
+        ) : activeView === 'archaeology' ? (
+          <div className="archive-view-fill">
+            <ErrorBoundary label="Archaeology">
+              <ArchaeologyPane />
+            </ErrorBoundary>
+          </div>
+        ) : (
+          <div className="archive-view-fill">
+            <div className="view-region">
+              <div className="shell-inspector-empty">
+                {activeView === 'overview'
+                  ? 'Overview (VerdictBoard / FleetStrip) lands in the next P3 implement PR — Coverage and Archaeology are live on this rail.'
+                  : 'Exports lands in the next P3 implement PR — pick Coverage or Archaeology on the rail, or return to Sessions.'}
+              </div>
+            </div>
           </div>
         )}
-
-        <div className="inspector-region" ref={inspectorRegionRef} tabIndex={-1}>
-          <InspectorPane
-            sessionId={sessionId}
-            liveTail={liveTail}
-            trajectoryFocused={trajectoryFocused}
-            onToggleTrajectoryFocus={() => setTrajectoryFocused((v) => !v)}
-          />
-        </div>
       </div>
     </div>
   );

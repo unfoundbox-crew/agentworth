@@ -65,3 +65,76 @@
   border-radius: 3px;
   color: var(--mv-muted);
 }
+
+/* rail — ported from apps/dashboard/src/shell/shell.css for P3 parity */
+.shell-root.archive-phase .rail {
+  width: 52px;
+  flex: 0 0 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 0;
+  border-right: 1px solid var(--mv-border);
+  background: var(--mv-ground);
+}
+.shell-root.archive-phase .rail-btn {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mv-muted);
+  transition: background 140ms ease-out, color 140ms ease-out;
+  cursor: pointer;
+}
+.shell-root.archive-phase .rail-btn svg {
+  width: 20px;
+  height: 20px;
+}
+.shell-root.archive-phase .rail-btn:hover {
+  background: var(--mv-surface);
+  color: var(--mv-text);
+}
+.shell-root.archive-phase .rail-btn[aria-current='true'] {
+  background: var(--mv-accent-soft);
+  color: var(--mv-accent);
+  border-color: var(--mv-accent-border);
+}
+.shell-root.archive-phase .rail-btn[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  background: var(--mv-ink);
+  color: var(--mv-ground);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 5px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 40;
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+}
+.shell-root.archive-phase .rail-btn:hover::after,
+.shell-root.archive-phase .rail-btn:focus-visible::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+.shell-root.archive-phase .rail-spacer {
+  flex: 1 1 auto;
+}
+/* Non-sessions views fill the body beside the rail */
+.shell-root.archive-phase .archive-view-fill {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+}
