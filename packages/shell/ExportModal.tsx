@@ -1,11 +1,4 @@
-import React, { useState, useMemo } from 'react';
-import {
-  AgentWorthTrace,
-} from '../types';
-import {
-  performClientSideRedaction,
-  convertToAtif,
-} from '../services/api';
+import { useState, useMemo } from 'react';
 import {
   X,
   Download,
@@ -14,8 +7,19 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 
-interface ExportModalProps {
-  trace: AgentWorthTrace;
+/** Minimal trace shape the modal needs; apps pass their AgentWorthTrace. */
+export interface ExportTrace {
+  session_id: string;
+}
+
+export type RedactionResult<T extends ExportTrace> = {
+  redactedTrace: T;
+  redactedCount: number;
+  categories: Record<string, number>;
+};
+
+export interface ExportModalProps<T extends ExportTrace = ExportTrace> {
+  trace: T;
   onClose?: () => void;
   /**
    * Renders as a plain pane (no fixed backdrop, no close button) instead of
@@ -24,9 +28,19 @@ interface ExportModalProps {
    * flow (SessionInspector's "Export" button) keeps the modal presentation.
    */
   embedded?: boolean;
+  /** App-owned helper — home/dashboard keep their api.ts copies until a later extract. */
+  performClientSideRedaction: (trace: T) => RedactionResult<T>;
+  /** App-owned ATIF converter. */
+  convertToAtif: (trace: T) => unknown;
 }
 
-export const ExportModal: React.FC<ExportModalProps> = ({ trace, onClose, embedded = false }) => {
+export function ExportModal<T extends ExportTrace>({
+  trace,
+  onClose,
+  embedded = false,
+  performClientSideRedaction,
+  convertToAtif,
+}: ExportModalProps<T>) {
   const [format, setFormat] = useState<'atif' | 'raw'>('atif');
   const [redact, setRedact] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
@@ -208,4 +222,4 @@ export const ExportModal: React.FC<ExportModalProps> = ({ trace, onClose, embedd
       </div>
     </div>
   );
-};
+}

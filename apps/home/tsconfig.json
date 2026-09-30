@@ -2,7 +2,11 @@
   "compilerOptions": {
     "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
@@ -16,13 +20,34 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@ui/*": ["../../packages/ui/*"],
-      "@shell/*": ["../../packages/shell/*"],
-      "react": ["./node_modules/@types/react"],
-      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
+      "@ui/*": [
+        "../../packages/ui/*"
+      ],
+      "@shell/*": [
+        "../../packages/shell/*"
+      ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react/jsx-runtime": [
+        "./node_modules/@types/react/jsx-runtime"
+      ],
+      "lucide-react": [
+        "./node_modules/lucide-react"
+      ]
     }
   },
-  "include": ["src", "../../packages/ui", "../../packages/shell"],
-  "exclude": ["src/mock"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": [
+    "src",
+    "../../packages/ui",
+    "../../packages/shell"
+  ],
+  "exclude": [
+    "src/mock"
+  ],
+  "references": [
+    {
+      "path": "./tsconfig.node.json"
+    }
+  ]
 }

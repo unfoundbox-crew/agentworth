@@ -14,3 +14,12 @@ export type { TrajectoryScrubberProps } from './TrajectoryScrubber';
 export type { OutcomeKind, OutcomeEvidence, NormalizedEvent } from './types';
 export type { EventGroup } from './eventGroups';
 export { getEventGroup } from './eventGroups';
+
+export { CacheCliffWidget } from './CacheCliffWidget';
+export { ExportModal } from './ExportModal';
+export type {
+  ExportModalProps,
+  ExportTrace,
+  RedactionResult,
+} from './ExportModal';
+export { formatTokens, formatUSD } from './formatters';

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { AgentWorthTrace } from '../types';
 import { fetchTraceDetail } from '../services/api';
-import { ExportModal } from '../components/ExportModal';
+import { ExportModal } from '@shell/ExportModal';
+import { performClientSideRedaction, convertToAtif } from '../services/api';
 
 export interface ExportsPaneProps {
   /** The currently selected session (Sessions view's selection), if any. */
@@ -56,7 +57,12 @@ export function ExportsPane({ sessionId }: ExportsPaneProps) {
 
   return (
     <div className="view-region view-region-flush">
-      <ExportModal trace={trace} embedded />
+      <ExportModal
+        trace={trace}
+        embedded
+        performClientSideRedaction={performClientSideRedaction}
+        convertToAtif={convertToAtif}
+      />
     </div>
   );
 }
