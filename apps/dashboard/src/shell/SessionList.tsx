@@ -394,7 +394,7 @@ export function SessionList({ selectedId, onSelect, registerNav, liveTail, reloa
       className={`shell-list-pane${listWidth.collapsed ? ' is-collapsed' : ''}`}
       style={
         listWidth.collapsed
-          ? { width: 0, flexBasis: 0 }
+          ? { width: 44, flexBasis: 44, minWidth: 44 }
           : { width: listWidth.width, flexBasis: listWidth.width }
       }
     >
