@@ -816,12 +816,17 @@
 }
 
 /* ---------------- collapsed session list ----------------
-   Collapsing keeps the pane in the tree at zero width rather than unmounting
-   it: the list keeps its scroll position, its filters and its selection, so
-   reopening returns to exactly where you were. */
+   Collapsing keeps the pane in the tree as a narrow rail rather than
+   unmounting it: the list keeps its scroll position, its filters and its
+   selection, so reopening returns to exactly where you were. A zero-width
+   pane with overflow:hidden (and an overflow:hidden .shell-root ancestor)
+   clipped the restore control so a stuck-collapsed sidebar could not be
+   reopened — keep a rail wide enough for the button. */
 .shell-root .shell-list-pane.is-collapsed {
-  border-right: 0;
-  overflow: hidden;
+  border-right: 1px solid var(--mv-border-soft);
+  overflow: visible;
+  /* Rail width matches the restore control; flex basis is set inline too. */
+  min-width: 44px;
 }
 .shell-root .shell-list-pane.is-collapsed > *:not(.shell-list-restore) {
   display: none;
@@ -832,14 +837,15 @@
   position: absolute;
   top: 12px;
   left: 0;
+  right: 0;
   z-index: 4;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 6px 8px 6px 6px;
+  padding: 6px 4px;
   border: 1px solid var(--mv-border);
-  border-left: 0;
-  border-radius: 0 8px 8px 0;
+  border-radius: 8px;
   background: var(--mv-surface);
   color: var(--mv-muted);
   cursor: pointer;
