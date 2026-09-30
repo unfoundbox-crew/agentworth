@@ -1,295 +1,177 @@
 # Capability matrix
 
 Internal. Not the README, not the site. This is the honest version of the
-adapter count, measured on one machine 2026-09-12.
+adapter count, measured on one machine **2026-09-30**.
 
 The README says twenty adapters. That is true and it is not the number anyone
-should plan against. Nine of them have ever produced a row here (`antigravity`
-is a tenth name that produces rows but isn't one of the twenty — see below),
-two produce tokens, two produce any outcome at all, and one produces
-everything.
+should plan against. A handful produce real rows here; depth varies sharply;
+one product identity (`gemini`) folds two index names.
 
-Every count on this page is from the index as it stood on 2026-09-12,
-re-measured against `archie agent list --json` and the live SQLite index
-(this machine's index carries every session, not a fixed snapshot copy, so
-"as it stood" moves every scan). The Codex fix (#116) and the v0.1.23 token
-fix (#163) both predate this measurement and are reflected in the numbers
-below — codex tokens are no longer near-zero, see "Self-reported, and where
-it disagrees".
+Every count on this page is from a forced tip scan on that date, against the
+live SQLite index (not a fixed snapshot copy). Tip binary **0.1.28**. Scan:
+
+    archie scan --force --plain
+    # EXIT 0 · tip 0.1.28 · 7,260 sessions · index ~/.agentworth/agentworth.db
 
 ## What was measured, and against what
 
-Two sources, cross-checked.
+**Self-reported.** Adapter `capabilities()` / `PARSER_VERSION` on tip, and
+what `GET /api/matrix` exposes via `adapter_display_meta` (same flags the
+adapters claim for prompts/tokens/tools/shell/outcomes). Codex is
+`PARSER_VERSION` **4** (prompts, tools, shell, outcomes). Pi is
+`PARSER_VERSION` **2** (tools, tokens, outcomes — not events-only). Gemini /
+Antigravity (`agy`) is `PARSER_VERSION` **4** (tokens real on agy blobs).
 
-**Self-reported.** `archie agent list --json` on the installed 0.1.23 binary.
-It lists **20 adapters**, matching the count at the previous measurement —
-`crates/adapters/src/` still holds `lib.rs` (module root) and `mcp.rs`
-(tool-name normalizer, not an adapter) alongside the 20. Eleven report
-`is_detected: true`, same count as before, though the adapter mix behind that
-count was not individually re-diffed.
+**Observed.** Live index after that scan. Two population bars matter and they
+are not the same:
 
-**Observed.** The live index, not a copy: 6,054 session rows, 4,800 non-stub
-(`total_events > 1 AND total_tokens > 0`), 34,722 `file_modifications` rows,
-spanning 2026-02-15 to 2026-09-12 (one row carries a pre-1970 epoch
-timestamp and is excluded from that range as a bad value — NOT RE-MEASURED
-further, i.e. its cause was not chased down).
+| bar | predicate |
+| :--- | :--- |
+| **in_db** | every row in `sessions` for that `adapter` value |
+| **API non-stub** | `kind = 'conversation' AND total_events > 1 AND (total_tokens > 0 OR tool_calls_count > 0)` — `NON_STUB_SQL_PREDICATE` in storage; what `/api/matrix` `sessions_count`, `/api/stats`, and default `/api/traces` use |
 
-```sql
-SELECT adapter, COUNT(*) n,
-  SUM(total_events > 1) ev, SUM(total_tokens > 0) tok,
-  ROUND(AVG(total_events),1) avg_ev,
-  SUM(tool_calls_count > 0) tools,
-  SUM(primary_outcome IS NOT NULL) outcome,
-  SUM(primary_outcome IN ('test_or_build_passed','commit_observed',
-      'ci_or_deployment_verified')) verified,
-  SUM(composite_score IS NOT NULL) scored,
-  SUM(prompt_preview IS NOT NULL) preview
-FROM sessions GROUP BY adapter ORDER BY n DESC;
-```
+The 2026-09-12 matrix used `total_events > 1 AND total_tokens > 0` as its
+"non-stub" bar. That is **stale vs the API**: a multi-event session with tools
+but zero tokens now counts as non-stub. Do not compare 09-12 "tokens>0" counts
+to today's API non-stub column as if they were the same filter.
 
-#68 (rejecting non-session files at discovery) is long since merged and this
-is the live index, not a pre-#68 copy — so the "Junk in the index" counts
-below are post-#68 residue, not the pre-#68 baseline.
+## Observed (2026-09-30)
 
-## Observed
+| adapter (index name) | tip reality | in_db → API non-stub | tokens (DB) | notes |
+| :--- | :--- | ---: | ---: | :--- |
+| claude_code | Full pv3 | 4,444 → 4,300 | 66.04B | OK |
+| **codex** | **Deep pv4** — prompts / tools / exec / outcomes | 852 → 803 | 6.46B | 482 tools, 211 outcomes, 747 prompts, 362 exec; 49 API stubs remain in DB |
+| antigravity (agy) | pv4 tokens real | 757 → 667 | 5.49B | 374 rows with `tokens > 0`; **folded into `gemini` in matrix / API identity** (see below) |
+| opencode | Deep pv2 | 468 → 407 | 3.58B | Matrix used to underrate as prompts-only; tip claims and delivers depth |
+| **pi** | **pv2 tools + tokens + outcomes** | 398 → 136 | 1.47B | pv2: 142 rows; pv1 residue: 256 rows at 0 tok; 26 `node_modules` junk under this name |
+| grok | still thin / events | 34 → 0 | 0 | junk roots: marketplace-cache ×3, memtrace ×22 |
+| gemini (CLI) | partial | 50 → 35 | 25.2M | **Separate** from the 757 agy rows; same adapter struct, different product identity |
 
-| adapter | rows | >1 event | tokens | avg ev | tools | any outcome | verified | scored | prompt |
-| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| claude_code | 4,061 | 4,061 | 3,866 | 384.2 | 3,544 | 2,542 | 2,241 | 3,998 | 3,971 |
-| codex | 972 | 972 | 745 | 269.5 | 0 | 0 | 0 | 972 | 0 |
-| antigravity | 530 | 530 | 0 | 124.0 | 449 | 88 | 9 | 476 | 455 |
-| opencode | 206 | 205 | 177 | 203.7 | 159 | 72 | 24 | 206 | 205 |
-| pi | 82 | 43 | 0 | 88.2 | 0 | 0 | 0 | 82 | 5 |
-| cursor | 70 | 62 | 0 | 49.6 | 0 | 0 | 0 | 70 | 0 |
-| gemini | 50 | 44 | 12 | 40.1 | 23 | 0 | 0 | 21 | 11 |
-| hermes | 47 | 47 | 0 | 351.0 | 0 | 0 | 0 | 47 | 0 |
-| grok | 34 | 34 | 0 | 450.5 | 0 | 0 | 0 | 33 | 1 |
-| herdr | 2 | 1 | 0 | 2.0 | 0 | 0 | 0 | 2 | 0 |
+Adapters not listed above (cursor, hermes, herdr, and the zero-row twenty)
+were **not re-counted** this pass — do not copy 09-12 figures as current.
 
-Nine of the twenty adapters appear above. `antigravity` is a tenth name the
-index uses and the matrix does not list. Eleven produced no row at all: aider,
-cline, deepseek, goose, kimi, manus, minimax, openclaw, qwen, windsurf, zhipu.
-Of those, `goose` and `openclaw` report `is_detected: true` and still
-contributed nothing. `herdr` has moved out of this group since the last
-measurement — see the depth-rating note below — but its two rows are
-`fleet_snapshot` kind, not conversations, so it barely counts as "producing a
-row" in the sense every other adapter here does.
+## Gemini / Antigravity dual-name (agy vs gemini)
 
-Compaction is no longer absent from this table. `sessions.compaction_count`
-exists now (#62 landed and this index has it): `claude_code` is the only
-adapter showing any compacted sessions, 25 of its 4,061. Every other adapter
-shows zero — either genuinely uncompacted or, for the lower-volume adapters,
-not enough long sessions to trigger it. `compaction.md`'s own numbers still
-come from parsing raw JSONL directly, not this column.
+One registered adapter (`GeminiAdapter`, `name() = "gemini"`,
+`PARSER_VERSION` 4) writes two `sessions.adapter` identities via
+`detect_product_identity`:
 
-`prompt_preview` is no longer zero in every row — the #47 fix (noted in
-`handoff.md`) has propagated through rescans: 3,971/4,061 claude_code rows,
-455/530 antigravity, 205/206 opencode, 11/50 gemini, 5/82 pi, 1/34 grok carry
-a preview. `codex`, `cursor`, `hermes` and `herdr` are still at zero.
+| identity | what it is | this scan |
+| :--- | :--- | :--- |
+| `antigravity` | Antigravity CLI / IDE (`agy`) brain & conversation stores | 757 in_db → 667 API non-stub · 5.49B tokens · 374 with `tok > 0` |
+| `gemini` | Gemini CLI session files | 50 in_db → 35 API non-stub · 25.2M tokens |
 
-## Self-reported, and where it disagrees
+`identity_names()` returns `["gemini", "antigravity"]`. `/api/matrix` therefore
+shows **one** row (`adapter: "gemini"`, display name "Gemini / Antigravity")
+whose `sessions_count` is the **sum** of both identities under the API
+non-stub predicate, and whose `identities` array lists both names. Joining the
+matrix to the index on `name()` alone still drops every `antigravity` row;
+join on `identities` (or sum both names) instead.
 
-The shipped matrix claims token and outcome extraction for exactly three
-adapters: `claude_code`, `codex`, `gemini`. The index disagrees with two of
-those three.
+Do not treat "gemini matrix claims full extraction" as a claim about Gemini
+CLI alone — the capability flags describe the shared adapter; observed depth
+for CLI (50 → 35, partial) and agy (757 → 667, tokens real) differ.
 
-| adapter | matrix claims tokens | rows with tokens | matrix claims outcomes | rows with outcomes |
-| :--- | :--- | ---: | :--- | ---: |
-| claude_code | yes | 3,866 | yes | 2,241 |
-| codex | yes | 745 | yes | **0** |
-| gemini | yes | **12** | yes | **0** |
-| opencode | **no** | 177 | **no** | 24 |
-| antigravity | not listed at all | 0 | not listed at all | 9 |
+## Self-reported vs tip index (drift closed / still open)
 
-Two of the three original failures are now different shapes, and one is
-unchanged:
+| adapter | tip claims (pv) | 09-12 matrix-doc | 2026-09-30 observed |
+| :--- | :--- | :--- | :--- |
+| claude_code | Full (pv3) | Full | still Full — 4,444 → 4,300 |
+| **codex** | prompts / tools / shell / outcomes (**pv4**) | **STALE:** tools=0, outcomes=0, prompts=0 | **flip:** 482 tools, 211 outcomes, 747 prompts, 362 exec on 852 → 803 |
+| antigravity (agy) | tokens (**pv4**) | Sep-12 tokens 0; Sep-29 note that tokens landed | 5.49B DB tokens; 374 `tok > 0` |
+| opencode | Deep (pv2) | underrated as prompts-only | 468 → 407 · 3.58B |
+| **pi** | tools + tokens + outcomes (**pv2**) | **STALE:** "events only" | not events-only; 398 → 136; pv1 residue (256 @ 0 tok) still dilutes in_db |
+| grok | thin | thin / events | still true — 34 → **0** non-stub; junk roots as above |
+| gemini CLI | shared adapter claims full | claimed full | partial — 50 → 35 · 25.2M; separate from agy |
 
-1. **`codex` claims tokens and, since #116 and rescans, mostly delivers them.**
-   745 of 972 sessions now carry a token total — this is the fix landing, not a
-   new bug. What #116 did not touch is still missing: `tools` is 0 across every
-   codex row and `any outcome` is 0. Tool calls and outcomes live in
-   `response_item` and `event_msg`/`item_completed` records nothing parses yet
-   (see the depth rating below) — the matrix's claim of `outcomes: true` for
-   codex is still wrong, just for a narrower reason than before.
-2. **`gemini` claims full extraction and mostly still produces nothing.** 50
-   rows, 44 with events, 12 now with tokens (up from 0 — not chased down
-   further this pass, flagged NOT RE-MEASURED for root cause), zero outcomes.
-3. **`antigravity` is a real adapter name in the index and is not in the
-   matrix's twenty.** The `gemini` adapter writes rows under both names; the
-   capability table only knows one of them. Any consumer that joins the matrix
-   to the index on adapter name silently drops 530 rows.
-
-`opencode` is still the inverse: the matrix says it extracts nothing beyond
-prompts, and it remains the second-best adapter in the whole index by tokens
-and outcomes. The matrix is a hand-maintained table and it is still drifted
-from the code — codex and gemini's outcome claims are the open drift now,
-not codex's token claim.
+Codex depth flip is the largest honesty correction this pass: tip pv4 reads
+`response_item` / `custom_tool_call` traffic the 09-12 doc said nothing
+parsed yet. Pi is the second: tip pv2 is tools+tokens+outcomes; calling it
+"events only" is wrong. Residual pv1 rows (256 @ 0 tok) and 26
+`node_modules` paths under `pi` explain why in_db (398) is far above API
+non-stub (136).
 
 ## Junk in the index
 
-Two categories of row that are not sessions.
-
-| | rows |
+| | rows (2026-09-30) |
 | :--- | ---: |
-| `source_path` contains `node_modules` | 123 |
-| Resolves to `plugins/cache` via `extract_repository_or_workspace` | NOT RE-MEASURED 2026-09-12 — original figure (1,323) used the Rust helper directly; a `source_path LIKE` approximation gave 127, which is not the same method and isn't reported as a replacement |
+| `source_path` contains `node_modules` | **68** |
 
-Real examples: `.gemini/antigravity-ide/playground/…/node_modules/@tybys/
-wasm-util/dist/tsdoc-metadata.json` indexed as a session, and
-`~/.local/share/opencode/mcp-auth.json` — a credential file — indexed as one.
-The node_modules share of the index is down to 123/6,054 = 2.0% (was 12.8% of
-a much smaller, junk-heavier index). #68 rejects non-session files at
-discovery now, so a full rescan prunes these; the count above still includes
-whatever survived past #68 plus anything indexed before it landed.
+Down from 123 on 2026-09-12. Pi alone still carries 26 of those. Grok's
+non-stub collapse (34 → 0) is dominated by junk roots (marketplace-cache ×3,
+memtrace ×22), not by a thin-but-real conversation population.
 
 ## Exit codes by adapter
 
-A `ShellCommand` with `exit_code: None` says a command was typed. Only `Some(0)`
-says it ran and passed, and that is what rung 3 is built on. So it matters which
-adapters can actually see the result.
+NOT RE-MEASURED 2026-09-30 — left as the earlier raw-transcript measurement
+(Claude Code `is_error` / "Exit code N" envelope; shared backfill for most
+others). See git history of this file for the 2026-09-02 table.
 
-Measured against 20 real Claude Code transcripts (17,981 Bash tool results): no
-transcript carries a numeric exit code field at all. What it carries is the
-harness's pass/fail envelope — `is_error` on every result, plus an "Exit code N"
-line inside 519 of the 659 failures. `crates/adapters/src/exit_status.rs` turns
-that envelope into a code and stitches it onto the command.
-
-NOT RE-MEASURED 2026-09-12 — this is a raw-transcript parse (counting fields
-inside JSONL Bash tool results), not a query the live index or `archie`'s
-CLI/JSON surfaces answer. Left as the 2026-09-02 measurement.
-
-| adapter | exit status in the source format | status |
-| :--- | :--- | :--- |
-| claude_code | `is_error` on every `tool_result`; "Exit code N" in the error text; `toolUseResult` sidecar marks backgrounded and interrupted runs | **read, measured.** Backgrounded and interrupted runs stay `None` — launched is not finished |
-| windsurf | explicit `exit_code` field | read (already did) |
-| aider (JSONL) | explicit `exit_code` field | read (already did) |
-| aider (markdown chat history) | **none** | now `None`. It used to hardcode `Some(0)`, manufacturing the exact proof rung 3 asks for |
-| opencode | a `status` string of `error`/`failed` | read (already did) on the primary path; the second path now backfills |
-| antigravity/gemini, cline, codex, cursor, deepseek, goose, grok, herdr, hermes, kimi, manus, minimax, openclaw, pi, qwen, zhipu | an `is_error` flag on the tool result | backfilled by the shared pass. **Unverified** — no sample sessions for these on this machine, so what is proven is that the adapter reads the field it parses, not that real files carry it |
-
-The stitching is a separate pass because every adapter emits its `ShellCommand`
-when it sees the *request*, several records before the answer arrives. It only
-fills gaps, and only where the `ShellCommand` sits directly behind its own
-`ToolCall`, so one command's result cannot land on another's.
-
-## Honest depth rating
-
-One line each, from what the index shows, not from what the adapter claims.
+## Honest depth rating (tip + this scan)
 
 | adapter | depth |
 | :--- | :--- |
-| claude_code | **Full.** Events, tools, shell, tokens, files, outcomes. Everything else in this product is really built on this one. |
-| opencode | **Deep, undersold.** Tokens and outcomes both real; blame paths are relative, which breaks file attribution. |
-| antigravity | **Events, tools, models and tokens.** Models since 2026-09-19 (field 19 of `gen_metadata`). Tokens since 2026-09-29: per-step usage varints at protobuf path `1/4/<n>` in the same blobs (input/output/cached/thoughts/tool), emitted as `ModelInvocation` — previously missed because the walker only collected strings. |
-| codex | **Tokens, model, effort and repo since #116; tools and outcomes still missing.** 745 of 972 rows now carry tokens post-fix and post-rescan — the "stays wrong until reparsed" caveat from the last measurement no longer applies. The adapter reads `session_meta.cwd` for the repository (the rollout path is under `~/.codex` and used to bucket every session into the home directory), `turn_context.model` and `turn_context.effort` per turn, and the `token_count` events' cumulative counters. Tool calls, prompts and outcomes are still unread: they live in `response_item` and `event_msg`/`item_completed` records nothing parses yet. |
-| gemini | **Events and tools, barely scored.** 50 rows, 44 with events, 12 now with tokens (was 0), zero outcomes. |
-| grok | **Events only, thin.** 34 sessions with events, one tool call across all of them. |
-| pi | **Events only.** 43 real sessions, no tools. |
-| hermes | **Detects the directory.** 47 rows, all with more than one event, average 351.0. |
-| cursor | **Detects the directory.** 70 rows, 62 with more than one event, average 49.6. |
-| herdr | **Not a conversational session at all.** 2 rows, both `fleet_snapshot` kind — see the note above the table. |
-| aider, cline, deepseek, goose, kimi, manus, minimax, openclaw, qwen, windsurf, zhipu | **Unproven.** Zero rows on this machine, so nothing about them is verified beyond a path existing. |
-
-Update 2026-09-07 (PR #149): `herdr` moved out of the last group, in a way the
-table above cannot express. Herdr is a terminal workspace manager and writes no
-transcript; its one file, `~/.config/herdr/session.json`, is a snapshot of panes
-and the agent session id running in each. The adapter now reads that file (it
-used to look for fields no Herdr file has). Measured through the CLI on the
-redacted fixture: 1 session, 8 events (one per pane), 0 tokens, 0 tools, 0
-outcomes, stored as a `fleet_snapshot`, so it never counts as a session. What it yields is the join key
-`agent_session.value` from a pane to the Claude Code / Codex / Gemini session
-that ran in it, nothing a depth rating measures. Its capability profile claims
-0 of 7 on purpose.
-
-Three of these — `hermes`, `cursor`, and every row in the last group — belong
-under the same honest label: **detects the directory**. The adapter finds files
-where they are supposed to be and gets almost nothing out of them. That is a
-useful state to have shipped and it is not the same thing as support.
-
-Update 2026-09-19: `antigravity` gains models. The
-`agy` SQLite store's `gen_metadata` table holds one blob per generated step and
-field 19 of each is the model name; the adapter read every other part of the
-store and skipped that field, so all `antigravity` rows indexed with
-`models_used: []`. Measured on this machine's store: field 19 is a clean model
-id in 3,826 of 3,854 rows (`gemini-3.7-flash` 2,786, `gemini-3.7-flash-exp-b`
-779, `gemini-3.1-pro-low` 143, `gemini-3.8-flash` 115), and the two
-control-character rows are dropped by a shape filter.
-
-Update 2026-09-29: `antigravity` gains tokens. The same `gen_metadata` blobs
-carry per-step usage as protobuf varints at path `1/4/<n>` — field 2 input,
-3 output, 5 cached, 9 thoughts, 10 tool — mirroring Gemini CLI's JSON `tokens`
-block. An earlier search concluded the store had no counters because the
-walker only collected strings; the varint path was never read. Thoughts and
-tool fold into `output_tokens` exactly as the Gemini CLI adapter does. Parser
-version 4 reindexes existing rows.
+| claude_code | **Full (pv3).** Events, tools, shell, tokens, files, outcomes. |
+| **codex** | **Deep (pv4).** Prompts, tools, exec/shell, outcomes, tokens, model, effort, repo. Measured: 747 prompts / 482 tools / 362 exec / 211 outcomes on 852 → 803. |
+| opencode | **Deep (pv2).** Tokens and outcomes real; blame paths can still be relative. |
+| antigravity (agy) | **pv4 — tokens real** (plus prior models-from-`gen_metadata`). Folded into **gemini** for `/api/matrix` identity. 757 → 667; 374 `tok > 0`. |
+| gemini CLI | **Partial.** Same adapter as agy, separate identity. 50 → 35; 25.2M tokens. Not "full" on its own. |
+| **pi** | **pv2 — tools + tokens + outcomes** (not events-only). 398 → 136; pv1 residue 256 @ 0 tok; 26 `node_modules`. |
+| grok | **Events only, thin — and mostly junk.** 34 → 0 API non-stub. |
+| others | **Not re-rated this pass.** Zero-row adapters remain unproven on this machine. |
 
 ## What this means for the specs
 
-- `verified-outcome-rate.md`'s `adapter` grouping has exactly two usable
-  groups. Its null-rate return value exists because of this table.
-- `suspect-commits.md` can only attribute commits from `claude_code` and
-  `antigravity` blame rows; `opencode`'s 133 `file_modifications` rows are
-  all relative paths and get dropped.
-- `handoff.md` degrades to a token count on seven of nine adapters.
-- Any adapter-count claim on the site or in the README should say twenty
-  adapters and **two with full extraction**, or it is selling detection as
-  support.
+- Any surface that uses API non-stub (`/api/matrix` `sessions_count`,
+  `/api/stats`, default traces) will show codex ~803 and pi ~136, not the
+  in_db totals.
+- Joining matrix → index on adapter name must use `identities` (or sum
+  `gemini` + `antigravity`) or agy rows vanish from the gemini matrix line.
+- README / site adapter-count claims should not equate "detected" with
+  "deep extraction." Codex and Pi are deep on tip; grok is not; gemini CLI
+  is partial; agy tokens are real but live under the `antigravity` identity.
 
 ## Refresh
 
-Re-run both halves after any adapter change:
+Re-run after any adapter / predicate change:
 
-    archie agent list --json > /tmp/aw-matrix.json
-    sqlite3 -readonly ~/.agentworth/agentworth.db   # then the SQL below
-
-Both halves matter. The matrix is what the code claims; the index is what the
-code did. This page exists because those two disagreed in three places, and
-still disagrees in two.
-
-## How measured, 2026-09-12
-
-Self-reported side:
-
+    archie scan --force --plain
     archie agent list --json
+    # index: ~/.agentworth/agentworth.db (or archie doctor --json → storage.path)
 
-Observed side — live index, no copy, opened read-only (db path from
-`archie doctor --json`'s `storage.path`):
+API non-stub (authoritative for matrix `sessions_count`):
 
-    SELECT COUNT(*) FROM sessions;
-    SELECT COUNT(*) FROM sessions WHERE total_events > 1 AND total_tokens > 0;
-    SELECT COUNT(*) FROM file_modifications;
-    SELECT MIN(started_at), MAX(started_at) FROM sessions;
-    SELECT MIN(started_at) FROM sessions WHERE started_at > '2020-01-01';
-    SELECT COUNT(*) FROM sessions WHERE started_at < '2020-01-01';
+```sql
+-- NON_STUB_SQL_PREDICATE
+kind = 'conversation'
+  AND total_events > 1
+  AND (total_tokens > 0 OR tool_calls_count > 0)
+```
 
-    SELECT adapter, COUNT(*) n,
-      SUM(total_events > 1) ev, SUM(total_tokens > 0) tok,
-      ROUND(AVG(total_events),1) avg_ev,
-      SUM(tool_calls_count > 0) tools,
-      SUM(primary_outcome IS NOT NULL) outcome,
-      SUM(primary_outcome IN ('test_or_build_passed','commit_observed',
-          'ci_or_deployment_verified')) verified,
-      SUM(composite_score IS NOT NULL) scored,
-      SUM(prompt_preview IS NOT NULL) preview
-    FROM sessions GROUP BY adapter ORDER BY n DESC;
+Per-adapter in_db → non-stub + token totals:
 
-    SELECT adapter, SUM(compaction_count>0) compacted, COUNT(*) n
-    FROM sessions GROUP BY adapter ORDER BY n DESC;
+```sql
+SELECT adapter,
+  COUNT(*) AS in_db,
+  SUM(kind = 'conversation'
+      AND total_events > 1
+      AND (total_tokens > 0 OR tool_calls_count > 0)) AS api_non_stub,
+  SUM(total_tokens) AS tokens
+FROM sessions
+GROUP BY adapter
+ORDER BY in_db DESC;
+```
 
-    SELECT COUNT(*) FROM sessions WHERE source_path LIKE '%node_modules%';
+```sql
+SELECT COUNT(*) FROM sessions WHERE source_path LIKE '%node_modules%';
+```
 
-    SELECT COUNT(*) FROM file_modifications fm
-    JOIN sessions s ON fm.session_id = s.session_id
-    WHERE s.adapter = 'opencode';
+## How measured, 2026-09-30
 
-    SELECT COUNT(*) FROM file_modifications fm
-    JOIN sessions s ON fm.session_id = s.session_id
-    WHERE s.adapter = 'opencode' AND fm.file_path NOT LIKE '/%';
-
-    SELECT session_id, adapter, kind, total_events, total_tokens
-    FROM sessions WHERE adapter = 'herdr';
-
-Not re-measured this pass, and marked so inline: the `plugins/cache` junk-row
-count (needs the Rust `extract_repository_or_workspace` helper, not a `LIKE`
-approximation), and the exit-code-by-adapter section (a raw-JSONL transcript
-parse, not a SQL or `archie` query).
+- Tip **0.1.28**; `archie scan --force --plain` EXIT 0; **7,260** sessions in
+  `~/.agentworth/agentworth.db`.
+- Counts in the Observed table are exactly the measurement set for this
+  rewrite — no invented averages, verified-outcome rates, or unlisted
+  adapters.
+- `/api/matrix` capability flags for codex / pi / gemini already match tip
+  `capabilities()` on main; this page was the stale half.
