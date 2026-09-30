@@ -735,11 +735,14 @@ pub fn turn_session_match(alias_t: &str, alias_s: &str) -> String {
     // Codex history.jsonl stores the bare UUID; Codex session rows use the rollout
     // stem `rollout-…-<uuid>`. Exact id equality under-links; the third OR is the
     // SPEC-preferred UUID-in-rollout-stem repair, scoped to source='codex'.
+    // Equality against `insights_codex_uuid(s.session_id)` (trailing UUID extracted
+    // once) — never a leading-wildcard `LIKE '%-'||uuid`, which reintroduced the
+    // sessions×turns nested scan the TEMP-set membership was built to kill.
     format!(
         "(({t}.session_id IS NOT NULL AND {t}.session_id={s}.session_id) OR \
           ({t}.source_path<>'' AND {t}.source_path={s}.source_path) OR \
           ({t}.source='codex' AND {t}.session_id IS NOT NULL AND {t}.session_id<>'' \
-           AND {s}.session_id LIKE '%-' || {t}.session_id))",
+           AND insights_codex_uuid({s}.session_id)={t}.session_id))",
         t = alias_t,
         s = alias_s
     )
@@ -751,16 +754,20 @@ pub fn turn_session_match(alias_t: &str, alias_s: &str) -> String {
 /// 97s (claude_code) per request on the real index; the plain machine-wide form cost 34s.
 /// TEMP tables live in SQLite's separate temp database, so this works on a read-only handle.
 fn build_turn_link_sets(conn: &Connection, filter: &InsightsDimensionFilter) -> Result<()> {
+    // DROP+CREATE so a prior connection that built the pre-codex_uuid shape cannot
+    // leave a stale TEMP schema; fill is still one pass over the slice.
     conn.execute_batch(&format!(
-        "CREATE TEMP TABLE IF NOT EXISTS ins_slice_sessions( \
-             session_id TEXT, source_path TEXT, rl TEXT); \
-         DELETE FROM ins_slice_sessions; \
+        "DROP TABLE IF EXISTS ins_slice_sessions; \
+         CREATE TEMP TABLE ins_slice_sessions( \
+             session_id TEXT, source_path TEXT, rl TEXT, codex_uuid TEXT); \
          INSERT INTO ins_slice_sessions \
-           SELECT s.session_id, s.source_path, insights_repo_label(s.source_path) \
+           SELECT s.session_id, s.source_path, insights_repo_label(s.source_path), \
+                  insights_codex_uuid(s.session_id) \
            FROM sessions s WHERE s.kind='conversation'{dim} AND s.total_events>1; \
-         CREATE INDEX IF NOT EXISTS ins_slice_id ON ins_slice_sessions(session_id); \
-         CREATE INDEX IF NOT EXISTS ins_slice_path ON ins_slice_sessions(source_path); \
-         CREATE INDEX IF NOT EXISTS ins_slice_rl ON ins_slice_sessions(rl);",
+         CREATE INDEX ins_slice_id ON ins_slice_sessions(session_id); \
+         CREATE INDEX ins_slice_path ON ins_slice_sessions(source_path); \
+         CREATE INDEX ins_slice_rl ON ins_slice_sessions(rl); \
+         CREATE INDEX ins_slice_codex_uuid ON ins_slice_sessions(codex_uuid);",
         dim = dimension_predicate_on(filter, "s")
     ))?;
     Ok(())
@@ -771,11 +778,12 @@ fn build_turn_link_sets(conn: &Connection, filter: &InsightsDimensionFilter) -> 
 /// One definition, so the heatmap, friction and vocabulary blocks agree on what "in the
 /// slice" means for a turn.
 fn turn_link_predicate(_filter: &InsightsDimensionFilter) -> String {
+    // Codex UUID-in-stem is an indexed equality probe into the TEMP set's
+    // `codex_uuid` column (filled once per session) — same shape as id/path/rl.
     "(t.session_id IS NOT NULL AND t.session_id IN (SELECT session_id FROM ins_slice_sessions)) \
      OR (t.source_path<>'' AND t.source_path IN (SELECT source_path FROM ins_slice_sessions)) \
      OR (t.source='codex' AND t.session_id IS NOT NULL AND t.session_id<>'' \
-         AND EXISTS (SELECT 1 FROM ins_slice_sessions s \
-                     WHERE s.session_id LIKE '%-' || t.session_id)) \
+         AND t.session_id IN (SELECT codex_uuid FROM ins_slice_sessions WHERE codex_uuid<>'')) \
      OR (insights_repo_label(t.source_path)<>'' \
          AND insights_repo_label(t.source_path) IN (SELECT rl FROM ins_slice_sessions))"
         .to_string()
@@ -801,15 +809,33 @@ fn query_turn_link(
         conn,
         format!("SELECT COUNT(*) FROM human_turns t WHERE {tp}"),
     )?;
-    let linked_by_id = one(
-        "AND t.session_id IS NOT NULL AND (t.session_id=s.session_id \
-         OR (t.source='codex' AND t.session_id<>'' AND s.session_id LIKE '%-' || t.session_id))",
+    // Exact id stays an indexed EXISTS; Codex UUID-in-stem is a separate linear IN
+    // over the once-per-session extracted suffix set (same pattern as linked_by_repo).
+    // Folding both into one OR with a leading-wildcard LIKE made the whole EXISTS
+    // unindexable → sessions×turns nested scan (~2.4s on macOS CI at 1.5k×12k).
+    let linked_by_id_exact =
+        one("AND t.session_id IS NOT NULL AND t.session_id=s.session_id")?;
+    let linked_by_id_codex = query_one_i64(
+        conn,
+        format!(
+            "SELECT COUNT(*) FROM human_turns t WHERE {tp} \
+             AND t.source='codex' AND t.session_id IS NOT NULL AND t.session_id<>'' \
+             AND NOT EXISTS (SELECT 1 FROM sessions s2 WHERE s2.session_id=t.session_id AND \
+                 s2.kind='conversation' AND s2.total_events>1 AND s2.started_at>'2020-01-01') \
+             AND t.session_id IN \
+                 (SELECT insights_codex_uuid(s.session_id) FROM sessions s \
+                  WHERE {USABLE_PREDICATE} AND insights_codex_uuid(s.session_id)<>'')"
+        ),
     )?;
-    let already_id = "NOT EXISTS (SELECT 1 FROM sessions s2 WHERE \
-                      (s2.session_id=t.session_id \
-                       OR (t.source='codex' AND t.session_id IS NOT NULL AND t.session_id<>'' \
-                           AND s2.session_id LIKE '%-' || t.session_id)) AND \
-                      s2.kind='conversation' AND s2.total_events>1 AND s2.started_at>'2020-01-01')";
+    let linked_by_id = linked_by_id_exact + linked_by_id_codex;
+    let already_id = format!(
+        "NOT EXISTS (SELECT 1 FROM sessions s2 WHERE s2.session_id=t.session_id AND \
+         s2.kind='conversation' AND s2.total_events>1 AND s2.started_at>'2020-01-01') \
+         AND NOT (t.source='codex' AND t.session_id IS NOT NULL AND t.session_id<>'' \
+                  AND t.session_id IN \
+                      (SELECT insights_codex_uuid(s.session_id) FROM sessions s \
+                       WHERE {USABLE_PREDICATE} AND insights_codex_uuid(s.session_id)<>''))"
+    );
     let linked_by_path = one(&format!(
         "AND t.source_path<>'' AND t.source_path=s.source_path AND {already_id}"
     ))?;
@@ -1276,6 +1302,57 @@ fn register_repo_label_fn(conn: &Connection) {
             Ok(repo_label(&path))
         },
     );
+    let _ = conn.create_scalar_function(
+        "insights_codex_uuid",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let session_id: String = ctx.get(0)?;
+            Ok(codex_uuid_from_stem(&session_id))
+        },
+    );
+}
+
+/// Trailing UUID from a Codex rollout stem (`rollout-…-<uuid>`), or empty when the id
+/// is not that shape. Extracted once per session into the TEMP slice set / IN-set so
+/// turn↔session repair is an equality probe — never `LIKE '%-'||uuid`.
+pub fn codex_uuid_from_stem(session_id: &str) -> String {
+    const UUID_LEN: usize = 36; // 8-4-4-4-12
+    if session_id.len() <= UUID_LEN {
+        return String::new();
+    }
+    let start = session_id.len() - UUID_LEN;
+    if session_id.as_bytes().get(start - 1) != Some(&b'-') {
+        return String::new();
+    }
+    let candidate = &session_id[start..];
+    if is_uuid_shape(candidate) {
+        candidate.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn is_uuid_shape(s: &str) -> bool {
+    if s.len() != 36 {
+        return false;
+    }
+    let b = s.as_bytes();
+    for (i, &c) in b.iter().enumerate() {
+        match i {
+            8 | 13 | 18 | 23 => {
+                if c != b'-' {
+                    return false;
+                }
+            }
+            _ => {
+                if !c.is_ascii_hexdigit() {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 /// The valid filter values on this index, computed over the windowed usable population.
@@ -2683,6 +2760,22 @@ mod tests {
         assert_eq!(
             tl.linked_by_path, 2,
             "sess-z loses the exact id; its path still links"
+        );
+    }
+
+    #[test]
+    fn codex_uuid_from_stem_extracts_trailing_uuid_only() {
+        let uuid = "019c617f-ce70-7971-92de-93d8ff78ecbc";
+        assert_eq!(
+            codex_uuid_from_stem(&format!("rollout-2026-02-15T19-01-31-{uuid}")),
+            uuid
+        );
+        assert_eq!(codex_uuid_from_stem(uuid), "");
+        assert_eq!(codex_uuid_from_stem("scale-sess-0"), "");
+        assert_eq!(codex_uuid_from_stem(""), "");
+        assert_eq!(
+            codex_uuid_from_stem("rollout-2026-02-15T19-01-31-not-a-real-uuid-here!!"),
+            ""
         );
     }
 
