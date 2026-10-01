@@ -130,6 +130,12 @@ others). See git history of this file for the 2026-09-02 table.
 - README / site adapter-count claims should not equate "detected" with
   "deep extraction." Codex and Pi are deep on tip; grok is not; gemini CLI
   is partial; agy tokens are real but live under the `antigravity` identity.
+- **Detected ≠ indexed coverage.** `/api/matrix` `detected` is live presence of
+  on-disk roots; `sessions_count` is API non-stub rows in the index. cursor /
+  hermes / grok / herdr often show detected with `sessions_count = 0` and
+  tokens ≈ 0 — that is discovery only. The coverage matrix UI labels those
+  columns **Detected** and **Indexed** so a Yes under Detected cannot be
+  read as "we have sessions".
 
 ## Refresh
 

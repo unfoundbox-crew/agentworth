@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Insights field honesty (`schema_version` 2 → 3).** `/api/insights` volume /
+  by_adapter / calls_per_turn_by_adapter / top_sessions fields that summed
+  `sessions.user_messages_count` were named like the `human_turns` table
+  (`human_turns_index_proxy`, `human_turns`). They are now
+  `session_user_messages` / `user_messages`. Deprecated aliases with the old
+  names are still emitted for one tip cycle. Real human-turn counts live in
+  `day_hour` / `friction` / `vocabulary` (from the `human_turns` table).
+- **Coverage matrix: Detected ≠ Indexed.** The matrix UI column formerly labelled
+  "Sessions" showed `detected` (on-disk presence) as Yes/No, which looked like
+  indexed coverage. It is now **Detected** plus an **Indexed** column for
+  `sessions_count` (API non-stub). cursor / hermes / grok / herdr often show
+  Detected Yes with Indexed 0 — discovery only.
+
 ### Fixed
 
 - **Changelog honesty: Codex is a human-turn source.** Tip already ingests Codex

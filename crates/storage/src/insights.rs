@@ -25,7 +25,14 @@ use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::Value;
 
-pub const INSIGHTS_SCHEMA_VERSION: u32 = 2;
+/// Wire schema for `/api/insights` / `archie insights --json`.
+///
+/// Schema 3: volume/by_adapter/calls_per_turn/top_sessions expose honest
+/// `session_user_messages` / `user_messages` (SUM of `sessions.user_messages_count`)
+/// instead of names that collide with the `human_turns` table. Deprecated JSON
+/// aliases (`human_turns_index_proxy`, `human_turns`) are still emitted for one
+/// tip cycle so existing readers keep working.
+pub const INSIGHTS_SCHEMA_VERSION: u32 = 3;
 
 /// The session population predicate shared by every metric in this module, verbatim from the
 /// reference implementation: `kind='conversation' AND total_events>1 AND started_at>'2020-01-01'`.
@@ -196,6 +203,14 @@ pub struct InsightsPopulation {
 pub struct InsightsVolume {
     pub usable_sessions: i64,
     pub tool_calls_witnessed: i64,
+    /// SUM(`sessions.user_messages_count`) over the window — a **session-stats
+    /// proxy**, not a count from the `human_turns` table. (Codex example on a
+    /// measured index: thousands of session user_messages vs hundreds of rows
+    /// ingested from `~/.codex/history.jsonl` into `human_turns`.)
+    pub session_user_messages: i64,
+    /// Deprecated JSON alias of [`Self::session_user_messages`]. Same value;
+    /// kept so existing `/api/insights` consumers keep working. Prefer
+    /// `session_user_messages`.
     pub human_turns_index_proxy: i64,
     pub assistant_messages: i64,
     pub total_tokens: i64,
@@ -206,6 +221,10 @@ pub struct InsightsAdapterRow {
     pub adapter: String,
     pub sessions: i64,
     pub tool_calls: i64,
+    /// SUM(`sessions.user_messages_count`) for this adapter — **not**
+    /// `human_turns` table rows.
+    pub user_messages: i64,
+    /// Deprecated JSON alias of [`Self::user_messages`]. Prefer `user_messages`.
     pub human_turns: i64,
     pub input_output_tokens: i64,
 }
@@ -237,6 +256,9 @@ pub struct InsightsCallsPerTurnRow {
     pub adapter: String,
     pub calls_per_turn: f64,
     pub tool_calls: i64,
+    /// Denominator: SUM(`sessions.user_messages_count`), not `human_turns` rows.
+    pub user_messages: i64,
+    /// Deprecated JSON alias of [`Self::user_messages`]. Prefer `user_messages`.
     pub human_turns: i64,
 }
 
@@ -304,6 +326,9 @@ pub struct InsightsTopSessionRow {
     pub total_tokens: i64,
     pub total_events: i64,
     pub tool_calls: i64,
+    /// This session's `user_messages_count` — **not** a `human_turns` table count.
+    pub user_messages: i64,
+    /// Deprecated JSON alias of [`Self::user_messages`]. Prefer `user_messages`.
     pub human_turns: i64,
     pub duration_hours: f64,
     pub source_path: String,
@@ -1626,12 +1651,16 @@ fn query_volume(conn: &Connection, pred: &str) -> Result<InsightsVolume> {
     );
     let row = conn
         .query_row(&sql, [], |r| {
-            Ok(InsightsVolume {
-                usable_sessions: r.get(0)?,
-                tool_calls_witnessed: r.get(1)?,
-                human_turns_index_proxy: r.get(2)?,
-                assistant_messages: r.get(3)?,
-                total_tokens: r.get(4)?,
+            Ok({
+                let session_user_messages: i64 = r.get(2)?;
+                InsightsVolume {
+                    usable_sessions: r.get(0)?,
+                    tool_calls_witnessed: r.get(1)?,
+                    session_user_messages,
+                    human_turns_index_proxy: session_user_messages,
+                    assistant_messages: r.get(3)?,
+                    total_tokens: r.get(4)?,
+                }
             })
         })
         .map_err(anyhow::Error::from)?;
@@ -1647,12 +1676,16 @@ fn query_by_adapter(conn: &Connection, pred: &str) -> Result<Vec<InsightsAdapter
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
         .query_map([], |r| {
-            Ok(InsightsAdapterRow {
-                adapter: r.get(0)?,
-                sessions: r.get(1)?,
-                tool_calls: r.get(2)?,
-                human_turns: r.get(3)?,
-                input_output_tokens: r.get(4)?,
+            Ok({
+                let user_messages: i64 = r.get(3)?;
+                InsightsAdapterRow {
+                    adapter: r.get(0)?,
+                    sessions: r.get(1)?,
+                    tool_calls: r.get(2)?,
+                    user_messages,
+                    human_turns: user_messages,
+                    input_output_tokens: r.get(4)?,
+                }
             })
         })
         .map_err(anyhow::Error::from)?
@@ -1783,6 +1816,7 @@ fn query_calls_per_turn_by_adapter(
             calls_per_turn: round4(tc as f64 / um.max(1) as f64),
             adapter,
             tool_calls: tc,
+            user_messages: um,
             human_turns: um,
         })
         .collect();
@@ -1906,18 +1940,22 @@ fn query_top_sessions(conn: &Connection, pred: &str) -> Result<Vec<InsightsTopSe
         .query_map([], |r| {
             let source_path: String = r.get(8)?;
             let duration_seconds: f64 = r.get(7)?;
-            Ok(InsightsTopSessionRow {
-                session_id: r.get(0)?,
-                adapter: r.get(1)?,
-                started_at: r.get(2)?,
-                total_tokens: r.get(3)?,
-                total_events: r.get(4)?,
-                tool_calls: r.get(5)?,
-                human_turns: r.get(6)?,
-                duration_hours: round4(duration_seconds / 3600.0),
-                source_path,
-                primary_outcome: r.get(9)?,
-                repo_label: String::new(),
+            Ok({
+                let user_messages: i64 = r.get(6)?;
+                InsightsTopSessionRow {
+                    session_id: r.get(0)?,
+                    adapter: r.get(1)?,
+                    started_at: r.get(2)?,
+                    total_tokens: r.get(3)?,
+                    total_events: r.get(4)?,
+                    tool_calls: r.get(5)?,
+                    user_messages,
+                    human_turns: user_messages,
+                    duration_hours: round4(duration_seconds / 3600.0),
+                    source_path,
+                    primary_outcome: r.get(9)?,
+                    repo_label: String::new(),
+                }
             })
         })
         .map_err(anyhow::Error::from)?
@@ -2980,7 +3018,8 @@ mod tests {
 
         let vol = &insights.volume;
         assert_eq!(vol.tool_calls_witnessed, 8);
-        assert_eq!(vol.human_turns_index_proxy, 4);
+        assert_eq!(vol.session_user_messages, 4);
+        assert_eq!(vol.human_turns_index_proxy, 4); // deprecated alias
 
         // strict: 8 calls / 4 turns = 2.0; heavy (A only, 12 events, um>0): 6/3 = 2.0
         assert_eq!(insights.calls_per_turn.strict, Some(2.0));

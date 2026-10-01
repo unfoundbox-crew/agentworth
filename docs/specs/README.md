@@ -30,6 +30,7 @@ What is left and in what order, with the lane spec for building it: `docs/ROADMA
 | `handoff.md` | built | #TBD (2026-09-02) |
 | `home-latency.md` | measured | — |
 | `home.md` | concept locked 2026-09-07, not built | — |
+| `insights-proxy-naming.md` | built 2026-10-01 — honest `session_user_messages` / `user_messages` names (schema 3) | honesty #7 |
 | `local-search.md` | draft, not built (mostly); MCP-server precondition met | — |
 | `loop.md` | built | #TBD (2026-09-06) |
 | `loose-ends.md` | built | #77 |

@@ -98,16 +98,19 @@ export interface RawInsights {
   volume: {
     usable_sessions: number;
     tool_calls_witnessed: number;
-    human_turns_index_proxy: number;
+    /** Honest name: SUM(sessions.user_messages_count), not human_turns table. */
+    session_user_messages: number;
+    /** @deprecated alias of session_user_messages — still emitted for one tip cycle. */
+    human_turns_index_proxy?: number;
     assistant_messages: number;
     total_tokens: number;
   };
-  by_adapter: { adapter: string; sessions: number; tool_calls: number; human_turns: number; input_output_tokens: number }[];
+  by_adapter: { adapter: string; sessions: number; tool_calls: number; user_messages: number; human_turns?: number; input_output_tokens: number }[];
   ladder: RawLadderRow[];
   verified: { sessions: number; total_tokens: number; share_pct: number };
   no_evidence_small_sessions: number;
   calls_per_turn: { strict: number | null; heavy_session_average: number | null };
-  calls_per_turn_by_adapter: { adapter: string; calls_per_turn: number; tool_calls: number; human_turns: number }[];
+  calls_per_turn_by_adapter: { adapter: string; calls_per_turn: number; tool_calls: number; user_messages: number; human_turns?: number }[];
   turn_buckets: { bucket: string; label: string; sessions: number }[];
   file_modifications: {
     total: number;
@@ -123,7 +126,8 @@ export interface RawInsights {
     total_tokens: number;
     total_events: number;
     tool_calls: number;
-    human_turns: number;
+    user_messages: number;
+    human_turns?: number;
     duration_hours: number;
     source_path: string;
     primary_outcome: string | null;
@@ -208,7 +212,7 @@ function mapCurrent(raw: RawInsights): InsightsWindow {
     { key: 'verified', label: 'verified outcome rate', value: num(raw.verified.share_pct, 0), unit: '%', series: raw.series.verified_by_month.map((m) => m.sessions) },
     { key: 'sessions', label: 'sessions', value: raw.population.usable_sessions, series: raw.series.daily.map((d) => d.sessions) },
     { key: 'tool_calls', label: 'tool calls', value: raw.volume.tool_calls_witnessed },
-    { key: 'turns', label: 'human turns', value: raw.volume.human_turns_index_proxy },
+    { key: 'turns', label: 'session user messages', value: raw.volume.session_user_messages ?? raw.volume.human_turns_index_proxy ?? 0 },
     { key: 'tokens', label: 'token burn', value: toB(raw.volume.total_tokens), unit: 'B' },
   ];
 

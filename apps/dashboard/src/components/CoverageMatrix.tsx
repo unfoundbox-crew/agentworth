@@ -67,8 +67,8 @@ export const CoverageMatrix: React.FC<CoverageMatrixProps> = ({ className = "" }
             </div>
             <h2>Adapter extraction capabilities</h2>
             <p>
-              Grounded directly in our automated fixture test suite. We publish exactly what each adapter extracts
-              and what remains pending.
+              Detected means the tool is present on this machine; Indexed is how many non-stub sessions
+              the index holds. Capability columns are grounded in the fixture suite — Yes only when proven.
             </p>
           </div>
 
@@ -119,11 +119,12 @@ export const CoverageMatrix: React.FC<CoverageMatrixProps> = ({ className = "" }
 
       {/* Table */}
       <div className="table-frame table-scroll">
-        <table className="data-table matrix-table" style={{ minWidth: 860 }}>
+        <table className="data-table matrix-table" style={{ minWidth: 940 }}>
           <thead>
             <tr>
               <th>Adapter</th>
-              <th className="is-center">Sessions</th>
+              <th className="is-center">Detected</th>
+              <th className="is-center">Indexed</th>
               <th className="is-center">Tokens</th>
               <th className="is-center">Cache split</th>
               <th className="is-center">Models</th>
@@ -149,6 +150,9 @@ export const CoverageMatrix: React.FC<CoverageMatrixProps> = ({ className = "" }
                   </div>
                 </td>
                 <td className="is-center">{renderBadge(item.detected)}</td>
+                <td className="is-center font-mono text-xs tabular-nums text-ink">
+                  {item.sessions_count > 0 ? item.sessions_count.toLocaleString() : "0"}
+                </td>
                 <td className="is-center">{renderBadge(item.token_accounting)}</td>
                 <td className="is-center">{renderBadge(item.cache_breakdown)}</td>
                 <td className="is-center">{renderBadge(item.model_switches)}</td>
@@ -165,9 +169,12 @@ export const CoverageMatrix: React.FC<CoverageMatrixProps> = ({ className = "" }
       <div className="mt-4 p-3 rounded-lg border border-border bg-surface flex items-start gap-2 text-xs text-muted">
         <ShieldAlert className="w-4 h-4 text-muted shrink-0 mt-0.5" />
         <div>
-          <strong className="text-ink font-semibold">Honest accounting rule.</strong> We never print $0.00 for
-          unextracted data. A cell reads <code className="font-mono text-[0.92em] text-text">YES</code> only when an
-          automated test fixture verifies it.
+          <strong className="text-ink font-semibold">Detected is not coverage.</strong>{" "}
+          <em>Detected</em> means the adapter&apos;s files were found on this machine;
+          <em> Indexed</em> is the API non-stub <code className="font-mono text-[0.92em] text-text">sessions_count</code>
+          {" "}(conversation rows with events and tokens or tools). A Yes under Detected with Indexed 0
+          (cursor / hermes / grok / herdr often look like this) is discovery only — not extraction depth.
+          Capability Yes cells still require fixture proof; we never print $0.00 for unextracted data.
         </div>
       </div>
     </div>

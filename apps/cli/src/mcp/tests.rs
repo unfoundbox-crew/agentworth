@@ -1828,7 +1828,7 @@ async fn insights_get_returns_the_exact_full_payload_contract() {
     let value = call_result_json(result);
 
     assert_key_set(&value, &EXPECTED_KEYS);
-    assert_eq!(value["schema_version"], 2);
+    assert_eq!(value["schema_version"], 3);
     assert_eq!(value["population"]["usable_sessions"], 2);
     assert_eq!(value["volume"]["tool_calls_witnessed"], 8);
     assert_eq!(value["calls_per_turn"]["strict"], 2.0);
