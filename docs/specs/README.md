@@ -15,7 +15,7 @@ What is left and in what order, with the lane spec for building it: `docs/ROADMA
 | `beliefs.md` | proposed, measured | — |
 | `cache-economics.md` | built | #42 |
 | `cli-grammar.md` | built: grammar and cockpit; §4(3) (`window receipt`) not built, waits on spec G | #118, #121 |
-| `codex-human-turns.md` | proposed 2026-09-30; SPEC only — Codex `~/.codex/history.jsonl` into human-turn lane | — |
+| `codex-human-turns.md` | built 2026-10-01 — Codex `~/.codex/history.jsonl` into human-turn lane | #216 (SPEC), #224 (implement) |
 | `compaction-diff.md` | built | #83 |
 | `compaction.md` | built | #57 (dashboard pane), #62 (per-session tracking) |
 | `context-composition.md` | built | #46 |

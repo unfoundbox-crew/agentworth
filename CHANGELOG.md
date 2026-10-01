@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Changelog honesty: Codex is a human-turn source.** Tip already ingests Codex
+  prompt history via `~/.codex/history.jsonl` into `human_turns` (#224, SPEC #216).
+  The 0.1.28 notes below previously named only Claude Code and Antigravity; they now
+  list Codex too so agentworth.dev cannot claim a narrower source set than tip.
+
 ---
 
 ## [0.1.28] - 2026-09-30
@@ -28,11 +35,13 @@ a separate COS-approved step** — this release only stops the label lying.
 - **The insights payload's human-turn blocks are real data.** `archie scan` ingests the
   human-at-the-keyboard turn histories no session adapter owns — Claude Code's
   `~/.claude/history.jsonl` and per-project transcript user-turns, Antigravity's
-  `history.jsonl` + brain `transcript.jsonl` `USER_INPUT` records — and stores per turn only
-  derived features (timestamp, local hour/date, word count, the six-trigger friction class,
-  bounded vocabulary mention counts). The insights payload's `day_hour` heatmap, `friction`
-  by-trigger counts and `vocabulary` streams fill from these tables with the same semantics
-  as the `tools/behavioral_insights.py` prototype, windowed by `?since=&until=`, with
+  `history.jsonl` + brain `transcript.jsonl` `USER_INPUT` records, and Codex via
+  `~/.codex/history.jsonl` (SPEC #216 / #224; indexed from that file only — rollouts stay
+  on the session adapter) — and stores per turn only derived features (timestamp, local
+  hour/date, word count, the six-trigger friction class, bounded vocabulary mention
+  counts). The insights payload's `day_hour` heatmap, `friction` by-trigger counts and
+  `vocabulary` streams fill from these tables with the same semantics as the
+  `tools/behavioral_insights.py` prototype, windowed by `?since=&until=`, with
   `deltas.friction_rate` computed across the requested window. Nothing raw is stored (the
   dedup key is a hash of timestamp + first 60 chars), unchanged files skip re-parsing by the
   same (size, mtime, fingerprint) rule sessions use, and a taxonomy version bump wipes and

@@ -1,22 +1,22 @@
 # Codex human turns
 
-Status: proposed 2026-09-30. SPEC only — do not implement until this file
-is solid and COS schedules the implement PR. Companion to the existing
-human-turn lane (`crates/adapters/src/human_turns/`), which today covers
-Claude Code and Antigravity only.
+Status: built 2026-10-01 (PR #224). Companion to the human-turn lane
+(`crates/adapters/src/human_turns/`), which covers Claude Code, Antigravity,
+and Codex (`~/.codex/history.jsonl`).
 
 ## The problem
 
 Insights friction / `day_hour` / vocabulary read the `human_turns` table.
 That table is filled from harness **prompt histories** the session adapters
-do not own as "human input" — today:
+do not own as "human input". Before this SPEC's implement PR the sources were:
 
 | Source constant | Homes / files (from `human_turns/mod.rs`) |
 | :--- | :--- |
 | `claude` | `~/.claude/history.jsonl`, `~/.claude/projects/**/<session>.jsonl` |
 | `antigravity` | `~/.gemini/antigravity-cli/history.jsonl`, `…/brain/<session>/transcript.jsonl` |
 
-Codex has a deep session adapter (`crates/adapters/src/codex.rs`,
+After #224 the same table also includes `codex` from `~/.codex/history.jsonl`
+(see Acceptance / Measured below). Codex has a deep session adapter (`crates/adapters/src/codex.rs`,
 `PARSER_VERSION` 4) over `~/.codex/sessions/**/rollout-*.jsonl`, and those
 rollouts already emit `UserMessage` into **session** traces. They do **not**
 feed the human-turn lane. So Codex keyboard history is invisible to
