@@ -209,8 +209,8 @@ async fn home_deck_does_not_spa_fallback_api_insights() {
         assert!(json.is_object(), "insights body must be a JSON object");
         assert_eq!(
             json["schema_version"],
-            2,
-            "insights schema_version must be 2 with home_deck_enabled={enabled}; got {json}"
+            3,
+            "insights schema_version must be 3 with home_deck_enabled={enabled}; got {json}"
         );
     }
 }

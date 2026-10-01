@@ -432,7 +432,9 @@ export type BlameResponse = BlameMatch[];
 export interface AdapterCapability {
   adapter: string;
   name: string;
+  /** Live presence of on-disk roots — not indexed coverage. */
   detected: boolean;
+  /** API non-stub sessions in the index; 0 with detected=true is discovery only. */
   sessions_count: number;
   identities: string[];
   formats: string[];

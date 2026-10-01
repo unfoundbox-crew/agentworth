@@ -110,7 +110,11 @@ pub struct BlameQuery {
 pub struct AdapterMatrixItem {
     pub adapter: String,
     pub name: String,
+    /// Live presence: the adapter's on-disk roots exist on this machine.
+    /// **Not** indexed coverage — see [`Self::sessions_count`].
     pub detected: bool,
+    /// API non-stub session count in the index for this adapter's identities.
+    /// Detected-with-zero here is discovery only, not extraction depth.
     pub sessions_count: usize,
     /// Every raw `sessions.adapter` value counted into `sessions_count` above. Usually
     /// just `[adapter]`; an adapter that tags sessions under more than one product
