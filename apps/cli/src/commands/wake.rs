@@ -41,7 +41,7 @@ pub fn run_wake_command(
     // path and keys a repo checked out directly under `code/` one component short of what the
     // index holds. See `agentworth_schema::repo_key_for_dir`.
     // `repo_key_for_dir` already returns the canonical key; an explicit `--repo` may still
-    // be the path-derived alias (`crew/agentworth`), so collapse it the same way.
+    // be a known alias (`crew/agentworth` or `unfoundbox-crew/agentworth`), so collapse it.
     let repo = agentworth_schema::canonical_repo_key(
         &repo.unwrap_or_else(|| agentworth_schema::repo_key_for_dir(&workspace)),
     )

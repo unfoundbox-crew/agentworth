@@ -221,12 +221,13 @@ a session's `source_path`, a file — and as the named fallback for a directory
 that is no longer on disk, so historical sessions for moved or deleted repos
 are not orphaned.
 
-Known checkout relocations are collapsed by `canonical_repo_key`: the
+Known checkout / org-slug aliases are collapsed by `canonical_repo_key`: the
 agentworth checkout moved from `~/code/unfoundbox/agentworth` to
 `~/code/crew/agentworth`, so a live cwd under crew and every indexed session
 still keyed as `unfoundbox/agentworth` from the old Claude project slug
 resolve to the same identity. `repo_keys_match` keeps `--repo crew/agentworth`
-working as an alias of the historical key.
+and `--repo unfoundbox-crew/agentworth` (the GitHub org slug) working as
+aliases of the historical key.
 
 A linked worktree at `<repo>/.claude/worktrees/<name>` is its own checkout,
 so the root walk stops there; the key truncates at the first hidden
