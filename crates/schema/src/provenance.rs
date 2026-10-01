@@ -246,20 +246,27 @@ pub fn repo_key_from_root(root: &Path) -> String {
     canonical_repo_key(&raw).to_string()
 }
 
-/// Collapse known checkout relocations onto the key sessions already use in the index.
+/// Collapse known checkout / org-slug aliases onto the key sessions already use in the index.
 ///
 /// COS dogfood: the agentworth checkout moved from `~/code/unfoundbox/agentworth` to
 /// `~/code/crew/agentworth`. Claude project slugs (and therefore every indexed session)
 /// still key as `unfoundbox/agentworth`. Without this remap, `archie session wake` from
 /// the crew path looks up `crew/agentworth` and reports zero sessions.
 ///
+/// The GitHub org slug `unfoundbox-crew/agentworth` is a second alias: people pass the
+/// remote `owner/repo` form to `--repo`, but indexed rows still carry the historical
+/// `unfoundbox/agentworth` key. Without the remap, `archie session wake --repo
+/// unfoundbox-crew/agentworth` finds nothing while `crew/agentworth` and
+/// `unfoundbox/agentworth` both work.
+///
 /// The historical key stays the canonical answer so existing index rows, MCP filters, and
-/// `--repo unfoundbox/agentworth` keep working. The path-derived `crew/agentworth` is an
-/// alias that resolves here; [`repo_keys_match`] treats both as equal at filter sites that
-/// compare a user-supplied needle against a session key.
+/// `--repo unfoundbox/agentworth` keep working. Path-derived `crew/agentworth` and the
+/// org-prefixed `unfoundbox-crew/agentworth` are aliases that resolve here;
+/// [`repo_keys_match`] treats all three as equal at filter sites that compare a
+/// user-supplied needle against a session key.
 pub fn canonical_repo_key(key: &str) -> &str {
     match key {
-        "crew/agentworth" => "unfoundbox/agentworth",
+        "crew/agentworth" | "unfoundbox-crew/agentworth" => "unfoundbox/agentworth",
         other => other,
     }
 }
@@ -504,6 +511,30 @@ mod tests {
         assert_eq!(canonical_repo_key("crew/agentworth"), "unfoundbox/agentworth");
         assert_eq!(canonical_repo_key("unfoundbox/agentworth"), "unfoundbox/agentworth");
         assert_eq!(canonical_repo_key("crew/other"), "crew/other");
+    }
+
+    /// Org-prefixed GitHub slug passed to `--repo` must collapse to the same historical
+    /// key as the crew path alias — otherwise `archie session wake --repo
+    /// unfoundbox-crew/agentworth` reports zero sessions while the other two forms work.
+    #[test]
+    fn test_unfoundbox_crew_agentworth_aliases_to_unfoundbox_agentworth() {
+        assert_eq!(
+            canonical_repo_key("unfoundbox-crew/agentworth"),
+            "unfoundbox/agentworth"
+        );
+        assert!(repo_keys_match(
+            "unfoundbox-crew/agentworth",
+            "unfoundbox/agentworth"
+        ));
+        assert!(repo_keys_match(
+            "unfoundbox-crew/agentworth",
+            "crew/agentworth"
+        ));
+        // Sibling under the same org must not silently remap.
+        assert_eq!(
+            canonical_repo_key("unfoundbox-crew/other"),
+            "unfoundbox-crew/other"
+        );
     }
 
     /// A sibling worktree created with `git worktree add ../name` is not under the main
