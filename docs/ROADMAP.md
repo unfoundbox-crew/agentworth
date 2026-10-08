@@ -1,8 +1,9 @@
 # Roadmap: release status and remaining work
 
 Status: 2026-10-08. Checked against main `e159dd1`, release tag `v0.1.28`
-(`aa7e851`, published 2026-09-30), and the local worktrees. GitHub reports no
-open PRs. Main CI run [36834340036](https://github.com/unfoundbox-crew/agentworth/actions/runs/36834340036)
+(`aa7e851`, published 2026-09-30), and the local worktrees. The initial audit found no open PRs. Release
+preparation is now [draft PR #229](https://github.com/unfoundbox-crew/agentworth/pull/229),
+targeting main. Main CI run [36834340036](https://github.com/unfoundbox-crew/agentworth/actions/runs/36834340036)
 passed on `e159dd1`. This proves main, not the prepared release branch.
 
 ## Next release: v0.1.29
@@ -53,6 +54,12 @@ Marketing download-count lookups were unavailable in the sandbox; the build
 handled them as unavailable and completed. Cross-platform packaging, signed
 release assets, registry publication, and clean-install CI smoke tests remain
 release-workflow checks. Local success does not stand in for those checks.
+
+The first PR CI run used Rust 1.99 while local clippy used 1.97.1. CI found
+five unnecessary closure borrows in existing wake redaction; the release
+branch removes them without changing redaction behavior. All 28 wake tests
+and local clippy pass after the correction. PR #229 carries the current CI
+results; merge and tag approval remain outstanding.
 
 ## Release publication checklist
 

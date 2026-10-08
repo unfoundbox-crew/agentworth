@@ -226,7 +226,7 @@ impl WakeReport {
     /// sentences rather than on only one of them.
     pub fn redacted(&self, redactor: &Redactor) -> WakeReport {
         let text = |s: &String| redactor.redact_text(s);
-        let opt_text = |s: &Option<String>| s.as_ref().map(&text);
+        let opt_text = |s: &Option<String>| s.as_ref().map(text);
         let command = |c: &RanCommand| RanCommand {
             command: redactor.redact_text(&c.command),
             ..c.clone()
@@ -262,8 +262,8 @@ impl WakeReport {
                     ..o.clone()
                 }),
                 proof: Proof {
-                    last_passed: s.proof.last_passed.as_ref().map(&command),
-                    last_failed: s.proof.last_failed.as_ref().map(&command),
+                    last_passed: s.proof.last_passed.as_ref().map(command),
+                    last_failed: s.proof.last_failed.as_ref().map(command),
                     ..s.proof.clone()
                 },
                 files: s
@@ -290,8 +290,8 @@ impl WakeReport {
                 })
                 .collect(),
             next: Next {
-                blocker: self.next.blocker.as_ref().map(&command),
-                step: self.next.step.as_ref().map(&loose_end),
+                blocker: self.next.blocker.as_ref().map(command),
+                step: self.next.step.as_ref().map(loose_end),
             },
             moved_under_you: self.moved_under_you.as_ref().map(|moved| MovedUnderYou {
                 first_path: redactor.redact_text(&moved.first_path),
