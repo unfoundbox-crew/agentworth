@@ -59,7 +59,9 @@ The first PR CI run used Rust 1.99 while local clippy used 1.97.1. CI found
 five unnecessary closure borrows in existing wake redaction; the release
 branch removes them without changing redaction behavior. All 28 wake tests
 and local clippy pass after the correction. PR #229 carries the current CI
-results; merge and tag approval remain outstanding.
+results. Saurabh approved merge of PR #229 and publication of v0.1.29 on
+2026-10-08: "go ahead", in reply to the merge/tag/release-verification plan.
+Release workflow verification remains pending.
 
 ## Release publication checklist
 

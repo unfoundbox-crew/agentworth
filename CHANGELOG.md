@@ -11,8 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.29] - 2026-10-08
 
-Release candidate notes. Not published yet; confirm the date when tagging.
-
 ### Added
 
 - **Home deck P3 parity.** Overview, Coverage, Archaeology, Exports, and the
