@@ -9,8 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.29] - 2026-10-08
+
+### Added
+
+- **Home deck P3 parity.** Overview, Coverage, Archaeology, Exports, and the
+  command palette now work inside the archive phase (#218, #219). The legacy
+  dashboard remains available; the serve root stays unchanged.
+- **Live Tail in both explorers.** The dashboard and home archive subscribe to
+  `/api/live-tail` for session updates (#213, #222).
+- **Codex human turns.** `archie scan` ingests `~/.codex/history.jsonl` into
+  derived human-turn features for insights heatmaps, friction, and vocabulary
+  (#224). Raw prompts remain in the source file. Codex rollouts continue through
+  the session adapter.
+
 ### Changed
 
+- **Shared shell components.** Both explorers use shared cache-cliff, export,
+  verdict, and fleet components instead of separate copies (#223, #225).
 - **Insights field honesty (`schema_version` 2 → 3).** `/api/insights` volume /
   by_adapter / calls_per_turn_by_adapter / top_sessions fields that summed
   `sessions.user_messages_count` were named like the `human_turns` table
@@ -26,10 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Changelog honesty: Codex is a human-turn source.** Tip already ingests Codex
-  prompt history via `~/.codex/history.jsonl` into `human_turns` (#224, SPEC #216).
-  The 0.1.28 notes below previously named only Claude Code and Antigravity; they now
-  list Codex too so agentworth.dev cannot claim a narrower source set than tip.
+- **Explicit scan paths leave global human-turn history untouched.** A small
+  `scan PATH` previously also read Claude, Codex, and Antigravity turn histories
+  from the machine's home directory. Scoped scans now scan sessions at the
+  supplied paths and preserve existing global turn rows and their ingestion
+  version, including with `--force`. Run `scan` without paths to refresh the
+  global insights turn lane.
+- **Wake after the repository rename.** `unfoundbox-crew/agentworth` now maps
+  to the historical repository key so wake finds existing sessions (#227).
+- **Collapsed dashboard rail.** The session-list restore control stays visible
+  when the rail is collapsed (#210).
 
 ---
 
@@ -39,8 +61,8 @@ Version honesty bump: tip has been advertising `0.1.27` while already shipping t
 features under the 0.1.x line (insights lane, Codex parser v4, home/app-merge,
 repo-key wake, agy token accounting, and related adapters). Cargo + npm pins move in
 sync to `0.1.28` as a **patch** label-honesty bump — tip features continue to ship on
-0.1.x rather than opening a 0.2 line. **npm publish and the GitHub release tag remain
-a separate COS-approved step** — this release only stops the label lying.
+0.1.x rather than opening a 0.2 line. Published as `v0.1.28` on 2026-09-30.
+The label bump includes the features below.
 
 ### Added
 
@@ -50,9 +72,8 @@ a separate COS-approved step** — this release only stops the label lying.
 - **The insights payload's human-turn blocks are real data.** `archie scan` ingests the
   human-at-the-keyboard turn histories no session adapter owns — Claude Code's
   `~/.claude/history.jsonl` and per-project transcript user-turns, Antigravity's
-  `history.jsonl` + brain `transcript.jsonl` `USER_INPUT` records, and Codex via
-  `~/.codex/history.jsonl` (SPEC #216 / #224; indexed from that file only — rollouts stay
-  on the session adapter) — and stores per turn only derived features (timestamp, local
+  `history.jsonl` + brain `transcript.jsonl` `USER_INPUT` records — and stores per turn
+  only derived features (timestamp, local
   hour/date, word count, the six-trigger friction class, bounded vocabulary mention
   counts). The insights payload's `day_hour` heatmap, `friction` by-trigger counts and
   `vocabulary` streams fill from these tables with the same semantics as the

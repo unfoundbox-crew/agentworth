@@ -48,8 +48,8 @@ pub struct ScanSummary {
     /// the owning adapter's `is_session_path` rejects outright, whether or not they are
     /// thin. Only computed on a full (unscoped) scan -- see `run_scan`.
     pub stub_sessions_removed: usize,
-    /// The human-turn ingestion lane (insights data lane) runs with every scan; these are its
-    /// numbers. Zeroes when no turn sources exist locally — an absence, never a fabrication.
+    /// The human-turn ingestion lane runs with unscoped machine scans. Explicit-path scans
+    /// leave this global lane untouched; their counters are zero.
     #[serde(default)]
     pub human_turns: turns::TurnIngestSummary,
 }
@@ -58,18 +58,24 @@ pub struct ScanSummary {
 pub struct Scanner {
     adapters: Vec<Box<dyn AgentAdapter>>,
     storage: Arc<Storage>,
+    turn_ingestor: Option<agentworth_adapters::human_turns::HumanTurnIngestor>,
 }
 
 impl Scanner {
     /// Create a new scanner with every adapter in `agentworth_adapters::all_adapters()` --
     /// the canonical registry, so a newly-added adapter is picked up here automatically.
     pub fn new(storage: Arc<Storage>) -> Self {
-        Self { adapters: agentworth_adapters::all_adapters(), storage }
+        Self {
+            adapters: agentworth_adapters::all_adapters(),
+            storage,
+            turn_ingestor: Some(agentworth_adapters::human_turns::HumanTurnIngestor::from_system()),
+        }
     }
 
-    /// Create a scanner with custom adapter list (useful for testing or selective execution).
+    /// Create a scanner with only the supplied session adapters. This selective scanner
+    /// does not also discover machine-global human-turn sources.
     pub fn with_adapters(adapters: Vec<Box<dyn AgentAdapter>>, storage: Arc<Storage>) -> Self {
-        Self { adapters, storage }
+        Self { adapters, storage, turn_ingestor: None }
     }
 
     /// Reference to underlying storage engine.
@@ -545,20 +551,22 @@ impl Scanner {
         let aggregate_stats = self.storage.get_aggregate_stats(true)?;
         let total_indexed_sessions = self.storage.total_row_count()?;
 
-        // Human-turn ingestion (insights data lane) runs with every scan — the session facts
-        // and per-turn facts share one index and one fingerprint stall, so a scan leaves the
-        // insights payload's turn blocks as fresh as its session blocks. A failure here warns
-        // and leaves the turn tables as the last good one left them; it never fails a scan.
-        let human_turns = match turns::ingest_human_turns(
-            &agentworth_adapters::human_turns::HumanTurnIngestor::from_system(),
-            self.storage(),
-            options.force,
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Human-turn ingestion failed: {}", e);
-                turns::TurnIngestSummary::default()
+        // Turn sources belong to the machine scan, not an explicit session path. Ingesting
+        // the system homes during a scoped scan imports unrelated histories into fixture
+        // or selected-path indexes and makes a tiny scan read the whole machine.
+        // Skipping also preserves the global turn version and rows on forced scoped scans.
+        let human_turns = if !options.custom_paths.is_empty() {
+            turns::TurnIngestSummary::default()
+        } else if let Some(ingestor) = &self.turn_ingestor {
+            match turns::ingest_human_turns(ingestor, self.storage(), options.force) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Human-turn ingestion failed: {}", e);
+                    turns::TurnIngestSummary::default()
+                }
             }
+        } else {
+            turns::TurnIngestSummary::default()
         };
 
         Ok(ScanSummary {
@@ -1776,6 +1784,10 @@ mod tests {
             "a still-enumerated virtual source must not be pruned as missing"
         );
         assert!(storage.get_session_by_id("virtual-stub-sess").unwrap().is_some());
+        assert_eq!(seed_summary.human_turns.sources_found, 0);
+        assert_eq!(prune_summary.human_turns.sources_found, 0);
+        assert_eq!(storage.human_turn_total().unwrap(), 0);
+        assert_eq!(storage.human_turn_ingestion_version().unwrap(), 0);
     }
 
     /// End-to-end regression for the `recovery.rs:571` panic: a real Claude Code transcript

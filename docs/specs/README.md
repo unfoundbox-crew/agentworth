@@ -1,14 +1,18 @@
 # Specs, and the order to build them
 
-## Where this stands, 2026-09-12
+## Where this stands, 2026-10-08
 
-What is left and in what order, with the lane spec for building it: `docs/ROADMAP.md` (2026-09-12).
+What is left and in what order, with the lane spec for building it: `docs/ROADMAP.md` (2026-10-08).
+
+Release status is checked against main `e159dd1` and tag `v0.1.28`. The
+sequencing prose below the status table is historical; use the roadmap for
+current release work.
 
 | Spec | Status | PR |
 | :--- | :--- | :--- |
 | `agent-bus.md` | proposed 2026-09-07, not built | — |
-| `app-merge.md` | product call locked 2026-09-30; P1+P2 merged; P3 SPEC; P4/P5 blocked | #204, #205, #212 |
-| `app-merge-p3-parity.md` | proposed 2026-09-30; SPEC only — P3 deck parity / safe dedupe | — |
+| `app-merge.md` | product call locked 2026-09-30; P1-P3 implementation merged; P3 dogfood pending confirmation; P4/P5 blocked | #204, #205, #212, #218, #219, #222, #223, #225 |
+| `app-merge-p3-parity.md` | implementation merged; dogfood pending confirmation | #217, #218, #219, #222, #223, #225 |
 | `archie-bench.md` | built (the local table) | #124 |
 | `archie.md` | proposed (umbrella spec) | — |
 | `asks.md` | built | #97 |
@@ -29,8 +33,8 @@ What is left and in what order, with the lane spec for building it: `docs/ROADMA
 | `governor.md` | built | #TBD (2026-09-06) |
 | `handoff.md` | built | #TBD (2026-09-02) |
 | `home-latency.md` | measured | — |
-| `home.md` | concept locked 2026-09-07, not built | — |
-| `insights-proxy-naming.md` | built 2026-10-01 — honest `session_user_messages` / `user_messages` names (schema 3) | honesty #7 |
+| `home.md` | deck implemented; archive remains a phase; P4 blocked | #204, #205, #218, #219 |
+| `insights-proxy-naming.md` | built 2026-10-01 — honest `session_user_messages` / `user_messages` names (schema 3) | #228 |
 | `local-search.md` | draft, not built (mostly); MCP-server precondition met | — |
 | `loop.md` | built | #TBD (2026-09-06) |
 | `loose-ends.md` | built | #77 |

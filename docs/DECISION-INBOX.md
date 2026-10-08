@@ -4,6 +4,22 @@ Owner of this doc: the master session. Everything below this section is a
 historical log from earlier sessions — kept for the record, not maintained
 going forward.
 
+## Current release decisions, 2026-10-08
+
+Initial release audit: main `e159dd1`, published `v0.1.28`. Release
+preparation is PR #229; CI passed on `e3140eb`.
+`docs/ROADMAP.md` holds the current release checklist. v0.1.29 preparation
+includes merged P3 work; it does not reopen P4/P5.
+
+Saurabh approved merge of PR #229 and publication of v0.1.29 on 2026-10-08:
+"go ahead", in reply to the merge/tag/release-verification plan. Verify the
+release workflow after the tag push.
+
+Pending: confirm P3 dogfood acceptance before any P4 relaunch. The release
+approval does not reopen P4/P5.
+
+The entries below remain the historical log.
+
 ## 2026-09-05, session_wake
 
 **PARSER_VERSION is not bumped for the workspace metadata. Decided; no revisit

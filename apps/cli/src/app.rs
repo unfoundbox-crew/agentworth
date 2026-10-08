@@ -602,7 +602,7 @@ enum StatsCommand {
 
 #[derive(clap::Args, Debug, PartialEq)]
 struct ScanArgs {
-    /// Optional specific paths or directories to scan
+    /// Optional session paths or directories to scan; omit to also refresh global human-turn history
     #[arg(value_name = "PATHS")]
     paths: Vec<PathBuf>,
 

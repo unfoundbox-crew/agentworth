@@ -40,6 +40,9 @@ fn fixture() -> (TempDir, std::path::PathBuf) {
     let db = temp.path().join("index.db");
     Command::cargo_bin("agentworth")
         .unwrap()
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .env("AGENTWORTH_CONFIG_PATH", temp.path().join("config.toml"))
         .arg("--db-path")
         .arg(&db)
         .arg("scan")
@@ -53,6 +56,10 @@ fn fixture() -> (TempDir, std::path::PathBuf) {
 
 fn run(db: &std::path::Path, args: &[&str]) -> std::process::Output {
     let mut cmd = Command::cargo_bin("agentworth").unwrap();
+    let home = db.parent().unwrap();
+    cmd.env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("AGENTWORTH_CONFIG_PATH", home.join("config.toml"));
     cmd.arg("--db-path").arg(db);
     for a in args {
         cmd.arg(a);

@@ -1,7 +1,8 @@
 # App-merge
 
 Status: product call locked 2026-09-30. P1 and P2 have merged (#204, #205).
-P3 is next when scheduled. **P4 and P5 are blocked** until after P3 dogfood
+P3 implementation merged (#218, #219, #222, #223, #225), checked 2026-10-08
+against main `e159dd1`. P3 dogfood is not confirmed by this release audit. **P4 and P5 are blocked** until after P3 dogfood
 and an explicit COS relaunch of P4.
 
 This file is the durable home for the merge of `apps/dashboard` into
@@ -27,7 +28,7 @@ honest here so a later session does not re-open a closed product call.
 | :--- | :--- | :--- |
 | P1 | Path deep links inside the deck: `/home/insights`, `/home/s/<id>` | Merged — #204 |
 | P2 | Archive phase in the deck: `SessionList` + `InspectorPane`, `a` key | Merged — #205 |
-| P3 | Parity / kill duplicates: rail overview, coverage, archaeology, exports, command palette, shared-package dedupe. Archive remains a phase. Detail: `docs/specs/app-merge-p3-parity.md`. | SPEC on main (#217); implement in flight (#218 + stacked Overview/Exports/palette) |
+| P3 | Parity / kill duplicates: rail overview, coverage, archaeology, exports, command palette, shared-package dedupe. Archive remains a phase. Detail: `docs/specs/app-merge-p3-parity.md`. | Implementation merged — #218, #219, #222, #223, #225; dogfood pending confirmation |
 | P4 | Flip root / delete `apps/dashboard` | **Blocked** — needs P3 dogfood + COS relaunch |
 | P5 | Follow-ons after P4 (e.g. voice / #144, promote-to-default paths) | **Blocked** on P4 |
 
@@ -41,7 +42,7 @@ the dashboard is gone.
 | :--- | :--- | :--- |
 | Home deck | `apps/home` | Served at `/home/` via `archie serve --home` / `archie home` |
 | Archive phase | `apps/home/src/archive/` | Port of dashboard sessions view; see `Archive.tsx` header |
-| Legacy dashboard | `apps/dashboard` | Still embedded and served; still the home for rail / overview / coverage / archaeology / exports / palette until P3 |
+| Legacy dashboard | `apps/dashboard` | Still embedded and served at `/`; P3 panes also exist in the deck |
 | Design | `apps/home/DESIGN.md`, `docs/specs/home.md` | Product shape of the deck, not the merge plan |
 
 ## Why this call exists

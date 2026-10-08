@@ -558,25 +558,24 @@ There is no publish step to run by hand. Pushing a `v*` tag does everything —
 builds four targets, creates the GitHub Release, publishes to npm, then smoke
 tests `npx agentworth@<version>` on clean Ubuntu and macOS.
 
-Six files carry the version and `version-gate` fails the release if the tag
-disagrees with any of them:
+Version pins live in the workspace, npm launcher, and both plugin bundles.
+The release workflow checks the tag against Cargo, npm, plugin versions, and
+both plugin npx pins. Also update Cargo.lock, the npm lockfile, and regenerate
+the reference with the candidate binary.
 
 | File | What |
 | :--- | :--- |
-| `Cargo.toml` | workspace version |
-| `Cargo.lock` | the ten `agentworth-*` workspace crates |
-| `packages/agentworth/package.json` | the npm package |
-| `apps/web/src/version.ts` | the badge on the marketing site |
-| `.claude-plugin/plugin.json` | the Claude Code plugin, twice: `version` and the `agentworth@<version>` pin in the `npx` args |
-| `packages/dsh-plugin-agentworth/` | the dsh bundle, twice: `package.json` `version` and the pin in `cordis.patch.yml` |
+| `Cargo.toml` / `Cargo.lock` | Workspace and native crate versions |
+| `packages/agentworth/package.json` / `package-lock.json` | npm launcher version |
+| `.claude-plugin/plugin.json` | Plugin version and `agentworth@<version>` pin |
+| `packages/dsh-plugin-agentworth/package.json` / `cordis.patch.yml` | Bundle version and npx pin |
+| `docs/REFERENCE.md` / `docs/reference.json` | Generated reference from the candidate binary |
 
-```bash
-git checkout -b release/vX.Y.Z origin/main
-# bump all six, then:
-gh pr create --base main --title "chore(release): vX.Y.Z"
-# merge once CI is green, then tag the merged commit:
-git tag -a vX.Y.Z <merged-sha> -m "..." && git push origin vX.Y.Z
-```
+Use an isolated worktree. Prepare the changelog and version bump, then run CI
+before merging. Follow `AGENTS.md` for the PR base and public publication
+approval. COS / Saurabh must approve the merge into main and the release tag.
+The marketing site reads generated content; there is no separate
+`apps/web/src/version.ts` pin.
 
 Tag the merge commit, not your local branch — and confirm the work is actually
 on `main` first. A release has already been cut around a commit that changed
@@ -620,8 +619,10 @@ while you still remember what shipped.
 
 ### Public documentation
 
-`apps/web` is the marketing site and deploys to GitHub Pages on every push to
-`main` via `deploy-pages.yml`. It is a separate build from the dashboard and
+`apps/web` is the marketing site. `agentworth.dev` is served by Vercel behind
+Cloudflare, deployed through the CLI; the Pages workflow does not serve the
+production domain. Build locally with the shared design tokens before a
+Vercel deployment (see `AGENTS.md`). It is a separate build from the dashboard and
 must stay free of API calls — anything that fetches `/api/*` there ships a
 request that 404s in production.
 
