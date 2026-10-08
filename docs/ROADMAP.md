@@ -1,16 +1,15 @@
 # Roadmap: release status and remaining work
 
-Status: 2026-10-08. Checked against main `e159dd1`, release tag `v0.1.28`
-(`aa7e851`, published 2026-09-30), and the local worktrees. The initial audit found no open PRs. Release
-preparation is now [draft PR #229](https://github.com/unfoundbox-crew/agentworth/pull/229),
-targeting main. Main CI run [36834340036](https://github.com/unfoundbox-crew/agentworth/actions/runs/36834340036)
-passed on `e159dd1`. This proves main, not the prepared release branch.
+Status: 2026-10-08. PR #229 merged into main as `97cba0e`; tag `v0.1.29`
+points to that commit. [GitHub release](https://github.com/unfoundbox-crew/agentworth/releases/tag/v0.1.29)
+and `agentworth@0.1.29` are published. The DSH npm package is not published;
+its first publication needs an authenticated npm account and trusted publisher setup.
 
-## Next release: v0.1.29
+## Released: v0.1.29
 
-Prepare a patch release from the 17 main commits after `v0.1.28`. No P4 work
-is required for this release. The dashboard stays at `/`; the deck stays at
-`/home/`, with archive as a phase.
+This patch release includes the 17 main commits after `v0.1.28` and the
+release scan fix. The dashboard stays at `/`; the deck stays at `/home/`,
+with archive as a phase. P4/P5 remain blocked.
 
 | Scope on main | Evidence | Release consequence |
 | :--- | :--- | :--- |
@@ -21,7 +20,7 @@ is required for this release. The dashboard stays at `/`; the deck stays at
 | Wake repository alias | #227 | Existing sessions remain discoverable after the repository rename |
 | Insights and matrix honesty | #228 | Schema 3 distinguishes session user messages from human turns; coverage separates detected from indexed |
 
-Release preparation lives on `codex/release-v0.1.29`. Changelog, version
+Release preparation merged through PR #229 from `codex/release-v0.1.29`. Changelog, version
 pins, lockfiles, spec status, and release instructions are updated there.
 Local validation on 2026-10-08 found and fixed an additional scan bug:
 explicit session paths also ingested unrelated machine-global human-turn
@@ -51,9 +50,9 @@ installed binary and real index were not replaced.
 | `doctor --self-test` on multilingual fixture index | 9 pass, 1 expected compaction skip; no slow/fail steps |
 
 Marketing download-count lookups were unavailable in the sandbox; the build
-handled them as unavailable and completed. Cross-platform packaging, signed
-release assets, registry publication, and clean-install CI smoke tests remain
-release-workflow checks. Local success does not stand in for those checks.
+handled them as unavailable and completed. All four release archives and their
+SHA256 checksum files are published. Fresh npm installs passed on macOS and
+Linux. These assets have checksums; the workflow does not sign them.
 
 The first PR CI run used Rust 1.99 while local clippy used 1.97.1. CI found
 five unnecessary closure borrows in existing wake redaction; the release
@@ -61,21 +60,22 @@ branch removes them without changing redaction behavior. All 28 wake tests
 and local clippy pass after the correction. PR #229 carries the current CI
 results. Saurabh approved merge of PR #229 and publication of v0.1.29 on
 2026-10-08: "go ahead", in reply to the merge/tag/release-verification plan.
-Release workflow verification remains pending.
+Main CI [37780830052](https://github.com/unfoundbox-crew/agentworth/actions/runs/37780830052)
+passed. Release workflow [37781553850](https://github.com/unfoundbox-crew/agentworth/actions/runs/37781553850)
+reported success, and native builds, GitHub publication, agentworth npm publication,
+and both fresh-install checks passed. Its DSH publish step actually failed with npm
+E404. The shell pipeline returned tee's success because pipefail was absent.
+The follow-up adds pipefail to both publication steps. DSH remains unavailable:
+first publish with an authenticated npm owner, then configure the trusted publisher
+for unfoundbox-crew/agentworth, workflow release.yml. Local npm authentication
+returned E401, so this session could not perform the first publication.
 
-## Release publication checklist
+## Remaining publication work
 
-1. Run candidate CI after the approved branch push. Local validation above
-   passed; CI must confirm the published commit before merge and tagging.
-2. Get Saurabh's approval before publishing the branch and PR to this public
-   repository. No open train PR exists; the September 19 and September 23
-   train branches are already ancestors of main. Confirm the release PR base
-   when publishing; do not reuse those branches.
-3. Get COS / Saurabh's approval to merge the reviewed release PR into main.
-4. Confirm the changelog date, then tag the approved merge commit `v0.1.29` only after CI passes. A tag push
-   publishes GitHub assets and npm packages; publication needs approval.
-5. Verify the release workflow and clean-install smoke tests. Marketing
-   deployment is a separate Vercel operation.
+1. Review and approve the follow-up workflow fix before merging it into main.
+2. Publish `dsh-plugin-agentworth@0.1.29` with an authenticated npm owner.
+3. Configure the DSH package's trusted publisher for future releases.
+4. Verify the DSH registry version after publication. Marketing deployment remains separate.
 
 ## Local worktree and branch audit, before cleanup
 
