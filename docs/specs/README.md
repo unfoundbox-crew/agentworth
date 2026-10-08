@@ -4,7 +4,8 @@
 
 What is left and in what order, with the lane spec for building it: `docs/ROADMAP.md` (2026-10-08).
 
-Release status is checked against main `e159dd1` and tag `v0.1.28`. The
+Release status is checked against main `97cba0e` and tag `v0.1.29`.
+Native and agentworth npm publication passed; DSH publication is blocked. The
 sequencing prose below the status table is historical; use the roadmap for
 current release work.
 

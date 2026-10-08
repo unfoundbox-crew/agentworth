@@ -211,6 +211,7 @@ jobs:
       - name: Publish package to NPM (trusted publishing / OIDC)
         working-directory: packages/agentworth
         run: |
+          set -o pipefail
           if ! npm publish --access public 2>&1 | tee /tmp/publish.log; then
             if grep -qiE "trusted publisher|oidc|not configured" /tmp/publish.log; then
               echo "::error::Trusted Publisher is not configured on npmjs.com."
@@ -230,6 +231,7 @@ jobs:
       - name: Publish dsh-plugin-agentworth to NPM (trusted publishing / OIDC)
         working-directory: packages/dsh-plugin-agentworth
         run: |
+          set -o pipefail
           if ! npm publish --access public 2>&1 | tee /tmp/publish-dsh.log; then
             if grep -qiE "trusted publisher|oidc|not configured|404|E404" /tmp/publish-dsh.log; then
               echo "::error::dsh-plugin-agentworth: first publish by hand (npm publish from packages/dsh-plugin-agentworth), then add a Trusted Publisher:"

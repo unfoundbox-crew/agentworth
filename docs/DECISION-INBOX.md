@@ -6,14 +6,17 @@ going forward.
 
 ## Current release decisions, 2026-10-08
 
-Initial release audit: main `e159dd1`, published `v0.1.28`. Release
-preparation is PR #229; CI passed on `e3140eb`.
-`docs/ROADMAP.md` holds the current release checklist. v0.1.29 preparation
-includes merged P3 work; it does not reopen P4/P5.
+PR #229 merged as `97cba0e`; tag `v0.1.29` points to that commit. GitHub
+assets and agentworth npm package are published; macOS/Linux fresh installs pass.
+`docs/ROADMAP.md` records the validation and remaining publication work.
 
 Saurabh approved merge of PR #229 and publication of v0.1.29 on 2026-10-08:
-"go ahead", in reply to the merge/tag/release-verification plan. Verify the
-release workflow after the tag push.
+"go ahead", in reply to the merge/tag/release-verification plan.
+
+Unresolved: dsh-plugin-agentworth publication failed with npm E404. A missing
+pipefail hid the failure in CI. The follow-up fixes status reporting, but the
+package needs its first authenticated publication and trusted publisher setup.
+Local npm authentication returned E401.
 
 Pending: confirm P3 dogfood acceptance before any P4 relaunch. The release
 approval does not reopen P4/P5.
