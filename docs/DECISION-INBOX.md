@@ -4,6 +4,18 @@ Owner of this doc: the master session. Everything below this section is a
 historical log from earlier sessions — kept for the record, not maintained
 going forward.
 
+## Current release decisions, 2026-10-08
+
+Release audit: main `e159dd1`, published `v0.1.28`, no open GitHub PRs.
+`docs/ROADMAP.md` holds the current release checklist. v0.1.29 preparation
+includes merged P3 work; it does not reopen P4/P5.
+
+Pending: confirm P3 dogfood acceptance before any P4 relaunch. Public release
+PR publication, merge to main, and tag publication still need approval.
+No merge or tag was performed during preparation.
+
+The entries below remain the historical log.
+
 ## 2026-09-05, session_wake
 
 **PARSER_VERSION is not bumped for the workspace metadata. Decided; no revisit

@@ -1,10 +1,9 @@
 # App-merge P3 — parity / kill duplicates
 
-Status: SPEC on main (#217). Implement in flight (#218 Coverage/Archaeology; stacked Overview/Exports/palette + packages/shell twins). SPEC for the next app-merge phase after P1
-(#204) and P2 (#205). Implements the P3 row already locked in
-`docs/specs/app-merge.md` (product call #212). **SPEC first; implement on a
-follow-up branch/PR stack. Do not merge to main without COS / Saurabh
-approval. P4 and P5 stay blocked.**
+Status: implementation merged (#218, #219, #222, #223, #225), checked
+2026-10-08 against main `e159dd1`. SPEC #217 follows P1 (#204) and P2 (#205).
+P3 dogfood remains unconfirmed in this audit. **P4 and P5 stay blocked until
+P3 dogfood + explicit COS relaunch of P4.**
 
 ## Parent product call (do not re-open)
 
