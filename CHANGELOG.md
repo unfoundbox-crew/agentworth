@@ -44,6 +44,12 @@ Release candidate notes. Not published yet; confirm the date when tagging.
 
 ### Fixed
 
+- **Explicit scan paths leave global human-turn history untouched.** A small
+  `scan PATH` previously also read Claude, Codex, and Antigravity turn histories
+  from the machine's home directory. Scoped scans now scan sessions at the
+  supplied paths and preserve existing global turn rows and their ingestion
+  version, including with `--force`. Run `scan` without paths to refresh the
+  global insights turn lane.
 - **Wake after the repository rename.** `unfoundbox-crew/agentworth` now maps
   to the historical repository key so wake finds existing sessions (#227).
 - **Collapsed dashboard rail.** The session-list restore control stays visible

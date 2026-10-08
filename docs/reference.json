@@ -52,7 +52,7 @@
           "name": "PATHS",
           "positional": true,
           "required": false,
-          "help": "Optional specific paths or directories to scan",
+          "help": "Optional session paths or directories to scan; omit to also refresh global human-turn history",
           "default": null,
           "possibleValues": []
         },

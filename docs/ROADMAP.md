@@ -20,16 +20,44 @@ is required for this release. The dashboard stays at `/`; the deck stays at
 | Wake repository alias | #227 | Existing sessions remain discoverable after the repository rename |
 | Insights and matrix honesty | #228 | Schema 3 distinguishes session user messages from human turns; coverage separates detected from indexed |
 
-Release preparation lives on `codex/release-v0.1.29`. The changelog, version
+Release preparation lives on `codex/release-v0.1.29`. Changelog, version
 pins, lockfiles, spec status, and release instructions are updated there.
-The installed v0.1.28 generator matches the committed reference surfaces;
-reference metadata is aligned to v0.1.29. Regeneration with the candidate
-binary is still required. Lenovo SSH timed out during this audit; heavy
-builds were not run on the MacBook. Version consistency and diff checks pass.
-Candidate CI and release packaging still need verification before a tag is pushed.
+Local validation on 2026-10-08 found and fixed an additional scan bug:
+explicit session paths also ingested unrelated machine-global human-turn
+sources. Explicit-path and custom-adapter scans now leave that global lane
+untouched. A real CLI fixture proves scoped/forced isolation, normal
+machine ingestion, and preservation of already-ingested turn rows/version.
+The grammar test now uses its synthetic home for child commands too.
 
-1. Validate the prepared branch, including generated reference, version pins,
-   both embedded UIs, Rust tests, clippy, and launcher/plugin tests.
+## Local release validation, 2026-10-08
+
+Saurabh explicitly authorized local builds for this release. All checks below
+ran in the release worktree, with a separate Cargo target directory. Smoke
+checks used synthetic histories and a separate fixture database. The
+installed binary and real index were not replaced.
+
+| Check | Result |
+| :--- | :--- |
+| Rust workspace tests, including doc tests | 1,193 passed; 0 failed; 0 ignored |
+| `cargo clippy --workspace --all-targets -- -D warnings` | Passed |
+| Optimized native build | Passed; macOS arm64; all three names report 0.1.29 |
+| Dashboard, home, marketing builds | Passed; marketing prerender checked 64 routes |
+| Home tests / dashboard typecheck | 143 passed / passed |
+| npm launcher / DSH plugin tests | 52 passed / 6 passed |
+| Version pins, lockfiles, generated reference | Consistent; regenerated with the candidate binary |
+| Release binary embedding and HTTP smoke | Dashboard/home HTML and JS match their dist builds; home deep links, stats, insights schema 3 pass |
+| npm wrapper smoke | Runs the candidate binary and reports 0.1.29 |
+| `doctor --self-test` on multilingual fixture index | 9 pass, 1 expected compaction skip; no slow/fail steps |
+
+Marketing download-count lookups were unavailable in the sandbox; the build
+handled them as unavailable and completed. Cross-platform packaging, signed
+release assets, registry publication, and clean-install CI smoke tests remain
+release-workflow checks. Local success does not stand in for those checks.
+
+## Release publication checklist
+
+1. Run candidate CI after the approved branch push. Local validation above
+   passed; CI must confirm the published commit before merge and tagging.
 2. Get Saurabh's approval before publishing the branch and PR to this public
    repository. No open train PR exists; the September 19 and September 23
    train branches are already ancestors of main. Confirm the release PR base
@@ -40,7 +68,7 @@ Candidate CI and release packaging still need verification before a tag is pushe
 5. Verify the release workflow and clean-install smoke tests. Marketing
    deployment is a separate Vercel operation.
 
-## Local worktree and branch audit
+## Local worktree and branch audit, before cleanup
 
 | Worktree / branch | Tip | Finding |
 | :--- | :--- | :--- |
@@ -51,9 +79,15 @@ Candidate CI and release packaging still need verification before a tag is pushe
 
 `git cherry` reports the Codex and shell follow-ups as unique commits, but
 inspection of main confirms their functional outcomes are present. Commit
-identity alone does not make them release gaps. No branch was deleted,
-reset, or cherry-picked. Other local branches include old release, test,
-and archive branches; none is an open GitHub PR or a required release input.
+identity alone does not make them release gaps. No cherry-picks were needed.
+
+Saurabh approved local cleanup on 2026-10-08 and waived the absent Git-flow
+file for that cleanup. The three clean worktrees in the table were removed,
+including their ignored build output. Their original local branches remain.
+Another 49 local branch refs were deleted after verifying every tip is an
+ancestor of main `e159dd1`. No remote refs were changed. Main, the release
+worktree, and all branches with unique history remain. The shared checkout's
+packageManager edit was left untouched.
 
 ## Remaining product work
 

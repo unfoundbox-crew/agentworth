@@ -24,7 +24,7 @@ Scan and index agent histories from the local system
 
 | Flag | Required | Help | Default | Values |
 |---|---|---|---|---|
-| `PATHS` | no | Optional specific paths or directories to scan | - | - |
+| `PATHS` | no | Optional session paths or directories to scan; omit to also refresh global human-turn history | - | - |
 | `--force, -f` | no | Force rescanning and re-indexing of unchanged source files | false | - |
 | `--include-stubs` | no | Keep storing/pruning near-empty stub sessions instead of filtering them out | false | - |
 | `--json` | no | Output scan results as formatted JSON | false | - |
