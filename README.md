@@ -178,6 +178,99 @@ Every score provides an explainable 5-factor breakdown:
 
 ---
 
+## Evidence Check for Pull Requests
+
+The ladder above lives on your machine. **AgentWorth / Evidence** carries the part of it a
+reviewer can check onto the pull request, without the transcripts:
+
+1. Your pre-push hook signs a small **Work Receipt** for the commits you push (which agent
+   sessions touched them, the rungs they reached, token counts; no prompts, no paths, no
+   code) and pushes it as a git note, `refs/notes/agentworth`.
+2. The GitHub Action verifies the signature and re-derives what CI can see for itself:
+   the commits are in this PR, the claimed files are in their diffs, CI is green on the
+   head commit. Each commit lands in three columns: **verified here**, **attested locally
+   (signed)**, **claimed only**.
+3. The check is `neutral` unless every commit carries a receipt signed by a key linked to
+   GitHub and head CI is green (`success`). It is only ever `failure` if you opt in with
+   `fail-on`.
+
+One-minute setup:
+
+```bash
+# 1. In your repo, once (prints the workflow and the hook; --write writes both)
+npx -y agentworth@latest repo receipt init --write
+
+# 2. Commit the workflow it wrote, then push as usual
+git add .github/workflows/agentworth.yml && git commit -m "Add AgentWorth evidence check" && git push
+
+# 3. Open a PR. "AgentWorth / Evidence" appears under Checks.
+```
+
+The workflow it writes, also copy-pasteable on its own:
+
+```yaml
+name: AgentWorth
+on: pull_request
+permissions:
+  contents: read
+  checks: write
+  pull-requests: read
+jobs:
+  receipt-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: unfoundbox-crew/agentworth@v0
+```
+
+Optional, for "signed by @you": `archie repo receipt key --github` prints the
+`gh ssh-key add --type signing` command that links the receipt key to your account.
+Maintainers can add only the workflow: contributors without AgentWorth still get a check
+("no receipt covers this commit") with the one-line install.
+
+| Input | Default | What it does |
+| :--- | :--- | :--- |
+| `wait-for-ci` | `600` | Seconds to wait for the other checks on the head commit before reporting. |
+| `fail-on` | empty | Opt-in failure: `invalid-signature`, `below-rung:N`, `unattributed` (comma-separated). |
+| `transport` | `auto` | `auto` reads notes and committed `.agentworth/receipts/` files; `file` skips the notes fetch. |
+| `archie-version` | the Action's release | Pin the archie release the Action installs (Linux X64 runners; the `.sha256` is verified). |
+| `archie-path` | empty | Use an archie you built instead of a release. |
+| `github-token` | `github.token` | Needs `checks: write` to post the check. |
+
+**Fork pull requests.** GitHub gives `pull_request` workflows from forks a read-only token,
+so the check cannot be created; the Action puts the same table in the job summary and
+says so. To get the check on fork PRs, run it after CI in the base repository's context:
+
+```yaml
+name: AgentWorth (after CI)
+on:
+  workflow_run:
+    workflows: [CI]          # the workflow(s) whose result should count as rung 5
+    types: [completed]
+permissions:
+  contents: read
+  checks: write
+  pull-requests: read
+jobs:
+  receipt-verify:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: unfoundbox-crew/agentworth@v0
+        with: { wait-for-ci: 0 }
+```
+
+The Action never uses `pull_request_target` and never runs code from the pull request: it
+reads git objects and notes, calls the GitHub API with the workflow token, and runs a
+released archie whose checksum it checks. Before you push, the read-only MCP tool
+`repo_receipt` shows an agent the receipt the next push would sign and the rungs it would
+show. Full design: `docs/specs/evidence-check.md`.
+
+---
+
 ## Local-First SQLite Architecture
 
 AgentWorth is designed around strict privacy, performance, and local-first invariants:
@@ -293,6 +386,7 @@ archie session export <SESSION_ID> --format atif --redact > trajectory_atif.json
 | `archie session forgotten [ID]` | What compaction dropped: decisions a session made that its own summaries didn't keep (`--round N`, `--class CLASS`, `--json`). |
 | `archie repo blunder-blame [--session ID \| --file PATH]` | Bridges a recorded blunder forward to the files it touched, or a file's blame history back to any blunder in the sessions blamed for it (`--top N`, `--json`). |
 | `archie repo suspect [OPTIONS]` | Lists commits on this branch whose authoring session never proved anything, so you know where to look twice before pushing (`--repo`, `--since`, `--json`). `--hook` prints a pre-push script that prints and never blocks. |
+| `archie repo receipt init\|create\|show\|key\|verify` | Work Receipts for the AgentWorth / Evidence pull-request check: `init --write` sets a repo up (key, consent, workflow, hook), `create` signs a receipt for the commits you push (the hook runs it), `show` decodes one, `key --github` links the key to GitHub, `verify` renders the check offline (what the Action runs). |
 | `archie doctor [--json]` | Diagnoses system health, SQLite WAL status, and detected adapter roots. |
 | `archie doctor --self-test` | Runs the real workflow end to end — scan, stats, usage, traces, inspect, handoff, forgotten, an MCP round trip — against the real index on this machine, with no network. Prints pass/fail/slow and timing per step; exits non-zero if any step fails. |
 | `archie mcp` | Starts the read-only MCP server over stdio, so a coding agent can query this machine's session index mid-session (see below). |

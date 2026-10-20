@@ -27,7 +27,7 @@ in.
 | # | Extension | Reach | What it needs from the core | Exists today |
 | :-- | :--- | :--- | :--- | :--- |
 | L1 | The done gate (`done-gate.md`) | every stop, in every session, in two harnesses | one new tool, `session_gate` | nothing; the tool is new, the plugins are new |
-| L2 | A GitHub Action on a pull request | every reviewer of every PR, including people with no AgentWorth installed | `repo_suspect` and `session_list --repo` over a checkout, plus a receipt format a developer can attach | both tools ship; the Action and the receipt format do not |
+| L2 | A GitHub Action on a pull request | every reviewer of every PR, including people with no AgentWorth installed | `repo_suspect` and `session_list --repo` over a checkout, plus a receipt format a developer can attach | built: the Action and the Work Receipt format ship as AgentWorth / Evidence (`evidence-check.md`) |
 | L3 | A shell prompt segment | every prompt, all day, one line | `archie window show --plain` under 50 ms | the command ships and is fast enough — measured below. `--plain` exists; the one-line form does not |
 | L4 | An editor extension | every file save, in the status bar | the local HTTP API | ships: `archie serve` and ten routes |
 | L5 | Declarative adapters | every harness nobody has written Rust for | the adapter trait accepting a data-driven implementation | the trait ships; a manifest loader does not |
@@ -46,6 +46,14 @@ The first extension because it is the only one that changes what an agent
 *does*, rather than what a person can look at.
 
 ### L2 — a GitHub Action on a pull request
+
+> **Built, with one amendment (2026-10-20).** L2 shipped as AgentWorth / Evidence,
+> specified in `docs/specs/evidence-check.md`. The receipt travels in a **git note**
+> (`refs/notes/agentworth`) pushed by the pre-push hook, not in the pull request body: a
+> body is editable by anyone with write access, shares a 65,536-character limit with the
+> prose, and needs a human paste on every push. A committed file under
+> `.agentworth/receipts/` remains as a flag. Everything else below holds: the Action never
+> sees the index or a transcript, and a PR with no receipt still gets a check that says so.
 
 Post the rung and the sessions that produced a change, as a PR comment or a
 check.

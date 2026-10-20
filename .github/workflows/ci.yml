@@ -34,6 +34,7 @@ jobs:
       dashboard: ${{ steps.filter.outputs.dashboard }}
       web: ${{ steps.filter.outputs.web }}
       launcher: ${{ steps.filter.outputs.launcher }}
+      action: ${{ steps.filter.outputs.action }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +56,9 @@ jobs:
               # "docs-only" and skip Rust CI entirely.
               - 'docs/REFERENCE.md'
               - 'docs/reference.json'
+              # apps/cli/tests/action_e2e.rs runs the Action's script end to end.
+              - 'action.yml'
+              - 'action/**'
             dashboard:
               - 'apps/dashboard/**'
               - 'packages/ui/**'
@@ -64,6 +68,11 @@ jobs:
             launcher:
               - 'packages/agentworth/**'
               - 'packages/dsh-plugin-agentworth/**'
+            action:
+              - 'action.yml'
+              - 'action/**'
+              - 'apps/cli/tests/fixtures/action/**'
+              - '.github/workflows/agentworth-evidence.yml'
 
   # No dedicated "docs_only" filter: docs-only is just the case where none of
   # the build-triggering filters above matched. Computed here instead of via
@@ -76,7 +85,8 @@ jobs:
       github.event_name == 'pull_request' &&
       needs.changes.outputs.rust != 'true' &&
       needs.changes.outputs.web != 'true' &&
-      needs.changes.outputs.launcher != 'true'
+      needs.changes.outputs.launcher != 'true' &&
+      needs.changes.outputs.action != 'true'
     runs-on: ubuntu-latest
     steps:
       - run: echo "docs only, nothing to build"
@@ -328,3 +338,44 @@ jobs:
       - name: Run dsh bundle tests
         working-directory: packages/dsh-plugin-agentworth
         run: npm test
+
+  # The GitHub Action (action.yml, action/evidence.sh) is bash that runs on every
+  # adopter's pull requests. Its behavior is tested end to end by
+  # apps/cli/tests/action_e2e.rs in the Rust job; this job lints it. shellcheck is
+  # preinstalled on ubuntu-latest. The glyph rule matches install.sh's above.
+  action-lint:
+    name: Action scripts
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.action == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: shellcheck --version && shellcheck action/*.sh apps/cli/tests/fixtures/action/*.sh
+
+      - name: action.yml keeps its name, composite runner and inputs
+        run: |
+          grep -qx 'name: AgentWorth Evidence' action.yml
+          grep -qx '  using: composite' action.yml
+          for input in wait-for-ci fail-on transport archie-version archie-path github-token; do
+            grep -qx "  $input:" action.yml || { echo "::error::action.yml lost input $input"; exit 1; }
+          done
+
+      - name: Action scripts stay inside the glyph set
+        run: |
+          python3 - <<'EOF'
+          import sys
+          bad = []
+          for path in ['action.yml', 'action/evidence.sh']:
+              with open(path, encoding='utf-8') as f:
+                  for n, line in enumerate(f, 1):
+                      for ch in line:
+                          cp = ord(ch)
+                          ok = cp < 128 or 0x2500 <= cp <= 0x259F or ch in '\u25cf\u25cb\u00b7\u2014\u2192'
+                          if not ok:
+                              bad.append(f"{path}:{n}: U+{cp:04X} ({ch})")
+          if bad:
+              print("glyph outside the allowed set:", *bad, sep="\n")
+              sys.exit(1)
+          EOF
