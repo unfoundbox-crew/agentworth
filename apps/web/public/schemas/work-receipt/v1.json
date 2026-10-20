@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentworth.dev/schemas/work-receipt/v1.json",
+  "title": "AgentWorth Work Receipt v1 (in-toto Statement v1)",
+  "description": "The decoded DSSE payload of a Work Receipt: an in-toto Statement v1 whose predicateType is https://agentworth.dev/work-receipt/v1. Integers only (confidence in basis points, money in micro-USD). Canonical form: keys sorted, no insignificant whitespace, UTF-8 (RFC 8785 compatible). receipt_id = hex(sha256(canonical bytes)). Max 64 KiB; over the cap commits[].files is emptied and predicate.truncated is true. Source of truth: crates/schema/src/work_receipt.rs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_type", "subject", "predicateType", "predicate"],
+  "properties": {
+    "_type": { "const": "https://in-toto.io/Statement/v1" },
+    "subject": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "digest"],
+        "properties": {
+          "name": { "const": "commit" },
+          "digest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["gitCommit"],
+            "properties": { "gitCommit": { "$ref": "#/$defs/gitOid" } }
+          }
+        }
+      }
+    },
+    "predicateType": { "const": "https://agentworth.dev/work-receipt/v1" },
+    "predicate": { "$ref": "#/$defs/predicate" }
+  },
+  "$defs": {
+    "gitOid": { "type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$" },
+    "sessionRef": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "minuteTimestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:00Z$" },
+    "u32": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "u64": { "type": "integer", "minimum": 0 },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt_version", "generator", "signer", "created_at", "range", "attribution", "sessions", "commits", "index", "redaction", "truncated"],
+      "properties": {
+        "receipt_version": { "const": 1 },
+        "generator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": { "name": { "type": "string" }, "version": { "type": "string" } }
+        },
+        "signer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["public_key"],
+          "properties": {
+            "public_key": {
+              "description": "OpenSSH public key line without comment. Its SHA256 fingerprint is the DSSE keyid; its raw 32 bytes are the signer_pubkey of every session ref.",
+              "type": "string",
+              "pattern": "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$"
+            }
+          }
+        },
+        "created_at": { "$ref": "#/$defs/minuteTimestamp" },
+        "range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["base", "head", "commits", "rule"],
+          "properties": {
+            "base": { "oneOf": [{ "$ref": "#/$defs/gitOid" }, { "type": "null" }] },
+            "head": { "type": "string" },
+            "commits": { "$ref": "#/$defs/u32" },
+            "rule": { "enum": ["upstream..HEAD", "default-branch..HEAD", "base..HEAD", "since", "last-n"] }
+          }
+        },
+        "attribution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule", "window_hours", "unanchored_rows"],
+          "properties": {
+            "rule": { "type": "string" },
+            "window_hours": { "$ref": "#/$defs/u32" },
+            "unanchored_rows": { "$ref": "#/$defs/u32" }
+          }
+        },
+        "sessions": { "type": "array", "items": { "$ref": "#/$defs/session" } },
+        "commits": { "type": "array", "items": { "$ref": "#/$defs/commit" } },
+        "index": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["last_session_at", "parser_version_min"],
+          "properties": {
+            "last_session_at": { "oneOf": [{ "$ref": "#/$defs/minuteTimestamp" }, { "type": "null" }] },
+            "parser_version_min": { "$ref": "#/$defs/u32" }
+          }
+        },
+        "redaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["policy", "fields_dropped"],
+          "properties": {
+            "policy": { "type": "string" },
+            "fields_dropped": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "adapter", "models", "started_at", "ended_at", "tokens_total", "spend_micro_usd", "highest_rung", "rungs", "risk"],
+      "properties": {
+        "ref": { "$ref": "#/$defs/sessionRef" },
+        "adapter": { "type": "string" },
+        "models": { "type": "array", "items": { "type": "string" } },
+        "started_at": { "oneOf": [{ "$ref": "#/$defs/minuteTimestamp" }, { "type": "null" }] },
+        "ended_at": { "oneOf": [{ "$ref": "#/$defs/minuteTimestamp" }, { "type": "null" }] },
+        "tokens_total": { "$ref": "#/$defs/u64" },
+        "spend_micro_usd": {
+          "description": "API-equivalent spend in micro-USD. null unless the author opted in with --include-spend.",
+          "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }]
+        },
+        "highest_rung": { "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 5 }, { "type": "null" }] },
+        "rungs": { "type": "array", "items": { "$ref": "#/$defs/rung" } },
+        "risk": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["demoted_claims", "loop_alerts", "unresolved_loops", "recoveries", "governor_halts", "known"],
+          "properties": {
+            "demoted_claims": { "$ref": "#/$defs/u32" },
+            "loop_alerts": { "$ref": "#/$defs/u32" },
+            "unresolved_loops": { "$ref": "#/$defs/u32" },
+            "recoveries": { "$ref": "#/$defs/u32" },
+            "governor_halts": { "$ref": "#/$defs/u32" },
+            "known": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "rung": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rung", "kind", "source", "command_class", "confidence_bp", "test_origin", "event_seq", "verified_locally"],
+      "properties": {
+        "rung": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "kind": { "enum": ["done_claimed", "artifact_changed", "test_or_build_passed", "commit_observed", "ci_or_deployment_verified"] },
+        "source": { "enum": ["shell_exit_0", "tool_result", "file_change", "git_commit", "assistant_claim", "other"] },
+        "command_class": {
+          "oneOf": [
+            { "enum": ["cargo test", "cargo build", "npm test", "pnpm test", "pytest", "go test", "make test", "gh pr create", "other_test_command"] },
+            { "type": "null" }
+          ]
+        },
+        "confidence_bp": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "test_origin": { "oneOf": [{ "enum": ["agent_chosen", "held_out", "unknown"] }, { "type": "null" }] },
+        "event_seq": { "$ref": "#/$defs/u64" },
+        "verified_locally": { "type": "boolean" }
+      }
+    },
+    "commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha", "sessions", "files", "anchor"],
+      "properties": {
+        "sha": { "$ref": "#/$defs/gitOid" },
+        "sessions": { "type": "array", "items": { "$ref": "#/$defs/sessionRef" } },
+        "files": {
+          "description": "Repo-relative paths that appear in this commit's own diff. First field dropped by the 64 KiB cap.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[^/~\\\\]" }
+        },
+        "anchor": { "oneOf": [{ "enum": ["absolute", "relative_to_session_repo"] }, { "type": "null" }] }
+      }
+    }
+  }
+}

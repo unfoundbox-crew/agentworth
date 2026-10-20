@@ -10,6 +10,7 @@ mod tokens;
 mod trace;
 pub mod fixtures;
 pub mod vector;
+pub mod work_receipt;
 
 pub use compaction::{
     compact_summary_text, compaction_rounds, CompactionRound, COMPACT_SUMMARY_KIND,
@@ -33,3 +34,7 @@ pub use text::{preview, tail_chars, truncate_chars};
 pub use tokens::TokenUsage;
 pub use trace::{AgentWorthTrace, IdentitySighting, TraceKind, TraceStats};
 pub use vector::{ChunkKind, TrajectoryChunk, VectorSearchResult, VectorStats};
+pub use work_receipt::{
+    canonical_json, receipt_id_of, session_ref, WorkReceiptError, WorkReceiptStatement,
+    MAX_RECEIPT_BYTES, WORK_RECEIPT_PREDICATE_TYPE,
+};

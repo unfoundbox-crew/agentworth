@@ -10,6 +10,7 @@ members = [
     "crates/scoring",
     "crates/redaction",
     "crates/export-atif",
+    "crates/attest",
     "apps/cli",
 ]
 resolver = "2"
@@ -58,6 +59,7 @@ agentworth-outcomes = { path = "crates/outcomes" }
 agentworth-scoring = { path = "crates/scoring" }
 agentworth-redaction = { path = "crates/redaction" }
 agentworth-export-atif = { path = "crates/export-atif" }
+agentworth-attest = { path = "crates/attest" }
 
 [workspace.lints.clippy]
 # `clippy::all` is cargo clippy's own default anyway; made explicit so the policy is
