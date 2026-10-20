@@ -1636,6 +1636,79 @@
       ]
     },
     {
+      "path": "archie repo receipt verify",
+      "about": "Verify every receipt for a PR range offline and render the AgentWorth / Evidence check. CI results and signing keys come from files (--ci, --keys); no network",
+      "args": [
+        {
+          "name": "--base",
+          "positional": false,
+          "required": true,
+          "help": "Base of the PR range (a commit or ref)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--head",
+          "positional": false,
+          "required": true,
+          "help": "Head of the PR range (a commit or ref)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--ci",
+          "positional": false,
+          "required": false,
+          "help": "Check runs and statuses on the head SHA, as collected with `gh api`",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--keys",
+          "positional": false,
+          "required": false,
+          "help": "GitHub signing keys of the PR and commit authors, as collected with `gh api`",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--receipt",
+          "positional": false,
+          "required": false,
+          "help": "An extra receipt file to read, beyond notes and .agentworth/receipts/ (repeatable)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--fail-on",
+          "positional": false,
+          "required": false,
+          "help": "Opt-in failure: invalid-signature, below-rung:N, unattributed (comma-separated)",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--format",
+          "positional": false,
+          "required": false,
+          "help": "Output format",
+          "default": "md",
+          "possibleValues": [
+            "md",
+            "check-json"
+          ]
+        },
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Path to a git checkout. Defaults to the current directory",
+          "default": null,
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "archie window",
       "about": "The rolling burn-rate window: what is being spent right now",
       "args": []

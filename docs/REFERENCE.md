@@ -463,6 +463,21 @@ Print the receipt public key; --github prints the `gh ssh-key add --type signing
 | `--github` | no | Print the `gh ssh-key add --type signing` command that links this key to your GitHub account, so the check can say "Signed by @you" | false | - |
 | `--json` | no | Output as JSON | false | - |
 
+### `archie repo receipt verify`
+
+Verify every receipt for a PR range offline and render the AgentWorth / Evidence check. CI results and signing keys come from files (--ci, --keys); no network
+
+| Flag | Required | Help | Default | Values |
+|---|---|---|---|---|
+| `--base` | yes | Base of the PR range (a commit or ref) | - | - |
+| `--head` | yes | Head of the PR range (a commit or ref) | - | - |
+| `--ci` | no | Check runs and statuses on the head SHA, as collected with `gh api` | - | - |
+| `--keys` | no | GitHub signing keys of the PR and commit authors, as collected with `gh api` | - | - |
+| `--receipt` | no | An extra receipt file to read, beyond notes and .agentworth/receipts/ (repeatable) | - | - |
+| `--fail-on` | no | Opt-in failure: invalid-signature, below-rung:N, unattributed (comma-separated) | - | - |
+| `--format` | no | Output format | md | md, check-json |
+| `--repo` | no | Path to a git checkout. Defaults to the current directory | - | - |
+
 ### `archie window`
 
 The rolling burn-rate window: what is being spent right now
