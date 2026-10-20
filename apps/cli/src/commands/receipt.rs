@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use agentworth_core::Scanner;
 use agentworth_outcomes::{evaluate_trace_outcomes, highest_outcome, RecoveryDetector};
+use agentworth_schema::work_receipt::EvidenceSource;
 use agentworth_schema::{AgentWorthTrace, EventPayload, OutcomeKind};
 use agentworth_scoring::{TraceScore, TraceScorer};
 use agentworth_storage::Storage;
@@ -835,6 +836,211 @@ pub fn run_receipt_command(
     }
 
     Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// Work Receipt projection (Evidence slice 1, spec §2.2 / §2.5)
+// -----------------------------------------------------------------------------
+
+/// At most this many rung entries of one kind per session go into a Work Receipt. A long
+/// session can record hundreds of file edits; one rung-2 entry per edit would blow the 64 KiB
+/// cap and say nothing a reader needs. The strongest few of each kind are kept: verified
+/// first, then highest confidence, then latest event.
+pub const WORK_RUNGS_PER_KIND: usize = 3;
+
+/// Everything [`project_work_session`] needs about one session besides its trace.
+#[derive(Debug, Clone)]
+pub struct WorkSessionInput<'a> {
+    /// The raw session id. Only its ref leaves this function.
+    pub session_id: &'a str,
+    pub adapter: &'a str,
+    pub models: &'a [String],
+    /// `None` when the session row is gone from the index (only its blame row is left).
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub tokens_total: u64,
+    /// `session_risk` row, if the scan ever computed one.
+    pub risk: Option<&'a agentworth_storage::SessionRisk>,
+    /// Governor events with action `halt` for this session.
+    pub governor_halts: u32,
+    /// Raw 32-byte signer public key: the session ref is derived from it.
+    pub signer_pubkey: &'a [u8; 32],
+    /// Opt-in (`--include-spend`); tokens only otherwise (decision row 4).
+    pub include_spend: bool,
+}
+
+/// The privacy-safe projection of one session for a Work Receipt.
+///
+/// Unlike [`extract_flight_data`] this carries no free text at all: no summaries, no quotes,
+/// no paths, no raw command lines, no raw session id. A rung's command is reduced to its
+/// [`CommandClass`](agentworth_schema::work_receipt::CommandClass) here and the raw string is
+/// dropped. `trace` is `None` when the session's source file could not be re-read; the
+/// session still appears (it was attributed), with no rungs, which reads as "no outcome
+/// evidence" rather than as clean.
+pub fn project_work_session(
+    input: &WorkSessionInput<'_>,
+    trace: Option<&AgentWorthTrace>,
+) -> agentworth_schema::work_receipt::WorkSession {
+    use agentworth_schema::work_receipt::{
+        session_ref, ReceiptTimestamp, SessionRisk as ReceiptRisk, WorkSession,
+    };
+
+    let rungs = trace.map(work_rungs).unwrap_or_default();
+    let highest_rung = rungs.iter().map(|r| r.rung).max();
+    let spend_micro_usd = match (input.include_spend, trace) {
+        (true, Some(t)) => {
+            let usd = TraceScorer::default().score(t).total_estimated_cost_usd;
+            (usd.is_finite() && usd >= 0.0).then(|| (usd * 1_000_000.0).round() as u64)
+        }
+        _ => None,
+    };
+    let to_u32 = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let risk = match input.risk {
+        Some(r) => ReceiptRisk {
+            demoted_claims: to_u32(r.demoted_claims),
+            loop_alerts: to_u32(r.loop_alerts),
+            unresolved_loops: to_u32(r.unresolved_loops),
+            recoveries: to_u32(r.recoveries),
+            governor_halts: input.governor_halts,
+            known: true,
+        },
+        None => ReceiptRisk {
+            governor_halts: input.governor_halts,
+            known: false,
+            ..ReceiptRisk::default()
+        },
+    };
+    let mut models: Vec<String> = Vec::new();
+    for m in input.models {
+        if !m.is_empty() && !models.contains(m) {
+            models.push(m.clone());
+        }
+    }
+
+    WorkSession {
+        session_ref: session_ref(input.signer_pubkey, input.session_id),
+        adapter: input.adapter.to_string(),
+        models,
+        started_at: input.started_at.map(ReceiptTimestamp::from_datetime),
+        ended_at: input.ended_at.map(ReceiptTimestamp::from_datetime),
+        tokens_total: input.tokens_total,
+        spend_micro_usd,
+        highest_rung,
+        rungs,
+        risk,
+    }
+}
+
+/// Rung entries for one trace: the outcome detector's located, verified evidence, mapped to
+/// closed vocabularies and capped at [`WORK_RUNGS_PER_KIND`] per kind.
+pub fn work_rungs(trace: &AgentWorthTrace) -> Vec<agentworth_schema::work_receipt::RungEvidence> {
+    use agentworth_schema::work_receipt::{evidence_rung, RungEvidence};
+
+    let located = agentworth_outcomes::OutcomeDetector::new().detect_outcomes_located(trace);
+    let mut all: Vec<RungEvidence> = located
+        .iter()
+        .map(|l| {
+            let event = &trace.events[l.event_index];
+            let (source, command) = rung_source(&event.payload);
+            let kind = l.evidence.kind;
+            let command_class = match kind {
+                OutcomeKind::TestOrBuildPassed | OutcomeKind::CiOrDeploymentVerified => {
+                    command.map(agentworth_schema::work_receipt::CommandClass::classify)
+                }
+                _ => None,
+            };
+            let test_origin = (kind == OutcomeKind::TestOrBuildPassed)
+                .then(|| l.evidence.test_provenance.as_ref().map(|p| p.origin).into());
+            RungEvidence {
+                rung: evidence_rung(kind),
+                kind,
+                source,
+                command_class,
+                confidence_bp: confidence_bp(l.evidence.confidence),
+                test_origin,
+                event_seq: l.event_sequence,
+                verified_locally: verified_locally(source, &event.payload, l),
+            }
+        })
+        .collect();
+
+    // Strongest first, then keep the first few of each kind.
+    all.sort_by(|a, b| {
+        b.rung
+            .cmp(&a.rung)
+            .then(b.verified_locally.cmp(&a.verified_locally))
+            .then(b.confidence_bp.cmp(&a.confidence_bp))
+            .then(b.event_seq.cmp(&a.event_seq))
+    });
+    let mut kept: Vec<RungEvidence> = Vec::new();
+    for r in all {
+        if kept.iter().filter(|k| k.kind == r.kind).count() < WORK_RUNGS_PER_KIND {
+            kept.push(r);
+        }
+    }
+    kept
+}
+
+/// Which observation produced a rung, and the command string behind it (classified by the
+/// caller, never stored).
+fn rung_source(payload: &EventPayload) -> (EvidenceSource, Option<&str>) {
+    match payload {
+        EventPayload::ShellCommand(cmd) if cmd.exit_code == Some(0) => {
+            let trimmed = cmd.command.trim_start();
+            if trimmed.starts_with("git commit") || trimmed.starts_with("git merge") {
+                (EvidenceSource::GitCommit, Some(cmd.command.as_str()))
+            } else {
+                (EvidenceSource::ShellExit0, Some(cmd.command.as_str()))
+            }
+        }
+        EventPayload::ShellCommand(cmd) => (EvidenceSource::Other, Some(cmd.command.as_str())),
+        EventPayload::FileAction { .. } => (EvidenceSource::FileChange, None),
+        EventPayload::ToolResult(_) => (EvidenceSource::ToolResult, None),
+        EventPayload::AssistantMessage { .. } => (EvidenceSource::AssistantClaim, None),
+        EventPayload::ToolCall(call) => {
+            let command = call
+                .arguments
+                .get("command")
+                .or_else(|| call.arguments.get("cmd"))
+                .and_then(|v| v.as_str());
+            (EvidenceSource::Other, command)
+        }
+        _ => (EvidenceSource::Other, None),
+    }
+}
+
+/// Whether a ground-truth re-check on this machine backs the rung (spec §2.2,
+/// `verify_outcomes`). An assistant's word never does. A structurally captured exit code or
+/// tool result does unless verification contradicted it. Anything else (a file edit, a bare
+/// tool-call request) only counts when verification actively confirmed it against git or
+/// the filesystem.
+fn verified_locally(
+    source: EvidenceSource,
+    payload: &EventPayload,
+    located: &agentworth_outcomes::LocatedOutcome,
+) -> bool {
+    let contradicted = located.verification.as_ref().is_some_and(|n| {
+        n.final_kind != n.original_kind || n.final_confidence < n.original_confidence
+    });
+    let confirmed = located.verification.as_ref().is_some_and(|n| {
+        n.final_kind == n.original_kind && n.final_confidence > n.original_confidence
+    });
+    match source {
+        EvidenceSource::AssistantClaim => false,
+        EvidenceSource::ShellExit0 | EvidenceSource::GitCommit => !contradicted,
+        EvidenceSource::ToolResult => {
+            !contradicted && matches!(payload, EventPayload::ToolResult(r) if !r.is_error)
+        }
+        EvidenceSource::FileChange | EvidenceSource::Other => confirmed,
+    }
+}
+
+/// Confidence in basis points (no floats in a receipt).
+fn confidence_bp(confidence: f32) -> u16 {
+    if !confidence.is_finite() {
+        return 0;
+    }
+    (confidence.clamp(0.0, 1.0) * 10_000.0).round() as u16
 }
 
 // -----------------------------------------------------------------------------

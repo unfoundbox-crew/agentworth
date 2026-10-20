@@ -570,6 +570,33 @@ enum RepoCommand {
     /// any recorded blunders in the sessions blamed for it
     #[command(name = "blunder-blame")]
     BlunderBlame(BlunderBlameArgs),
+
+    /// Work Receipts: a signed, privacy-safe account of what this machine's index saw on
+    /// the commits you push, for the AgentWorth / Evidence check. Nothing leaves the machine
+    /// until you say yes once per repository
+    Receipt {
+        #[command(subcommand)]
+        action: ReceiptCommand,
+    },
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+enum ReceiptCommand {
+    /// Print the workflow and the pre-push hook. --write writes both (never over an existing
+    /// file), creates the receipt key, and records consent for this repository
+    Init(ReceiptInitArgs),
+
+    /// Build, sign and store a receipt for the commits about to be pushed: a git note on the
+    /// tip (default) or a file under .agentworth/receipts/. Shows the exact JSON first on a
+    /// terminal, and asks once per repository
+    Create(ReceiptCreateArgs),
+
+    /// Decode a receipt by id prefix or commit, check its signature offline, and map its
+    /// session refs back to sessions on this machine
+    Show(ReceiptShowArgs),
+
+    /// Print the receipt public key; --github prints the `gh ssh-key add --type signing` line
+    Key(ReceiptKeyArgs),
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -1309,6 +1336,92 @@ struct SuspectCliArgs {
     json: bool,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum ReceiptTransportArg {
+    /// A git note on the tip commit, refs/notes/agentworth
+    #[default]
+    Notes,
+    /// .agentworth/receipts/<receipt_id>.dsse.json, for you to commit
+    File,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ReceiptInitArgs {
+    /// Path to a git checkout. Defaults to the current directory
+    #[arg(long)]
+    repo: Option<PathBuf>,
+
+    /// Write the workflow and hook, create the key, and record consent
+    #[arg(long)]
+    write: bool,
+
+    /// Output as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ReceiptCreateArgs {
+    /// Path to a git checkout. Defaults to the current directory
+    #[arg(long)]
+    repo: Option<PathBuf>,
+
+    /// Ref to cover commits since. Defaults to the branch's upstream, then origin/main
+    #[arg(long)]
+    base: Option<String>,
+
+    /// Push refs/notes/agentworth after writing the note (what the pre-push hook runs)
+    #[arg(long)]
+    push: bool,
+
+    /// Remote to push the notes ref to. Defaults to origin
+    #[arg(long)]
+    remote: Option<String>,
+
+    /// Where the receipt goes
+    #[arg(long, value_enum, default_value_t = ReceiptTransportArg::Notes)]
+    transport: ReceiptTransportArg,
+
+    /// Include API-equivalent spend (micro-USD). Off by default: receipts carry tokens only
+    #[arg(long)]
+    include_spend: bool,
+
+    /// Output the result, and the receipt itself, as JSON. Never prompts
+    #[arg(long)]
+    json: bool,
+
+    /// One line on stderr, never a prompt, never a failure. What the hook runs
+    #[arg(long)]
+    quiet: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ReceiptShowArgs {
+    /// A receipt id (or a prefix of one, 4+ hex characters) or a commit
+    #[arg(value_name = "RECEIPT_ID_OR_SHA")]
+    target: String,
+
+    /// Path to a git checkout. Defaults to the current directory
+    #[arg(long)]
+    repo: Option<PathBuf>,
+
+    /// Output as JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ReceiptKeyArgs {
+    /// Print the `gh ssh-key add --type signing` command that links this key to your
+    /// GitHub account, so the check can say "Signed by @you"
+    #[arg(long)]
+    github: bool,
+
+    /// Output as JSON
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(clap::Args, Debug, PartialEq)]
 struct BlunderBlameArgs {
     /// Blame -> blunder direction: file path or pattern. Checks every session AI
@@ -2039,6 +2152,41 @@ pub fn run() -> Result<()> {
                 cli.db_path,
                 &ui,
             )?;
+        }
+        Action::Repo(RepoCommand::Receipt { action }) => {
+            use crate::commands::work_receipt as wr;
+            match action {
+                ReceiptCommand::Init(a) => {
+                    wr::run_init_command(a.write, a.repo, resolve_json(a.json))?;
+                }
+                ReceiptCommand::Create(a) => {
+                    wr::run_create_command(
+                        wr::CreateArgs {
+                            repo: a.repo,
+                            base: a.base,
+                            push: a.push,
+                            remote: a.remote,
+                            transport: match a.transport {
+                                ReceiptTransportArg::Notes => wr::Transport::Notes,
+                                ReceiptTransportArg::File => wr::Transport::File,
+                            },
+                            include_spend: a.include_spend,
+                            // The hook passes --quiet; a persisted `json = true` must not turn
+                            // it into a screenful of JSON on every push.
+                            json: resolve_json(a.json) && !a.quiet,
+                            quiet: a.quiet,
+                        },
+                        cli.db_path,
+                        &ui,
+                    )?;
+                }
+                ReceiptCommand::Show(a) => {
+                    wr::run_show_command(&a.target, a.repo, resolve_json(a.json), cli.db_path)?;
+                }
+                ReceiptCommand::Key(a) => {
+                    wr::run_key_command(a.github, resolve_json(a.json))?;
+                }
+            }
         }
         Action::Repo(RepoCommand::BlunderBlame(a)) => {
             crate::run_blunder_blame_command(

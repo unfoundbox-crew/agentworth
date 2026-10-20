@@ -31,10 +31,25 @@ pub struct CliConfig {
     /// Default lookback window (`day` | `week` | `month` | `year` | `all`) for `usage --period`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub period: Option<String>,
+    /// Work Receipt export consent (`archie repo receipt init --write`, or a `y` at the
+    /// first interactive `repo receipt create`). A TOML table, so it sits after the scalars.
+    /// Deliberately not one of `CONFIG_KEYS`: consent is given by the receipt commands, which
+    /// show what a receipt reveals first, never by a bare `config set`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipts: Option<ReceiptsConfig>,
     /// How Archie is drawn wherever the product draws him. A TOML table, so it has to
     /// stay last in this struct -- `toml` refuses to emit a table before a scalar.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archie: Option<ArchieConfig>,
+}
+
+/// Repositories whose owner said yes to signing and exporting Work Receipts
+/// (`docs/specs/evidence-check.md` §2.5, consent). Keyed by the repository root as git
+/// reports it; this file never leaves the machine.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ReceiptsConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub consented_repos: Vec<String>,
 }
 
 /// Archie's kit and colourway. See `packages/ui/brand/archie/README.md`; the SVG poses
@@ -119,7 +134,7 @@ pub fn load_config() -> Result<CliConfig> {
     load_config_from(&config_file_path()?)
 }
 
-fn load_config_from(path: &Path) -> Result<CliConfig> {
+pub(crate) fn load_config_from(path: &Path) -> Result<CliConfig> {
     if !path.exists() {
         return Ok(CliConfig::default());
     }
@@ -134,7 +149,7 @@ pub fn save_config(cfg: &CliConfig) -> Result<()> {
     save_config_to(&config_file_path()?, cfg)
 }
 
-fn save_config_to(path: &Path, cfg: &CliConfig) -> Result<()> {
+pub(crate) fn save_config_to(path: &Path, cfg: &CliConfig) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create config directory at {:?}", parent))?;
@@ -411,6 +426,9 @@ mod tests {
             json: Some(true),
             limit: Some(42),
             period: Some("week".to_string()),
+            receipts: Some(ReceiptsConfig {
+                consented_repos: vec!["/tmp/example-repo".to_string()],
+            }),
             archie: Some(ArchieConfig {
                 accessory: Some("goggles".to_string()),
                 colourway: Some("C2".to_string()),

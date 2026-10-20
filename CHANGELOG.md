@@ -19,6 +19,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   crypto dependency stays out of the scanner and adapter crates. The JSON
   Schema is served at `agentworth.dev/schemas/work-receipt/v1.json`. Evidence
   slice 1, PR 1 of 4; `archie repo receipt` arrives in a later PR.
+- **`archie repo receipt` create, show, key, and init.** `create` builds a
+  Work Receipt for the commits in a range (default: upstream merge-base to
+  `HEAD`), attributes sessions through anchored blame, runs the publication
+  redactor over every string leaf and fails closed on a leak, signs with a
+  local ed25519 key (`~/.agentworth/keys/receipt_ed25519`, override with
+  `AGENTWORTH_RECEIPT_KEY`), and writes it as a git note on
+  `refs/notes/agentworth` (or `--transport file` for
+  `.agentworth/receipts/<id>.dsse.json`). Nothing is signed or written until
+  the repo is consented with `repo receipt init --write`, which creates the
+  key, records consent in `~/.agentworth/config.toml`, and adds the CI
+  workflow; without consent `create` prints a preview only. `show` maps the
+  session refs in a commit's receipts back to local sessions. `key --github`
+  prints the `gh ssh-key add --type signing` line that registers the key. Spend is
+  omitted unless `--include-spend` is passed. Evidence slice 1, PR 2 of 4.
+- **pre-push hook publishes receipts.** The hook printed by
+  `archie repo suspect --hook` (and written by `repo receipt init --write`) now runs
+  `archie repo receipt create --push --quiet`. It never blocks a push: a
+  missing binary, missing key, or rejected notes push prints one line and
+  exits 0. A notes push that is rejected is merged with `cat_sort_uniq` and
+  retried once.
+- **`repo_receipt` MCP tool.** Read-only preview of the receipt `create` would
+  produce for a range: sessions, rungs, what a reader would learn, and the
+  predicted attested/claimed result. It never signs, writes, or pushes.
 
 ## [0.1.29] - 2026-10-08
 

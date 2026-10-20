@@ -31,9 +31,9 @@ use serde_json::json;
 use super::params::{
     parse_rfc3339_opt, AgentStatusParams, BlameFindParams, CarryForwardParams, CoverageStatsParams,
     ForgottenContextParams, InsightsGetParams, InsightsSummaryParams, LadderParams,
-    OutcomeRateParams, PacingWindowParams, SessionAsksParams, SessionBurnParams,
-    SessionDriftParams, SessionGetParams, SessionHandoffParams, SessionsFindParams,
-    SuspectCommitsParams, UsagePeriodParam, UsageSummaryParams, WakeParams,
+    OutcomeRateParams, PacingWindowParams, ReceiptPreviewParams, SessionAsksParams,
+    SessionBurnParams, SessionDriftParams, SessionGetParams, SessionHandoffParams,
+    SessionsFindParams, SuspectCommitsParams, UsagePeriodParam, UsageSummaryParams, WakeParams,
 };
 use crate::asks::{self, AsksOptions, AsksReport};
 use crate::forgotten::{self, ForgottenOptions, ForgottenReport};
@@ -1109,6 +1109,76 @@ impl AgentWorthMcpServer {
 
         Self::json_result(&report)
     }
+    #[tool(
+        description = "The Work Receipt the next push would sign, without signing, writing or \
+                        pushing anything. Same range rules as repo_suspect (upstream, then \
+                        origin/main, then the last max_commits). Returns the exact receipt \
+                        Statement (commit SHAs, opaque session refs, adapters, models, token \
+                        totals, rung kinds with verified_locally, risk counters -- no prompts, \
+                        no paths outside the commits' own diffs), a `predicted` list per commit \
+                        (highest rung attested locally, rungs only claimed), a one-line \
+                        `summary` such as \"rung 3 attested, rung 1 claimed only\", and \
+                        `sessions_local` mapping each ref back to a session id for session_show. \
+                        Use it before pushing: if nothing reaches rung 3 attested, run the tests \
+                        first. Rungs 2, 4 and 5 are re-derived from CI by the AgentWorth / \
+                        Evidence check, not here. `key_present: false` means no receipt key \
+                        exists yet (refs are placeholders); `consent_recorded: false` means the \
+                        pre-push hook will not export until the user runs `archie repo receipt \
+                        init --write` or answers yes once."
+    )]
+    pub(crate) async fn repo_receipt(
+        &self,
+        Parameters(params): Parameters<ReceiptPreviewParams>,
+    ) -> Result<CallToolResult, McpError> {
+        use crate::commands::work_receipt as wr;
+        let since = parse_rfc3339_opt(params.since.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let window_hours = params.window_hours.unwrap_or(suspect::DEFAULT_WINDOW_HOURS);
+        if window_hours < 0 {
+            return Err(McpError::invalid_params(
+                "window_hours must not be negative".to_string(),
+                None,
+            ));
+        }
+        let max_commits = params
+            .max_commits
+            .unwrap_or(suspect::DEFAULT_MAX_COMMITS)
+            .clamp(1, suspect::MAX_COMMITS_CEILING);
+        let opts = wr::BuildOptions {
+            query: suspect::SuspectQuery {
+                repo: std::path::PathBuf::from(&params.repo),
+                branch: params.branch.clone(),
+                base: params.base.clone(),
+                since,
+                window_hours,
+                max_commits,
+            },
+            include_spend: params.include_spend.unwrap_or(false),
+            now: chrono::Utc::now(),
+        };
+
+        let storage = self.storage.clone();
+        let preview = tokio::task::spawn_blocking(move || {
+            let key = wr::default_key_path()
+                .ok()
+                .and_then(|p| wr::read_public_key(&p).ok().flatten());
+            let cfg = crate::app::config::load_config().unwrap_or_default();
+            let loader = wr::ScannerTraceLoader::new(storage.clone());
+            wr::preview_receipt(
+                &storage,
+                &loader,
+                key,
+                &|root| wr::has_consent(&cfg, root),
+                &opts,
+            )
+        })
+        .await
+        .map_err(Self::join_error)?
+        .map_err(|e| McpError::invalid_params(format!("repo_receipt failed: {e:#}"), None))?;
+
+        Self::json_result(&preview)
+    }
+
     // -------------------------------------------------------------------------
     // Pre-0.1.16 tool names, kept registered so a client that was configured against
     // them keeps working. Each one is a two-line forward to the renamed handler, so the
@@ -1257,15 +1327,16 @@ impl ServerHandler for AgentWorthMcpServer {
                  session_list, session_show, repo_blame, stats_usage, window_show, \
                  agent_list, stats_outcomes, stats_ladder, insights_summary, insights_get, \
                  session_handoff, session_carry_forward, \
-                 session_wake, session_forgotten, session_asks, repo_suspect, agent_status, \
-                 session_drift, session_burn. Start a \
+                 session_wake, session_forgotten, session_asks, repo_suspect, repo_receipt, \
+                 agent_status, session_drift, session_burn. Start a \
                  session with session_wake; session_carry_forward lists the last few handoffs \
                  in full. End a session with session_handoff. If a session has compacted, \
                  session_forgotten returns the decisions its own summaries dropped. \
                  session_asks finds where a question's answer already landed, so it never \
                  needs re-asking. Before \
                  pushing, repo_suspect names the commits whose authoring session never \
-                 proved anything -- a list and a prompt, never a patch. agent_status says \
+                 proved anything -- a list and a prompt, never a patch -- and repo_receipt \
+                 previews the signed Work Receipt that push would carry. agent_status says \
                  where every agent on this machine is right now, and session_drift says what \
                  moved under you since you read it and who moved it -- both fed by the \
                  harness's own hooks rather than by a scan. session_burn says what the \

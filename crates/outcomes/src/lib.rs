@@ -21,7 +21,7 @@ pub use compaction_diff::{
 pub use loose_ends::{find_loose_ends, find_loose_ends_in_trace, loose_ends_prompt, LooseEnd};
 pub use mode_gate::{evaluate_mode_gate, extract_commits, extract_test_passes, find_bypass, Bypass, Mode, ModeGateResult, ModeObserved, observe_mode};
 pub use outcome::{
-    outcome_kind_name, outcome_rank, promotion_eligible, OutcomeDetector,
+    outcome_kind_name, outcome_rank, promotion_eligible, LocatedOutcome, OutcomeDetector,
     OutcomeHierarchyDetector,
 };
 pub use recovery::{RecoveryDetector, RecoverySignal};
@@ -410,5 +410,41 @@ mod tests {
         assert_eq!(outcomes[0].kind, OutcomeKind::DoneClaimed);
         assert!(outcomes[0].summary.contains("已完成") || outcomes[0].summary.contains("测试"));
     }
-}
 
+    /// `detect_outcomes_located` finds the same evidence as `detect_outcomes`, each item tied
+    /// to the sequence number of the event that produced it.
+    #[test]
+    fn located_outcomes_match_detect_outcomes_and_carry_event_sequences() {
+        let mut trace = make_test_trace();
+        let start = trace.started_at;
+        trace.events.push(NormalizedEvent::new(
+            7,
+            start + Duration::seconds(1),
+            EventPayload::ShellCommand(ShellCommand {
+                command: "cargo test".to_string(),
+                cwd: None,
+                exit_code: Some(0),
+                output: None,
+            }),
+        ));
+        trace.events.push(NormalizedEvent::new(
+            9,
+            start + Duration::seconds(2),
+            EventPayload::AssistantMessage {
+                content: "I have completed all the requested tasks!".to_string(),
+                thinking: None,
+            },
+        ));
+        let plain = OutcomeDetector::new().detect_outcomes(&trace);
+        let located = OutcomeDetector::new().detect_outcomes_located(&trace);
+        assert_eq!(
+            located.iter().map(|l| l.evidence.clone()).collect::<Vec<_>>(),
+            plain
+        );
+        let seqs: Vec<u64> = located.iter().map(|l| l.event_sequence).collect();
+        assert_eq!(seqs, vec![7, 9]);
+        assert_eq!(located[0].evidence.kind, OutcomeKind::TestOrBuildPassed);
+        // The bare claim was cross-checked against the real exit code: its note rides along.
+        assert!(located[1].verification.is_some());
+    }
+}

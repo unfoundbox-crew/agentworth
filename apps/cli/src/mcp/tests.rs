@@ -1364,6 +1364,107 @@ async fn test_suspect_commits_flags_the_unproven_commit() {
     );
 }
 
+/// `repo_receipt` previews the receipt the next push would sign: the Statement, a per-commit
+/// prediction, and the ref → session map. It signs and writes nothing.
+#[tokio::test]
+async fn test_repo_receipt_previews_without_signing_or_writing() {
+    use agentworth_schema::{EventPayload, FileActionType, NormalizedEvent};
+    use std::process::Command;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = std::fs::canonicalize(dir.path()).expect("canonicalize");
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    run(&["init", "-q", "-b", "main"]);
+    run(&["config", "user.email", "test@example.invalid"]);
+    run(&["config", "user.name", "Test"]);
+    run(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(root.join("first.rs"), "fn a() {}\n").expect("write");
+    run(&["add", "first.rs"]);
+    run(&["commit", "-q", "-m", "feat: first"]);
+    std::fs::write(root.join("second.rs"), "fn b() {}\n").expect("write");
+    run(&["add", "second.rs"]);
+    run(&["commit", "-q", "-m", "feat: second"]);
+
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let at = Utc::now() - chrono::Duration::minutes(1);
+    let prov = Provenance::new(
+        format!(
+            "/tmp/claude/projects/{}/s.jsonl",
+            root.to_string_lossy().replace('/', "-")
+        ),
+        "claude_code",
+        100,
+        100,
+        "fp_receipt",
+    );
+    let mut trace = AgentWorthTrace::new("sess_receipt_mcp", "claude_code", prov, at);
+    trace.events.push(NormalizedEvent::new(
+        1,
+        at,
+        EventPayload::FileAction {
+            path: root.join("second.rs").to_string_lossy().to_string(),
+            action: FileActionType::Edit,
+            diff: None,
+            lines_changed: None,
+        },
+    ));
+    storage
+        .upsert_session(&trace, Some("artifact_changed"), Some(0.4), 1)
+        .expect("seed session");
+
+    let server = AgentWorthMcpServer::new(storage);
+    let params = serde_json::json!({ "repo": root.to_string_lossy() });
+    let result = server
+        .repo_receipt(Parameters(serde_json::from_value(params).unwrap()))
+        .await
+        .expect("repo_receipt");
+    let value = call_result_json(result);
+
+    assert_eq!(value["commits_in_range"], 2);
+    let statement = &value["statement"];
+    assert_eq!(statement["_type"], "https://in-toto.io/Statement/v1");
+    assert_eq!(
+        statement["predicateType"],
+        "https://agentworth.dev/work-receipt/v1"
+    );
+    assert_eq!(
+        statement["predicate"]["sessions"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(value["predicted"].as_array().unwrap().len(), 2);
+    let sessions_local = value["sessions_local"].as_object().unwrap();
+    assert_eq!(sessions_local.len(), 1);
+    assert_eq!(
+        sessions_local.values().next().unwrap(),
+        "sess_receipt_mcp",
+        "the local map is how an agent gets from a ref to session_show"
+    );
+    let payload = statement.to_string();
+    assert!(!payload.contains("sess_receipt_mcp"), "refs, never raw ids");
+    assert!(
+        !payload.contains(root.to_string_lossy().as_ref()),
+        "no absolute paths"
+    );
+    assert!(value["summary"].as_str().unwrap().contains("attested"));
+
+    // Read-only: no note was written.
+    let notes = run(&["notes", "--ref", "agentworth", "list"]);
+    assert!(notes.is_empty(), "preview must not write a note: {notes}");
+}
+
 /// A repo path that is not a git checkout comes back as a parameter error naming the missing
 /// noun, not an opaque internal one.
 #[tokio::test]
