@@ -54,7 +54,7 @@ now() { date +%s; }
 command -v jq >/dev/null 2>&1 || stop "jq is required on the runner (preinstalled on GitHub-hosted runners)"
 command -v git >/dev/null 2>&1 || stop "git is required on the runner"
 is_full_repo "$REPO" || stop "GITHUB_REPOSITORY is not set; this runs inside GitHub Actions"
-[ -n "$EVENT_PATH" ] && [ -f "$EVENT_PATH" ] || stop "no event payload (GITHUB_EVENT_PATH)"
+if [ -z "$EVENT_PATH" ] || [ ! -f "$EVENT_PATH" ]; then stop "no event payload (GITHUB_EVENT_PATH)"; fi
 git rev-parse --git-dir >/dev/null 2>&1 || stop "no git checkout here: add actions/checkout with fetch-depth: 0 before this step"
 mkdir -p "$WORK" || stop "cannot create $WORK"
 
@@ -67,7 +67,7 @@ if ! is_uint "$WAIT" || [ "$WAIT" -gt 3600 ]; then
   warn "wait-for-ci must be 0 to 3600 seconds; using 600"
   WAIT=600
 fi
-is_uint "$POLL" && [ "$POLL" -ge 1 ] || POLL=15
+if ! is_uint "$POLL" || [ "$POLL" -lt 1 ]; then POLL=15; fi
 TRANSPORT="${INPUT_TRANSPORT:-auto}"
 case "$TRANSPORT" in
   auto | notes | file) ;;
@@ -242,7 +242,7 @@ collect_ci() {
         | {name, status, conclusion}]' 2>/dev/null)" || return 1
   statuses="$("$GH" api "repos/$REPO/commits/$HEAD/status?per_page=100" 2>/dev/null |
     jq '[.statuses[]? | {context, state}]' 2>/dev/null)" || return 1
-  [ -n "$runs" ] && [ -n "$statuses" ] || return 1
+  if [ -z "$runs" ] || [ -z "$statuses" ]; then return 1; fi
   jq -n --arg h "$HEAD" --argjson c "$runs" --argjson s "$statuses" \
     '{head_sha: $h, check_runs: $c, statuses: $s}' >"$CI_JSON"
 }
