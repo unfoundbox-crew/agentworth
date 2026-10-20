@@ -310,3 +310,42 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           npx -y "agentworth@${VERSION}" usage --pacing </dev/null
+
+  # The GitHub Action (action.yml at the repository root) is pinned by users as
+  # `unfoundbox-crew/agentworth@v0`, and installs the archie release that
+  # matches. Each stable release moves `v0` to the released commit, after the
+  # binaries it downloads exist. It only MOVES the tag: the first `v0` is
+  # created by a person, together with the Marketplace listing, after a live
+  # sandbox pull request (docs/specs/evidence-check.md section 6.2). Until then this job
+  # says so and does nothing.
+  move-action-tag:
+    name: Move the v0 Action tag
+    needs: create-release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v0.')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move v0 to this release
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF_NAME" in
+            *-*) echo "pre-release $GITHUB_REF_NAME: v0 stays where it is"; exit 0 ;;
+          esac
+          if ! git ls-remote --exit-code --tags origin refs/tags/v0 >/dev/null; then
+            echo "::notice::No v0 tag yet. A person creates the first one when the Action is listed; not creating it here."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f -a v0 -m "AgentWorth Evidence Action, $GITHUB_REF_NAME" "$GITHUB_SHA"
+          # A push made with GITHUB_TOKEN never starts another workflow, so this does not
+          # re-run the release for the tag it moves.
+          git push -f origin refs/tags/v0
+          echo "v0 -> $GITHUB_REF_NAME ($GITHUB_SHA)"

@@ -1,0 +1,67 @@
+name: AgentWorth Evidence
+description: >-
+  Verify signed Work Receipts on a pull request and show, per commit, what CI
+  re-derived, what the author's machine attested, and what was only claimed.
+author: unfoundbox-crew
+branding:
+  icon: check-circle
+  color: gray-dark
+
+# Composite, bash only. The step never fails the job: the result is the
+# "AgentWorth / Evidence" check run (spec docs/specs/evidence-check.md section 3.2,
+# section 4.2). Nothing from the pull request is executed: the Action reads git
+# objects and notes, calls the GitHub API with the workflow token, and runs a
+# released archie binary whose checksum it verifies.
+inputs:
+  wait-for-ci:
+    description: Seconds to wait for other checks on the head commit to finish before reporting. 0 reports immediately.
+    required: false
+    default: '600'
+  fail-on:
+    description: >-
+      Opt-in failure conditions, comma-separated: invalid-signature,
+      below-rung:N (N 1-5), unattributed. Empty (the default) never fails.
+    required: false
+    default: ''
+  transport:
+    description: Where to read receipts. auto (notes and files), notes, or file (committed .agentworth/receipts only, skips the notes fetch).
+    required: false
+    default: auto
+  archie-version:
+    description: Release of archie to install, such as v0.1.30. Default is the release matching this Action's tag, or the latest release when pinned to a major tag like v0.
+    required: false
+    default: ''
+  archie-path:
+    description: Use this archie binary instead of installing a release (for building from source).
+    required: false
+    default: ''
+  github-token:
+    description: Token for the GitHub API. Needs checks:write to post the check; with a read-only token (fork pull requests) the result goes to the job summary only.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  conclusion:
+    description: success, neutral or failure, as posted on the check. Empty when the check could not be computed.
+    value: ${{ steps.evidence.outputs.conclusion }}
+  title:
+    description: The check title.
+    value: ${{ steps.evidence.outputs.title }}
+  posted:
+    description: true when the check run was created, false when it went to the job summary only.
+    value: ${{ steps.evidence.outputs.posted }}
+
+runs:
+  using: composite
+  steps:
+    - id: evidence
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        INPUT_WAIT_FOR_CI: ${{ inputs.wait-for-ci }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_TRANSPORT: ${{ inputs.transport }}
+        INPUT_ARCHIE_VERSION: ${{ inputs.archie-version }}
+        INPUT_ARCHIE_PATH: ${{ inputs.archie-path }}
+        AGENTWORTH_ACTION_REF: ${{ github.action_ref }}
+      run: bash "$GITHUB_ACTION_PATH/action/evidence.sh"

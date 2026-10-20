@@ -1,0 +1,51 @@
+name: AgentWorth Evidence
+
+# Dogfood: every AgentWorth pull request shows the "AgentWorth / Evidence" check
+# (docs/specs/evidence-check.md, §4 row 27). It runs this repository's own Action
+# (`uses: ./`) with archie built from the same commit, so the check always
+# exercises the code under review. A published release cannot be used here: the
+# Action and `archie repo receipt verify` change together in this repository.
+#
+# No secrets: only the workflow's GITHUB_TOKEN with the permissions below. On a
+# fork pull request GitHub hands out a read-only token, so creating the check
+# run gets a 403 and the result lands in the job summary instead (the Action's
+# documented fallback). The job never fails on the result; the conclusion lives
+# on the check.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: read
+
+concurrency:
+  group: agentworth-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  receipt-verify:
+    name: Receipt verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: agentworth-evidence
+
+      # The dashboard and home deck are not needed for `repo receipt verify`; the
+      # binary builds without their dist folders (rust-embed serves a fallback).
+      - name: Build archie
+        run: cargo build --bin archie
+
+      - name: AgentWorth / Evidence
+        uses: ./
+        with:
+          archie-path: target/debug/archie

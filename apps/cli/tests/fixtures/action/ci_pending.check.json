@@ -1,0 +1,10 @@
+{
+  "conclusion": "neutral",
+  "head_sha": "<hex40>",
+  "name": "AgentWorth / Evidence",
+  "output": {
+    "summary": "### AgentWorth / Evidence\n\n**Highest evidence rung: 4, commit in PR** (head <hex7>, CI pending, 0 of 1 checks done)\n\nReceipt <hex8> · signed by @octo-dev (GitHub signing key SHA256:<fingerprint>...) · git note · 0 sessions\n\n| Commit | Session | Verified here | Attested locally (signed) | Claimed only |\n| :-- | :-- | :-- | :-- | :-- |\n| <hex7> edit src.txt | · | ● 4 commit in PR | · | · |\n| <hex7> edit src.txt | · | ● 4 commit in PR | · | · |\n\n**Claims vs evidence**\n- Evidence, re-derived on this runner: 2 commits named by a signed receipt are in this PR; CI pending, 0 of 1 checks done.\n- Attested, signed but not re-runnable here: none.\n- Claims, not evidence: none.\n\n<sub>What this check cannot see: transcripts never leave the author's machine. A receipt is the author's machine attesting to itself; only the \"Verified here\" column is checked by this runner. Install: `npx -y agentworth@latest repo receipt init`.</sub>\n",
+    "title": "Rung 4 · commit in PR · 2 of 2 commits carry a signed receipt · CI pending 0/1"
+  },
+  "status": "completed"
+}

@@ -58,6 +58,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--base`, `--head`, `--ci ci.json`, `--keys keys.json`, `--receipt FILE`,
   `--fail-on`, `--format md|check-json`. The conclusion is in the output, never
   in the exit status.
+- **AgentWorth Evidence GitHub Action.** `action.yml` at the repository root
+  (`uses: unfoundbox-crew/agentworth@v0` once tagged). It installs archie from
+  the release tarball and verifies its `.sha256`, fetches
+  `refs/notes/agentworth` from the head repository, waits up to `wait-for-ci`
+  for the other checks on the head commit (ignoring its own), collects the
+  authors' GitHub signing keys, runs `repo receipt verify`, and posts the
+  `AgentWorth / Evidence` check run. Fork pull requests with a read-only token
+  get the table in the job summary and a notice; a `workflow_run` mode puts the
+  check on forks. Never `pull_request_target`, never code from the PR, and the
+  step always exits 0. Inputs: `wait-for-ci`, `fail-on`, `transport`,
+  `archie-version`, `archie-path`, `github-token`. Evidence slice 1, PR 4 of 4.
+- **Dogfood.** `.github/workflows/agentworth-evidence.yml` runs the Action from
+  this checkout (`uses: ./`, archie built from the same commit) on every
+  AgentWorth pull request, with `GITHUB_TOKEN` only.
+- **Release moves the `v0` Action tag** to each stable release once a person
+  has created it; the first `v0` is created by hand with the Marketplace
+  listing.
+- **Docs.** README "Evidence Check for Pull Requests" section,
+  `docs/specs/evidence-check.md`, learn page "The evidence check", the L2
+  amendment in `docs/specs/extensions.md`, and the demo tape
+  `docs/dogfood/evidence-demo.tape` (not yet recorded).
 
 ## [0.1.29] - 2026-10-08
 
