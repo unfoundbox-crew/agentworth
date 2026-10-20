@@ -597,6 +597,10 @@ enum ReceiptCommand {
 
     /// Print the receipt public key; --github prints the `gh ssh-key add --type signing` line
     Key(ReceiptKeyArgs),
+
+    /// Verify every receipt for a PR range offline and render the AgentWorth / Evidence
+    /// check. CI results and signing keys come from files (--ci, --keys); no network
+    Verify(ReceiptVerifyArgs),
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -1410,6 +1414,50 @@ struct ReceiptShowArgs {
     json: bool,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum ReceiptVerifyFormatArg {
+    /// The check summary as markdown (what goes to $GITHUB_STEP_SUMMARY)
+    #[default]
+    Md,
+    /// The `POST /repos/{o}/{r}/check-runs` body
+    CheckJson,
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+struct ReceiptVerifyArgs {
+    /// Base of the PR range (a commit or ref)
+    #[arg(long)]
+    base: String,
+
+    /// Head of the PR range (a commit or ref)
+    #[arg(long)]
+    head: String,
+
+    /// Check runs and statuses on the head SHA, as collected with `gh api`
+    #[arg(long, value_name = "CI_JSON")]
+    ci: Option<PathBuf>,
+
+    /// GitHub signing keys of the PR and commit authors, as collected with `gh api`
+    #[arg(long, value_name = "KEYS_JSON")]
+    keys: Option<PathBuf>,
+
+    /// An extra receipt file to read, beyond notes and .agentworth/receipts/ (repeatable)
+    #[arg(long = "receipt", value_name = "FILE")]
+    receipts: Vec<PathBuf>,
+
+    /// Opt-in failure: invalid-signature, below-rung:N, unattributed (comma-separated)
+    #[arg(long, value_name = "LIST")]
+    fail_on: Option<String>,
+
+    /// Output format
+    #[arg(long, value_enum, default_value_t)]
+    format: ReceiptVerifyFormatArg,
+
+    /// Path to a git checkout. Defaults to the current directory
+    #[arg(long)]
+    repo: Option<PathBuf>,
+}
+
 #[derive(clap::Args, Debug, PartialEq)]
 struct ReceiptKeyArgs {
     /// Print the `gh ssh-key add --type signing` command that links this key to your
@@ -2185,6 +2233,23 @@ pub fn run() -> Result<()> {
                 }
                 ReceiptCommand::Key(a) => {
                     wr::run_key_command(a.github, resolve_json(a.json))?;
+                }
+                ReceiptCommand::Verify(a) => {
+                    use crate::commands::receipt_verify as rv;
+                    let out = rv::run_receipt_verify_command(&rv::VerifyArgs {
+                        repo: a.repo.unwrap_or_else(|| PathBuf::from(".")),
+                        base: a.base,
+                        head: a.head,
+                        ci: a.ci,
+                        keys: a.keys,
+                        receipts: a.receipts,
+                        fail_on: rv::FailOn::parse_list(a.fail_on.as_deref().unwrap_or(""))?,
+                        format: match a.format {
+                            ReceiptVerifyFormatArg::Md => rv::VerifyFormat::Markdown,
+                            ReceiptVerifyFormatArg::CheckJson => rv::VerifyFormat::CheckJson,
+                        },
+                    })?;
+                    print!("{out}");
                 }
             }
         }

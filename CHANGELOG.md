@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`repo_receipt` MCP tool.** Read-only preview of the receipt `create` would
   produce for a range: sessions, rungs, what a reader would learn, and the
   predicted attested/claimed result. It never signs, writes, or pushes.
-- **Work Receipt verifier and check renderer (no CLI wiring yet).** New
+- **Work Receipt verifier and check renderer.** New
   `agentworth_cli::commands::receipt_verify` verifies every receipt for a PR
   range offline (git notes under `refs/notes/agentworth`, committed
   `.agentworth/receipts/*.dsse.json`, or explicit files), classifies each
@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   linked key and head CI is green, and `failure` only through opt-in
   `fail-on`. Renders the AgentWorth / Evidence check as markdown or as a
   check-run JSON body. No network code. Evidence slice 1, PR 3 of 4.
+- **`archie repo receipt verify`.** The verifier is now on the CLI:
+  `--base`, `--head`, `--ci ci.json`, `--keys keys.json`, `--receipt FILE`,
+  `--fail-on`, `--format md|check-json`. The conclusion is in the output, never
+  in the exit status.
 
 ## [0.1.29] - 2026-10-08
 
