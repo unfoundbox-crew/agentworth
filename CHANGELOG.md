@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Work Receipt v1 format and signing (no CLI yet).** New
+  `agentworth_schema::work_receipt` types for an in-toto Statement v1 with
+  predicate `https://agentworth.dev/work-receipt/v1`, canonical JSON,
+  `receipt_id`, the 64 KiB cap, and session refs. New `crates/attest` crate
+  for ed25519 DSSE signing and verification and OpenSSH key encoding; the
+  crypto dependency stays out of the scanner and adapter crates. The JSON
+  Schema is served at `agentworth.dev/schemas/work-receipt/v1.json`. Evidence
+  slice 1, PR 1 of 4; `archie repo receipt` arrives in a later PR.
+
 ## [0.1.29] - 2026-10-08
 
 ### Added

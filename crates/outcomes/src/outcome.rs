@@ -565,3 +565,27 @@ mod outcome_kind_name_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod work_receipt_rung_tests {
+    use super::*;
+
+    /// A Work Receipt writes `rung` with `agentworth_schema::work_receipt::evidence_rung`
+    /// (schema cannot depend on this crate). The two ladders must never disagree.
+    #[test]
+    fn receipt_rungs_match_outcome_rank() {
+        for kind in [
+            OutcomeKind::DoneClaimed,
+            OutcomeKind::ArtifactChanged,
+            OutcomeKind::TestOrBuildPassed,
+            OutcomeKind::CommitObserved,
+            OutcomeKind::CiOrDeploymentVerified,
+        ] {
+            assert_eq!(
+                agentworth_schema::work_receipt::evidence_rung(kind),
+                outcome_rank(kind),
+                "{kind:?}"
+            );
+        }
+    }
+}
