@@ -29,8 +29,8 @@ current release work.
 | `done-gate.md` | proposed, measured | — |
 | `dropped-commitments.md` | built; carry-forward over MCP not yet done | #44 |
 | `efficiency-receipts.md` | proposed, P0 measured; nothing built | — |
-| `evidence-check.md` | built in 4 PRs, not yet released; `v0` tag and Marketplace listing pending | #231, #233, #232, PR 4 |
-| `extensions.md` | proposed; L2 built as `evidence-check.md` (transport amended to git notes) | #231, #233, #232, PR 4 |
+| `evidence-check.md` | built in 4 PRs, not yet released; `v0` tag and Marketplace listing pending | #231, #233, #232, #234 |
+| `extensions.md` | proposed; L2 built as `evidence-check.md` (transport amended to git notes) | #231, #233, #232, #234 |
 | `fleet-view.md` | built | #41, plus the SSE live-tail endpoint (v0.1.10) |
 | `governor.md` | built | #TBD (2026-09-06) |
 | `handoff.md` | built | #TBD (2026-09-02) |

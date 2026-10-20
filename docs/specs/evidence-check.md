@@ -1,6 +1,6 @@
 # AgentWorth / Evidence: the PR check (slice 1 of the evidence layer)
 
-Status: built in four PRs, not yet released: #231 (format and signing), #233 (create, hook, MCP), #232 (verify and renderer), and the Action, dogfood workflow and docs (PR 4). Decisions in §7 are taken at the COS defaults. Proposed 17 Oct 2026. Owner: COS. Builds on v0.1.29 (`main` at `54d5fa3`).
+Status: built in four PRs, not yet released: #231 (format and signing), #233 (create, hook, MCP), #232 (verify and renderer), and #234 (the Action, dogfood workflow and docs). Decisions in §7 are taken at the COS defaults. Proposed 17 Oct 2026. Owner: COS. Builds on v0.1.29 (`main` at `54d5fa3`).
 Read-only research against a shallow clone of `unfoundbox-crew/agentworth`. Every repo fact below cites a path.
 
 ## 0. The one-line version
