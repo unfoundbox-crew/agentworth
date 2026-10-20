@@ -42,6 +42,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`repo_receipt` MCP tool.** Read-only preview of the receipt `create` would
   produce for a range: sessions, rungs, what a reader would learn, and the
   predicted attested/claimed result. It never signs, writes, or pushes.
+- **Work Receipt verifier and check renderer (no CLI wiring yet).** New
+  `agentworth_cli::commands::receipt_verify` verifies every receipt for a PR
+  range offline (git notes under `refs/notes/agentworth`, committed
+  `.agentworth/receipts/*.dsse.json`, or explicit files), classifies each
+  signature as signed by a linked GitHub key, key not linked, or invalid, and
+  re-derives the rungs CI can see: commit in PR (4), claimed files against the
+  commit's own diff (2), and head CI from a `ci.json` file (5). Rung 3 is only
+  ever "attested locally"; rung 1 is never evidence. Conclusion is neutral by
+  default, `success` only when every commit carries a receipt signed by a
+  linked key and head CI is green, and `failure` only through opt-in
+  `fail-on`. Renders the AgentWorth / Evidence check as markdown or as a
+  check-run JSON body. No network code. Evidence slice 1, PR 3 of 4.
 
 ## [0.1.29] - 2026-10-08
 

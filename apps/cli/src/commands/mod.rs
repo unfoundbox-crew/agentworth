@@ -9,6 +9,7 @@ pub mod hook;
 pub mod ladder;
 pub mod loop_cmds;
 pub mod receipt;
+pub mod receipt_verify;
 pub mod search;
 pub mod suspect;
 pub mod work_receipt;
