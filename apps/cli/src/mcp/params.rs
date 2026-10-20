@@ -219,6 +219,32 @@ pub struct SuspectCommitsParams {
     pub max_commits: Option<usize>,
 }
 
+/// Parameters for the `repo_receipt` tool: `repo_suspect`'s shape plus `include_spend`. See
+/// `docs/specs/evidence-check.md` §4.3.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReceiptPreviewParams {
+    /// Absolute path to a git checkout on this machine. Anything inside it works — the
+    /// repository root is resolved with `git rev-parse --show-toplevel`.
+    pub repo: String,
+    /// Branch to walk. Defaults to `HEAD`.
+    pub branch: Option<String>,
+    /// Ref to diff against. Defaults to the branch's own upstream, then `origin/main`, then
+    /// `origin/master`, then the most recent `max_commits` commits — the range the pre-push
+    /// hook would sign.
+    pub base: Option<String>,
+    /// RFC 3339 timestamp. Only consulted when `base` is absent.
+    pub since: Option<String>,
+    /// How long before a commit a session's file touch still counts as having authored it.
+    /// Defaults to 24.
+    pub window_hours: Option<i64>,
+    /// Ceiling on commits walked. Defaults to 200, hard-capped at 1000.
+    pub max_commits: Option<usize>,
+    /// Put API-equivalent spend (micro-USD) in the preview, as `create --include-spend` would.
+    /// Defaults to false: receipts carry tokens only.
+    #[serde(default)]
+    pub include_spend: Option<bool>,
+}
+
 /// Parameters for the `stats_outcomes` tool. See `docs/specs/verified-outcome-rate.md`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct OutcomeRateParams {

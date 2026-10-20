@@ -1,6 +1,6 @@
 {
   "version": "0.1.29",
-  "generatedDate": "2026-10-08",
+  "generatedDate": "2026-10-20",
   "globalFlags": [
     {
       "name": "--verbose, -v",
@@ -1476,6 +1476,166 @@
       ]
     },
     {
+      "path": "archie repo receipt",
+      "about": "Work Receipts: a signed, privacy-safe account of what this machine's index saw on the commits you push, for the AgentWorth / Evidence check. Nothing leaves the machine until you say yes once per repository",
+      "args": []
+    },
+    {
+      "path": "archie repo receipt init",
+      "about": "Print the workflow and the pre-push hook. --write writes both (never over an existing file), creates the receipt key, and records consent for this repository",
+      "args": [
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Path to a git checkout. Defaults to the current directory",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--write",
+          "positional": false,
+          "required": false,
+          "help": "Write the workflow and hook, create the key, and record consent",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie repo receipt create",
+      "about": "Build, sign and store a receipt for the commits about to be pushed: a git note on the tip (default) or a file under .agentworth/receipts/. Shows the exact JSON first on a terminal, and asks once per repository",
+      "args": [
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Path to a git checkout. Defaults to the current directory",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--base",
+          "positional": false,
+          "required": false,
+          "help": "Ref to cover commits since. Defaults to the branch's upstream, then origin/main",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--push",
+          "positional": false,
+          "required": false,
+          "help": "Push refs/notes/agentworth after writing the note (what the pre-push hook runs)",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--remote",
+          "positional": false,
+          "required": false,
+          "help": "Remote to push the notes ref to. Defaults to origin",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--transport",
+          "positional": false,
+          "required": false,
+          "help": "Where the receipt goes",
+          "default": "notes",
+          "possibleValues": [
+            "notes",
+            "file"
+          ]
+        },
+        {
+          "name": "--include-spend",
+          "positional": false,
+          "required": false,
+          "help": "Include API-equivalent spend (micro-USD). Off by default: receipts carry tokens only",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output the result, and the receipt itself, as JSON. Never prompts",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--quiet",
+          "positional": false,
+          "required": false,
+          "help": "One line on stderr, never a prompt, never a failure. What the hook runs",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie repo receipt show",
+      "about": "Decode a receipt by id prefix or commit, check its signature offline, and map its session refs back to sessions on this machine",
+      "args": [
+        {
+          "name": "RECEIPT_ID_OR_SHA",
+          "positional": true,
+          "required": true,
+          "help": "A receipt id (or a prefix of one, 4+ hex characters) or a commit",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--repo",
+          "positional": false,
+          "required": false,
+          "help": "Path to a git checkout. Defaults to the current directory",
+          "default": null,
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
+      "path": "archie repo receipt key",
+      "about": "Print the receipt public key; --github prints the `gh ssh-key add --type signing` line",
+      "args": [
+        {
+          "name": "--github",
+          "positional": false,
+          "required": false,
+          "help": "Print the `gh ssh-key add --type signing` command that links this key to your GitHub account, so the check can say \"Signed by @you\"",
+          "default": "false",
+          "possibleValues": []
+        },
+        {
+          "name": "--json",
+          "positional": false,
+          "required": false,
+          "help": "Output as JSON",
+          "default": "false",
+          "possibleValues": []
+        }
+      ]
+    },
+    {
       "path": "archie window",
       "about": "The rolling burn-rate window: what is being spent right now",
       "args": []
@@ -2365,6 +2525,69 @@
         },
         "required": [
           "file_path"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "repo_receipt",
+      "description": "The Work Receipt the next push would sign, without signing, writing or pushing anything. Same range rules as repo_suspect (upstream, then origin/main, then the last max_commits). Returns the exact receipt Statement (commit SHAs, opaque session refs, adapters, models, token totals, rung kinds with verified_locally, risk counters -- no prompts, no paths outside the commits' own diffs), a `predicted` list per commit (highest rung attested locally, rungs only claimed), a one-line `summary` such as \"rung 3 attested, rung 1 claimed only\", and `sessions_local` mapping each ref back to a session id for session_show. Use it before pushing: if nothing reaches rung 3 attested, run the tests first. Rungs 2, 4 and 5 are re-derived from CI by the AgentWorth / Evidence check, not here. `key_present: false` means no receipt key exists yet (refs are placeholders); `consent_recorded: false` means the pre-push hook will not export until the user runs `archie repo receipt init --write` or answers yes once.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "base": {
+            "description": "Ref to diff against. Defaults to the branch's own upstream, then `origin/main`, then\n`origin/master`, then the most recent `max_commits` commits — the range the pre-push\nhook would sign.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branch": {
+            "description": "Branch to walk. Defaults to `HEAD`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "include_spend": {
+            "default": null,
+            "description": "Put API-equivalent spend (micro-USD) in the preview, as `create --include-spend` would.\nDefaults to false: receipts carry tokens only.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "max_commits": {
+            "description": "Ceiling on commits walked. Defaults to 200, hard-capped at 1000.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "repo": {
+            "description": "Absolute path to a git checkout on this machine. Anything inside it works — the\nrepository root is resolved with `git rev-parse --show-toplevel`.",
+            "type": "string"
+          },
+          "since": {
+            "description": "RFC 3339 timestamp. Only consulted when `base` is absent.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window_hours": {
+            "description": "How long before a commit a session's file touch still counts as having authored it.\nDefaults to 24.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "repo"
         ],
         "type": "object"
       }

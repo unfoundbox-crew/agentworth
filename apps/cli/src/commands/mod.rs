@@ -11,6 +11,7 @@ pub mod loop_cmds;
 pub mod receipt;
 pub mod search;
 pub mod suspect;
+pub mod work_receipt;
 
 pub use audit::run_audit_command;
 pub use blunder::run_blunder_command;

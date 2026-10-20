@@ -38,6 +38,12 @@ agentworth-export-atif.workspace = true
 agentworth-outcomes.workspace = true
 agentworth-scoring.workspace = true
 agentworth-loop.workspace = true
+# Work Receipt signing (`archie repo receipt`). The ed25519 dependency stays inside this crate
+# and the CLI; the scanner and adapter crates never see it.
+agentworth-attest.workspace = true
+base64 = "0.22"
+thiserror.workspace = true
+zeroize = "1.7"
 clap.workspace = true
 clap_complete.workspace = true
 serde.workspace = true

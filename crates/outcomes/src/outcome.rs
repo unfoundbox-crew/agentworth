@@ -37,6 +37,20 @@ pub fn outcome_kind_name(kind: OutcomeKind) -> String {
     }
 }
 
+/// One piece of outcome evidence, still tied to the event that produced it. See
+/// [`OutcomeDetector::detect_outcomes_located`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocatedOutcome {
+    /// Index into `trace.events`.
+    pub event_index: usize,
+    /// `trace.events[event_index].sequence`.
+    pub event_sequence: u64,
+    /// The evidence after verification (kind and confidence may have been adjusted).
+    pub evidence: OutcomeEvidence,
+    /// The verification note for this event, when the re-check changed anything.
+    pub verification: Option<crate::verify::VerificationNote>,
+}
+
 impl OutcomeDetector {
     pub fn new() -> Self {
         Self
@@ -63,6 +77,34 @@ impl OutcomeDetector {
         let notes =
             crate::verify::verify_outcomes(&trace.events, &mut indexed, repo_root.as_deref());
         (indexed.into_iter().map(|(_, ev)| ev).collect(), notes)
+    }
+
+    /// The same detection and verification pass as [`Self::detect_outcomes_with_verification`],
+    /// but each item stays paired with the event that produced it and with the verification
+    /// note (if any) that adjusted it. A Work Receipt needs both: `event_seq` is how a reader
+    /// finds the evidence in their own transcript, and the note is what says whether a ground
+    /// truth re-check backed the claim or cut it down.
+    pub fn detect_outcomes_located(&self, trace: &AgentWorthTrace) -> Vec<LocatedOutcome> {
+        let mut indexed = self.classify_from_events(&trace.events);
+        let repo_root = crate::verify::resolve_repo_root(&trace.events, Some(&trace.provenance));
+        let notes =
+            crate::verify::verify_outcomes(&trace.events, &mut indexed, repo_root.as_deref());
+        indexed
+            .into_iter()
+            .map(|(idx, evidence)| {
+                let event_sequence = trace.events[idx].sequence;
+                let verification = notes
+                    .iter()
+                    .find(|n| n.event_sequence == event_sequence)
+                    .cloned();
+                LocatedOutcome {
+                    event_index: idx,
+                    event_sequence,
+                    evidence,
+                    verification,
+                }
+            })
+            .collect()
     }
 
     /// Detect all outcome evidence items from a sequence of events, independently verified

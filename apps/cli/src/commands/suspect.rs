@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use agentworth_outcomes::outcome_rank;
+use agentworth_schema::work_receipt::RangeRule;
 use agentworth_schema::OutcomeKind;
 use agentworth_storage::{AnchoredBlameRow, SessionRisk, Storage};
 use anyhow::{bail, Context, Result};
@@ -163,7 +164,7 @@ struct GitCommit {
 /// Reject a ref that git would read as a flag, or that cannot be a ref at all. Arguments are
 /// passed as argv entries (never through a shell), so this is not about injection — it is about
 /// a `--force`-looking ref silently becoming an option.
-fn validate_ref(name: &str, what: &str) -> Result<()> {
+pub(crate) fn validate_ref(name: &str, what: &str) -> Result<()> {
     if name.is_empty() {
         bail!("{what} must not be empty");
     }
@@ -176,7 +177,7 @@ fn validate_ref(name: &str, what: &str) -> Result<()> {
     Ok(())
 }
 
-fn git(repo: &Path, args: &[&str]) -> Result<std::process::Output> {
+pub(crate) fn git(repo: &Path, args: &[&str]) -> Result<std::process::Output> {
     Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -185,7 +186,7 @@ fn git(repo: &Path, args: &[&str]) -> Result<std::process::Output> {
         .with_context(|| format!("failed to run `git {}` in {:?}", args.join(" "), repo))
 }
 
-fn git_stdout(repo: &Path, args: &[&str]) -> Result<String> {
+pub(crate) fn git_stdout(repo: &Path, args: &[&str]) -> Result<String> {
     let out = git(repo, args)?;
     if !out.status.success() {
         bail!(
@@ -234,8 +235,24 @@ fn linked_worktrees(root: &Path) -> Vec<String> {
         .collect()
 }
 
+/// The commit range a query resolved to: the `git log` arguments, the rule in words, and the
+/// same rule as a closed enum (a Work Receipt carries the enum, never the words, because the
+/// words name branches and upstreams).
+#[derive(Debug, Clone)]
+pub struct ResolvedRange {
+    /// Arguments handed to `git log`.
+    pub args: Vec<String>,
+    /// How the range was chosen, in words — `origin/main..HEAD`, `--since=…`, or the fallback.
+    pub desc: String,
+    pub rule: RangeRule,
+    /// The base ref expression when the rule has one (`<base>..<head>`).
+    pub base: Option<String>,
+    /// The head ref expression (`HEAD` or the `--branch`).
+    pub head: String,
+}
+
 /// Choose the commit range, and say in words which rule chose it.
-fn resolve_range(root: &Path, q: &SuspectQuery) -> Result<(Vec<String>, String)> {
+fn resolve_range(root: &Path, q: &SuspectQuery) -> Result<ResolvedRange> {
     let head = match &q.branch {
         Some(b) => {
             validate_ref(b, "branch")?;
@@ -243,43 +260,56 @@ fn resolve_range(root: &Path, q: &SuspectQuery) -> Result<(Vec<String>, String)>
         }
         None => "HEAD".to_string(),
     };
+    let two_dot = |base: &str, rule: RangeRule| {
+        let range = format!("{base}..{head}");
+        ResolvedRange {
+            args: vec![range.clone()],
+            desc: range,
+            rule,
+            base: Some(base.to_string()),
+            head: head.clone(),
+        }
+    };
 
     if let Some(base) = &q.base {
         validate_ref(base, "base")?;
         if !ref_exists(root, base) {
             bail!("base ref '{base}' does not resolve in this repository");
         }
-        let range = format!("{base}..{head}");
-        return Ok((vec![range.clone()], range));
+        return Ok(two_dot(base, RangeRule::ExplicitBase));
     }
 
     if let Some(since) = q.since {
         let arg = format!("--since={}", since.to_rfc3339());
-        return Ok((
-            vec![arg.clone(), head.clone()],
-            format!("{head} {arg}"),
-        ));
+        return Ok(ResolvedRange {
+            args: vec![arg.clone(), head.clone()],
+            desc: format!("{head} {arg}"),
+            rule: RangeRule::Since,
+            base: None,
+            head: head.clone(),
+        });
     }
 
     // The branch's own upstream is the honest default: it is the set of commits about to be
     // pushed, which is exactly what a pre-push hook is asking about.
     if let Ok(upstream) = git_stdout(root, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]) {
         if !upstream.is_empty() {
-            let range = format!("{upstream}..{head}");
-            return Ok((vec![range.clone()], range));
+            return Ok(two_dot(&upstream, RangeRule::Upstream));
         }
     }
     for fallback in ["origin/main", "origin/master"] {
         if ref_exists(root, fallback) {
-            let range = format!("{fallback}..{head}");
-            return Ok((vec![range.clone()], range));
+            return Ok(two_dot(fallback, RangeRule::DefaultBranch));
         }
     }
 
-    Ok((
-        vec![format!("-n{}", q.max_commits), head.clone()],
-        format!("{head}, last {} commits (no upstream and no origin/main)", q.max_commits),
-    ))
+    Ok(ResolvedRange {
+        args: vec![format!("-n{}", q.max_commits), head.clone()],
+        desc: format!("{head}, last {} commits (no upstream and no origin/main)", q.max_commits),
+        rule: RangeRule::LastN,
+        base: None,
+        head,
+    })
 }
 
 /// Read commits and their changed paths in one `git log`.
@@ -417,13 +447,57 @@ fn parse_outcome_rank(name: &str) -> u8 {
         .unwrap_or(0)
 }
 
-/// Run the whole query: resolve the range, read the commits, join them to anchored sessions,
-/// and attach each session's risk signals.
-pub fn compute_suspect_commits(storage: &Storage, q: &SuspectQuery) -> Result<SuspectReport> {
+/// One commit in the range and every anchored session that touched one of its files inside
+/// the attribution window. `sessions` is empty for an unattributed commit.
+#[derive(Debug, Clone)]
+pub struct AttributedCommit {
+    pub sha: String,
+    pub subject: String,
+    pub committed_at: DateTime<Utc>,
+    /// Every path this commit changed (`git log --name-only`).
+    pub files: Vec<String>,
+    /// Session id → the latest anchored blame row that tied it to this commit.
+    pub sessions: BTreeMap<String, AnchoredBlameRow>,
+    /// The commit's own paths that some attributed session touched: the intersection of the
+    /// diff and the blame rows, computed here so a receipt never names a path the commit
+    /// itself does not.
+    pub session_files: Vec<String>,
+}
+
+/// Every commit in a range, attributed through the anchored blame join. This is what both
+/// `repo suspect` (which then keeps only the suspects) and `repo receipt create` (which keeps
+/// them all) are built on.
+#[derive(Debug, Clone)]
+pub struct AttributedCommits {
+    pub root: PathBuf,
+    pub repo_identity: String,
+    pub range: ResolvedRange,
+    pub window_hours: i64,
+    /// Newest first, as `git log` lists them.
+    pub commits: Vec<AttributedCommit>,
+    pub unanchored_rows: usize,
+}
+
+impl AttributedCommits {
+    /// Distinct session ids across every attributed commit, sorted.
+    pub fn session_ids(&self) -> Vec<String> {
+        self.commits
+            .iter()
+            .flat_map(|c| c.sessions.keys().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+}
+
+/// Resolve the range, read the commits, and join each one to the anchored sessions that
+/// touched its files within the window. Nothing is filtered: unattributed commits are kept
+/// with an empty session map.
+pub fn attribute_commits(storage: &Storage, q: &SuspectQuery) -> Result<AttributedCommits> {
     let root = resolve_repo_root(&q.repo)?;
     let root_str = root.to_string_lossy().to_string();
-    let (range_args, range_desc) = resolve_range(&root, q)?;
-    let commits = read_commits(&root, &range_args, q.max_commits)?;
+    let range = resolve_range(&root, q)?;
+    let commits = read_commits(&root, &range.args, q.max_commits)?;
 
     let window = Duration::hours(q.window_hours.max(0));
     // An empty range — nothing to push — must not turn into an unbounded blame query. With no
@@ -445,18 +519,20 @@ pub fn compute_suspect_commits(storage: &Storage, q: &SuspectQuery) -> Result<Su
             .push(row);
     }
 
-    // Candidate sessions first, so risk rows are fetched in one query rather than per commit.
-    let mut matched: Vec<(usize, BTreeMap<String, &AnchoredBlameRow>)> = Vec::new();
-    for (idx, commit) in commits.iter().enumerate() {
+    let mut out = Vec::with_capacity(commits.len());
+    for commit in commits {
         let mut sessions: BTreeMap<String, &AnchoredBlameRow> = BTreeMap::new();
+        let mut session_files = Vec::new();
         for file in &commit.files {
             let Some(rows) = by_path.get(file.as_str()) else { continue };
+            let mut touched = false;
             for row in rows {
                 if row.modified_at > commit.committed_at + COMMIT_TIME_SLACK
                     || row.modified_at < commit.committed_at - window
                 {
                     continue;
                 }
+                touched = true;
                 sessions
                     .entry(row.session_id.clone())
                     .and_modify(|existing| {
@@ -466,28 +542,57 @@ pub fn compute_suspect_commits(storage: &Storage, q: &SuspectQuery) -> Result<Su
                     })
                     .or_insert(row);
             }
+            if touched {
+                session_files.push(file.clone());
+            }
         }
-        if !sessions.is_empty() {
-            matched.push((idx, sessions));
-        }
+        out.push(AttributedCommit {
+            sha: commit.sha,
+            subject: commit.subject,
+            committed_at: commit.committed_at,
+            files: commit.files,
+            sessions: sessions
+                .into_iter()
+                .map(|(id, row)| (id, row.clone()))
+                .collect(),
+            session_files,
+        });
     }
 
-    let session_ids: Vec<String> = matched
-        .iter()
-        .flat_map(|(_, s)| s.keys().cloned())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    Ok(AttributedCommits {
+        root,
+        repo_identity: blame.repo_identity.clone(),
+        range,
+        window_hours: q.window_hours,
+        commits: out,
+        unanchored_rows: blame.unanchored_rows,
+    })
+}
+
+/// Run the whole query: attribute every commit in the range, then attach each attributed
+/// session's risk signals and keep the commits that have one.
+pub fn compute_suspect_commits(storage: &Storage, q: &SuspectQuery) -> Result<SuspectReport> {
+    let attributed_set = attribute_commits(storage, q)?;
+    let root_str = attributed_set.root.to_string_lossy().to_string();
+    let commits_scanned = attributed_set.commits.len();
+
+    // Candidate sessions first, so risk rows are fetched in one query rather than per commit.
+    let session_ids = attributed_set.session_ids();
     let risks = storage.get_session_risks(&session_ids)?;
     let sessions_with_unknown_risk = session_ids
         .iter()
         .filter(|id| !risks.contains_key(*id))
         .count();
 
+    let mut attributed = 0usize;
     let mut suspect = Vec::new();
-    for (idx, sessions) in &matched {
-        let commit = &commits[*idx];
-        let flagged: Vec<SuspectSession> = sessions
+    for commit in &attributed_set.commits {
+        if commit.sessions.is_empty() {
+            continue;
+        }
+        attributed += 1;
+        let flagged: Vec<SuspectSession> = commit
+            .sessions
             .values()
             .filter_map(|row| {
                 let risk = risks.get(&row.session_id);
@@ -520,18 +625,18 @@ pub fn compute_suspect_commits(storage: &Storage, q: &SuspectQuery) -> Result<Su
     }
     suspect.sort_by_key(|c| std::cmp::Reverse(c.committed_at));
 
-    let attributed = matched.len();
-    let prompt = build_prompt(&range_desc, &suspect, commits.len(), attributed);
+    let range_desc = attributed_set.range.desc.clone();
+    let prompt = build_prompt(&range_desc, &suspect, commits_scanned, attributed);
 
     Ok(SuspectReport {
         repo: root_str,
-        repo_identity: blame.repo_identity.clone(),
+        repo_identity: attributed_set.repo_identity.clone(),
         range: range_desc,
         window_hours: q.window_hours,
-        commits_scanned: commits.len(),
+        commits_scanned,
         attributed,
-        unattributed: commits.len().saturating_sub(attributed),
-        unanchored_blame_rows: blame.unanchored_rows,
+        unattributed: commits_scanned.saturating_sub(attributed),
+        unanchored_blame_rows: attributed_set.unanchored_rows,
         sessions_with_unknown_risk,
         suspect,
         prompt,
@@ -622,11 +727,17 @@ pub const PRE_PUSH_HOOK: &str = r#"#!/bin/sh
 # archie repo suspect — a note on the way out, never a gate.
 # Install: save as .git/hooks/pre-push and `chmod +x` it.
 #
-# Lists commits about to be pushed whose authoring session never proved anything.
+# Lists commits about to be pushed whose authoring session never proved anything, then
+# signs a Work Receipt for them and pushes it as a git note (refs/notes/agentworth) --
+# only once you have said yes to that for this repository (`archie repo receipt init`).
 # It exits 0 no matter what it finds, and no matter whether agentworth is installed.
 
+# The nested `git push` of the receipt notes ref sets AGENTWORTH_RECEIPT_PUSH=1, so this
+# hook does not run a second time for it.
+[ -n "$AGENTWORTH_RECEIPT_PUSH" ] && exit 0
 command -v agentworth >/dev/null 2>&1 || exit 0
 archie repo suspect --repo . --quiet || true
+archie repo receipt create --push --quiet --remote "${1:-origin}" || true
 exit 0
 "#;
 
@@ -753,7 +864,7 @@ pub fn run_suspect_command(
 
 /// `Some` when the string is a date this tool understands: RFC 3339, or a bare `YYYY-MM-DD`
 /// read as midnight UTC. `None` means "treat it as a git ref".
-fn parse_since(value: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn parse_since(value: &str) -> Option<DateTime<Utc>> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
         return Some(dt.with_timezone(&Utc));
     }

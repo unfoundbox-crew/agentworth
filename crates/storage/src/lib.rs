@@ -4380,6 +4380,26 @@ impl Storage {
         Ok(())
     }
 
+    /// The lowest `parser_version` among `session_ids` that are in the index, or `None` when
+    /// none of them are. A Work Receipt records it (`index.parser_version_min`) so a reader can
+    /// tell a receipt built from stale parses from one built after a re-scan.
+    pub fn min_parser_version(&self, session_ids: &[String]) -> Result<Option<i64>> {
+        if session_ids.is_empty() {
+            return Ok(None);
+        }
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let placeholders = vec!["?"; session_ids.len()].join(",");
+        let sql = format!(
+            "SELECT MIN(parser_version) FROM sessions WHERE session_id IN ({placeholders})"
+        );
+        let bound: Vec<&dyn ToSql> = session_ids.iter().map(|s| s as &dyn ToSql).collect();
+        let min: Option<i64> = conn.query_row(&sql, bound.as_slice(), |row| row.get(0))?;
+        Ok(min)
+    }
+
     /// Risk signals for a set of sessions. A session missing from the result has no stored row:
     /// it has not been scanned since `session_risk` landed, which callers must report as
     /// unknown rather than as clean.
