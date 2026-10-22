@@ -1,9 +1,41 @@
 # Roadmap: release status and remaining work
 
-Status: 2026-10-08. PR #229 merged into main as `97cba0e`; tag `v0.1.29`
-points to that commit. [GitHub release](https://github.com/unfoundbox-crew/agentworth/releases/tag/v0.1.29)
-and `agentworth@0.1.29` are published. The DSH npm package is not published;
-its first publication needs an authenticated npm account and trusted publisher setup.
+Status: 2026-10-21. PR #235 merged into main as `0412eb9`; tag `v0.1.30`
+points to that commit. [GitHub release](https://github.com/unfoundbox-crew/agentworth/releases/tag/v0.1.30)
+and `agentworth@0.1.30` are published. The DSH npm package is still not published;
+its first publication needs an authenticated npm owner and trusted publisher setup.
+
+## Released: v0.1.30
+
+This release ships Evidence slice 1 (`docs/specs/evidence-check.md`): signed
+Work Receipts carried on pull requests as git notes, and a GitHub Action
+that re-derives what CI can see. Saurabh approved the merge train and the
+release on 2026-10-20, via COS.
+
+| Scope on main | Evidence | Release consequence |
+| :--- | :--- | :--- |
+| Work Receipt v1 format and signing | #231 | in-toto/DSSE receipt types, canonical JSON, new `agentworth-attest` ed25519 crate |
+| Receipt create, hook, MCP | #233 | `archie repo receipt init/create/show/key`; pre-push hook signs and pushes notes; `repo_receipt` MCP preview |
+| Offline verifier and check renderer | #232 | `archie repo receipt verify`; rung re-derivation and conclusion policy |
+| GitHub Action, dogfood, docs | #234 | Root `action.yml` (AgentWorth Evidence); dogfood workflow runs it on every PR |
+
+Release preparation merged through PR #235 from `release/v0.1.30`.
+Main CI [39482243014](https://github.com/unfoundbox-crew/agentworth/actions/runs/39482243014)
+passed on `0412eb9`. Release workflow [39482293851](https://github.com/unfoundbox-crew/agentworth/actions/runs/39482293851)
+ended in failure only at the DSH publish step (npm E404, package never
+published). Native builds, the GitHub release with all four archives and
+checksums, and `agentworth` npm publication (with provenance) succeeded. The
+smoke-test jobs were skipped because they depend on the npm job; a manual
+`npx -y agentworth@0.1.30 --version` on macOS reported 0.1.30. The
+`move-action-tag` job found no `v0` tag and created none.
+
+## Remaining publication work
+
+1. Publish `dsh-plugin-agentworth` (now 0.1.30) for the first time with an authenticated npm owner.
+2. Configure its trusted publisher: unfoundbox-crew/agentworth, workflow `release.yml`. Until then every release run ends red at that step.
+3. Evidence Action, human-gated: a live sandbox PR from another account, then create the first `v0` tag and publish the Marketplace listing ("AgentWorth Evidence"). Later releases move `v0` automatically.
+4. Evidence demo: record `docs/dogfood/evidence-demo.tape` and take the README screenshot from a real dogfood check.
+5. Marketing deployment remains separate.
 
 ## Released: v0.1.29
 
@@ -70,12 +102,10 @@ first publish with an authenticated npm owner, then configure the trusted publis
 for unfoundbox-crew/agentworth, workflow release.yml. Local npm authentication
 returned E401, so this session could not perform the first publication.
 
-## Remaining publication work
+### v0.1.29 publication follow-ups
 
-1. Review and approve the follow-up workflow fix before merging it into main.
-2. Publish `dsh-plugin-agentworth@0.1.29` with an authenticated npm owner.
-3. Configure the DSH package's trusted publisher for future releases.
-4. Verify the DSH registry version after publication. Marketing deployment remains separate.
+The pipefail fix for the publication steps merged as #230. The DSH first
+publication is carried forward above.
 
 ## Local worktree and branch audit, before cleanup
 
